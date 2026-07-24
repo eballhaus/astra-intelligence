@@ -57,6 +57,11 @@ from engine.astra_loss_containment_engine_v1 import (
     run_loss_containment_review_v1,
     save_loss_containment_state_v1,
 )
+from engine.astra_canonical_position_snapshot_v1 import (
+    build_canonical_position_snapshot,
+    snapshot_to_loss_containment_rows,
+    snapshot_to_broker_position_by_symbol,
+)
 from engine.astra_position_peak_memory_v1 import (
     build_peak_memory,
     load_peak_memory,
@@ -775,6 +780,10 @@ def _pick_first_text(*values: Any) -> str:
         if text:
             return text
     return ""
+
+
+def _text(value: Any, default: str = "") -> str:
+    return str(value or default).strip()
 
 
 def _pick_first_number(*values: Any) -> float | None:
@@ -6964,6 +6973,55 @@ class PaperAutopilotEngine:
         self._load_state_file()
         return {"ok": True, "autopilot_enabled": self._enabled}
 
+    @staticmethod
+    def _enrich_broker_rows_from_db_rows(
+        broker_rows: list[dict[str, Any]],
+        db_rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Merge Astra-owned metadata from DB rows into broker-truth rows.
+
+        Broker positions are authoritative for existence, quantity, and price.
+        DB rows are only consulted for lane/horizon/ownership enrichment when
+        the same symbol is still open at the broker.
+        """
+        enrichment: dict[str, dict[str, Any]] = {}
+        for row in db_rows or []:
+            if not isinstance(row, dict):
+                continue
+            symbol = _text(row.get("symbol")).upper()
+            if not symbol:
+                continue
+            enrichment[symbol] = row
+
+        enriched: list[dict[str, Any]] = []
+        for row in broker_rows:
+            if not isinstance(row, dict):
+                continue
+            symbol = _text(row.get("symbol")).upper()
+            src = enrichment.get(symbol)
+            if not src:
+                enriched.append(row)
+                continue
+            merged = dict(row)
+            for key in (
+                "lane_id",
+                "paper_entry_horizon_style",
+                "intended_horizon",
+                "original_horizon",
+                "position_owner",
+                "exit_policy_owner",
+                "entry_timestamp",
+                "created_at",
+                "updated_at",
+                "last_update_ts",
+            ):
+                if not merged.get(key) and src.get(key):
+                    merged[key] = src[key]
+            if not merged.get("lane_id") and src.get("lane"):
+                merged["lane_id"] = src["lane"]
+            enriched.append(merged)
+        return enriched
+
     def _load_loss_containment_state(self) -> dict[str, Any]:
         return load_loss_containment_state_v1(self.loss_containment_state_path)
 
@@ -6977,16 +7035,56 @@ class PaperAutopilotEngine:
         broker_position_by_symbol: dict[str, dict[str, Any]] | None = None,
         latest_price_by_symbol: dict[str, dict[str, Any]] | None = None,
         max_positions: int = 100,
+        broker_fetch_succeeded: bool | None = None,
     ) -> dict[str, Any]:
         """Bounded advisory loss-containment review without order submission.
 
         Produces canonical loss-containment decisions per position, lane
         summaries, and durable shadow records. Execution is never authorized.
+
+        Broker positions are authoritative for current open-position existence.
+        Three broker observation states:
+          True  + non-empty → authoritative positions
+          True  + empty     → authoritative empty (no open positions)
+          False             → broker truth unavailable, fail closed
+
+        broker_fetch_succeeded: True if broker fetch completed (may be empty).
+        Explicitly False means broker truth is unavailable.
         """
-        rows = list(open_rows or self._fetch_open_positions() or [])
+        db_rows = list(open_rows if open_rows is not None else self._fetch_open_positions() or [])
         broker_positions = dict(broker_position_by_symbol or {})
         latest_prices = dict(latest_price_by_symbol or {})
         prior_state = self._load_loss_containment_state()
+
+        # Broker positions are authoritative for current open-position existence.
+        # broker_fetch_succeeded is the canonical signal:
+        #   True  -> use broker positions (empty is authoritative empty)
+        #   False -> fail closed, do not use stale DB positions
+        #   None  -> not called with broker evidence; fall back to open_rows / DB
+        broker_failed = broker_fetch_succeeded is False
+        if broker_fetch_succeeded is True:
+            canonical_snapshot = build_canonical_position_snapshot(broker_positions)
+            broker_rows = snapshot_to_loss_containment_rows(canonical_snapshot)
+            # Enrich broker-truth rows with Astra-owned lane/horizon/ownership metadata
+            # from DB rows.  Lane/horizon are UNAVAILABLE in raw broker positions.
+            rows = self._enrich_broker_rows_from_db_rows(broker_rows, db_rows)
+            # Stale decision eviction: keep only decisions for symbols still open at broker.
+            current_symbols = set(broker_positions.keys())
+            prior_decisions = dict(prior_state.get("decisions") or {})
+            prior_state = {
+                **prior_state,
+                "decisions": {
+                    pid: d for pid, d in prior_decisions.items()
+                    if isinstance(d, dict) and d.get("symbol") in current_symbols
+                },
+            }
+        elif broker_failed:
+            # Broker truth unavailable — clear rows to prevent stale DB fallback.
+            rows = []
+            # Evict all prior decisions so they cannot drive stale actions.
+            prior_state = {**prior_state, "decisions": {}}
+        else:
+            rows = db_rows
 
         ownership_map: dict[str, dict[str, Any]] = {}
         for row in rows:
@@ -6994,6 +7092,13 @@ class PaperAutopilotEngine:
                 continue
             pid = _pick_first_text(row.get("position_id"), row.get("asset_id"), row.get("symbol"))
             ownership_map[pid] = resolve_canonical_position_ownership_v1(row)
+
+        observation_state = "FAILED" if broker_failed else "READY"
+        position_truth_available = not broker_failed
+        confirmed_open_position_count = len(broker_positions) if not broker_failed else None
+        first_phase_blocker = None
+        if broker_failed:
+            first_phase_blocker = "BROKER_POSITION_EVIDENCE_UNAVAILABLE"
 
         result = run_loss_containment_review_v1(
             rows,
@@ -7003,6 +7108,19 @@ class PaperAutopilotEngine:
             prior_state=prior_state,
             max_positions=max_positions,
         )
+        # Add phase-level broker-truth metadata to result and durable state
+        phase_meta = {
+            "broker_fetch_succeeded": not broker_failed,
+            "position_truth_available": position_truth_available,
+            "observation_state": observation_state,
+            "confirmed_open_position_count": confirmed_open_position_count,
+            "first_phase_blocker": first_phase_blocker,
+        }
+        result.update(phase_meta)
+        state = dict(result.get("state") or {})
+        state.update(phase_meta)
+        result["state"] = state
+
         self._runtime_state["loss_containment_review_v1"] = {
             "positions_evaluated": result.get("positions_evaluated", 0),
             "max_positions": result.get("max_positions", 1),
@@ -7013,9 +7131,10 @@ class PaperAutopilotEngine:
             "broker_submission_allowed": result.get("broker_submission_allowed", False),
             "advisory_only": result.get("advisory_only", True),
             "as_of": result.get("generated_timestamp"),
+            **phase_meta,
         }
-        self._runtime_state["loss_containment_state_v1"] = result.get("state", {})
-        self._save_loss_containment_state(result.get("state", {}))
+        self._runtime_state["loss_containment_state_v1"] = state
+        self._save_loss_containment_state(state)
         return result
 
     def _load_profit_protection_state(self) -> dict[str, Any]:
@@ -7030,14 +7149,48 @@ class PaperAutopilotEngine:
         open_rows: list[dict[str, Any]] | None = None,
         broker_position_by_symbol: dict[str, dict[str, Any]] | None = None,
         max_positions: int = 100,
+        broker_fetch_succeeded: bool | None = None,
     ) -> dict[str, Any]:
         """Bounded advisory profit-protection review without order submission.
 
         Consumes loss-containment decisions by position ID for precedence.
+
+        Broker positions are authoritative for current open-position existence.
         """
-        rows = list(open_rows or self._fetch_open_positions() or [])
+        db_rows = list(open_rows if open_rows is not None else self._fetch_open_positions() or [])
         broker_positions = dict(broker_position_by_symbol or {})
         prior_state = self._load_profit_protection_state()
+
+        # Same broker-truth logic as loss containment
+        broker_failed = broker_fetch_succeeded is False
+        if broker_fetch_succeeded is True:
+            canonical_snapshot = build_canonical_position_snapshot(broker_positions)
+            broker_rows = snapshot_to_loss_containment_rows(canonical_snapshot)
+            # Enrich broker-truth rows with Astra-owned lane/horizon/ownership metadata.
+            rows = self._enrich_broker_rows_from_db_rows(broker_rows, db_rows)
+            # Stale decision eviction: keep only decisions for symbols still open at broker.
+            current_symbols = set(broker_positions.keys())
+            prior_decisions = dict(prior_state.get("decisions") or {})
+            prior_state = {
+                **prior_state,
+                "decisions": {
+                    pid: d for pid, d in prior_decisions.items()
+                    if isinstance(d, dict) and d.get("symbol") in current_symbols
+                },
+            }
+        elif broker_failed:
+            rows = []
+            # Evict all prior decisions so they cannot drive stale actions.
+            prior_state = {**prior_state, "decisions": {}}
+        else:
+            rows = db_rows
+
+        observation_state = "FAILED" if broker_failed else "READY"
+        position_truth_available = not broker_failed
+        confirmed_open_position_count = len(broker_positions) if not broker_failed else None
+        first_phase_blocker = None
+        if broker_failed:
+            first_phase_blocker = "BROKER_POSITION_EVIDENCE_UNAVAILABLE"
 
         ownership_map: dict[str, dict[str, Any]] = {}
         for row in rows:
@@ -7057,6 +7210,18 @@ class PaperAutopilotEngine:
             prior_state=prior_state,
             max_positions=max_positions,
         )
+        phase_meta = {
+            "broker_fetch_succeeded": not broker_failed,
+            "position_truth_available": position_truth_available,
+            "observation_state": observation_state,
+            "confirmed_open_position_count": confirmed_open_position_count,
+            "first_phase_blocker": first_phase_blocker,
+        }
+        result.update(phase_meta)
+        state = dict(result.get("state") or {})
+        state.update(phase_meta)
+        result["state"] = state
+
         self._runtime_state["profit_protection_review_v1"] = {
             "positions_evaluated": result.get("positions_evaluated", 0),
             "max_positions": result.get("max_positions", 1),
@@ -7067,9 +7232,10 @@ class PaperAutopilotEngine:
             "broker_submission_allowed": result.get("broker_submission_allowed", False),
             "advisory_only": result.get("advisory_only", True),
             "as_of": result.get("generated_timestamp"),
+            **phase_meta,
         }
-        self._runtime_state["profit_protection_state_v1"] = result.get("state", {})
-        self._save_profit_protection_state(result.get("state", {}))
+        self._runtime_state["profit_protection_state_v1"] = state
+        self._save_profit_protection_state(state)
         return result
 
     def _bounded_legacy_quarantine_review_phase(
@@ -7291,6 +7457,7 @@ class PaperAutopilotEngine:
                     open_rows=self._fetch_open_positions(),
                     broker_position_by_symbol=dict(broker_snapshot.get("broker_position_by_symbol") or {}),
                     max_positions=100,
+                    broker_fetch_succeeded=bool(broker_snapshot.get("broker_positions_fetch_ok", False)),
                 )
             except Exception as exc:
                 loss_containment_review = {"observation_state": "FAILED", "error": str(exc)[:180]}
@@ -7380,6 +7547,7 @@ class PaperAutopilotEngine:
                     loss_containment_review_partial = self._loss_containment_review_phase(
                         broker_position_by_symbol=broker_position_by_symbol,
                         max_positions=100,
+                        broker_fetch_succeeded=bool(broker_snapshot.get("broker_positions_fetch_ok", False)),
                     )
                 except Exception as exc:
                     loss_containment_review_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
@@ -7390,6 +7558,7 @@ class PaperAutopilotEngine:
                     profit_protection_review_partial = self._profit_protection_review_phase(
                         broker_position_by_symbol=broker_position_by_symbol,
                         max_positions=100,
+                        broker_fetch_succeeded=bool(broker_snapshot.get("broker_positions_fetch_ok", False)),
                     )
                 except Exception as exc:
                     profit_protection_review_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
@@ -7658,6 +7827,7 @@ class PaperAutopilotEngine:
                     broker_position_by_symbol=broker_position_by_symbol,
                     latest_price_by_symbol=latest_price_by_symbol,
                     max_positions=100,
+                    broker_fetch_succeeded=bool(broker_snapshot.get("broker_positions_fetch_ok", False)),
                 )
             except Exception as exc:
                 loss_containment_review = {"observation_state": "FAILED", "error": str(exc)[:180]}
@@ -7668,6 +7838,7 @@ class PaperAutopilotEngine:
                     open_rows=open_rows_initial,
                     broker_position_by_symbol=broker_position_by_symbol,
                     max_positions=100,
+                    broker_fetch_succeeded=bool(broker_snapshot.get("broker_positions_fetch_ok", False)),
                 )
             except Exception as exc:
                 profit_protection_review = {"observation_state": "FAILED", "error": str(exc)[:180]}

@@ -192,7 +192,7 @@ def load_profit_protection_state_v1(path: str) -> dict[str, Any]:
             "events": {},
             "as_of": _iso(),
         }
-    return {
+    base = {
         "schema_version": "astra_profit_protection_state_v1",
         "loaded": True,
         "forensic": None,
@@ -200,6 +200,17 @@ def load_profit_protection_state_v1(path: str) -> dict[str, Any]:
         "events": dict(raw.get("events") or {}),
         "as_of": _iso(),
     }
+    # Preserve phase-level metadata written by the review phase.
+    for key in (
+        "broker_fetch_succeeded",
+        "position_truth_available",
+        "observation_state",
+        "confirmed_open_position_count",
+        "first_phase_blocker",
+    ):
+        if key in raw:
+            base[key] = raw[key]
+    return base
 
 
 def save_profit_protection_state_v1(path: str, state: Mapping[str, Any]) -> None:
@@ -210,6 +221,16 @@ def save_profit_protection_state_v1(path: str, state: Mapping[str, Any]) -> None
         "events": dict(state.get("events") or {}),
         "as_of": _iso(),
     }
+    # Preserve phase-level metadata written by the review phase.
+    for key in (
+        "broker_fetch_succeeded",
+        "position_truth_available",
+        "observation_state",
+        "confirmed_open_position_count",
+        "first_phase_blocker",
+    ):
+        if key in state:
+            payload[key] = state[key]
     _atomic_write_json(path, payload)
 
 
