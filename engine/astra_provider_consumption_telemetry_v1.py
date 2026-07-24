@@ -10,6 +10,9 @@ from typing import Any, Iterable, Mapping
 
 
 SCHEMA_VERSION = "astra_provider_consumption_telemetry_v1"
+FMP_EVENT_LEDGER_NAME = "fmp_efficiency_ledger_v1.jsonl"
+MAX_FMP_EVENT_ROWS = 2_000
+MAX_FMP_EVENT_BYTES = 2 * 1024 * 1024
 
 
 def _now() -> str:
@@ -40,10 +43,26 @@ def _atomic_write(path: Path, payload: Mapping[str, Any]) -> None:
         raise
 
 
+def _read_tail_lines(path: Path, limit: int, read_bytes: int = MAX_FMP_EVENT_BYTES) -> list[str]:
+    """Read a bounded JSONL tail without loading historical provider traffic."""
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            handle.seek(max(0, size - max(1024, int(read_bytes))))
+            data = handle.read()
+    except OSError:
+        return []
+    lines = data.decode("utf-8", errors="ignore").splitlines()
+    # The first row can be partial after seeking into a large JSONL file.
+    if size > read_bytes and lines:
+        lines = lines[1:]
+    return lines[-max(1, int(limit)):]
+
+
 def _read_tail(path: Path, limit: int = 200) -> list[dict[str, Any]]:
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()[-max(1, limit):]
-    except OSError:
+        lines = _read_tail_lines(path, limit)
+    except (OSError, ValueError):
         return []
     rows: list[dict[str, Any]] = []
     for line in lines:
@@ -54,6 +73,90 @@ def _read_tail(path: Path, limit: int = 200) -> list[dict[str, Any]]:
         if isinstance(row, dict):
             rows.append(row)
     return rows
+
+
+def append_fmp_provider_event_v1(
+    event: Mapping[str, Any],
+    *,
+    state_dir: str | Path = "state",
+    max_rows: int = MAX_FMP_EVENT_ROWS,
+    max_bytes: int = MAX_FMP_EVENT_BYTES,
+) -> None:
+    """Append one redacted event and compact the shared ledger atomically.
+
+    The backend and worker are separate processes.  A lock file keeps their
+    writes ordered, while compaction prevents old telemetry from becoming an
+    active-window budget input or an unbounded runtime artifact.
+    """
+    root = Path(state_dir)
+    path = root / FMP_EVENT_LEDGER_NAME
+    root.mkdir(parents=True, exist_ok=True)
+    row = dict(event)
+    row["timestamp"] = str(row.get("timestamp") or _now())
+    line = json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n"
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        try:
+            import fcntl
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        except (ImportError, OSError):
+            pass
+        try:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(line)
+                handle.flush()
+                os.fsync(handle.fileno())
+            if path.stat().st_size > max(1, int(max_bytes)):
+                rows = _read_tail(path, max(1, int(max_rows)))
+                compacted = "".join(
+                    json.dumps(item, ensure_ascii=False, separators=(",", ":")) + "\n"
+                    for item in rows[-max(1, int(max_rows)):]
+                )
+                fd, temporary = tempfile.mkstemp(dir=str(root), suffix=".tmp")
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                        handle.write(compacted)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.replace(temporary, path)
+                except Exception:
+                    try:
+                        os.unlink(temporary)
+                    except OSError:
+                        pass
+                    raise
+        finally:
+            try:
+                import fcntl
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+            except (ImportError, OSError):
+                pass
+
+
+def fmp_context_network_bytes_v1(
+    caller_context: str,
+    *,
+    state_dir: str | Path = "state",
+    window_start: str = "",
+) -> int:
+    """Return actual network bytes for one producer context only.
+
+    A candidate-enrichment cap must never be charged for open-position router
+    traffic.  Cache reads and deduplicated events have no network byte cost.
+    """
+    rows = _read_tail(Path(state_dir) / FMP_EVENT_LEDGER_NAME, MAX_FMP_EVENT_ROWS)
+    total = 0
+    for row in rows:
+        if str(row.get("caller_context") or "") != str(caller_context):
+            continue
+        if window_start and not _within_window(row, window_start):
+            continue
+        if bool(row.get("cache_hit")) or bool(row.get("deduplicated")):
+            continue
+        if _number(row.get("api_calls_delta")) <= 0:
+            continue
+        total += max(0, int(_number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta"))))
+    return total
 
 
 def _within_window(row: Mapping[str, Any], window_start: str) -> bool:
@@ -139,7 +242,7 @@ def build_provider_consumption_telemetry_v1(
 ) -> dict[str, Any]:
     """Summarize existing router ledger events without issuing provider calls."""
     root = Path(state_dir)
-    events = [row for row in _read_tail(root / "fmp_efficiency_ledger_v1.jsonl") if _within_window(row, window_start)]
+    events = [row for row in _read_tail(root / FMP_EVENT_LEDGER_NAME) if _within_window(row, window_start)]
     attempts = len(events)
     cache_hits = [row for row in events if bool(row.get("cache_hit"))]
     governor_blocked = [row for row in events if str(row.get("blocked_reason") or "").lower() in {"call_limit", "bandwidth_budget", "governor_blocked", "provider_cooldown_or_budget"}]

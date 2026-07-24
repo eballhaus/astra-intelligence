@@ -8,10 +8,13 @@ from unittest.mock import patch
 
 from engine.astra_continuous_system_integrity_scanner_v1 import ContinuousSystemIntegrityScannerV1
 from engine.astra_provider_consumption_telemetry_v1 import (
+    append_fmp_provider_event_v1,
     build_provider_consumption_telemetry_v1,
+    fmp_context_network_bytes_v1,
     load_provider_consumption_telemetry_v1,
     save_provider_consumption_telemetry_v1,
 )
+from engine.api_call_manager import _cap_per_min
 from engine.provider_router import ProviderRouter
 from engine.paper_autopilot import PaperAutopilotEngine
 
@@ -25,6 +28,28 @@ class FmpProviderConsumptionTests(unittest.TestCase):
     def test_explicit_hard_limit_remains_respected(self):
         with patch.dict(os.environ, {"ASTRA_FMP_REST_HARD_LIMIT_ENABLED": "1"}, clear=False):
             self.assertTrue(ProviderRouter._fmp_probe_hard_limited())
+
+    def test_fmp_reserve_is_bounded_but_preserves_open_position_capacity(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ASTRA_PROVIDER_CAP_FMP_PER_MIN", None)
+            os.environ.pop("ASTRA_TEMP_FMP_REST_DISABLED", None)
+            self.assertEqual(_cap_per_min("FMP"), 30)
+
+    def test_shared_ledger_compacts_and_context_budget_ignores_router_traffic(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for index in range(8):
+                append_fmp_provider_event_v1(
+                    {"caller_context": "provider_router_fmp_quote", "api_calls_delta": 1, "bytes_actual_if_available": 500},
+                    state_dir=directory, max_rows=3, max_bytes=256,
+                )
+            append_fmp_provider_event_v1(
+                {"caller_context": "top_buys_fmp_enrichment_v1", "api_calls_delta": 1, "bytes_actual_if_available": 71},
+                state_dir=directory, max_rows=3, max_bytes=256,
+            )
+            ledger = os.path.join(directory, "fmp_efficiency_ledger_v1.jsonl")
+            with open(ledger, encoding="utf-8") as handle:
+                self.assertLessEqual(len([line for line in handle if line.strip()]), 3)
+            self.assertEqual(fmp_context_network_bytes_v1("top_buys_fmp_enrichment_v1", state_dir=directory), 71)
 
     def test_profile_response_is_accepted_without_exposing_secret(self):
         router = ProviderRouter()

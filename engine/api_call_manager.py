@@ -62,9 +62,11 @@ def _cap_per_min(provider: str) -> int:
             # FMP is a premium, bounded context provider.  Four shared calls
             # were routinely consumed by candidate enrichment before the
             # worker could refresh an open position.  Twelve remains far below
-            # the account cap while reserving room for one position-context
-            # request per cooperative worker cycle.
-            "FMP": 0 if _fmp_rest_disabled() else 12,
+            # the account cap while reserving enough bounded capacity for the
+            # open-position evidence queue.  Thirty calls/minute is still far
+            # below the Premium account limit and does not change any trade
+            # authority.
+            "FMP": 0 if _fmp_rest_disabled() else 30,
         }
         if p in temporary_caps:
             return int(temporary_caps[p])

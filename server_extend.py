@@ -51,6 +51,10 @@ from engine.astra_runtime_governance_v1 import (
     snapshot_age_seconds as _runtime_snapshot_age_seconds,
     worker_liveness as _runtime_worker_liveness,
 )
+from engine.astra_provider_consumption_telemetry_v1 import (
+    append_fmp_provider_event_v1,
+    fmp_context_network_bytes_v1,
+)
 
 load_runtime_environment()
 
@@ -3489,7 +3493,7 @@ MAX_FMP_ENRICHMENT_SYMBOLS_PER_CYCLE = max(1, min(5, int(float(os.getenv("ASTRA_
 MAX_FMP_ENRICHMENT_CALLS_PER_CYCLE = max(2, min(10, int(float(os.getenv("ASTRA_MAX_FMP_ENRICHMENT_CALLS_PER_CYCLE", "6")))))
 FMP_ENRICHMENT_QUOTE_TTL_SECONDS = max(120, min(900, int(float(os.getenv("ASTRA_FMP_ENRICHMENT_QUOTE_TTL_SECONDS", "180")))))
 FMP_ENRICHMENT_PROFILE_TTL_SECONDS = max(86400, int(float(os.getenv("ASTRA_FMP_ENRICHMENT_PROFILE_TTL_SECONDS", "86400"))))
-FMP_ENRICHMENT_DAILY_SOFT_CAP_BYTES = max(16384, int(float(os.getenv("ASTRA_FMP_ENRICHMENT_DAILY_SOFT_CAP_BYTES", "131072"))))
+FMP_ENRICHMENT_DAILY_SOFT_CAP_BYTES = max(65536, int(float(os.getenv("ASTRA_FMP_ENRICHMENT_DAILY_SOFT_CAP_BYTES", "524288"))))
 FMP_ENRICHMENT_CYCLE_SOFT_CAP_BYTES = max(2048, int(float(os.getenv("ASTRA_FMP_ENRICHMENT_CYCLE_SOFT_CAP_BYTES", "12288"))))
 
 def _env_float(name, default):
@@ -37011,7 +37015,7 @@ def _fmp_efficiency_record_event(event):
     row["bandwidth_delta"] = int(_to_float(row.get("bandwidth_delta"), 0.0))
     row["provider_governor_allowed"] = bool(row.get("provider_governor_allowed", True))
     with _FMP_EFFICIENCY_LOCK:
-        _append_jsonl_safely(FMP_EFFICIENCY_LEDGER_PATH, row)
+        append_fmp_provider_event_v1(row, state_dir=STATE)
         manifest = _fmp_efficiency_manifest_load()
         manifest["enabled"] = True
         manifest["total_fmp_calls_tracked"] = int(_to_float(manifest.get("total_fmp_calls_tracked"), 0.0)) + 1
@@ -37170,7 +37174,9 @@ def _fmp_small_endpoint_request(endpoint_key, symbol, cycle_state, call_reason):
         }
     cycle_state["cache_misses"] = int(_to_float(cycle_state.get("cache_misses"), 0.0)) + 1
     governor = dict(_fmp_usage_governor_snapshot(update=False) or {})
-    est_today_bytes = int(_to_float(( _read_json_file(FMP_USAGE_STATE_PATH, default={}) or {}).get("fmp_estimated_used_today_bytes"), 0.0))
+    # Candidate enrichment has a separate bounded allowance.  Router traffic
+    # for open-position monitoring must not consume this context's budget.
+    est_today_bytes = int(fmp_context_network_bytes_v1("top_buys_fmp_enrichment_v1", state_dir=STATE))
     if not bool(governor.get("fmp_rest_governor_allowed", False)):
         _fmp_efficiency_record_event(
             {

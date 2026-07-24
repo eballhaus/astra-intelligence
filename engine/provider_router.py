@@ -26,6 +26,7 @@ from engine.api_call_manager import (
     record_error,
     record_rate_limit,
 )
+from engine.astra_provider_consumption_telemetry_v1 import append_fmp_provider_event_v1
 
 
 def _alpaca_secret_key() -> str:
@@ -200,9 +201,7 @@ def _fmp_efficiency_record(row: dict[str, Any]) -> None:
     rec.setdefault("caller_context", "")
     rec.setdefault("ttl_seconds", 0)
     with _FMP_EFFICIENCY_LOCK:
-        os.makedirs(os.path.dirname(_FMP_EFFICIENCY_LEDGER_PATH) or ".", exist_ok=True)
-        with open(_FMP_EFFICIENCY_LEDGER_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n")
+        append_fmp_provider_event_v1(rec)
         manifest = _fmp_efficiency_manifest_load()
         manifest["enabled"] = True
         manifest["total_fmp_calls_tracked"] = int(_to_float(manifest.get("total_fmp_calls_tracked"), 0.0)) + 1
