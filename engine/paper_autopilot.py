@@ -7035,6 +7035,13 @@ class PaperAutopilotEngine:
             pid = _pick_first_text(row.get("position_id"), row.get("asset_id"), row.get("symbol"))
             ownership_map[pid] = resolve_canonical_position_ownership_v1(row)
 
+        observation_state = "FAILED" if broker_failed else "READY"
+        position_truth_available = not broker_failed
+        confirmed_open_position_count = len(broker_positions) if not broker_failed else None
+        first_phase_blocker = None
+        if broker_failed:
+            first_phase_blocker = "BROKER_POSITION_EVIDENCE_UNAVAILABLE"
+
         result = run_loss_containment_review_v1(
             rows,
             ownership_map=ownership_map,
@@ -7043,6 +7050,13 @@ class PaperAutopilotEngine:
             prior_state=prior_state,
             max_positions=max_positions,
         )
+        # Add phase-level broker-truth metadata to result
+        result["broker_fetch_succeeded"] = not broker_failed
+        result["position_truth_available"] = position_truth_available
+        result["observation_state"] = observation_state
+        result["confirmed_open_position_count"] = confirmed_open_position_count
+        result["first_phase_blocker"] = first_phase_blocker
+
         self._runtime_state["loss_containment_review_v1"] = {
             "positions_evaluated": result.get("positions_evaluated", 0),
             "max_positions": result.get("max_positions", 1),
@@ -7053,6 +7067,11 @@ class PaperAutopilotEngine:
             "broker_submission_allowed": result.get("broker_submission_allowed", False),
             "advisory_only": result.get("advisory_only", True),
             "as_of": result.get("generated_timestamp"),
+            "broker_fetch_succeeded": not broker_failed,
+            "position_truth_available": position_truth_available,
+            "observation_state": observation_state,
+            "confirmed_open_position_count": confirmed_open_position_count,
+            "first_phase_blocker": first_phase_blocker,
         }
         self._runtime_state["loss_containment_state_v1"] = result.get("state", {})
         self._save_loss_containment_state(result.get("state", {}))
@@ -7103,6 +7122,13 @@ class PaperAutopilotEngine:
                 }
                 prior_state = {**prior_state, "decisions": filtered_decisions}
 
+        observation_state = "FAILED" if broker_failed else "READY"
+        position_truth_available = not broker_failed
+        confirmed_open_position_count = len(broker_positions) if not broker_failed else None
+        first_phase_blocker = None
+        if broker_failed:
+            first_phase_blocker = "BROKER_POSITION_EVIDENCE_UNAVAILABLE"
+
         ownership_map: dict[str, dict[str, Any]] = {}
         for row in rows:
             if not isinstance(row, dict):
@@ -7121,6 +7147,12 @@ class PaperAutopilotEngine:
             prior_state=prior_state,
             max_positions=max_positions,
         )
+        result["broker_fetch_succeeded"] = not broker_failed
+        result["position_truth_available"] = position_truth_available
+        result["observation_state"] = observation_state
+        result["confirmed_open_position_count"] = confirmed_open_position_count
+        result["first_phase_blocker"] = first_phase_blocker
+
         self._runtime_state["profit_protection_review_v1"] = {
             "positions_evaluated": result.get("positions_evaluated", 0),
             "max_positions": result.get("max_positions", 1),
@@ -7131,6 +7163,11 @@ class PaperAutopilotEngine:
             "broker_submission_allowed": result.get("broker_submission_allowed", False),
             "advisory_only": result.get("advisory_only", True),
             "as_of": result.get("generated_timestamp"),
+            "broker_fetch_succeeded": not broker_failed,
+            "position_truth_available": position_truth_available,
+            "observation_state": observation_state,
+            "confirmed_open_position_count": confirmed_open_position_count,
+            "first_phase_blocker": first_phase_blocker,
         }
         self._runtime_state["profit_protection_state_v1"] = result.get("state", {})
         self._save_profit_protection_state(result.get("state", {}))

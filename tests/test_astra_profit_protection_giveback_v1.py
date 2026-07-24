@@ -457,5 +457,61 @@ class GivebackBoundaryTests(unittest.TestCase):
         self.assertEqual(d["canonical_recommendation"], "EXIT_REVIEW")
 
 
+class IntegrationTests(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="astra_profit_protection_intel_")
+        self.db_path = os.path.join(self.tmpdir, "ai_trading_memory.db")
+        self.state_path = os.path.join(self.tmpdir, "paper_autopilot_state.json")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _can_import_paper_autopilot(self):
+        try:
+            from engine.paper_autopilot import PaperAutopilotEngine
+            return PaperAutopilotEngine
+        except Exception as exc:
+            self.skipTest(f"PaperAutopilotEngine unavailable: {exc}")
+
+    def test_profit_protection_broker_failed_metadata(self):
+        """Failed broker fetch must produce correct metadata in profit protection."""
+        PaperAutopilotEngine = self._can_import_paper_autopilot()
+        engine = PaperAutopilotEngine(
+            db_path=self.db_path,
+            state_path=self.state_path,
+            enabled=False,
+        )
+        engine._ensure_schema()
+        result = engine._profit_protection_review_phase(
+            broker_fetch_succeeded=False,
+            max_positions=100,
+        )
+        self.assertFalse(result.get("broker_fetch_succeeded", True))
+        self.assertFalse(result.get("position_truth_available", True))
+        self.assertEqual(result.get("observation_state"), "FAILED")
+        self.assertIsNone(result.get("confirmed_open_position_count"))
+        self.assertEqual(result.get("first_phase_blocker"), "BROKER_POSITION_EVIDENCE_UNAVAILABLE")
+
+    def test_profit_protection_broker_empty_metadata(self):
+        """Successful empty broker fetch must produce correct metadata in profit protection."""
+        PaperAutopilotEngine = self._can_import_paper_autopilot()
+        engine = PaperAutopilotEngine(
+            db_path=self.db_path,
+            state_path=self.state_path,
+            enabled=False,
+        )
+        engine._ensure_schema()
+        result = engine._profit_protection_review_phase(
+            broker_position_by_symbol={},
+            broker_fetch_succeeded=True,
+            max_positions=100,
+        )
+        self.assertTrue(result.get("broker_fetch_succeeded", False))
+        self.assertTrue(result.get("position_truth_available", False))
+        self.assertEqual(result.get("observation_state"), "READY")
+        self.assertEqual(result.get("confirmed_open_position_count"), 0)
+        self.assertIsNone(result.get("first_phase_blocker"))
+
+
 if __name__ == "__main__":
     unittest.main()

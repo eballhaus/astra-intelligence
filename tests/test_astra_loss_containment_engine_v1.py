@@ -569,6 +569,12 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(result.get("positions_evaluated", 0), 0)
         self.assertFalse(result.get("execution_authorized", True))
         self.assertEqual(len(result.get("position_decisions", [])), 0)
+        # Failed-fetch metadata
+        self.assertFalse(result.get("broker_fetch_succeeded", True))
+        self.assertFalse(result.get("position_truth_available", True))
+        self.assertEqual(result.get("observation_state"), "FAILED")
+        self.assertIsNone(result.get("confirmed_open_position_count"))
+        self.assertEqual(result.get("first_phase_blocker"), "BROKER_POSITION_EVIDENCE_UNAVAILABLE")
 
     def test_broker_fetch_empty_overrides_stale_db(self):
         """Successful empty broker result must clear stale DB positions."""
@@ -595,6 +601,12 @@ class IntegrationTests(unittest.TestCase):
         # With successful empty broker, stale DB rows must not be evaluated
         self.assertEqual(result.get("positions_evaluated", 0), 0)
         self.assertFalse(result.get("execution_authorized", True))
+        # Successful-empty metadata
+        self.assertTrue(result.get("broker_fetch_succeeded", False))
+        self.assertTrue(result.get("position_truth_available", False))
+        self.assertEqual(result.get("observation_state"), "READY")
+        self.assertEqual(result.get("confirmed_open_position_count"), 0)
+        self.assertIsNone(result.get("first_phase_blocker"))
 
 
 if __name__ == "__main__":
