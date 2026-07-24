@@ -263,6 +263,10 @@ class ContinuousSystemIntegrityScannerV1:
                 signals.append({"kind": "PROVIDER_TELEMETRY_INCOMPLETE", "severity": "MEDIUM", "confidence": "VERIFIED",
                                 "canonical_fact_ids": ["FMP_PROVIDER_CONSUMPTION"], "affected_components": ["astra_provider_consumption_telemetry_v1"],
                                 "first_bad_handoff": "provider ledger -> assignment/consumption telemetry"})
+            if _number(provider.get("byte_telemetry_missing")) > 0:
+                signals.append({"kind": "FMP_BYTE_TELEMETRY_MISMATCH", "severity": "HIGH", "confidence": "VERIFIED",
+                                "canonical_fact_ids": ["FMP_PROVIDER_CONSUMPTION"], "affected_components": ["ProviderRouter._request"],
+                                "first_bad_handoff": "raw provider response -> FMP byte telemetry"})
         position_evidence = dict(context.get("position_evidence_completeness") or {})
         if position_evidence:
             represented = _number(position_evidence.get("positions_represented"))

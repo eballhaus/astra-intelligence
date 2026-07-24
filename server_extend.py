@@ -37195,7 +37195,9 @@ def _fmp_small_endpoint_request(endpoint_key, symbol, cycle_state, call_reason):
         )
         cycle_state["blocked"] = int(_to_float(cycle_state.get("blocked"), 0.0)) + 1
         return {"ok": False, "blocked_reason": "call_limit", "data": {}, "cache_hit": False, "bytes": 0, "fields_used": []}
-    if bool(governor.get("fmp_hard_stop_active", False)) or bool(governor.get("fmp_warning_active", False)):
+    # A warning is observable pressure, not a local denial.  Only the current
+    # daily budget or a real hard/emergency stop may suppress a bounded call.
+    if bool(governor.get("fmp_hard_stop_active", False)):
         _fmp_efficiency_record_event(
             {
                 "endpoint_family": family,
@@ -70666,6 +70668,31 @@ def _astra_position_evidence_completeness_v1_payload() -> dict:
             **_safety_flags_v1()}
 
 
+def _astra_portfolio_segmentation_v1_payload() -> dict:
+    """Read worker-persisted cohort metrics only; never refresh broker truth on GET."""
+    payload = _read_json_file(os.path.join(STATE, "astra_portfolio_segmentation_v1.json"), default={})
+    return {"endpoint": "/api/astra_portfolio_segmentation_v1", "status": "PASS" if payload else "AWAITING_WORKER_SEGMENTATION",
+            **dict(payload or {}), "provider_calls_from_get": 0, "broker_actions_from_get": 0,
+            "llm_calls_from_get": 0, "state_mutations_from_get": 0, "get_route_read_only": True,
+            **_safety_flags_v1()}
+
+
+def _astra_legacy_position_resolution_v1_payload() -> dict:
+    payload = _read_json_file(os.path.join(STATE, "astra_legacy_position_resolution_v1.json"), default={})
+    return {"endpoint": "/api/astra_legacy_position_resolution_v1", "status": "PASS" if payload else "AWAITING_WORKER_RESOLUTION",
+            **dict(payload or {}), "provider_calls_from_get": 0, "broker_actions_from_get": 0,
+            "llm_calls_from_get": 0, "state_mutations_from_get": 0, "get_route_read_only": True,
+            **_safety_flags_v1()}
+
+
+def _astra_legacy_capacity_recovery_v1_payload() -> dict:
+    payload = _read_json_file(os.path.join(STATE, "astra_legacy_capacity_recovery_v1.json"), default={})
+    return {"endpoint": "/api/astra_legacy_capacity_recovery_v1", "status": "PASS" if payload else "AWAITING_WORKER_CAPACITY",
+            **dict(payload or {}), "provider_calls_from_get": 0, "broker_actions_from_get": 0,
+            "llm_calls_from_get": 0, "state_mutations_from_get": 0, "get_route_read_only": True,
+            **_safety_flags_v1()}
+
+
 def _astra_unified_position_advisory_v1_payload() -> dict:
     payload = _read_json_file(os.path.join(STATE, "astra_unified_position_advisory_v1.json"), default={})
     return {"endpoint": "/api/astra_unified_position_advisory_v1", "status": "PASS" if payload else "AWAITING_WORKER_ADVISORY",
@@ -74586,6 +74613,21 @@ def astra_legacy_position_risk_triage_v1():
 @router.get("/api/astra_position_evidence_completeness_v1")
 def astra_position_evidence_completeness_v1():
     return _astra_position_evidence_completeness_v1_payload()
+
+
+@router.get("/api/astra_portfolio_segmentation_v1")
+def astra_portfolio_segmentation_v1():
+    return _astra_portfolio_segmentation_v1_payload()
+
+
+@router.get("/api/astra_legacy_position_resolution_v1")
+def astra_legacy_position_resolution_v1():
+    return _astra_legacy_position_resolution_v1_payload()
+
+
+@router.get("/api/astra_legacy_capacity_recovery_v1")
+def astra_legacy_capacity_recovery_v1():
+    return _astra_legacy_capacity_recovery_v1_payload()
 
 
 @router.get("/api/astra_unified_position_advisory_v1")

@@ -103,17 +103,19 @@ def _atomic_write(path: Path, payload: Mapping[str, Any]) -> None:
 def build_unified_position_advisory_v1(
     broker_positions: Mapping[str, Mapping[str, Any]], *, evidence: Mapping[str, Any], triage: Mapping[str, Any],
     loss_containment: Mapping[str, Any] | None = None, profit_protection: Mapping[str, Any] | None = None,
-    exit_readiness: Mapping[str, Any] | None = None,
+    exit_readiness: Mapping[str, Any] | None = None, resolution: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     evidence_by_symbol = _index(list(evidence.get("positions") or []))
     triage_by_symbol = _index(list(triage.get("positions") or []))
     loss_by_symbol = _index(list((loss_containment or {}).get("decisions", {}).values()))
     profit_by_symbol = _index(list((profit_protection or {}).get("decisions", {}).values()))
     exit_by_symbol = _index(list((exit_readiness or {}).get("positions") or []))
+    resolution_by_symbol = _index(list((resolution or {}).get("positions") or []))
     rows = []
     for symbol in sorted(broker_positions or {}):
         evidence_row, triage_row = evidence_by_symbol.get(symbol, {}), triage_by_symbol.get(symbol, {})
         loss, profit = loss_by_symbol.get(symbol, {}), profit_by_symbol.get(symbol, {})
+        resolution_row = resolution_by_symbol.get(symbol, {})
         legacy = bool(triage_row)
         policy = unified_position_recommendation(
             loss, profit, ownership="UNRESOLVED_FAIL_CLOSED" if evidence_row.get("canonical_lane_status") != "RESOLVED" and not legacy else "KNOWN",
@@ -126,11 +128,12 @@ def build_unified_position_advisory_v1(
         rows.append({
             "symbol": symbol, "final_advisory": recommendation, "confidence": confidence,
             "priority": "HIGH" if recommendation in {"EXIT_REVIEW", "THESIS_BROKEN", "PROTECT_CAPITAL"} else "MEDIUM" if recommendation == "WATCH" else "LOW",
-            "primary_reason": _text(triage_row.get("plain_english_reason")) or _text(loss.get("human_readable_reason")) or blocker,
+            "primary_reason": _text(resolution_row.get("plain_english_explanation")) or _text(triage_row.get("plain_english_reason")) or _text(loss.get("human_readable_reason")) or blocker,
             "supporting_reasons": [blocker], "evidence_used": triage_row.get("evidence_used") or {},
             "evidence_missing": triage_row.get("evidence_missing") or ([blocker] if blocker != "EVIDENCE_CURRENT" else []),
-            "first_causal_blocker": blocker, "source_components": [name for name, row in (("position_evidence_completeness_v1", evidence_row), ("legacy_position_risk_triage_v1", triage_row), ("exit_readiness", exit_row), ("loss_containment", loss), ("profit_protection", profit)) if row],
+            "first_causal_blocker": blocker, "source_components": [name for name, row in (("position_evidence_completeness_v1", evidence_row), ("legacy_position_risk_triage_v1", triage_row), ("legacy_position_resolution_v1", resolution_row), ("exit_readiness", exit_row), ("loss_containment", loss), ("profit_protection", profit)) if row],
             "legacy_position": legacy, "loss_containment_state": loss.get("canonical_recommendation"), "profit_protection_state": profit.get("canonical_recommendation") or profit.get("profit_state"),
+            "resolution_plan": resolution_row.get("resolution_plan"), "capacity_impact": resolution_row.get("estimated_capacity_releasable"), "urgency": resolution_row.get("urgency"),
             "generated_at": _now(), "execution_authority": "DISABLED", "advisory_only": True,
         })
     return {"schema_version": SCHEMA_VERSION, "generated_at": _now(), "broker_position_count": len(broker_positions or {}), "advisory_count": len(rows), "positions": rows,
@@ -141,6 +144,7 @@ def build_unified_position_advisory_v1(
 def build_position_exit_readiness_v1(
     broker_positions: Mapping[str, Mapping[str, Any]], *, evidence: Mapping[str, Any], triage: Mapping[str, Any],
     loss_containment: Mapping[str, Any] | None = None, profit_protection: Mapping[str, Any] | None = None,
+    resolution: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist the existing advisory policy inputs for every broker position.
 
@@ -152,9 +156,11 @@ def build_position_exit_readiness_v1(
     triage_by_symbol = _index(list(triage.get("positions") or []))
     loss_by_symbol = _index(list((loss_containment or {}).get("decisions", {}).values()))
     profit_by_symbol = _index(list((profit_protection or {}).get("decisions", {}).values()))
+    resolution_by_symbol = _index(list((resolution or {}).get("positions") or []))
     rows = []
     for symbol in sorted(broker_positions or {}):
         item, legacy, loss, profit = evidence_by_symbol.get(symbol, {}), triage_by_symbol.get(symbol, {}), loss_by_symbol.get(symbol, {}), profit_by_symbol.get(symbol, {})
+        resolution_row = resolution_by_symbol.get(symbol, {})
         policy = unified_position_recommendation(loss, profit, ownership="KNOWN", stale_evidence=item.get("quote_status") == "STALE" or item.get("completed_bar_status") == "STALE")
         recommendation = _text(legacy.get("recommendation")) or _text(policy.get("canonical_recommendation")) or "WATCH"
         blocker = _text(legacy.get("first_causal_blocker")) or _text(item.get("first_causal_blocker")) or "EVIDENCE_UNAVAILABLE"
@@ -167,7 +173,8 @@ def build_position_exit_readiness_v1(
             "legacy_triage_state": _text(legacy.get("recommendation")) or "NOT_APPLICABLE", "opportunity_cost_state": _text(item.get("opportunity_cost_status")) or "MISSING",
             "replacement_state": _text(item.get("replacement_candidate_status")) or "MISSING", "evidence_used": legacy.get("evidence_used") or {},
             "evidence_missing": legacy.get("evidence_missing") or ([blocker] if blocker != "EVIDENCE_CURRENT" else []), "first_causal_blocker": blocker,
-            "plain_english_reason": _text(legacy.get("plain_english_reason")) or blocker.lower().replace("_", " "),
+            "plain_english_reason": _text(resolution_row.get("plain_english_explanation")) or _text(legacy.get("plain_english_reason")) or blocker.lower().replace("_", " "),
+            "resolution_plan": resolution_row.get("resolution_plan"), "capacity_impact": resolution_row.get("estimated_capacity_releasable"),
             "execution_authority": "DISABLED", "advisory_only": True,
         })
     return {"schema_version": "astra_position_exit_readiness_v1", "generated_at": _now(), "broker_position_count": len(broker_positions or {}),

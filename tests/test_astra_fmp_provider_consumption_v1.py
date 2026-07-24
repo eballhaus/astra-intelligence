@@ -33,8 +33,10 @@ class FmpProviderConsumptionTests(unittest.TestCase):
         router._request = lambda *_args, **_kwargs: (  # type: ignore[method-assign]
             {"_list": [{"symbol": "AAA", "companyName": "Fixture", "sector": "Technology"}]}, 200, "", 2.0
         )
+        router._request_bytes = lambda *_args, **_kwargs: 123  # type: ignore[method-assign]
         result = router.fetch_fmp_profile_context("AAA")
         self.assertEqual(result["response_state"], "SUCCESS")
+        self.assertEqual(result["response_bytes"], 123)
         self.assertFalse(result["secret_exposed"])
 
     def test_earnings_and_news_contexts_are_symbol_scoped_and_parsed(self):
@@ -46,12 +48,15 @@ class FmpProviderConsumptionTests(unittest.TestCase):
             ({"_list": [{"symbol": "AAA", "title": "Fixture headline", "publishedDate": "2026-07-24T00:00:00Z"}]}, 200, "", 2.0),
         ))
         router._request = lambda *_args, **_kwargs: next(responses)  # type: ignore[method-assign]
+        router._request_bytes = lambda *_args, **_kwargs: 234  # type: ignore[method-assign]
         earnings = router.fetch_fmp_earnings_context("AAA")
         news = router.fetch_fmp_news_context("AAA")
         self.assertEqual(earnings["response_state"], "SUCCESS")
         self.assertEqual(earnings["normalized_fields"]["earnings_date"], "2026-08-01")
         self.assertEqual(news["response_state"], "SUCCESS")
         self.assertEqual(news["normalized_fields"]["headline"], "Fixture headline")
+        self.assertEqual(earnings["response_bytes"], 234)
+        self.assertEqual(news["response_bytes"], 234)
         self.assertFalse(earnings["secret_exposed"])
 
     def test_telemetry_records_accepted_consumed_response_and_is_bounded(self):
@@ -103,6 +108,18 @@ class FmpProviderConsumptionTests(unittest.TestCase):
             self.assertEqual(provider["responses_accepted"], 1)
             self.assertFalse(provider["telemetry_complete"])
             self.assertEqual(provider["endpoint_families"][0]["responses_assigned"], 0)
+
+    def test_success_without_measured_bytes_is_not_complete_telemetry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "fmp_efficiency_ledger_v1.jsonl")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({"timestamp": "2026-07-24T00:00:00Z", "endpoint_family": "company_profile", "ok": True, "useful_fields_count": 2, "status_code": 200}) + "\n")
+            telemetry = build_provider_consumption_telemetry_v1(
+                state_dir=directory, configured=True, key_fingerprint="deadbeef",
+                consumer_events=[{"endpoint_family": "company_profile", "consumer": "triage", "assigned": True, "consumed": True}],
+            )
+            self.assertFalse(telemetry["telemetry_complete"])
+            self.assertEqual(telemetry["providers"][0]["byte_telemetry_missing"], 1)
 
     def test_telemetry_window_excludes_prior_worker_generation(self):
         with tempfile.TemporaryDirectory() as directory:

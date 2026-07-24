@@ -97,6 +97,7 @@ def _event_counts(events: list[dict[str, Any]], consumer_events: list[dict[str, 
     successful = [row for row in network if bool(row.get("ok"))]
     failures = [row for row in network if not bool(row.get("ok"))]
     accepted = [row for row in successful if _number(row.get("useful_fields_count")) > 0]
+    byte_missing = [row for row in successful if _number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta")) <= 0]
     last = dict(scoped[-1]) if scoped else {}
     return {
         "endpoint_family": family,
@@ -110,6 +111,7 @@ def _event_counts(events: list[dict[str, Any]], consumer_events: list[dict[str, 
         "not_eligible": 0, "responses_parsed": len(successful),
         "responses_accepted": len(accepted), "responses_rejected": max(0, len(successful) - len(accepted)),
         "responses_assigned": len(assigned), "responses_consumed": len(consumed),
+        "byte_telemetry_missing": len(byte_missing),
         "bytes_received": int(sum(max(0.0, _number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta"))) for row in scoped)),
         "last_attempt_at": str(last.get("timestamp") or ""),
         "last_network_request_at": str(network[-1].get("timestamp") or "") if network else "",
@@ -146,6 +148,7 @@ def build_provider_consumption_telemetry_v1(
     successes = [row for row in network_sent if bool(row.get("ok"))]
     failures = [row for row in network_sent if not bool(row.get("ok"))]
     accepted = [row for row in successes if _number(row.get("useful_fields_count")) > 0]
+    byte_missing = [row for row in successes if _number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta")) <= 0]
     bytes_received = int(sum(max(0.0, _number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta"))) for row in events))
     consumer_rows = [
         dict(row) for row in consumer_events
@@ -178,6 +181,7 @@ def build_provider_consumption_telemetry_v1(
         "responses_rejected": max(0, len(successes) - len(accepted)),
         "responses_assigned": assigned_count,
         "responses_consumed": consumed_count,
+        "byte_telemetry_missing": len(byte_missing),
         "bytes_received": bytes_received,
         "last_attempt_at": str(last_event.get("timestamp") or ""),
         "last_success_at": str(successes[-1].get("timestamp") or "") if successes else "",
@@ -199,7 +203,7 @@ def build_provider_consumption_telemetry_v1(
     families = sorted({_family(row) for row in events} | {str(row.get("endpoint_family") or "unknown") for row in consumer_rows})
     family_rows = [_event_counts(events, consumer_rows, family) for family in families]
     complete = bool(family_rows) and not any(
-        row["responses_accepted"] > row["responses_assigned"] or row["responses_assigned"] > row["responses_consumed"]
+        row["responses_accepted"] > row["responses_assigned"] or row["responses_assigned"] > row["responses_consumed"] or row["byte_telemetry_missing"] > 0
         for row in family_rows
     )
     return {
@@ -218,6 +222,7 @@ def build_provider_consumption_telemetry_v1(
         "expected_traffic_missing_count": int(bool(configured and not attempts)),
         "success_not_consumed_count": int(bool(accepted and not consumed)),
         "stale_evidence_count": 0,
+        "byte_telemetry_mismatch_count": len(byte_missing),
         "provider_calls_used": 0,
         "broker_actions_used": 0,
         "llm_calls_used": 0,

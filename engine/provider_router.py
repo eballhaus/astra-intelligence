@@ -334,6 +334,9 @@ class ProviderRouter:
         self._quote_cache: dict[tuple[str, str], dict[str, Any]] = {}
         self._request_inflight: dict[str, threading.Event] = {}
         self._request_results: dict[str, tuple[float, tuple[dict[str, Any], int | None, str, float]]] = {}
+        # Keep only the raw body length needed by the caller that owns the
+        # corresponding ledger event.  Parsed payloads are never retained here.
+        self._request_response_bytes: dict[str, tuple[float, int]] = {}
         self._request_metrics = {
             "requests_submitted": 0,
             "provider_calls_executed": 0,
@@ -712,6 +715,9 @@ class ProviderRouter:
             with self._lock:
                 self._request_metrics["provider_calls_executed"] += 1
             status = int(resp.status_code)
+            response_bytes = len(resp.content or b"")
+            with self._lock:
+                self._request_response_bytes[request_key] = (time.time(), int(response_bytes))
             if status >= 400:
                 if status == 429:
                     record_rate_limit(provider_name, http_status=status)
@@ -742,9 +748,25 @@ class ProviderRouter:
                     key: value for key, value in self._request_results.items()
                     if (time.time() - float(value[0])) <= 10.0
                 }
+                self._request_response_bytes = {
+                    key: value for key, value in self._request_response_bytes.items()
+                    if (time.time() - float(value[0])) <= 10.0
+                }
                 inflight = self._request_inflight.pop(request_key, None)
                 if inflight is not None:
                     inflight.set()
+
+    def _request_bytes(self, provider: str, url: str, params: Mapping[str, Any] | None = None) -> int:
+        """Return the raw response length for the most recent matching request."""
+        provider_name = str(provider or "").upper()
+        safe_params = tuple(sorted(
+            (str(key), "<credential>" if str(key).lower() in {"apikey", "token", "api_key"} else str(value))
+            for key, value in (params or {}).items()
+        ))
+        request_key = json.dumps([provider_name, str(url).split("?", 1)[0], safe_params], separators=(",", ":"))
+        with self._lock:
+            row = self._request_response_bytes.get(request_key)
+        return int(row[1]) if row else 0
 
     def _fetch_quote_from_provider(self, provider: str, symbol: str, asset_type: str) -> dict[str, Any]:
         p = str(provider or "").upper()
@@ -1433,6 +1455,7 @@ class ProviderRouter:
             records_received: int = 0,
             records_valid: int = 0,
             latency_ms: float = 0.0,
+            response_bytes: int = 0,
         ) -> dict[str, Any]:
             success = response_state == "SUCCESS"
             _fmp_efficiency_record(
@@ -1443,8 +1466,8 @@ class ProviderRouter:
                     "status_code": int(http_status or 0),
                     "ok": success,
                     "cache_hit": False,
-                    "bytes_estimated": 0,
-                    "bytes_actual_if_available": 0,
+                    "bytes_estimated": int(max(0, response_bytes)),
+                    "bytes_actual_if_available": int(max(0, response_bytes)),
                     "useful_fields_count": len(normalized_fields or {}),
                     "useful_score": float(min(100, len(normalized_fields or {}) * 12)) if success else 0.0,
                     "call_reason": "legacy_swing_thesis_context",
@@ -1452,7 +1475,7 @@ class ProviderRouter:
                     "ttl_seconds": 3600,
                     "blocked_reason": str(error_category or ""),
                     "api_calls_delta": 1 if http_status is not None else 0,
-                    "bandwidth_delta": 0,
+                    "bandwidth_delta": int(max(0, response_bytes)),
                     "provider_governor_allowed": response_state not in {"RATE_LIMITED", "PROVIDER_UNAVAILABLE"},
                 }
             )
@@ -1472,6 +1495,7 @@ class ProviderRouter:
                 "records_valid": int(records_valid),
                 "normalized_fields": dict(normalized_fields or {}),
                 "latency_ms": round(_to_float(latency_ms, 0.0), 3),
+                "response_bytes": int(max(0, response_bytes)),
                 "broker_actions": 0,
                 "secret_exposed": False,
             }
@@ -1486,11 +1510,14 @@ class ProviderRouter:
         if self._provider_in_cooldown(provider):
             return outcome("RATE_LIMITED", error_category="provider_cooldown")
 
+        request_url = "https://financialmodelingprep.com/stable/profile"
+        request_params = {"symbol": sym, "apikey": key}
         data, status, error, latency = self._request(
             provider,
-            "https://financialmodelingprep.com/stable/profile",
-            params={"symbol": sym, "apikey": key},
+            request_url,
+            params=request_params,
         )
+        response_bytes = self._request_bytes(provider, request_url, request_params)
         if error:
             category = str(error or "provider_error")
             state = (
@@ -1502,17 +1529,17 @@ class ProviderRouter:
             )
             self._mark_result(provider, False, latency, rate_limited=state == "RATE_LIMITED")
             self._set_last_error(provider, category)
-            return outcome(state, http_status=status, error_category=category, latency_ms=latency)
+            return outcome(state, http_status=status, error_category=category, latency_ms=latency, response_bytes=response_bytes)
 
         rows = data.get("_list") if isinstance(data, dict) and isinstance(data.get("_list"), list) else data
         row = dict(rows[0] or {}) if isinstance(rows, list) and rows else dict(rows or {}) if isinstance(rows, dict) else {}
         if not row:
             self._mark_result(provider, False, latency)
-            return outcome("EMPTY_RESPONSE", http_status=status, error_category="empty_profile_response", latency_ms=latency)
+            return outcome("EMPTY_RESPONSE", http_status=status, error_category="empty_profile_response", latency_ms=latency, response_bytes=response_bytes)
         returned_symbol = _safe_symbol(row.get("symbol"))
         if returned_symbol and returned_symbol != sym:
             self._mark_result(provider, False, latency)
-            return outcome("MALFORMED_RESPONSE", http_status=status, error_category="symbol_mismatch", records_received=1, latency_ms=latency)
+            return outcome("MALFORMED_RESPONSE", http_status=status, error_category="symbol_mismatch", records_received=1, latency_ms=latency, response_bytes=response_bytes)
         normalized = {
             "company_name": str(row.get("companyName") or row.get("company_name") or "").strip(),
             "sector": str(row.get("sector") or "").strip(),
@@ -1525,11 +1552,11 @@ class ProviderRouter:
         normalized = {key: value for key, value in normalized.items() if value not in (None, "")}
         if not normalized:
             self._mark_result(provider, False, latency)
-            return outcome("EMPTY_RESPONSE", http_status=status, error_category="profile_fields_empty", records_received=1, latency_ms=latency)
+            return outcome("EMPTY_RESPONSE", http_status=status, error_category="profile_fields_empty", records_received=1, latency_ms=latency, response_bytes=response_bytes)
         self._mark_result(provider, True, latency)
         return outcome(
             "SUCCESS", http_status=status, normalized_fields=normalized,
-            records_received=1, records_valid=1, latency_ms=latency,
+            records_received=1, records_valid=1, latency_ms=latency, response_bytes=response_bytes,
         )
 
     def _fetch_fmp_event_context(self, symbol: str, *, endpoint_family: str) -> dict[str, Any]:
@@ -1549,24 +1576,24 @@ class ProviderRouter:
             return {"provider": provider, "endpoint_family": endpoint_family, "symbol": sym, "requested_at": requested_at, "response_state": "UNSUPPORTED_ENDPOINT", "error_category": "unsupported_fmp_context_family", "broker_actions": 0, "secret_exposed": False}
         url, params, template = specs[endpoint_family]
 
-        def outcome(state: str, *, status: int | None = None, error: str = "", fields: dict[str, Any] | None = None, received: int = 0, latency: float = 0.0) -> dict[str, Any]:
+        def outcome(state: str, *, status: int | None = None, error: str = "", fields: dict[str, Any] | None = None, received: int = 0, latency: float = 0.0, response_bytes: int = 0) -> dict[str, Any]:
             valid = bool(fields)
             _fmp_efficiency_record({
                 "endpoint_family": endpoint_family, "endpoint_path_template": template, "symbol_count": 1,
                 "status_code": int(status or 0), "ok": state == "SUCCESS", "cache_hit": False,
-                "bytes_estimated": 0, "bytes_actual_if_available": 0, "useful_fields_count": len(fields or {}),
+                "bytes_estimated": int(max(0, response_bytes)), "bytes_actual_if_available": int(max(0, response_bytes)), "useful_fields_count": len(fields or {}),
                 "useful_score": float(min(100, len(fields or {}) * 12)) if valid else 0.0,
                 "call_reason": "open_position_context_refresh", "caller_context": "paper_autopilot_open_position_worker",
                 "ttl_seconds": 6 * 60 * 60 if endpoint_family == "earnings" else 15 * 60,
                 "blocked_reason": error, "api_calls_delta": 1 if status is not None else 0,
-                "bandwidth_delta": 0, "provider_governor_allowed": state not in {"RATE_LIMITED", "PROVIDER_UNAVAILABLE"},
+                "bandwidth_delta": int(max(0, response_bytes)), "provider_governor_allowed": state not in {"RATE_LIMITED", "PROVIDER_UNAVAILABLE"},
             })
             return {"provider": provider, "endpoint_family": endpoint_family, "endpoint_template": template,
                     "symbol": sym, "requested_at": requested_at, "response_at": _now_iso(), "http_status": int(status or 0),
                     "authentication_state": "PRESENT" if bool(self._key_for(provider, "stock")) else "MISSING",
                     "response_state": state, "error_category": error, "records_received": int(received),
                     "records_valid": int(valid), "normalized_fields": dict(fields or {}),
-                    "latency_ms": round(_to_float(latency, 0.0), 3), "broker_actions": 0, "secret_exposed": False}
+                    "latency_ms": round(_to_float(latency, 0.0), 3), "response_bytes": int(max(0, response_bytes)), "broker_actions": 0, "secret_exposed": False}
 
         if not sym:
             return outcome("MALFORMED_RESPONSE", error="symbol_required")
@@ -1579,19 +1606,20 @@ class ProviderRouter:
             return outcome("RATE_LIMITED", error="provider_cooldown_or_budget")
         params["apikey"] = key
         data, status, error, latency = self._request(provider, url, params=params)
+        response_bytes = self._request_bytes(provider, url, params)
         if error:
             state = "AUTHENTICATION_FAILED" if int(status or 0) == 401 else "ENTITLEMENT_BLOCKED" if int(status or 0) == 403 else "RATE_LIMITED" if int(status or 0) == 429 else "TIMEOUT" if "timeout" in str(error).lower() else "PROVIDER_ERROR"
             self._mark_result(provider, False, latency, rate_limited=state == "RATE_LIMITED")
-            return outcome(state, status=status, error=str(error), latency=latency)
+            return outcome(state, status=status, error=str(error), latency=latency, response_bytes=response_bytes)
         rows = data.get("_list") if isinstance(data, dict) and isinstance(data.get("_list"), list) else data
         row = dict(rows[0] or {}) if isinstance(rows, list) and rows else dict(rows or {}) if isinstance(rows, dict) else {}
         if not row:
             self._mark_result(provider, False, latency)
-            return outcome("EMPTY_RESPONSE", status=status, error="empty_context_response", latency=latency)
+            return outcome("EMPTY_RESPONSE", status=status, error="empty_context_response", latency=latency, response_bytes=response_bytes)
         returned = _safe_symbol(row.get("symbol") or row.get("ticker"))
         if returned and returned != sym:
             self._mark_result(provider, False, latency)
-            return outcome("MALFORMED_RESPONSE", status=status, error="symbol_mismatch", received=1, latency=latency)
+            return outcome("MALFORMED_RESPONSE", status=status, error="symbol_mismatch", received=1, latency=latency, response_bytes=response_bytes)
         if endpoint_family == "earnings":
             fields = {"earnings_date": row.get("date") or row.get("fiscalDateEnding"), "eps": row.get("eps") or row.get("epsActual"), "revenue": row.get("revenue") or row.get("revenueActual")}
         else:
@@ -1599,9 +1627,9 @@ class ProviderRouter:
         fields = {name: value for name, value in fields.items() if value not in (None, "")}
         if not fields:
             self._mark_result(provider, False, latency)
-            return outcome("MALFORMED_RESPONSE", status=status, error="context_fields_empty", received=1, latency=latency)
+            return outcome("MALFORMED_RESPONSE", status=status, error="context_fields_empty", received=1, latency=latency, response_bytes=response_bytes)
         self._mark_result(provider, True, latency)
-        return outcome("SUCCESS", status=status, fields=fields, received=1, latency=latency)
+        return outcome("SUCCESS", status=status, fields=fields, received=1, latency=latency, response_bytes=response_bytes)
 
     def fetch_fmp_earnings_context(self, symbol: str) -> dict[str, Any]:
         return self._fetch_fmp_event_context(symbol, endpoint_family="earnings")
@@ -1633,6 +1661,7 @@ class ProviderRouter:
             records_received: int = 0,
             records_valid: int = 0,
             latency_ms: float = 0.0,
+            response_bytes: int = 0,
         ) -> dict[str, Any]:
             clean_bars = list(bars or [])
             success = response_state == "SUCCESS"
@@ -1644,8 +1673,8 @@ class ProviderRouter:
                     "status_code": int(http_status or 0),
                     "ok": success,
                     "cache_hit": False,
-                    "bytes_estimated": 0,
-                    "bytes_actual_if_available": 0,
+                    "bytes_estimated": int(max(0, response_bytes)),
+                    "bytes_actual_if_available": int(max(0, response_bytes)),
                     "useful_fields_count": int(records_valid),
                     "useful_score": float(min(100, records_valid * 5)) if success else 0.0,
                     "call_reason": "legacy_swing_historical_bar_fallback",
@@ -1653,7 +1682,7 @@ class ProviderRouter:
                     "ttl_seconds": 6 * 60 * 60,
                     "blocked_reason": str(error_category or ""),
                     "api_calls_delta": 1 if http_status is not None else 0,
-                    "bandwidth_delta": 0,
+                    "bandwidth_delta": int(max(0, response_bytes)),
                     "provider_governor_allowed": response_state not in {"RATE_LIMITED", "BUDGET_BLOCKED"},
                 }
             )
@@ -1674,6 +1703,7 @@ class ProviderRouter:
                 "records_received": int(records_received),
                 "records_valid": int(records_valid),
                 "latency_ms": round(_to_float(latency_ms, 0.0), 3),
+                "response_bytes": int(max(0, response_bytes)),
                 "broker_actions": 0,
                 "secret_exposed": False,
             }
@@ -1691,11 +1721,14 @@ class ProviderRouter:
         if self._provider_in_cooldown(provider) or self._fmp_probe_hard_limited():
             return outcome("RATE_LIMITED", error_category="provider_cooldown_or_budget")
 
+        request_url = f"https://financialmodelingprep.com/stable/historical-chart/{interval}"
+        request_params = {"symbol": sym, "apikey": key}
         data, status, error, latency = self._request(
             provider,
-            f"https://financialmodelingprep.com/stable/historical-chart/{interval}",
-            params={"symbol": sym, "apikey": key},
+            request_url,
+            params=request_params,
         )
+        response_bytes = self._request_bytes(provider, request_url, request_params)
         if error:
             category = str(error or "provider_error")
             state = (
@@ -1705,11 +1738,11 @@ class ProviderRouter:
                 "TIMEOUT" if "timeout" in category.lower() else "PROVIDER_ERROR"
             )
             self._mark_result(provider, False, latency, rate_limited=state == "RATE_LIMITED")
-            return outcome(state, http_status=status, error_category=category, latency_ms=latency)
+            return outcome(state, http_status=status, error_category=category, latency_ms=latency, response_bytes=response_bytes)
         rows = data.get("_list") if isinstance(data, dict) and isinstance(data.get("_list"), list) else data
         if not isinstance(rows, list) or not rows:
             self._mark_result(provider, False, latency)
-            return outcome("EMPTY_RESPONSE", http_status=status, error_category="empty_historical_response", latency_ms=latency)
+            return outcome("EMPTY_RESPONSE", http_status=status, error_category="empty_historical_response", latency_ms=latency, response_bytes=response_bytes)
         normalized: list[dict[str, Any]] = []
         for raw in rows[: max(1, min(int(limit or 20) * 3, 200))]:
             row = dict(raw or {}) if isinstance(raw, dict) else {}
@@ -1729,7 +1762,7 @@ class ProviderRouter:
             bars=normalized,
             records_received=len(rows),
             records_valid=len(normalized),
-            latency_ms=latency,
+            latency_ms=latency, response_bytes=response_bytes,
         )
 
     def diagnostics(self) -> dict[str, Any]:
