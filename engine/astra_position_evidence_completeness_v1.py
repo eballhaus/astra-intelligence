@@ -110,9 +110,12 @@ def build_position_evidence_completeness_v1(
         quote = dict(bundle.get("LATEST_QUOTE") or {})
         bars = dict(bundle.get("HISTORICAL_BARS") or bundle.get("HISTORICAL_BARS_ALPACA") or {})
         fmp = dict(fmp_by_symbol.get(symbol) or {})
+        auxiliary = dict(fmp.get("auxiliary_context") or {})
         quote_status, quote_age = _status(quote, timestamp="quote_timestamp", fresh_seconds=90, aging_seconds=15 * 60)
         bar_status, bar_age = _status(bars, timestamp="last_bar_at", fresh_seconds=6 * 60 * 60, aging_seconds=2 * 24 * 60 * 60)
         fmp_status, _fmp_age = _status(fmp, timestamp="response_at", fresh_seconds=6 * 60 * 60, aging_seconds=7 * 24 * 60 * 60)
+        earnings_status, _earnings_age = _status(dict(auxiliary.get("earnings") or {}), timestamp="response_at", fresh_seconds=6 * 60 * 60, aging_seconds=7 * 24 * 60 * 60)
+        catalyst_status, _catalyst_age = _status(dict(auxiliary.get("news_catalyst") or {}), timestamp="response_at", fresh_seconds=15 * 60, aging_seconds=6 * 60 * 60)
         closes = [_number(item.get("close"), 0.0) for item in bars.get("bars") or [] if isinstance(item, Mapping)]
         momentum = "MISSING"
         if bar_status in {"FRESH", "AGING"} and len(closes) >= 2 and closes[0] > 0:
@@ -133,6 +136,9 @@ def build_position_evidence_completeness_v1(
         elif bar_status == "STALE":
             missing_producer = "COMPLETED_BAR_EVIDENCE_STALE"
         completeness = sum(value in {"FRESH", "AGING"} for value in (quote_status, bar_status, fmp_status)) / 3.0
+        fmp_assigned = bool(fmp.get("record_id") and fmp.get("normalized_fields"))
+        fmp_consumed = bool(fmp.get("consumer_acknowledged"))
+        fmp_status = "ASSIGNED_NOT_CONSUMED" if fmp_assigned and not fmp_consumed else fmp_status
         rows.append({
             "symbol": symbol,
             "broker_position_present": True,
@@ -145,9 +151,14 @@ def build_position_evidence_completeness_v1(
             "liquidity_status": "FRESH" if quote_status == "FRESH" and _number(quote.get("bid")) > 0 and _number(quote.get("ask")) >= _number(quote.get("bid")) else "MISSING",
             "spread_status": "FRESH" if quote_status == "FRESH" and _number(quote.get("bid")) > 0 and _number(quote.get("ask")) >= _number(quote.get("bid")) else "MISSING",
             "volume_status": "FRESH" if bar_status in {"FRESH", "AGING"} and any(_number(item.get("volume")) > 0 for item in bars.get("bars") or [] if isinstance(item, Mapping)) else "MISSING",
-            "earnings_status": fmp_status, "catalyst_status": fmp_status, "catalyst_source": fmp.get("provider"), "fundamentals_status": fmp_status,
+            "earnings_status": earnings_status, "earnings_source": (auxiliary.get("earnings") or {}).get("provider"),
+            "catalyst_status": catalyst_status, "catalyst_source": (auxiliary.get("news_catalyst") or {}).get("provider"),
+            "fundamentals_status": fmp_status,
             "sector_status": "FRESH" if fmp_status in {"FRESH", "AGING"} and fmp.get("normalized_fields") else "MISSING",
-            "market_regime_status": "NOT_APPLICABLE", "profit_giveback_status": "NOT_APPLICABLE", "position_age_status": "MISSING", "opportunity_cost_status": "MISSING", "replacement_candidate_status": "MISSING",
+            "market_regime_status": "NOT_APPLICABLE", "profit_giveback_status": "NOT_APPLICABLE",
+            "position_age_status": "EXTERNALLY_UNAVAILABLE",
+            "opportunity_cost_status": "NO_ELIGIBLE_REPLACEMENT",
+            "replacement_candidate_status": "NO_ELIGIBLE_REPLACEMENT",
             "evidence_completeness_score": round(completeness, 3),
             "evidence_confidence": "HIGH" if completeness == 1 else "MODERATE" if completeness >= 0.5 else "LOW",
             "first_missing_producer": missing_producer,
@@ -160,6 +171,11 @@ def build_position_evidence_completeness_v1(
         "fresh_quote_count": sum(row["quote_status"] == "FRESH" for row in rows),
         "fresh_completed_bar_count": sum(row["completed_bar_status"] == "FRESH" for row in rows),
         "momentum_available_count": sum(row["momentum_status"] != "MISSING" for row in rows),
+        "fundamentals_available_count": sum(row["fundamentals_status"] in {"FRESH", "AGING"} for row in rows),
+        "earnings_available_count": sum(row["earnings_status"] in {"FRESH", "AGING"} for row in rows),
+        "catalyst_available_count": sum(row["catalyst_status"] in {"FRESH", "AGING"} for row in rows),
+        "opportunity_cost_available_count": sum(row["opportunity_cost_status"] != "MISSING" for row in rows),
+        "replacement_available_count": sum(row["replacement_candidate_status"] != "MISSING" for row in rows),
         "first_missing_producer_count": sum(bool(row["first_missing_producer"]) for row in rows),
         "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0,
         "state_mutations_from_get": 0, "paper_only_preserved": True, "advisory_only": True,

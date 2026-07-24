@@ -56,6 +56,60 @@ def _read_tail(path: Path, limit: int = 200) -> list[dict[str, Any]]:
     return rows
 
 
+def _family(value: Mapping[str, Any]) -> str:
+    """Normalize persisted FMP endpoint identities without changing router policy."""
+    raw = str(value.get("endpoint_family") or "unknown").strip().lower()
+    if raw in {"quote_profile", "quote"}:
+        path = str(value.get("endpoint_path_template") or "").lower()
+        if "profile" in path:
+            return "company_profile"
+        return "quote"
+    if "historical" in raw:
+        return "completed_bars"
+    return raw.replace(" ", "_") or "unknown"
+
+
+def _event_counts(events: list[dict[str, Any]], consumer_events: list[dict[str, Any]], family: str) -> dict[str, Any]:
+    scoped = [row for row in events if _family(row) == family]
+    assigned = [row for row in consumer_events if str(row.get("endpoint_family") or "unknown") == family and bool(row.get("assigned"))]
+    consumed = [row for row in consumer_events if str(row.get("endpoint_family") or "unknown") == family and bool(row.get("consumed"))]
+    cache_hits = [row for row in scoped if bool(row.get("cache_hit"))]
+    deduplicated = [row for row in scoped if bool(row.get("deduplicated"))]
+    blocked = [row for row in scoped if str(row.get("blocked_reason") or "").lower() in {"call_limit", "bandwidth_budget", "governor_blocked", "provider_cooldown_or_budget"}]
+    network = [row for row in scoped if row not in cache_hits and row not in deduplicated and row not in blocked]
+    successful = [row for row in network if bool(row.get("ok"))]
+    failures = [row for row in network if not bool(row.get("ok"))]
+    accepted = [row for row in successful if _number(row.get("useful_fields_count")) > 0]
+    last = dict(scoped[-1]) if scoped else {}
+    return {
+        "endpoint_family": family,
+        "configured": True,
+        "scheduled": len(scoped), "eligible": len(scoped), "attempted": len(scoped),
+        "network_sent": len(network), "successful": len(successful),
+        "HTTP_failed": sum(_number(row.get("status_code")) >= 400 for row in failures),
+        "network_failed": sum(not _number(row.get("status_code")) for row in failures),
+        "governor_blocked": len(blocked), "cache_hits": len(cache_hits),
+        "cache_misses": max(0, len(scoped) - len(cache_hits)), "deduplicated": len(deduplicated),
+        "not_eligible": 0, "responses_parsed": len(successful),
+        "responses_accepted": len(accepted), "responses_rejected": max(0, len(successful) - len(accepted)),
+        "responses_assigned": len(assigned), "responses_consumed": len(consumed),
+        "bytes_received": int(sum(max(0.0, _number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta"))) for row in scoped)),
+        "last_attempt_at": str(last.get("timestamp") or ""),
+        "last_network_request_at": str(network[-1].get("timestamp") or "") if network else "",
+        "last_success_at": str(successful[-1].get("timestamp") or "") if successful else "",
+        "last_failure_at": str(failures[-1].get("timestamp") or "") if failures else "",
+        "last_assigned_at": str(assigned[-1].get("assigned_at") or "") if assigned else "",
+        "last_consumed_at": str(consumed[-1].get("consumed_at") or "") if consumed else "",
+        "last_http_status": int(_number(last.get("status_code"))), "last_latency_ms": _number(last.get("latency_ms")),
+        "last_evidence_timestamp": str((consumed or assigned or [{}])[-1].get("evidence_at") or ""),
+        "last_symbol": str((consumed or assigned or [{}])[-1].get("symbol") or last.get("symbol") or ""),
+        "last_consumer": str(consumed[-1].get("consumer") or "") if consumed else "",
+        "consumer_record_id": str(consumed[-1].get("consumer_record_id") or "") if consumed else "",
+        "first_causal_blocker": str(last.get("blocked_reason") or ""),
+        "budget_limit": 750, "budget_used": len(network), "budget_remaining": max(0, 750 - len(network)),
+    }
+
+
 def build_provider_consumption_telemetry_v1(
     *,
     state_dir: str | Path = "state",
@@ -76,9 +130,11 @@ def build_provider_consumption_telemetry_v1(
     accepted = [row for row in successes if _number(row.get("useful_fields_count")) > 0]
     bytes_received = int(sum(max(0.0, _number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta"))) for row in events))
     consumer_rows = [dict(row) for row in consumer_events if isinstance(row, Mapping) and row.get("consumer")]
-    consumed = [row for row in consumer_rows if bool(row.get("accepted"))]
+    consumed = [row for row in consumer_rows if bool(row.get("consumed"))]
     last_event = dict(events[-1]) if events else {}
     last_consumer = str(consumed[-1].get("consumer") or "") if consumed else ""
+    assigned_count = sum(bool(row.get("assigned")) for row in consumer_rows)
+    consumed_count = sum(bool(row.get("consumed")) for row in consumer_rows)
     provider = {
         "provider": "FMP",
         "configured": bool(configured),
@@ -99,6 +155,8 @@ def build_provider_consumption_telemetry_v1(
         "responses_parsed": len(successes),
         "responses_accepted": len(accepted),
         "responses_rejected": max(0, len(successes) - len(accepted)),
+        "responses_assigned": assigned_count,
+        "responses_consumed": consumed_count,
         "bytes_received": bytes_received,
         "last_attempt_at": str(last_event.get("timestamp") or ""),
         "last_success_at": str(successes[-1].get("timestamp") or "") if successes else "",
@@ -117,12 +175,20 @@ def build_provider_consumption_telemetry_v1(
             "ACTIVE" if consumed else "FAIL_CLOSED"
         ),
     }
+    families = sorted({_family(row) for row in events} | {str(row.get("endpoint_family") or "unknown") for row in consumer_rows})
+    family_rows = [_event_counts(events, consumer_rows, family) for family in families]
+    complete = bool(family_rows) and not any(
+        row["responses_accepted"] > row["responses_assigned"] or row["responses_assigned"] > row["responses_consumed"]
+        for row in family_rows
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": _now(),
         "window_start": str(events[0].get("timestamp") or "") if events else "",
         "provider_count": 1,
-        "providers": [provider],
+        "providers": [{**provider, "endpoint_families": family_rows, "telemetry_complete": complete}],
+        "endpoint_families": family_rows,
+        "telemetry_complete": complete,
         "configured_but_unused_count": int(bool(configured and not attempts)),
         "successful_but_unconsumed_count": int(bool(accepted and not consumed)),
         "provider_starvation_count": int(bool(configured and not attempts)),

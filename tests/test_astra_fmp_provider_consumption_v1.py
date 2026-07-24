@@ -37,19 +37,47 @@ class FmpProviderConsumptionTests(unittest.TestCase):
         self.assertEqual(result["response_state"], "SUCCESS")
         self.assertFalse(result["secret_exposed"])
 
+    def test_earnings_and_news_contexts_are_symbol_scoped_and_parsed(self):
+        router = ProviderRouter()
+        router._key_for = lambda *_args: "test-key"  # type: ignore[method-assign]
+        router._temp_fmp_rest_disabled = False
+        responses = iter((
+            ({"_list": [{"symbol": "AAA", "date": "2026-08-01", "eps": 1.2}]}, 200, "", 2.0),
+            ({"_list": [{"symbol": "AAA", "title": "Fixture headline", "publishedDate": "2026-07-24T00:00:00Z"}]}, 200, "", 2.0),
+        ))
+        router._request = lambda *_args, **_kwargs: next(responses)  # type: ignore[method-assign]
+        earnings = router.fetch_fmp_earnings_context("AAA")
+        news = router.fetch_fmp_news_context("AAA")
+        self.assertEqual(earnings["response_state"], "SUCCESS")
+        self.assertEqual(earnings["normalized_fields"]["earnings_date"], "2026-08-01")
+        self.assertEqual(news["response_state"], "SUCCESS")
+        self.assertEqual(news["normalized_fields"]["headline"], "Fixture headline")
+        self.assertFalse(earnings["secret_exposed"])
+
     def test_telemetry_records_accepted_consumed_response_and_is_bounded(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "fmp_efficiency_ledger_v1.jsonl")
             with open(path, "w", encoding="utf-8") as handle:
-                handle.write(json.dumps({"timestamp": "2026-07-24T00:00:00Z", "ok": True, "useful_fields_count": 3, "bytes_actual_if_available": 91, "status_code": 200}) + "\n")
+                handle.write(json.dumps({"timestamp": "2026-07-24T00:00:00Z", "endpoint_family": "company_profile", "ok": True, "useful_fields_count": 3, "bytes_actual_if_available": 91, "status_code": 200}) + "\n")
             telemetry = build_provider_consumption_telemetry_v1(
                 state_dir=directory, configured=True, key_fingerprint="deadbeef",
-                consumer_events=[{"consumer": "legacy_position_risk_triage_v1", "symbol": "AAA", "accepted": True}],
+                consumer_events=[{
+                    "endpoint_family": "company_profile",
+                    "consumer": "legacy_position_risk_triage_v1",
+                    "consumer_record_id": "legacy-triage:AAA",
+                    "symbol": "AAA",
+                    "assigned": True,
+                    "consumed": True,
+                }],
             )
             provider = telemetry["providers"][0]
             self.assertEqual(provider["responses_accepted"], 1)
             self.assertEqual(provider["last_consumer"], "legacy_position_risk_triage_v1")
             self.assertEqual(provider["bytes_received"], 91)
+            family = provider["endpoint_families"][0]
+            self.assertEqual(family["responses_assigned"], 1)
+            self.assertEqual(family["responses_consumed"], 1)
+            self.assertTrue(provider["telemetry_complete"])
             self.assertNotIn("test-key", json.dumps(telemetry))
             save_provider_consumption_telemetry_v1(telemetry, directory)
             self.assertEqual(load_provider_consumption_telemetry_v1(directory)["provider_count"], 1)
@@ -64,6 +92,17 @@ class FmpProviderConsumptionTests(unittest.TestCase):
             self.assertEqual(provider["governor_blocked"], 1)
             self.assertEqual(provider["failed_calls"], 0)
             self.assertEqual(provider["network_sent"], 0)
+
+    def test_accepted_but_unassigned_remains_visible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "fmp_efficiency_ledger_v1.jsonl")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({"timestamp": "2026-07-24T00:00:00Z", "endpoint_family": "company_profile", "ok": True, "useful_fields_count": 2, "status_code": 200}) + "\n")
+            telemetry = build_provider_consumption_telemetry_v1(state_dir=directory, configured=True, key_fingerprint="deadbeef")
+            provider = telemetry["providers"][0]
+            self.assertEqual(provider["responses_accepted"], 1)
+            self.assertFalse(provider["telemetry_complete"])
+            self.assertEqual(provider["endpoint_families"][0]["responses_assigned"], 0)
 
     def test_scanner_detects_configured_unused_provider_and_success_not_consumed(self):
         telemetry = {"providers": [{"provider": "FMP", "configured": True, "attempted_calls": 0, "responses_accepted": 1, "last_consumer": ""}]}

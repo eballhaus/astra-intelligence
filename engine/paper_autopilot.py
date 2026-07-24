@@ -2609,7 +2609,12 @@ class PaperAutopilotEngine:
             return False
         return (now - observed).total_seconds() <= 6 * 60 * 60
 
-    def _refresh_legacy_swing_fmp_evidence(self, registry: dict[str, dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    def _refresh_legacy_swing_fmp_evidence(
+        self,
+        registry: dict[str, dict[str, Any]],
+        *,
+        max_symbols: int = 5,
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
         """Refresh bounded FMP profile context from the normal non-GET worker.
 
         FMP supplies forward monitoring context only.  The worker retains a
@@ -2644,11 +2649,16 @@ class PaperAutopilotEngine:
             "requests_attempted_this_cycle": 0,
             "requests_succeeded_this_cycle": 0,
             "requests_failed_this_cycle": 0,
-            "max_symbols_per_cycle": 5,
+            "max_symbols_per_cycle": max(1, min(int(max_symbols or 1), 5)),
             "broker_actions": 0,
         }
         attempted = 0
-        for activation_id, raw in sorted(registry.items()):
+        ordered = sorted(registry.items())
+        # Persisted rotation prevents the first legacy symbol from consuming
+        # every partial worker cycle.
+        cursor = int(prior_activity.get("rotation_cursor") or 0) % max(1, len(ordered))
+        ordered = ordered[cursor:] + ordered[:cursor]
+        for activation_id, raw in ordered:
             record = dict(raw or {})
             symbol = str(record.get("symbol") or "").upper().strip()
             if not symbol:
@@ -2732,6 +2742,59 @@ class PaperAutopilotEngine:
                 activity["requests_failed_this_cycle"] += 1
                 activity["retry_count"] = retry_count
                 activity["next_refresh_at"] = fmp_record["next_retry_at"]
+        # Earnings and catalyst context are complementary to a profile, not
+        # aliases for it.  Refresh one due, symbol-scoped family per worker
+        # cycle under the same FMP budget and preserve it on the exact
+        # activation record for downstream evidence projection.
+        event_specs = (
+            ("earnings", "fetch_fmp_earnings_context", 6 * 60 * 60),
+            ("news_catalyst", "fetch_fmp_news_context", 15 * 60),
+        )
+        event_cursor = int(prior_activity.get("event_rotation_cursor") or 0) % len(event_specs)
+        event_family, fetcher_name, event_max_age = event_specs[event_cursor]
+        event_fetcher = getattr(getattr(self, "_legacy_swing_fmp_router", None), fetcher_name, None)
+        if callable(event_fetcher):
+            for activation_id, raw in ordered:
+                record = dict(raw or {})
+                symbol = str(record.get("symbol") or "").upper().strip()
+                if not symbol:
+                    continue
+                fmp_record = dict(records.get(activation_id) or record.get("fmp_evidence") or {})
+                auxiliary = dict(fmp_record.get("auxiliary_context") or {})
+                prior_event = dict(auxiliary.get(event_family) or {})
+                if self._legacy_swing_fmp_is_current(prior_event, now) and event_family != "news_catalyst":
+                    continue
+                if event_family == "news_catalyst" and self._legacy_swing_fmp_is_current(prior_event, now):
+                    try:
+                        observed = datetime.fromisoformat(str(prior_event.get("response_at") or "").replace("Z", "+00:00")).astimezone(UTC)
+                        if (now - observed).total_seconds() <= event_max_age:
+                            continue
+                    except (TypeError, ValueError):
+                        pass
+                response = dict(event_fetcher(symbol) or {})
+                state = str(response.get("response_state") or "PROVIDER_ERROR").upper()
+                success = state == "SUCCESS" and bool(response.get("normalized_fields"))
+                auxiliary[event_family] = {
+                    "record_id": f"legacy-fmp:{event_family}:{activation_id}", "provider": "FMP",
+                    "endpoint_family": event_family, "symbol": symbol,
+                    "requested_at": response.get("requested_at") or now_iso, "response_at": response.get("response_at") or now_iso,
+                    "response_state": state, "freshness_state": "CURRENT" if success else "UNAVAILABLE",
+                    "normalized_fields": dict(response.get("normalized_fields") or {}),
+                    "error_category": str(response.get("error_category") or ""),
+                    "consumer_acknowledged": False, "broker_actions": 0,
+                }
+                fmp_record.setdefault("record_id", f"legacy-fmp:company-profile:{activation_id}")
+                fmp_record.setdefault("symbol", symbol)
+                fmp_record["auxiliary_context"] = auxiliary
+                records[activation_id] = fmp_record
+                record["fmp_evidence"] = fmp_record
+                registry[activation_id] = record
+                activity["event_family_scheduled"] = event_family
+                activity["event_symbol_requested"] = symbol
+                activity["event_request_succeeded"] = success
+                break
+        activity["event_rotation_cursor"] = (event_cursor + 1) % len(event_specs)
+        activity["rotation_cursor"] = (cursor + max(1, attempted)) % max(1, len(ordered))
         self._runtime_state["legacy_swing_fmp_evidence"] = records
         self._runtime_state["legacy_swing_fmp_activity"] = activity
         return records, activity
@@ -3378,16 +3441,12 @@ class PaperAutopilotEngine:
         # before contextual FMP work so slow profile calls cannot delay the
         # direct historical evidence required for momentum.
         market_records, market_activity = self._refresh_legacy_swing_broker_market_evidence(registry)
-        # A partial market cycle is a deliberate cooperative yield point.
-        # Reuse committed FMP context rather than serializing another bounded
-        # provider loop behind a due daily-bar request.
+        # Keep one independent, low-frequency position-context slot available
+        # during a cooperative market cycle.  Reusing the old state here made
+        # FMP profile evidence permanently dormant whenever the market queue
+        # was correctly yielding for its own budget.
         if str(market_activity.get("cycle_state") or "").startswith("CYCLE_PARTIAL"):
-            fmp_records = {
-                key: dict(value or {})
-                for key, value in dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {}).items()
-                if isinstance(value, dict)
-            }
-            fmp_activity = dict(self._runtime_state.get("legacy_swing_fmp_activity") or {})
+            fmp_records, fmp_activity = self._refresh_legacy_swing_fmp_evidence(registry, max_symbols=1)
         else:
             fmp_records, fmp_activity = self._refresh_legacy_swing_fmp_evidence(registry)
         reviews: dict[str, dict[str, Any]] = {}
@@ -7433,6 +7492,40 @@ class PaperAutopilotEngine:
         )
         save_unified_position_advisory_v1(advisory, os.path.dirname(self.unified_position_advisory_state_path) or "state")
         self._runtime_state["unified_position_advisory_v1"] = advisory
+        self._runtime_state["copilot_position_advisory_handoff_v1"] = {
+            "source": "astra_unified_position_advisory_v1",
+            "generated_at": advisory.get("generated_at"),
+            "positions_available": int(advisory.get("advisory_count") or 0),
+            "top_actionable_positions": [
+                {"symbol": row.get("symbol"), "advisory": row.get("final_advisory"), "priority": row.get("priority"), "confidence": row.get("confidence"), "execution_authority": "DISABLED"}
+                for row in sorted(list(advisory.get("positions") or []), key=lambda row: {"HIGH": 0, "MEDIUM": 1}.get(str((row or {}).get("priority") or "").upper(), 2))[:12]
+                if isinstance(row, Mapping)
+            ],
+            "handoff_active": bool(advisory.get("positions")),
+            "execution_authority": "DISABLED", "advisory_only": True,
+        }
+        # Mark an FMP record consumed only after the actual position triage
+        # received it.  This preserves the distinction between HTTP success,
+        # assignment, and downstream use in provider telemetry.
+        fmp_records = dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {})
+        triage_symbols = {str(row.get("symbol") or "").upper(): dict(row) for row in triage.get("positions") or [] if isinstance(row, Mapping)}
+        for key, raw in list(fmp_records.items()):
+            record = dict(raw or {})
+            symbol = str(record.get("symbol") or "").upper()
+            triage_row = triage_symbols.get(symbol) or {}
+            if record.get("normalized_fields") and triage_row and "FMP" in list(triage_row.get("provider_sources") or []):
+                record.update({"consumer_acknowledged": True, "consumer": "legacy_position_risk_triage_v1", "consumer_record_id": f"legacy-triage:{symbol}", "consumed_at": _now_iso(), "acknowledgement_state": "CONSUMED_BY_LEGACY_POSITION_RISK_TRIAGE_V1"})
+            auxiliary = dict(record.get("auxiliary_context") or {})
+            evidence_row = next((dict(row) for row in evidence.get("positions") or [] if isinstance(row, Mapping) and str(row.get("symbol") or "").upper() == symbol), {})
+            for family, status_key in (("earnings", "earnings_status"), ("news_catalyst", "catalyst_status")):
+                event = dict(auxiliary.get(family) or {})
+                if event.get("normalized_fields") and evidence_row.get(status_key) in {"FRESH", "AGING"} and triage_row:
+                    event.update({"consumer_acknowledged": True, "consumer": "legacy_position_risk_triage_v1", "consumer_record_id": f"legacy-triage:{symbol}", "consumed_at": _now_iso(), "acknowledgement_state": "CONSUMED_BY_LEGACY_POSITION_RISK_TRIAGE_V1"})
+                    auxiliary[family] = event
+            if auxiliary:
+                record["auxiliary_context"] = auxiliary
+            fmp_records[key] = record
+        self._runtime_state["legacy_swing_fmp_evidence"] = fmp_records
         return evidence, triage, exit_readiness, advisory
 
     def _legacy_position_risk_triage_phase(
@@ -7484,15 +7577,29 @@ class PaperAutopilotEngine:
         """Project existing router accounting into one cache-only telemetry state."""
         key, _source = resolve_fmp_key()
         fingerprint = hashlib.sha256(key.encode("utf-8")).hexdigest()[:8] if key else ""
-        consumer_events = [
-            {
-                "consumer": "legacy_position_risk_triage_v1",
-                "symbol": row.get("symbol"),
-                "accepted": bool(row.get("provider_sources")),
-            }
-            for row in (triage or {}).get("positions") or []
-            if isinstance(row, Mapping)
-        ]
+        consumer_events = []
+        for record in dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {}).values():
+            if not isinstance(record, Mapping) or not record.get("record_id"):
+                continue
+            consumer_events.append({
+                "endpoint_family": str(record.get("endpoint_family") or "unknown"),
+                "symbol": record.get("symbol"), "assigned": bool(record.get("normalized_fields")),
+                "assigned_at": record.get("response_at"), "consumed": bool(record.get("consumer_acknowledged")),
+                "consumed_at": record.get("consumed_at"), "consumer": record.get("consumer") or "",
+                "consumer_record_id": record.get("consumer_record_id") or record.get("record_id"),
+                "evidence_at": record.get("response_at"),
+            })
+            for event in dict(record.get("auxiliary_context") or {}).values():
+                if not isinstance(event, Mapping) or not event.get("record_id"):
+                    continue
+                consumer_events.append({
+                    "endpoint_family": str(event.get("endpoint_family") or "unknown"),
+                    "symbol": event.get("symbol"), "assigned": bool(event.get("normalized_fields")),
+                    "assigned_at": event.get("response_at"), "consumed": bool(event.get("consumer_acknowledged")),
+                    "consumed_at": event.get("consumed_at"), "consumer": event.get("consumer") or "",
+                    "consumer_record_id": event.get("consumer_record_id") or event.get("record_id"),
+                    "evidence_at": event.get("response_at"),
+                })
         telemetry = build_provider_consumption_telemetry_v1(
             state_dir=os.path.dirname(self.state_path) or "state",
             configured=bool(key),

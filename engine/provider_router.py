@@ -1532,6 +1532,83 @@ class ProviderRouter:
             records_received=1, records_valid=1, latency_ms=latency,
         )
 
+    def _fetch_fmp_event_context(self, symbol: str, *, endpoint_family: str) -> dict[str, Any]:
+        """Fetch one bounded, symbol-scoped FMP earnings or news context.
+
+        This intentionally shares the router request path and FMP ledger with
+        quotes and profiles.  It is a context adapter only: it cannot create a
+        candidate, modify a broker position, or authorize an exit.
+        """
+        provider, sym = "FMP", _safe_symbol(symbol)
+        requested_at = _now_iso()
+        specs = {
+            "earnings": ("https://financialmodelingprep.com/stable/earnings", {"symbol": sym, "apikey": None}, "/stable/earnings?symbol={symbol}"),
+            "news_catalyst": ("https://financialmodelingprep.com/stable/news/stock", {"symbols": sym, "apikey": None}, "/stable/news/stock?symbols={symbol}"),
+        }
+        if endpoint_family not in specs:
+            return {"provider": provider, "endpoint_family": endpoint_family, "symbol": sym, "requested_at": requested_at, "response_state": "UNSUPPORTED_ENDPOINT", "error_category": "unsupported_fmp_context_family", "broker_actions": 0, "secret_exposed": False}
+        url, params, template = specs[endpoint_family]
+
+        def outcome(state: str, *, status: int | None = None, error: str = "", fields: dict[str, Any] | None = None, received: int = 0, latency: float = 0.0) -> dict[str, Any]:
+            valid = bool(fields)
+            _fmp_efficiency_record({
+                "endpoint_family": endpoint_family, "endpoint_path_template": template, "symbol_count": 1,
+                "status_code": int(status or 0), "ok": state == "SUCCESS", "cache_hit": False,
+                "bytes_estimated": 0, "bytes_actual_if_available": 0, "useful_fields_count": len(fields or {}),
+                "useful_score": float(min(100, len(fields or {}) * 12)) if valid else 0.0,
+                "call_reason": "open_position_context_refresh", "caller_context": "paper_autopilot_open_position_worker",
+                "ttl_seconds": 6 * 60 * 60 if endpoint_family == "earnings" else 15 * 60,
+                "blocked_reason": error, "api_calls_delta": 1 if status is not None else 0,
+                "bandwidth_delta": 0, "provider_governor_allowed": state not in {"RATE_LIMITED", "PROVIDER_UNAVAILABLE"},
+            })
+            return {"provider": provider, "endpoint_family": endpoint_family, "endpoint_template": template,
+                    "symbol": sym, "requested_at": requested_at, "response_at": _now_iso(), "http_status": int(status or 0),
+                    "authentication_state": "PRESENT" if bool(self._key_for(provider, "stock")) else "MISSING",
+                    "response_state": state, "error_category": error, "records_received": int(received),
+                    "records_valid": int(valid), "normalized_fields": dict(fields or {}),
+                    "latency_ms": round(_to_float(latency, 0.0), 3), "broker_actions": 0, "secret_exposed": False}
+
+        if not sym:
+            return outcome("MALFORMED_RESPONSE", error="symbol_required")
+        key = self._key_for(provider, "stock")
+        if not key:
+            return outcome("AUTHENTICATION_FAILED", error="missing_fmp_credential")
+        if self._temp_fmp_rest_disabled:
+            return outcome("PROVIDER_UNAVAILABLE", error="fmp_rest_temporarily_disabled")
+        if self._provider_in_cooldown(provider) or self._fmp_probe_hard_limited():
+            return outcome("RATE_LIMITED", error="provider_cooldown_or_budget")
+        params["apikey"] = key
+        data, status, error, latency = self._request(provider, url, params=params)
+        if error:
+            state = "AUTHENTICATION_FAILED" if int(status or 0) == 401 else "ENTITLEMENT_BLOCKED" if int(status or 0) == 403 else "RATE_LIMITED" if int(status or 0) == 429 else "TIMEOUT" if "timeout" in str(error).lower() else "PROVIDER_ERROR"
+            self._mark_result(provider, False, latency, rate_limited=state == "RATE_LIMITED")
+            return outcome(state, status=status, error=str(error), latency=latency)
+        rows = data.get("_list") if isinstance(data, dict) and isinstance(data.get("_list"), list) else data
+        row = dict(rows[0] or {}) if isinstance(rows, list) and rows else dict(rows or {}) if isinstance(rows, dict) else {}
+        if not row:
+            self._mark_result(provider, False, latency)
+            return outcome("EMPTY_RESPONSE", status=status, error="empty_context_response", latency=latency)
+        returned = _safe_symbol(row.get("symbol") or row.get("ticker"))
+        if returned and returned != sym:
+            self._mark_result(provider, False, latency)
+            return outcome("MALFORMED_RESPONSE", status=status, error="symbol_mismatch", received=1, latency=latency)
+        if endpoint_family == "earnings":
+            fields = {"earnings_date": row.get("date") or row.get("fiscalDateEnding"), "eps": row.get("eps") or row.get("epsActual"), "revenue": row.get("revenue") or row.get("revenueActual")}
+        else:
+            fields = {"headline": row.get("title") or row.get("headline"), "published_at": row.get("publishedDate") or row.get("published_at"), "source": row.get("site") or row.get("source")}
+        fields = {name: value for name, value in fields.items() if value not in (None, "")}
+        if not fields:
+            self._mark_result(provider, False, latency)
+            return outcome("MALFORMED_RESPONSE", status=status, error="context_fields_empty", received=1, latency=latency)
+        self._mark_result(provider, True, latency)
+        return outcome("SUCCESS", status=status, fields=fields, received=1, latency=latency)
+
+    def fetch_fmp_earnings_context(self, symbol: str) -> dict[str, Any]:
+        return self._fetch_fmp_event_context(symbol, endpoint_family="earnings")
+
+    def fetch_fmp_news_context(self, symbol: str) -> dict[str, Any]:
+        return self._fetch_fmp_event_context(symbol, endpoint_family="news_catalyst")
+
     def fetch_fmp_historical_bars(self, symbol: str, *, timeframe: str = "1Hour", limit: int = 20) -> dict[str, Any]:
         """Fetch bounded FMP intraday bars for the legacy-SWING worker.
 

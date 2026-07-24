@@ -318,14 +318,14 @@ class LegacySwingBrokerMarketEvidenceTests(unittest.TestCase):
         self.assertEqual(refreshed["activation-a"]["HISTORICAL_BARS"]["timeframe"], "1Day")
         self.assertGreaterEqual(activity["provider_requests_this_cycle"], 1)
 
-    def test_partial_market_cycle_defers_fmp_context_refresh(self):
+    def test_partial_market_cycle_keeps_one_bounded_fmp_context_slot(self):
         engine = _engine(_EmptyBars())
         engine._runtime_state["legacy_forward_activations"] = _registry_with_backlog()
         fmp_calls = []
         engine._legacy_swing_fmp_fetcher = lambda symbol: fmp_calls.append(symbol) or _fmp_success(symbol)
         result = engine._refresh_legacy_swing_canary_pre_submit({})
         self.assertTrue(str(result["market_activity"]["cycle_state"]).startswith("CYCLE_PARTIAL"))
-        self.assertEqual(fmp_calls, [])
+        self.assertEqual(len(fmp_calls), 1)
 
     def test_worker_normalizes_and_reuses_fresh_market_records(self):
         market = _MarketDataFixture()

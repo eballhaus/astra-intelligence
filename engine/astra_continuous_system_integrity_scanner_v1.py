@@ -239,6 +239,30 @@ class ContinuousSystemIntegrityScannerV1:
                                 "first_bad_handoff": "accepted FMP response -> advisory consumer",
                                 "owner": "engine.astra_legacy_position_risk_triage_v1",
                                 "repair": "retain source attribution and consume accepted FMP context in advisory triage"})
+            for family in list(provider.get("endpoint_families") or [])[:max_rows]:
+                if not isinstance(family, dict):
+                    continue
+                name = _text(family.get("endpoint_family")) or "unknown"
+                if not _number(family.get("scheduled")):
+                    signals.append({"kind": "CONFIGURED_ENDPOINT_NOT_SCHEDULED", "severity": "MEDIUM", "confidence": "VERIFIED",
+                                    "canonical_fact_ids": ["FMP_PROVIDER_CONSUMPTION"], "affected_components": ["PaperAutopilot FMP context scheduler"],
+                                    "affected_endpoint_family": name, "first_bad_handoff": "configured endpoint family -> worker schedule"})
+                if _number(family.get("responses_accepted")) > _number(family.get("responses_assigned")):
+                    signals.append({"kind": "PROVIDER_SUCCESS_NOT_ASSIGNED", "severity": "HIGH", "confidence": "VERIFIED",
+                                    "canonical_fact_ids": ["FMP_PROVIDER_CONSUMPTION"], "affected_endpoint_family": name,
+                                    "first_bad_handoff": "accepted provider evidence -> current position assignment"})
+                if _number(family.get("responses_assigned")) > _number(family.get("responses_consumed")):
+                    signals.append({"kind": "PROVIDER_ASSIGNED_NOT_CONSUMED", "severity": "HIGH", "confidence": "VERIFIED",
+                                    "canonical_fact_ids": ["FMP_PROVIDER_CONSUMPTION"], "affected_endpoint_family": name,
+                                    "first_bad_handoff": "position evidence assignment -> advisory consumer"})
+                if _number(family.get("governor_blocked")) and not _number(family.get("network_sent")):
+                    signals.append({"kind": "FMP_GOVERNOR_OVERBLOCKING", "severity": "HIGH", "confidence": "VERIFIED",
+                                    "canonical_fact_ids": ["FMP_PROVIDER_CONSUMPTION"], "affected_endpoint_family": name,
+                                    "first_bad_handoff": "endpoint family budget -> provider network request"})
+            if not bool(provider.get("telemetry_complete", False)):
+                signals.append({"kind": "PROVIDER_TELEMETRY_INCOMPLETE", "severity": "MEDIUM", "confidence": "VERIFIED",
+                                "canonical_fact_ids": ["FMP_PROVIDER_CONSUMPTION"], "affected_components": ["astra_provider_consumption_telemetry_v1"],
+                                "first_bad_handoff": "provider ledger -> assignment/consumption telemetry"})
         position_evidence = dict(context.get("position_evidence_completeness") or {})
         if position_evidence:
             represented = _number(position_evidence.get("positions_represented"))
@@ -260,6 +284,12 @@ class ContinuousSystemIntegrityScannerV1:
                             "affected_endpoints": ["unified position advisory"],
                             "affected_components": ["astra_unified_position_advisory_v1"],
                             "first_bad_handoff": "position evidence -> unified advisory"})
+        copilot_handoff = dict(context.get("copilot_position_advisory_handoff") or {})
+        if unified_advisory and not bool(copilot_handoff.get("handoff_active")):
+            signals.append({"kind": "COPILOT_HANDOFF_MISSING", "severity": "HIGH", "confidence": "VERIFIED",
+                            "canonical_fact_ids": ["CURRENT_BROKER_POSITION_ADVISORY"],
+                            "affected_components": ["astra_unified_position_advisory_v1", "astra_copilot_suite_v1"],
+                            "first_bad_handoff": "unified position advisory -> cached Copilot action handoff"})
         handoffs = list(context.get("quote_handoffs") or [])[:max_rows]
         for handoff in handoffs:
             if not isinstance(handoff, dict):

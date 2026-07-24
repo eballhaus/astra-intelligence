@@ -54,6 +54,38 @@ class PositionEvidenceAndAdvisoryTests(unittest.TestCase):
         self.assertEqual(advisory["silent_drop_count"], 0)
         self.assertTrue(all(row["execution_authority"] == "DISABLED" for row in advisory["positions"]))
 
+    def test_profile_assignment_without_consumer_is_explicit(self):
+        fmp = {
+            "activation-a": {
+                "record_id": "fmp:AAA", "symbol": "AAA", "provider": "FMP",
+                "response_state": "SUCCESS", "freshness_state": "CURRENT",
+                "response_at": "2999-01-01T00:00:00Z",
+                "normalized_fields": {"sector": "Technology"},
+                "consumer_acknowledged": False,
+            }
+        }
+        evidence = build_position_evidence_completeness_v1(self.positions, self.recovery, fmp_evidence=fmp)
+        rows = {row["symbol"]: row for row in evidence["positions"]}
+        self.assertEqual(rows["AAA"]["fundamentals_status"], "ASSIGNED_NOT_CONSUMED")
+        self.assertEqual(rows["AAA"]["opportunity_cost_status"], "NO_ELIGIBLE_REPLACEMENT")
+
+    def test_earnings_and_catalyst_are_not_profile_aliases(self):
+        fmp = {
+            "activation-a": {
+                "record_id": "fmp:AAA", "symbol": "AAA", "provider": "FMP",
+                "response_state": "SUCCESS", "freshness_state": "CURRENT", "response_at": "2999-01-01T00:00:00Z",
+                "normalized_fields": {"sector": "Technology"}, "consumer_acknowledged": True,
+                "auxiliary_context": {
+                    "earnings": {"record_id": "earnings:AAA", "provider": "FMP", "response_state": "SUCCESS", "freshness_state": "CURRENT", "response_at": "2999-01-01T00:00:00Z", "normalized_fields": {"earnings_date": "2999-02-01"}},
+                    "news_catalyst": {"record_id": "news:AAA", "provider": "FMP", "response_state": "SUCCESS", "freshness_state": "CURRENT", "response_at": "2999-01-01T00:00:00Z", "normalized_fields": {"headline": "Fixture"}},
+                },
+            }
+        }
+        evidence = build_position_evidence_completeness_v1(self.positions, self.recovery, fmp_evidence=fmp)
+        row = next(item for item in evidence["positions"] if item["symbol"] == "AAA")
+        self.assertEqual(row["earnings_status"], "FRESH")
+        self.assertEqual(row["catalyst_status"], "FRESH")
+
     def test_evidence_and_advisory_persistence_are_bounded(self):
         evidence = build_position_evidence_completeness_v1(self.positions, self.recovery)
         advisory = build_unified_position_advisory_v1(self.positions, evidence=evidence, triage={})

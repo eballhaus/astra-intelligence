@@ -59,7 +59,12 @@ def _cap_per_min(provider: str) -> int:
             "ALPHAVANTAGE": 8,
             "MORALIS": 20,
             "FRED": 4,
-            "FMP": 0 if _fmp_rest_disabled() else 4,
+            # FMP is a premium, bounded context provider.  Four shared calls
+            # were routinely consumed by candidate enrichment before the
+            # worker could refresh an open position.  Twelve remains far below
+            # the account cap while reserving room for one position-context
+            # request per cooperative worker cycle.
+            "FMP": 0 if _fmp_rest_disabled() else 12,
         }
         if p in temporary_caps:
             return int(temporary_caps[p])

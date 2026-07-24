@@ -430,6 +430,7 @@ class PaperAutopilotWorker:
                 "provider_consumption_telemetry": dict(runtime.get("provider_consumption_telemetry_v1") or {}),
                 "position_evidence_completeness": dict(runtime.get("position_evidence_completeness_v1") or {}),
                 "unified_position_advisory": dict(runtime.get("unified_position_advisory_v1") or {}),
+                "copilot_position_advisory_handoff": dict(runtime.get("copilot_position_advisory_handoff_v1") or {}),
                 "canonical_capacity_fact": dict(lane.get("canonical_capacity_fact") or {}),
                 "targeted_reasons": targeted_reasons,
                 "get_side_effects": 0,
