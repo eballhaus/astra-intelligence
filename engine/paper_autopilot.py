@@ -7981,9 +7981,18 @@ class PaperAutopilotEngine:
             # This is the same bounded worker-owned refresh and has no order
             # submission path; the later position-aware pass reuses its cache.
             legacy_canary_refresh: dict[str, Any] = {}
+            preflight_broker_snapshot: dict[str, Any] = {}
             try:
+                # Partial cycles are the normal runtime path under a bounded
+                # market-evidence backlog.  Register current broker symbols
+                # before refreshing so a position cannot remain unobserved
+                # merely because the full-cycle branch is deferred.
+                self._note_worker_progress("broker_position_snapshot")
+                preflight_broker_snapshot = self._broker_open_symbols_snapshot()
+                preflight_positions = dict(preflight_broker_snapshot.get("broker_position_by_symbol") or {})
+                self._refresh_legacy_forward_activations(preflight_positions)
                 self._note_worker_progress("legacy_market_evidence_preflight")
-                legacy_canary_refresh = self._refresh_legacy_swing_canary_pre_submit({})
+                legacy_canary_refresh = self._refresh_legacy_swing_canary_pre_submit(preflight_positions)
                 self._save_state_file()
             except Exception as exc:
                 legacy_canary_refresh = {"observation_state": "FAILED", "error": str(exc)[:180]}
@@ -7994,7 +8003,7 @@ class PaperAutopilotEngine:
                 # No entry, exit, or order path is reached from this branch.
                 self._note_worker_progress("bounded_broker_reconciliation")
                 safety = self._alpaca_safety_snapshot()
-                broker_snapshot = self._broker_open_symbols_snapshot()
+                broker_snapshot = preflight_broker_snapshot or self._broker_open_symbols_snapshot()
                 evidence_capacity_snapshot = self._evidence_capacity_snapshot_v1(
                     broker_snapshot,
                     self._fetch_open_positions(),
