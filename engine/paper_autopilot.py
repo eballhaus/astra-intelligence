@@ -6982,6 +6982,7 @@ class PaperAutopilotEngine:
         broker_position_by_symbol: dict[str, dict[str, Any]] | None = None,
         latest_price_by_symbol: dict[str, dict[str, Any]] | None = None,
         max_positions: int = 100,
+        broker_fetch_succeeded: bool | None = None,
     ) -> dict[str, Any]:
         """Bounded advisory loss-containment review without order submission.
 
@@ -6992,6 +6993,8 @@ class PaperAutopilotEngine:
         When broker snapshot is available and caller did not explicitly provide
         rows, always build canonical rows from broker positions (authoritative),
         regardless of DB state.
+
+        broker_fetch_succeeded: True if broker fetch completed (may be empty).
         """
         has_explicit_rows = open_rows is not None
         rows = list(open_rows or self._fetch_open_positions() or [])
@@ -6999,10 +7002,11 @@ class PaperAutopilotEngine:
         latest_prices = dict(latest_price_by_symbol or {})
         prior_state = self._load_loss_containment_state()
 
-        # Authoritative broker truth: When broker positions are available and
-        # no explicit rows were provided, build canonical snapshot rows.
-        # Broker positions define the authoritative current open-position set.
-        if not has_explicit_rows and broker_positions:
+        # Authoritative broker truth: When broker fetch succeeded (even if
+        # empty), use canonical snapshot. Broker positions define the
+        # authoritative current open-position set.
+        broker_available = broker_fetch_succeeded or bool(broker_positions)
+        if not has_explicit_rows and broker_available:
             canonical_snapshot = build_canonical_position_snapshot(broker_positions)
             broker_rows = snapshot_to_loss_containment_rows(canonical_snapshot)
             if broker_rows:
@@ -7059,6 +7063,7 @@ class PaperAutopilotEngine:
         open_rows: list[dict[str, Any]] | None = None,
         broker_position_by_symbol: dict[str, dict[str, Any]] | None = None,
         max_positions: int = 100,
+        broker_fetch_succeeded: bool | None = None,
     ) -> dict[str, Any]:
         """Bounded advisory profit-protection review without order submission.
 
@@ -7071,8 +7076,8 @@ class PaperAutopilotEngine:
         broker_positions = dict(broker_position_by_symbol or {})
         prior_state = self._load_profit_protection_state()
 
-        # Authoritative broker truth: same as loss containment
-        if not has_explicit_rows and broker_positions:
+        broker_available = broker_fetch_succeeded or bool(broker_positions)
+        if not has_explicit_rows and broker_available:
             canonical_snapshot = build_canonical_position_snapshot(broker_positions)
             broker_rows = snapshot_to_loss_containment_rows(canonical_snapshot)
             if broker_rows:
@@ -7338,6 +7343,7 @@ class PaperAutopilotEngine:
                     open_rows=self._fetch_open_positions(),
                     broker_position_by_symbol=dict(broker_snapshot.get("broker_position_by_symbol") or {}),
                     max_positions=100,
+                    broker_fetch_succeeded=bool(broker_snapshot.get("broker_positions_fetch_ok", False)),
                 )
             except Exception as exc:
                 loss_containment_review = {"observation_state": "FAILED", "error": str(exc)[:180]}
@@ -7427,6 +7433,7 @@ class PaperAutopilotEngine:
                     loss_containment_review_partial = self._loss_containment_review_phase(
                         broker_position_by_symbol=broker_position_by_symbol,
                         max_positions=100,
+                        broker_fetch_succeeded=bool(broker_snapshot.get("broker_positions_fetch_ok", False)),
                     )
                 except Exception as exc:
                     loss_containment_review_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
@@ -7437,6 +7444,7 @@ class PaperAutopilotEngine:
                     profit_protection_review_partial = self._profit_protection_review_phase(
                         broker_position_by_symbol=broker_position_by_symbol,
                         max_positions=100,
+                        broker_fetch_succeeded=bool(broker_snapshot.get("broker_positions_fetch_ok", False)),
                     )
                 except Exception as exc:
                     profit_protection_review_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
@@ -7705,6 +7713,7 @@ class PaperAutopilotEngine:
                     broker_position_by_symbol=broker_position_by_symbol,
                     latest_price_by_symbol=latest_price_by_symbol,
                     max_positions=100,
+                    broker_fetch_succeeded=bool(broker_snapshot.get("broker_positions_fetch_ok", False)),
                 )
             except Exception as exc:
                 loss_containment_review = {"observation_state": "FAILED", "error": str(exc)[:180]}
@@ -7715,6 +7724,7 @@ class PaperAutopilotEngine:
                     open_rows=open_rows_initial,
                     broker_position_by_symbol=broker_position_by_symbol,
                     max_positions=100,
+                    broker_fetch_succeeded=bool(broker_snapshot.get("broker_positions_fetch_ok", False)),
                 )
             except Exception as exc:
                 profit_protection_review = {"observation_state": "FAILED", "error": str(exc)[:180]}

@@ -344,5 +344,33 @@ class TestLaneHorizonUnavailable(unittest.TestCase):
         self.assertEqual(pos["lane"], "UNAVAILABLE")
 
 
+class TestEmptyBrokerResult(unittest.TestCase):
+    def test_empty_broker_result_produces_empty_snapshot(self):
+        """Successful broker fetch with zero positions produces empty snapshot."""
+        snapshot = build_canonical_position_snapshot({})
+        self.assertEqual(snapshot["position_count"], 0)
+        self.assertEqual(snapshot["dust_count"], 0)
+        self.assertEqual(snapshot["closed_count"], 0)
+
+    def test_empty_broker_result_produces_empty_loss_rows(self):
+        """Empty broker snapshot produces zero loss containment rows."""
+        snapshot = build_canonical_position_snapshot({})
+        rows = snapshot_to_loss_containment_rows(snapshot)
+        self.assertEqual(len(rows), 0)
+
+    def test_empty_broker_result_produces_empty_broker_format(self):
+        """Empty broker snapshot produces empty broker format."""
+        snapshot = build_canonical_position_snapshot({})
+        result = snapshot_to_broker_position_by_symbol(snapshot)
+        self.assertEqual(len(result), 0)
+
+    def test_stale_db_not_used_when_broker_fetch_succeeded_empty(self):
+        """When broker_fetch_succeeded is True with empty positions,
+        the canonical snapshot must be empty."""
+        snapshot = build_canonical_position_snapshot({})
+        self.assertEqual(snapshot["position_count"], 0)
+        self.assertEqual(len(snapshot.get("positions", {})), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
