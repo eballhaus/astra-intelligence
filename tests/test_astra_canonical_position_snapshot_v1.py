@@ -285,9 +285,32 @@ class TestFractionalQuantityPreservation(unittest.TestCase):
         }
         snapshot = build_canonical_position_snapshot(broker_positions)
         pos = snapshot["positions"]["FRAC"]
-        # Should preserve quantity with reasonable precision
-        self.assertGreater(pos["quantity"], 0)
-        self.assertLess(pos["quantity"], 0.001)
+        # Should preserve quantity exactly (float equality is stable for these values)
+        self.assertEqual(pos["quantity"], 0.000000321)
+
+    def test_exact_tiny_quantities_preserved(self):
+        """Specific micro-fractional quantities must survive normalization."""
+        for qty in ("0.000000321", "0.000000758", "0.000000926"):
+            with self.subTest(qty=qty):
+                symbol = f"Q_{qty.replace('.', '_')}"
+                qty_float = float(qty)
+                avg_entry = 50000.0
+                current = 55000.0
+                broker_positions = {
+                    symbol: {
+                        "symbol": symbol,
+                        "qty": qty,
+                        "avg_entry_price": str(avg_entry),
+                        "current_price": str(current),
+                        "market_value": str(qty_float * current),
+                        "cost_basis": str(qty_float * avg_entry),
+                        "asset_class": "crypto",
+                    }
+                }
+                snapshot = build_canonical_position_snapshot(broker_positions)
+                pos = snapshot["positions"][symbol]
+                self.assertEqual(pos["quantity"], qty_float)
+                self.assertEqual(pos["is_dust"], False)
 
     def test_dust_classification_does_not_remove_legitimate_residuals(self):
         broker_positions = {

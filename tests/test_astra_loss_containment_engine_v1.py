@@ -608,6 +608,209 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(result.get("confirmed_open_position_count"), 0)
         self.assertIsNone(result.get("first_phase_blocker"))
 
+    def test_broker_positions_override_explicit_db_rows(self):
+        """When broker fetch succeeded, broker positions must override explicit DB rows."""
+        PaperAutopilotEngine = self._can_import_paper_autopilot()
+        engine = PaperAutopilotEngine(
+            db_path=self.db_path,
+            state_path=self.state_path,
+            enabled=False,
+        )
+        engine._ensure_schema()
+        open_rows = [
+            {
+                "position_id": "d1",
+                "symbol": "AAPL",
+                "asset_type": "stock",
+                "status": "OPEN",
+                "quantity": 10,
+                "qty": 10,
+                "entry_price": 100.0,
+                "current_price": 90.0,
+                "market_value": 900.0,
+                "cost_basis": 1000.0,
+                "unrealized_pl": -100.0,
+                "unrealized_plpc": -10.0,
+                "lane_id": "DAY",
+                "position_owner": "DAY",
+                "exit_policy_owner": "DAY",
+                "last_update_ts": _now_iso(),
+            }
+        ]
+        broker_positions = {
+            "AAPL": {
+                "symbol": "AAPL",
+                "qty": 10,
+                "avg_entry_price": 100.0,
+                "current_price": 99.5,
+                "asset_class": "stock",
+                "lane_id": "DAY",
+            }
+        }
+        result = engine._loss_containment_review_phase(
+            open_rows=open_rows,
+            broker_position_by_symbol=broker_positions,
+            broker_fetch_succeeded=True,
+            max_positions=100,
+        )
+        self.assertEqual(result.get("positions_evaluated"), 1)
+        self.assertEqual(result["metrics"]["hard_boundary_breaches"], 0)
+        decision = result["position_decisions"][0]
+        self.assertEqual(decision["threshold_state"], "HEALTHY")
+        self.assertEqual(decision["symbol"], "AAPL")
+
+    def test_broker_rows_enriched_with_db_lane_metadata(self):
+        """Broker rows without lane/horizon must be enriched from DB rows for the same symbol."""
+        PaperAutopilotEngine = self._can_import_paper_autopilot()
+        engine = PaperAutopilotEngine(
+            db_path=self.db_path,
+            state_path=self.state_path,
+            enabled=False,
+        )
+        engine._ensure_schema()
+        open_rows = [
+            {
+                "position_id": "d1",
+                "symbol": "AAPL",
+                "asset_type": "stock",
+                "status": "OPEN",
+                "quantity": 10,
+                "qty": 10,
+                "entry_price": 100.0,
+                "current_price": 90.0,
+                "market_value": 900.0,
+                "cost_basis": 1000.0,
+                "unrealized_pl": -100.0,
+                "unrealized_plpc": -10.0,
+                "lane_id": "DAY",
+                "paper_entry_horizon_style": "day_trade",
+                "position_owner": "DAY",
+                "exit_policy_owner": "DAY",
+                "last_update_ts": _now_iso(),
+            }
+        ]
+        # Broker position has no lane/horizon, but broker price is healthy.
+        broker_positions = {
+            "AAPL": {
+                "symbol": "AAPL",
+                "qty": 10,
+                "avg_entry_price": 100.0,
+                "current_price": 99.5,
+                "asset_class": "stock",
+            }
+        }
+        result = engine._loss_containment_review_phase(
+            open_rows=open_rows,
+            broker_position_by_symbol=broker_positions,
+            broker_fetch_succeeded=True,
+            max_positions=100,
+        )
+        self.assertEqual(result.get("positions_evaluated"), 1)
+        self.assertEqual(result["metrics"]["incomplete_data_fail_closed"], 0)
+        self.assertEqual(result["metrics"]["hard_boundary_breaches"], 0)
+        decision = result["position_decisions"][0]
+        self.assertEqual(decision["threshold_state"], "HEALTHY")
+        self.assertEqual(decision["lane"], "DAY")
+        self.assertEqual(decision["symbol"], "AAPL")
+
+    def test_failed_broker_fetch_evicts_prior_decisions(self):
+        """When broker fetch fails, prior decisions must not drive stale actions."""
+        PaperAutopilotEngine = self._can_import_paper_autopilot()
+        engine = PaperAutopilotEngine(
+            db_path=self.db_path,
+            state_path=self.state_path,
+            enabled=False,
+        )
+        engine._ensure_schema()
+        engine._save_loss_containment_state({
+            "schema_version": "astra_loss_containment_state_v1",
+            "decisions": {
+                "AAPL": {
+                    "symbol": "AAPL",
+                    "threshold_state": "HARD_BOUNDARY_BREACH",
+                    "canonical_recommendation": "HARD_LOSS_EXIT_REQUIRED_ADVISORY",
+                },
+            },
+            "events": {},
+            "as_of": _now_iso(),
+        })
+        open_rows = [
+            {
+                "position_id": "d1",
+                "symbol": "AAPL",
+                "asset_type": "stock",
+                "status": "OPEN",
+                "quantity": 10,
+                "qty": 10,
+                "entry_price": 100.0,
+                "current_price": 90.0,
+                "market_value": 900.0,
+                "cost_basis": 1000.0,
+                "unrealized_pl": -100.0,
+                "unrealized_plpc": -10.0,
+                "lane_id": "DAY",
+                "last_update_ts": _now_iso(),
+            }
+        ]
+        result = engine._loss_containment_review_phase(
+            open_rows=open_rows,
+            broker_fetch_succeeded=False,
+            max_positions=100,
+        )
+        self.assertEqual(result.get("positions_evaluated"), 0)
+        self.assertEqual(result.get("observation_state"), "FAILED")
+        self.assertEqual(result.get("first_phase_blocker"), "BROKER_POSITION_EVIDENCE_UNAVAILABLE")
+        self.assertEqual(len(result.get("position_decisions", [])), 0)
+        state = engine._load_loss_containment_state()
+        self.assertEqual(state.get("decisions"), {})
+        # Phase metadata is preserved in the durable state file
+        self.assertEqual(state.get("observation_state"), "FAILED")
+        self.assertFalse(state.get("broker_fetch_succeeded"))
+        self.assertIsNone(state.get("confirmed_open_position_count"))
+
+    def test_durable_state_preserves_phase_metadata(self):
+        """Phase metadata must round-trip through durable state save/load."""
+        PaperAutopilotEngine = self._can_import_paper_autopilot()
+        engine = PaperAutopilotEngine(
+            db_path=self.db_path,
+            state_path=self.state_path,
+            enabled=False,
+        )
+        engine._ensure_schema()
+        broker_positions = {
+            "AAPL": {
+                "symbol": "AAPL",
+                "qty": 10,
+                "avg_entry_price": 100.0,
+                "current_price": 99.0,
+                "asset_class": "stock",
+                "lane_id": "DAY",
+            }
+        }
+        result = engine._loss_containment_review_phase(
+            broker_position_by_symbol=broker_positions,
+            broker_fetch_succeeded=True,
+            max_positions=100,
+        )
+        self.assertEqual(result.get("observation_state"), "READY")
+        self.assertTrue(result.get("broker_fetch_succeeded"))
+        self.assertEqual(result.get("confirmed_open_position_count"), 1)
+        self.assertIsNone(result.get("first_phase_blocker"))
+
+        # Metadata must be present in the in-memory state envelope
+        state = result.get("state", {})
+        self.assertEqual(state.get("observation_state"), "READY")
+        self.assertTrue(state.get("broker_fetch_succeeded"))
+        self.assertEqual(state.get("confirmed_open_position_count"), 1)
+        self.assertIsNone(state.get("first_phase_blocker"))
+
+        # Metadata must survive the atomic save/load cycle
+        loaded = engine._load_loss_containment_state()
+        self.assertEqual(loaded.get("observation_state"), "READY")
+        self.assertTrue(loaded.get("broker_fetch_succeeded"))
+        self.assertEqual(loaded.get("confirmed_open_position_count"), 1)
+        self.assertIsNone(loaded.get("first_phase_blocker"))
+
 
 if __name__ == "__main__":
     unittest.main()
