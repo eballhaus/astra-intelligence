@@ -9,6 +9,9 @@ from engine.astra_position_evidence_completeness_v1 import (
     save_position_evidence_completeness_v1,
 )
 from engine.astra_unified_position_advisory_v1 import (
+    build_position_exit_readiness_v1,
+    load_position_exit_readiness_v1,
+    save_position_exit_readiness_v1,
     build_unified_position_advisory_v1,
     load_unified_position_advisory_v1,
     save_unified_position_advisory_v1,
@@ -43,7 +46,10 @@ class PositionEvidenceAndAdvisoryTests(unittest.TestCase):
     def test_advisory_has_one_row_per_broker_position_and_never_executes(self):
         evidence = build_position_evidence_completeness_v1(self.positions, self.recovery)
         triage = {"positions": [{"symbol": "AAA", "recommendation": "WATCH", "confidence": "LOW", "first_causal_blocker": "FMP_CONTEXT_UNAVAILABLE", "advisory_only": True}]}
-        advisory = build_unified_position_advisory_v1(self.positions, evidence=evidence, triage=triage)
+        readiness = build_position_exit_readiness_v1(self.positions, evidence=evidence, triage=triage)
+        advisory = build_unified_position_advisory_v1(self.positions, evidence=evidence, triage=triage, exit_readiness=readiness)
+        self.assertEqual(readiness["positions_reviewed"], 2)
+        self.assertEqual(readiness["silent_drop_count"], 0)
         self.assertEqual(advisory["advisory_count"], 2)
         self.assertEqual(advisory["silent_drop_count"], 0)
         self.assertTrue(all(row["execution_authority"] == "DISABLED" for row in advisory["positions"]))
@@ -54,8 +60,10 @@ class PositionEvidenceAndAdvisoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             save_position_evidence_completeness_v1(evidence, directory)
             save_unified_position_advisory_v1(advisory, directory)
+            save_position_exit_readiness_v1(build_position_exit_readiness_v1(self.positions, evidence=evidence, triage={}), directory)
             self.assertEqual(load_position_evidence_completeness_v1(directory)["positions_represented"], 2)
             self.assertEqual(load_unified_position_advisory_v1(directory)["advisory_count"], 2)
+            self.assertEqual(load_position_exit_readiness_v1(directory)["positions_reviewed"], 2)
 
 
 if __name__ == "__main__":

@@ -70483,6 +70483,7 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
     provider_telemetry = _read_json_file(os.path.join(STATE, "astra_provider_consumption_telemetry_v1.json"), default={})
     legacy_triage = _read_json_file(os.path.join(STATE, "astra_legacy_position_risk_triage_v1.json"), default={})
     position_evidence = _read_json_file(os.path.join(STATE, "astra_position_evidence_completeness_v1.json"), default={})
+    exit_readiness = _read_json_file(os.path.join(STATE, "astra_position_exit_readiness_v1.json"), default={})
     unified_advisory = _read_json_file(os.path.join(STATE, "astra_unified_position_advisory_v1.json"), default={})
     active = [dict(row) for row in (persisted.get("issues") or []) if isinstance(row, dict) and row.get("state") not in {"RESOLVED"}]
     cortex = cortex_truth_summary_v1({**arbitration, "contradictions": active}) if callable(cortex_truth_summary_v1) else {"truth_promotion_allowed": False}
@@ -70515,6 +70516,7 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
             "provider_consumption_summary": {key: provider_telemetry.get(key) for key in ("generated_at", "configured_but_unused_count", "successful_but_unconsumed_count", "provider_starvation_count", "budget_warning_count")},
             "legacy_position_risk_triage_summary": {key: legacy_triage.get(key) for key in ("legacy_position_count", "triaged_count", "insufficient_evidence_count", "FMP_evidence_used_count", "execution_authority")},
             "position_evidence_completeness_summary": {key: position_evidence.get(key) for key in ("broker_position_count", "positions_represented", "fresh_quote_count", "fresh_completed_bar_count", "first_missing_producer_count")},
+            "position_exit_readiness_summary": {key: exit_readiness.get(key) for key in ("broker_position_count", "positions_reviewed", "silent_drop_count", "execution_authority")},
             "unified_position_advisory_summary": {key: unified_advisory.get(key) for key in ("broker_position_count", "advisory_count", "silent_drop_count", "execution_authority")},
             "remaining_blockers": ["open truth-arbitration contradiction requires sustained worker verification"] if active else [],
             "recommended_repairs": ["retain canonical SQLite open-position reader; do not use broad adapters as active state"],
@@ -70650,6 +70652,14 @@ def _astra_position_evidence_completeness_v1_payload() -> dict:
 def _astra_unified_position_advisory_v1_payload() -> dict:
     payload = _read_json_file(os.path.join(STATE, "astra_unified_position_advisory_v1.json"), default={})
     return {"endpoint": "/api/astra_unified_position_advisory_v1", "status": "PASS" if payload else "AWAITING_WORKER_ADVISORY",
+            **dict(payload or {}), "provider_calls_from_get": 0, "broker_actions_from_get": 0,
+            "llm_calls_from_get": 0, "state_mutations_from_get": 0, "get_route_read_only": True,
+            **_safety_flags_v1()}
+
+
+def _astra_position_exit_readiness_v1_payload() -> dict:
+    payload = _read_json_file(os.path.join(STATE, "astra_position_exit_readiness_v1.json"), default={})
+    return {"endpoint": "/api/astra_position_exit_readiness_v1", "status": "PASS" if payload else "AWAITING_WORKER_EXIT_READINESS",
             **dict(payload or {}), "provider_calls_from_get": 0, "broker_actions_from_get": 0,
             "llm_calls_from_get": 0, "state_mutations_from_get": 0, "get_route_read_only": True,
             **_safety_flags_v1()}
@@ -74564,6 +74574,11 @@ def astra_position_evidence_completeness_v1():
 @router.get("/api/astra_unified_position_advisory_v1")
 def astra_unified_position_advisory_v1():
     return _astra_unified_position_advisory_v1_payload()
+
+
+@router.get("/api/astra_position_exit_readiness_v1")
+def astra_position_exit_readiness_v1():
+    return _astra_position_exit_readiness_v1_payload()
 
 
 @router.get("/api/crypto_lane_paper_readiness_v1")

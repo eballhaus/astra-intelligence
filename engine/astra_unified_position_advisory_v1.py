@@ -103,11 +103,13 @@ def _atomic_write(path: Path, payload: Mapping[str, Any]) -> None:
 def build_unified_position_advisory_v1(
     broker_positions: Mapping[str, Mapping[str, Any]], *, evidence: Mapping[str, Any], triage: Mapping[str, Any],
     loss_containment: Mapping[str, Any] | None = None, profit_protection: Mapping[str, Any] | None = None,
+    exit_readiness: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     evidence_by_symbol = _index(list(evidence.get("positions") or []))
     triage_by_symbol = _index(list(triage.get("positions") or []))
     loss_by_symbol = _index(list((loss_containment or {}).get("decisions", {}).values()))
     profit_by_symbol = _index(list((profit_protection or {}).get("decisions", {}).values()))
+    exit_by_symbol = _index(list((exit_readiness or {}).get("positions") or []))
     rows = []
     for symbol in sorted(broker_positions or {}):
         evidence_row, triage_row = evidence_by_symbol.get(symbol, {}), triage_by_symbol.get(symbol, {})
@@ -117,8 +119,9 @@ def build_unified_position_advisory_v1(
             loss, profit, ownership="UNRESOLVED_FAIL_CLOSED" if evidence_row.get("canonical_lane_status") != "RESOLVED" and not legacy else "KNOWN",
             stale_evidence=evidence_row.get("quote_status") == "STALE" or evidence_row.get("completed_bar_status") == "STALE",
         )
-        recommendation = _text(triage_row.get("recommendation")) or _text(policy.get("canonical_recommendation")) or "WATCH"
-        blocker = _text(triage_row.get("first_causal_blocker")) or _text(evidence_row.get("first_causal_blocker")) or _text((loss.get("exact_blockers") or [""])[0]) or "EVIDENCE_UNAVAILABLE"
+        exit_row = exit_by_symbol.get(symbol, {})
+        recommendation = _text(exit_row.get("recommendation")) or _text(triage_row.get("recommendation")) or _text(policy.get("canonical_recommendation")) or "WATCH"
+        blocker = _text(exit_row.get("first_causal_blocker")) or _text(triage_row.get("first_causal_blocker")) or _text(evidence_row.get("first_causal_blocker")) or _text((loss.get("exact_blockers") or [""])[0]) or "EVIDENCE_UNAVAILABLE"
         confidence = _text(triage_row.get("confidence")) or _text(loss.get("confidence")) or _text(evidence_row.get("evidence_confidence")) or "LOW"
         rows.append({
             "symbol": symbol, "final_advisory": recommendation, "confidence": confidence,
@@ -126,13 +129,61 @@ def build_unified_position_advisory_v1(
             "primary_reason": _text(triage_row.get("plain_english_reason")) or _text(loss.get("human_readable_reason")) or blocker,
             "supporting_reasons": [blocker], "evidence_used": triage_row.get("evidence_used") or {},
             "evidence_missing": triage_row.get("evidence_missing") or ([blocker] if blocker != "EVIDENCE_CURRENT" else []),
-            "first_causal_blocker": blocker, "source_components": [name for name, row in (("position_evidence_completeness_v1", evidence_row), ("legacy_position_risk_triage_v1", triage_row), ("loss_containment", loss), ("profit_protection", profit)) if row],
+            "first_causal_blocker": blocker, "source_components": [name for name, row in (("position_evidence_completeness_v1", evidence_row), ("legacy_position_risk_triage_v1", triage_row), ("exit_readiness", exit_row), ("loss_containment", loss), ("profit_protection", profit)) if row],
             "legacy_position": legacy, "loss_containment_state": loss.get("canonical_recommendation"), "profit_protection_state": profit.get("canonical_recommendation") or profit.get("profit_state"),
             "generated_at": _now(), "execution_authority": "DISABLED", "advisory_only": True,
         })
     return {"schema_version": SCHEMA_VERSION, "generated_at": _now(), "broker_position_count": len(broker_positions or {}), "advisory_count": len(rows), "positions": rows,
             "silent_drop_count": max(0, len(broker_positions or {}) - len(rows)), "execution_authority": "DISABLED", "advisory_only": True,
             "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "state_mutations_from_get": 0, "paper_only_preserved": True}
+
+
+def build_position_exit_readiness_v1(
+    broker_positions: Mapping[str, Mapping[str, Any]], *, evidence: Mapping[str, Any], triage: Mapping[str, Any],
+    loss_containment: Mapping[str, Any] | None = None, profit_protection: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Persist the existing advisory policy inputs for every broker position.
+
+    This is not an order authorization state machine.  It records whether the
+    existing human-review recommendation has current evidence and keeps the
+    first missing producer visible to the later unified advisory.
+    """
+    evidence_by_symbol = _index(list(evidence.get("positions") or []))
+    triage_by_symbol = _index(list(triage.get("positions") or []))
+    loss_by_symbol = _index(list((loss_containment or {}).get("decisions", {}).values()))
+    profit_by_symbol = _index(list((profit_protection or {}).get("decisions", {}).values()))
+    rows = []
+    for symbol in sorted(broker_positions or {}):
+        item, legacy, loss, profit = evidence_by_symbol.get(symbol, {}), triage_by_symbol.get(symbol, {}), loss_by_symbol.get(symbol, {}), profit_by_symbol.get(symbol, {})
+        policy = unified_position_recommendation(loss, profit, ownership="KNOWN", stale_evidence=item.get("quote_status") == "STALE" or item.get("completed_bar_status") == "STALE")
+        recommendation = _text(legacy.get("recommendation")) or _text(policy.get("canonical_recommendation")) or "WATCH"
+        blocker = _text(legacy.get("first_causal_blocker")) or _text(item.get("first_causal_blocker")) or "EVIDENCE_UNAVAILABLE"
+        rows.append({
+            "symbol": symbol, "exit_readiness_state": "EVIDENCE_INCOMPLETE" if blocker != "EVIDENCE_CURRENT" else "ADVISORY_READY",
+            "recommendation": recommendation, "confidence": _text(legacy.get("confidence")) or _text(policy.get("confidence")) or "LOW",
+            "urgency": "HIGH" if recommendation in {"EXIT_REVIEW", "THESIS_BROKEN", "PROTECT_CAPITAL"} else "MEDIUM" if recommendation == "WATCH" else "LOW",
+            "forward_value_state": _text(item.get("opportunity_cost_status")) or "MISSING", "risk_state": _text(loss.get("canonical_recommendation")) or "UNAVAILABLE",
+            "profit_protection_state": _text(profit.get("canonical_recommendation") or profit.get("profit_state")) or "UNAVAILABLE",
+            "legacy_triage_state": _text(legacy.get("recommendation")) or "NOT_APPLICABLE", "opportunity_cost_state": _text(item.get("opportunity_cost_status")) or "MISSING",
+            "replacement_state": _text(item.get("replacement_candidate_status")) or "MISSING", "evidence_used": legacy.get("evidence_used") or {},
+            "evidence_missing": legacy.get("evidence_missing") or ([blocker] if blocker != "EVIDENCE_CURRENT" else []), "first_causal_blocker": blocker,
+            "plain_english_reason": _text(legacy.get("plain_english_reason")) or blocker.lower().replace("_", " "),
+            "execution_authority": "DISABLED", "advisory_only": True,
+        })
+    return {"schema_version": "astra_position_exit_readiness_v1", "generated_at": _now(), "broker_position_count": len(broker_positions or {}),
+            "positions_reviewed": len(rows), "positions": rows, "silent_drop_count": max(0, len(broker_positions or {}) - len(rows)),
+            "execution_authority": "DISABLED", "advisory_only": True, "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0,
+            "state_mutations_from_get": 0, "paper_only_preserved": True}
+
+
+def save_position_exit_readiness_v1(payload: Mapping[str, Any], state_dir: str | Path = "state") -> None:
+    _atomic_write(Path(state_dir) / "astra_position_exit_readiness_v1.json", payload)
+
+
+def load_position_exit_readiness_v1(state_dir: str | Path = "state") -> dict[str, Any]:
+    try: payload = json.loads((Path(state_dir) / "astra_position_exit_readiness_v1.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError): return {}
+    return dict(payload) if isinstance(payload, dict) else {}
 
 
 def save_unified_position_advisory_v1(payload: Mapping[str, Any], state_dir: str | Path = "state") -> None:

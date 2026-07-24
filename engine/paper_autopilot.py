@@ -93,6 +93,8 @@ from engine.astra_position_evidence_completeness_v1 import (
 )
 from engine.astra_unified_position_advisory_v1 import (
     build_unified_position_advisory_v1,
+    build_position_exit_readiness_v1,
+    save_position_exit_readiness_v1,
     save_unified_position_advisory_v1,
 )
 from engine.astra_provider_consumption_telemetry_v1 import (
@@ -1435,6 +1437,9 @@ class PaperAutopilotEngine:
         )
         self.unified_position_advisory_state_path = str(
             os.path.join(os.path.dirname(self.state_path) or "state", "astra_unified_position_advisory_v1.json")
+        )
+        self.position_exit_readiness_state_path = str(
+            os.path.join(os.path.dirname(self.state_path) or "state", "astra_position_exit_readiness_v1.json")
         )
         self.position_lane_horizon_recovery = AstraPositionLaneHorizonRecoveryV1(
             os.path.dirname(self.state_path) or "state"
@@ -7393,7 +7398,7 @@ class PaperAutopilotEngine:
         *,
         loss_containment: Mapping[str, Any] | None = None,
         profit_protection: Mapping[str, Any] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
         """Project worker-cached evidence into complete, non-executing advisories.
 
         This is intentionally downstream of broker truth and existing bounded
@@ -7409,16 +7414,26 @@ class PaperAutopilotEngine:
         save_position_evidence_completeness_v1(evidence, os.path.dirname(self.position_evidence_completeness_state_path) or "state")
         self._runtime_state["position_evidence_completeness_v1"] = evidence
         triage = self._legacy_position_risk_triage_phase(broker_position_by_symbol, position_evidence=evidence)
-        advisory = build_unified_position_advisory_v1(
+        exit_readiness = build_position_exit_readiness_v1(
             broker_position_by_symbol,
             evidence=evidence,
             triage=triage,
             loss_containment=loss_containment or self._runtime_state.get("loss_containment_state_v1") or {},
             profit_protection=profit_protection or self._runtime_state.get("profit_protection_state_v1") or {},
         )
+        save_position_exit_readiness_v1(exit_readiness, os.path.dirname(self.position_exit_readiness_state_path) or "state")
+        self._runtime_state["position_exit_readiness_v1"] = exit_readiness
+        advisory = build_unified_position_advisory_v1(
+            broker_position_by_symbol,
+            evidence=evidence,
+            triage=triage,
+            loss_containment=loss_containment or self._runtime_state.get("loss_containment_state_v1") or {},
+            profit_protection=profit_protection or self._runtime_state.get("profit_protection_state_v1") or {},
+            exit_readiness=exit_readiness,
+        )
         save_unified_position_advisory_v1(advisory, os.path.dirname(self.unified_position_advisory_state_path) or "state")
         self._runtime_state["unified_position_advisory_v1"] = advisory
-        return evidence, triage, advisory
+        return evidence, triage, exit_readiness, advisory
 
     def _legacy_position_risk_triage_phase(
         self,
@@ -7902,7 +7917,7 @@ class PaperAutopilotEngine:
                 loss_containment_review = {"observation_state": "FAILED", "error": str(exc)[:180]}
             try:
                 fmp_production_verification = self._run_fmp_production_verification_v1(broker_positions)
-                position_evidence_completeness, legacy_position_risk_triage, unified_position_advisory = self._position_evidence_and_advisory_phase(
+                position_evidence_completeness, legacy_position_risk_triage, position_exit_readiness, unified_position_advisory = self._position_evidence_and_advisory_phase(
                     broker_positions,
                     loss_containment=loss_containment_review,
                 )
@@ -7912,6 +7927,7 @@ class PaperAutopilotEngine:
                 legacy_position_risk_triage = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 provider_consumption_telemetry = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 position_evidence_completeness = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                position_exit_readiness = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 unified_position_advisory = {"observation_state": "FAILED", "error": str(exc)[:180]}
             safety = self._alpaca_safety_snapshot()
             out = {
@@ -7925,6 +7941,7 @@ class PaperAutopilotEngine:
                 "loss_containment_review_v1": loss_containment_review,
                 "legacy_position_risk_triage_v1": legacy_position_risk_triage,
                 "position_evidence_completeness_v1": position_evidence_completeness,
+                "position_exit_readiness_v1": position_exit_readiness,
                 "unified_position_advisory_v1": unified_position_advisory,
                 "provider_consumption_telemetry_v1": provider_consumption_telemetry,
                 "fmp_production_verification_v1": fmp_production_verification,
@@ -7948,6 +7965,7 @@ class PaperAutopilotEngine:
                 "loss_containment_review_v1": loss_containment_review,
                 "legacy_position_risk_triage_v1": legacy_position_risk_triage,
                 "position_evidence_completeness_v1": position_evidence_completeness,
+                "position_exit_readiness_v1": position_exit_readiness,
                 "unified_position_advisory_v1": unified_position_advisory,
                 "provider_consumption_telemetry_v1": provider_consumption_telemetry,
                 "fmp_production_verification_v1": fmp_production_verification,
@@ -8028,7 +8046,7 @@ class PaperAutopilotEngine:
                     self._note_worker_progress("fmp_production_verification")
                     fmp_production_verification_partial = self._run_fmp_production_verification_v1(broker_position_by_symbol)
                     self._note_worker_progress("legacy_position_risk_triage")
-                    position_evidence_completeness_partial, legacy_position_risk_triage_partial, unified_position_advisory_partial = self._position_evidence_and_advisory_phase(
+                    position_evidence_completeness_partial, legacy_position_risk_triage_partial, position_exit_readiness_partial, unified_position_advisory_partial = self._position_evidence_and_advisory_phase(
                         broker_position_by_symbol,
                         loss_containment=loss_containment_review_partial,
                         profit_protection=profit_protection_review_partial,
@@ -8039,6 +8057,7 @@ class PaperAutopilotEngine:
                     legacy_position_risk_triage_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
                     provider_consumption_telemetry_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
                     position_evidence_completeness_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                    position_exit_readiness_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
                     unified_position_advisory_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 # Update peak memory from broker snapshot
                 peak_memory_update: dict[str, Any] = {}
@@ -8222,6 +8241,7 @@ class PaperAutopilotEngine:
                     "profit_protection_review_v1": profit_protection_review_partial,
                     "legacy_position_risk_triage_v1": legacy_position_risk_triage_partial,
                     "position_evidence_completeness_v1": position_evidence_completeness_partial,
+                    "position_exit_readiness_v1": position_exit_readiness_partial,
                     "unified_position_advisory_v1": unified_position_advisory_partial,
                     "provider_consumption_telemetry_v1": provider_consumption_telemetry_partial,
                     "fmp_production_verification_v1": fmp_production_verification_partial,
@@ -8244,6 +8264,7 @@ class PaperAutopilotEngine:
                     "profit_protection_review_v1": profit_protection_review_partial,
                     "legacy_position_risk_triage_v1": legacy_position_risk_triage_partial,
                     "position_evidence_completeness_v1": position_evidence_completeness_partial,
+                    "position_exit_readiness_v1": position_exit_readiness_partial,
                     "unified_position_advisory_v1": unified_position_advisory_partial,
                     "provider_consumption_telemetry_v1": provider_consumption_telemetry_partial,
                     "fmp_production_verification_v1": fmp_production_verification_partial,
@@ -8336,7 +8357,7 @@ class PaperAutopilotEngine:
                     broker_position_by_symbol,
                 )
                 self._note_worker_progress("legacy_position_risk_triage")
-                position_evidence_completeness, legacy_position_risk_triage, unified_position_advisory = self._position_evidence_and_advisory_phase(
+                position_evidence_completeness, legacy_position_risk_triage, position_exit_readiness, unified_position_advisory = self._position_evidence_and_advisory_phase(
                     broker_position_by_symbol,
                     loss_containment=loss_containment_review,
                     profit_protection=profit_protection_review,
@@ -8349,6 +8370,7 @@ class PaperAutopilotEngine:
                 legacy_position_risk_triage = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 provider_consumption_telemetry = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 position_evidence_completeness = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                position_exit_readiness = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 unified_position_advisory = {"observation_state": "FAILED", "error": str(exc)[:180]}
             # Market evidence is a restart-stable worker product.  Persist it
             # before the broader candidate scan, which may take longer than a
@@ -9163,6 +9185,7 @@ class PaperAutopilotEngine:
                 "profit_protection_review_v1": dict(profit_protection_review or {}),
                 "legacy_position_risk_triage_v1": dict(legacy_position_risk_triage or {}),
                 "position_evidence_completeness_v1": dict(position_evidence_completeness or {}),
+                "position_exit_readiness_v1": dict(position_exit_readiness or {}),
                 "unified_position_advisory_v1": dict(unified_position_advisory or {}),
                 "provider_consumption_telemetry_v1": dict(provider_consumption_telemetry or {}),
                 "fmp_production_verification_v1": dict(fmp_production_verification or {}),
@@ -9257,6 +9280,7 @@ class PaperAutopilotEngine:
                 "profit_protection_review_v1": dict(profit_protection_review or {}),
                 "legacy_position_risk_triage_v1": dict(legacy_position_risk_triage or {}),
                 "position_evidence_completeness_v1": dict(position_evidence_completeness or {}),
+                "position_exit_readiness_v1": dict(position_exit_readiness or {}),
                 "unified_position_advisory_v1": dict(unified_position_advisory or {}),
                 "provider_consumption_telemetry_v1": dict(provider_consumption_telemetry or {}),
                 "fmp_production_verification_v1": dict(fmp_production_verification or {}),
