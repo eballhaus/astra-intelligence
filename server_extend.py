@@ -37016,6 +37016,8 @@ def _fmp_efficiency_record_event(event):
     row["provider_governor_allowed"] = bool(row.get("provider_governor_allowed", True))
     with _FMP_EFFICIENCY_LOCK:
         append_fmp_provider_event_v1(row, state_dir=STATE)
+        if str(row.get("event_phase") or "").upper() == "CONSUMPTION":
+            return
         manifest = _fmp_efficiency_manifest_load()
         manifest["enabled"] = True
         manifest["total_fmp_calls_tracked"] = int(_to_float(manifest.get("total_fmp_calls_tracked"), 0.0)) + 1
@@ -37407,6 +37409,16 @@ def _apply_controlled_fmp_enrichment_v1(payload):
         quote_enrich = _fmp_small_endpoint_request("quote", sym, cycle_state, "candidate_enrichment_quote")
         profile_enrich = _fmp_small_endpoint_request("profile", sym, cycle_state, "candidate_enrichment_profile")
         by_symbol_enrichment[sym] = {"quote": quote_enrich, "profile": profile_enrich}
+        for family, enrichment in (("quote", quote_enrich), ("company_profile", profile_enrich)):
+            if not bool(enrichment.get("ok") or enrichment.get("cache_hit")):
+                continue
+            _fmp_efficiency_record_event({
+                "event_phase": "CONSUMPTION", "endpoint_family": family, "symbol": sym,
+                "assigned": True, "consumed": True, "consumer": "candidate_ranking_fmp_enrichment_v1",
+                "consumer_record_id": f"candidate-enrichment:{sym}", "evidence_at": _now_utc_iso(),
+                "caller_context": "top_buys_fmp_enrichment_v1", "api_calls_delta": 0,
+                "bandwidth_delta": 0, "bytes_actual_if_available": 0,
+            })
     def _apply_row(row):
         r = dict(row or {})
         sym = str(r.get("symbol") or "").upper().strip()

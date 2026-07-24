@@ -112,6 +112,17 @@ def build_position_evidence_completeness_v1(
         fmp = dict(fmp_by_symbol.get(symbol) or {})
         auxiliary = dict(fmp.get("auxiliary_context") or {})
         quote_status, quote_age = _status(quote, timestamp="quote_timestamp", fresh_seconds=90, aging_seconds=15 * 60)
+        fmp_quote = dict(auxiliary.get("quote") or {})
+        fmp_quote_status, fmp_quote_age = _status(fmp_quote, timestamp="response_at", fresh_seconds=90, aging_seconds=15 * 60)
+        # FMP is a bounded fallback.  It may enrich a stale/missing broker
+        # quote, but can never replace a fresh canonical broker quote.
+        if quote_status in {"MISSING", "STALE", "PRODUCER_FAILED", "EXTERNALLY_UNAVAILABLE"} and fmp_quote_status in {"FRESH", "AGING"}:
+            quote = {
+                "provider": "FMP", "response_state": "SUCCESS", "freshness_state": fmp_quote.get("freshness_state"),
+                "quote_timestamp": fmp_quote.get("response_at"), "received_at": fmp_quote.get("response_at"),
+                **dict(fmp_quote.get("normalized_fields") or {}),
+            }
+            quote_status, quote_age = fmp_quote_status, fmp_quote_age
         bar_status, bar_age = _status(bars, timestamp="last_bar_at", fresh_seconds=6 * 60 * 60, aging_seconds=2 * 24 * 60 * 60)
         fmp_status, _fmp_age = _status(fmp, timestamp="response_at", fresh_seconds=6 * 60 * 60, aging_seconds=7 * 24 * 60 * 60)
         earnings_status, _earnings_age = _status(dict(auxiliary.get("earnings") or {}), timestamp="response_at", fresh_seconds=6 * 60 * 60, aging_seconds=7 * 24 * 60 * 60)

@@ -2753,6 +2753,7 @@ class PaperAutopilotEngine:
         event_specs = (
             ("earnings", "fetch_fmp_earnings_context", 6 * 60 * 60),
             ("news_catalyst", "fetch_fmp_news_context", 15 * 60),
+            ("quote", "get_quote", 90),
         )
         event_cursor = int(prior_activity.get("event_rotation_cursor") or 0) % len(event_specs)
         event_family, fetcher_name, event_max_age = event_specs[event_cursor]
@@ -2775,7 +2776,23 @@ class PaperAutopilotEngine:
                             continue
                     except (TypeError, ValueError):
                         pass
-                response = dict(event_fetcher(symbol) or {})
+                if event_family == "quote":
+                    quote = dict(event_fetcher(
+                        symbol, asset_type="stock", preferred_providers=["FMP"], cache_max_age_seconds=90,
+                    ) or {})
+                    quote_valid = bool(quote.get("valid_quote")) and str(quote.get("provider_used") or "").upper() == "FMP"
+                    response = {
+                        "provider": "FMP", "endpoint_family": "quote", "symbol": symbol,
+                        "requested_at": now_iso, "response_at": quote.get("quote_timestamp") or now_iso,
+                        "response_state": "SUCCESS" if quote_valid else "PROVIDER_UNAVAILABLE",
+                        "normalized_fields": {
+                            key: quote.get(key) for key in ("price", "bid", "ask", "volume", "quote_timestamp", "quote_age_seconds")
+                            if quote.get(key) is not None
+                        },
+                        "error_category": str(quote.get("data_unavailable_reason") or quote.get("rejection_reason") or ""),
+                    }
+                else:
+                    response = dict(event_fetcher(symbol) or {})
                 state = str(response.get("response_state") or "PROVIDER_ERROR").upper()
                 success = state == "SUCCESS" and bool(response.get("normalized_fields"))
                 auxiliary[event_family] = {
@@ -7532,9 +7549,10 @@ class PaperAutopilotEngine:
                 record.update({"consumer_acknowledged": True, "consumer": "legacy_position_risk_triage_v1", "consumer_record_id": f"legacy-triage:{symbol}", "consumed_at": _now_iso(), "acknowledgement_state": "CONSUMED_BY_LEGACY_POSITION_RISK_TRIAGE_V1"})
             auxiliary = dict(record.get("auxiliary_context") or {})
             evidence_row = next((dict(row) for row in evidence.get("positions") or [] if isinstance(row, Mapping) and str(row.get("symbol") or "").upper() == symbol), {})
-            for family, status_key in (("earnings", "earnings_status"), ("news_catalyst", "catalyst_status")):
+            for family, status_key in (("earnings", "earnings_status"), ("news_catalyst", "catalyst_status"), ("quote", "quote_status")):
                 event = dict(auxiliary.get(family) or {})
-                if event.get("normalized_fields") and evidence_row.get(status_key) in {"FRESH", "AGING"} and triage_row:
+                quote_consumed = family != "quote" or str(evidence_row.get("quote_source") or "").upper() == "FMP"
+                if event.get("normalized_fields") and evidence_row.get(status_key) in {"FRESH", "AGING"} and triage_row and quote_consumed:
                     event.update({"consumer_acknowledged": True, "consumer": "legacy_position_risk_triage_v1", "consumer_record_id": f"legacy-triage:{symbol}", "consumed_at": _now_iso(), "acknowledgement_state": "CONSUMED_BY_LEGACY_POSITION_RISK_TRIAGE_V1"})
                     auxiliary[family] = event
             if auxiliary:

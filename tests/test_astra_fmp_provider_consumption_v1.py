@@ -134,6 +134,18 @@ class FmpProviderConsumptionTests(unittest.TestCase):
             self.assertFalse(provider["telemetry_complete"])
             self.assertEqual(provider["endpoint_families"][0]["responses_assigned"], 0)
 
+    def test_candidate_consumption_acknowledgement_is_not_counted_as_network(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "fmp_efficiency_ledger_v1.jsonl")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({"timestamp": "2026-07-24T00:00:00Z", "endpoint_family": "quote", "ok": True, "useful_fields_count": 2, "bytes_actual_if_available": 42, "status_code": 200}) + "\n")
+                handle.write(json.dumps({"timestamp": "2026-07-24T00:00:01Z", "event_phase": "CONSUMPTION", "endpoint_family": "quote", "assigned": True, "consumed": True, "consumer": "candidate_ranking_fmp_enrichment_v1", "consumer_record_id": "candidate-enrichment:AAA"}) + "\n")
+            telemetry = build_provider_consumption_telemetry_v1(state_dir=directory, configured=True, key_fingerprint="deadbeef")
+            family = telemetry["providers"][0]["endpoint_families"][0]
+            self.assertEqual(family["network_sent"], 1)
+            self.assertEqual(family["responses_assigned"], 1)
+            self.assertEqual(family["responses_consumed"], 1)
+
     def test_success_without_measured_bytes_is_not_complete_telemetry(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "fmp_efficiency_ledger_v1.jsonl")

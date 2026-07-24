@@ -243,7 +243,20 @@ def build_provider_consumption_telemetry_v1(
 ) -> dict[str, Any]:
     """Summarize existing router ledger events without issuing provider calls."""
     root = Path(state_dir)
-    events = [row for row in _read_tail(root / FMP_EVENT_LEDGER_NAME) if _within_window(row, window_start)]
+    raw_events = [row for row in _read_tail(root / FMP_EVENT_LEDGER_NAME) if _within_window(row, window_start)]
+    # Consumption acknowledgements are ledgered beside their producer event so
+    # a candidate-enrichment response is not mistaken for an unconsumed quote.
+    ledger_consumers = [
+        {
+            "endpoint_family": _family(row), "symbol": row.get("symbol"),
+            "assigned": bool(row.get("assigned")), "assigned_at": row.get("assigned_at") or row.get("timestamp"),
+            "consumed": bool(row.get("consumed")), "consumed_at": row.get("consumed_at") or row.get("timestamp"),
+            "consumer": row.get("consumer") or "", "consumer_record_id": row.get("consumer_record_id") or "",
+            "evidence_at": row.get("evidence_at") or row.get("timestamp"),
+        }
+        for row in raw_events if str(row.get("event_phase") or "").upper() == "CONSUMPTION"
+    ]
+    events = [row for row in raw_events if str(row.get("event_phase") or "").upper() != "CONSUMPTION"]
     attempts = len(events)
     cache_hits = [row for row in events if bool(row.get("cache_hit"))]
     governor_blocked = [row for row in events if str(row.get("blocked_reason") or "").lower() in {"call_limit", "bandwidth_budget", "governor_blocked", "provider_cooldown_or_budget"}]
@@ -254,7 +267,7 @@ def build_provider_consumption_telemetry_v1(
     accepted = [row for row in successes if _number(row.get("useful_fields_count")) > 0]
     byte_missing = [row for row in successes if _number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta")) <= 0]
     bytes_received = int(sum(max(0.0, _number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta"))) for row in events))
-    consumer_rows = [
+    consumer_rows = ledger_consumers + [
         dict(row) for row in consumer_events
         if isinstance(row, Mapping) and row.get("consumer") and _consumer_event_within_window(row, window_start)
     ]
