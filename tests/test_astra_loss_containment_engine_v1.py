@@ -543,6 +543,59 @@ class IntegrationTests(unittest.TestCase):
         self.assertNotEqual(lc.get("broker_submission_allowed"), True)
         self.assertGreater(lc.get("positions_evaluated", 0), 0)
 
+    def test_broker_fetch_failed_does_not_use_stale_db_positions(self):
+        """When broker fetch fails, stale DB positions must not be evaluated."""
+        PaperAutopilotEngine = self._can_import_paper_autopilot()
+        engine = PaperAutopilotEngine(
+            db_path=self.db_path,
+            state_path=self.state_path,
+            enabled=False,
+        )
+        engine._ensure_schema()
+        # Insert a stale-looking position into the DB
+        with engine._connect() as conn:
+            conn.execute(
+                "INSERT INTO paper_positions (position_id, symbol, asset_type, status, quantity, "
+                "entry_price, entry_timestamp, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                ("d1", "AAPL", "stock", "OPEN", 10, 100.0,
+                 "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "2025-01-15T12:00:00Z"),
+            )
+            conn.commit()
+        result = engine._loss_containment_review_phase(
+            broker_fetch_succeeded=False,
+            max_positions=100,
+        )
+        # DB rows must not be evaluated as current positions
+        self.assertEqual(result.get("positions_evaluated", 0), 0)
+        self.assertFalse(result.get("execution_authorized", True))
+        self.assertEqual(len(result.get("position_decisions", [])), 0)
+
+    def test_broker_fetch_empty_overrides_stale_db(self):
+        """Successful empty broker result must clear stale DB positions."""
+        PaperAutopilotEngine = self._can_import_paper_autopilot()
+        engine = PaperAutopilotEngine(
+            db_path=self.db_path,
+            state_path=self.state_path,
+            enabled=False,
+        )
+        engine._ensure_schema()
+        with engine._connect() as conn:
+            conn.execute(
+                "INSERT INTO paper_positions (position_id, symbol, asset_type, status, quantity, "
+                "entry_price, entry_timestamp, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                ("d1", "AAPL", "stock", "OPEN", 10, 100.0,
+                 "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z", "2025-01-15T12:00:00Z"),
+            )
+            conn.commit()
+        result = engine._loss_containment_review_phase(
+            broker_position_by_symbol={},
+            broker_fetch_succeeded=True,
+            max_positions=100,
+        )
+        # With successful empty broker, stale DB rows must not be evaluated
+        self.assertEqual(result.get("positions_evaluated", 0), 0)
+        self.assertFalse(result.get("execution_authorized", True))
+
 
 if __name__ == "__main__":
     unittest.main()

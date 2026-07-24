@@ -6990,11 +6990,13 @@ class PaperAutopilotEngine:
         summaries, and durable shadow records. Execution is never authorized.
 
         Broker positions are authoritative for current open-position existence.
-        When broker snapshot is available and caller did not explicitly provide
-        rows, always build canonical rows from broker positions (authoritative),
-        regardless of DB state.
+        Three broker observation states:
+          True  + non-empty → authoritative positions
+          True  + empty     → authoritative empty (no open positions)
+          False             → broker truth unavailable, fail closed
 
         broker_fetch_succeeded: True if broker fetch completed (may be empty).
+        Explicitly False means broker truth is unavailable.
         """
         has_explicit_rows = open_rows is not None
         rows = list(open_rows or self._fetch_open_positions() or [])
@@ -7002,17 +7004,22 @@ class PaperAutopilotEngine:
         latest_prices = dict(latest_price_by_symbol or {})
         prior_state = self._load_loss_containment_state()
 
-        # Authoritative broker truth: When broker fetch succeeded (even if
-        # empty), use canonical snapshot. Broker positions define the
-        # authoritative current open-position set.
+        # When broker fetch explicitly failed, broker truth is unavailable.
+        # Do not use stale DB rows as current broker positions.
+        broker_failed = broker_fetch_succeeded is False
         broker_available = broker_fetch_succeeded or bool(broker_positions)
-        if not has_explicit_rows and broker_available:
-            canonical_snapshot = build_canonical_position_snapshot(broker_positions)
-            broker_rows = snapshot_to_loss_containment_rows(canonical_snapshot)
-            if broker_rows:
-                rows = broker_rows  # Broker truth overrides any stale DB rows
-                # Stale decision eviction: Only retain prior decisions for
-                # positions that exist in current broker snapshot.
+
+        if not has_explicit_rows:
+            if broker_failed:
+                # Broker truth unavailable — clear rows to prevent stale DB fallback.
+                rows = []
+            elif broker_available:
+                # Authoritative broker truth: build canonical snapshot.
+                # Whether broker has positions or empty, broker result is authoritative.
+                canonical_snapshot = build_canonical_position_snapshot(broker_positions)
+                broker_rows = snapshot_to_loss_containment_rows(canonical_snapshot)
+                rows = broker_rows  # Broker truth overrides (even if empty)
+                # Stale decision eviction
                 current_symbols = set(broker_positions.keys())
                 prior_decisions = dict(prior_state.get("decisions") or {})
                 filtered_decisions = {
@@ -7076,12 +7083,17 @@ class PaperAutopilotEngine:
         broker_positions = dict(broker_position_by_symbol or {})
         prior_state = self._load_profit_protection_state()
 
+        # Same broker-truth logic as loss containment
+        broker_failed = broker_fetch_succeeded is False
         broker_available = broker_fetch_succeeded or bool(broker_positions)
-        if not has_explicit_rows and broker_available:
-            canonical_snapshot = build_canonical_position_snapshot(broker_positions)
-            broker_rows = snapshot_to_loss_containment_rows(canonical_snapshot)
-            if broker_rows:
-                rows = broker_rows  # Broker truth overrides any stale DB rows
+
+        if not has_explicit_rows:
+            if broker_failed:
+                rows = []
+            elif broker_available:
+                canonical_snapshot = build_canonical_position_snapshot(broker_positions)
+                broker_rows = snapshot_to_loss_containment_rows(canonical_snapshot)
+                rows = broker_rows  # Broker truth overrides (even if empty)
                 # Stale decision eviction for profit protection too
                 current_symbols = set(broker_positions.keys())
                 prior_decisions = dict(prior_state.get("decisions") or {})
