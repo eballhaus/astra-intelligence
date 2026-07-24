@@ -450,6 +450,31 @@ class ContinuousGovernanceV1:
                 "expired_day_deadline_requires_final_escalation",
             )
         capacity = _dict(runtime_state.get("last_evidence_capacity_snapshot"))
+        recovery = _dict(runtime_state.get("position_lane_horizon_recovery_v1"))
+        if recovery:
+            for invariant_id, key, blocker in (
+                ("POSITION_LANE_RECOVERY_GAP", "unresolved_lane_count", "CANONICAL_LANE_EVIDENCE_UNAVAILABLE"),
+                ("POSITION_HORIZON_RECOVERY_GAP", "unresolved_horizon_count", "CANONICAL_HORIZON_EVIDENCE_UNAVAILABLE"),
+                ("POSITION_LANE_CONFLICT", "lane_conflict_count", "CANONICAL_LANE_CONFLICT"),
+                ("POSITION_HORIZON_CONFLICT", "horizon_conflict_count", "CANONICAL_HORIZON_CONFLICT"),
+            ):
+                count = _integer(recovery.get(key), 0)
+                conflict = "CONFLICT" in invariant_id
+                invariants.append({
+                    "invariant_id": invariant_id,
+                    "owner": "astra_position_lane_horizon_recovery_v1",
+                    "dependencies": ["current broker position snapshot", "canonical Astra entry evidence"],
+                    "state": "PASS" if count == 0 else "WARN",
+                    "observed_value": {"count": count, "position_count": _integer(recovery.get("position_count"), 0)},
+                    "expected_value": 0,
+                    "first_failed_at": None if count == 0 else _now(),
+                    "last_checked_at": _now(),
+                    "failure_count": 0 if count == 0 else 1,
+                    "severity": "INFO" if count == 0 else "HIGH" if conflict else "WARN",
+                    "repairability": "DIAGNOSTIC",
+                    "exact_blocker": None if count == 0 else blocker,
+                    "allowed_remediations": ["REBUILD_RECOVERY_LEDGER_FROM_EXISTING_CANONICAL_EVIDENCE"] if not conflict else [],
+                })
         swing_capacity = _dict(_dict(capacity.get("lanes")).get("swing"))
         if swing_capacity:
             active_remaining = _integer(capacity.get("active_strategy_slot_capacity_remaining"), -1)

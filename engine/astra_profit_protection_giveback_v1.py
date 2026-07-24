@@ -249,14 +249,17 @@ def _resolve_position_inputs(
         pos.get("position_id") or pos.get("asset_id") or broker.get("id") or broker.get("asset_id") or symbol
     )
 
+    # A recovery-aware caller owns lane selection.  Do not infer a lane from
+    # asset class or horizon when the canonical entry evidence is unavailable.
+    recovery_present = "lane_recovery_status" in pos
     lane = _lane(pos.get("lane_id"))
-    if not lane:
+    if not lane and not recovery_present:
         asset_class = _text(
             pos.get("asset_class") or pos.get("asset_type") or broker.get("asset_class") or broker.get("asset_type")
         ).lower()
         if asset_class in {"crypto", "cryptocurrency"}:
             lane = "CRYPTO"
-    if not lane:
+    if not lane and not recovery_present:
         horizon = _text(
             pos.get("paper_entry_horizon_style")
             or pos.get("trade_horizon_style")
@@ -352,6 +355,13 @@ def _resolve_position_inputs(
         "price_timestamp": price_timestamp,
         "holding_minutes": holding_minutes,
         "time_since_peak_minutes": time_since_peak_minutes,
+        "horizon": _text(pos.get("paper_entry_horizon_style") or pos.get("horizon")),
+        "lane_recovery_status": _text(pos.get("lane_recovery_status")),
+        "horizon_recovery_status": _text(pos.get("horizon_recovery_status")),
+        "lane_source": _text(pos.get("lane_source")),
+        "horizon_source": _text(pos.get("horizon_source")),
+        "recovery_method": _text(pos.get("recovery_method")),
+        "recovery_exact_blockers": list(pos.get("recovery_exact_blockers") or []),
     }
 
 
@@ -367,11 +377,17 @@ def _validate_inputs(
         blockers.append("MISSING_SYMBOL")
 
     lane = inputs.get("lane")
+    recovery_present = bool(inputs.get("lane_recovery_status"))
     if lane:
         if lane not in LANE_GIVEBACK_BANDS:
             blockers.append(f"UNKNOWN_LANE:{lane}")
+    elif recovery_present:
+        blockers.extend(str(item) for item in inputs.get("recovery_exact_blockers") or [] if str(item))
     else:
         blockers.append("MISSING_LANE")
+    if recovery_present and inputs.get("horizon_recovery_status") != "RESOLVED":
+        blockers.extend(str(item) for item in inputs.get("recovery_exact_blockers") or [] if "HORIZON" in str(item))
+    blockers = list(dict.fromkeys(blockers))
 
     if inputs.get("entry_price", 0.0) <= 0.0:
         blockers.append("MISSING_OR_INVALID_ENTRY_PRICE")
@@ -790,7 +806,13 @@ def evaluate_position_profit_protection_v1(
         "schema_version": "astra_profit_protection_position_decision_v1",
         "position_id": inputs.get("position_id"),
         "symbol": inputs.get("symbol"),
-        "lane": lane,
+        "lane": lane or "UNAVAILABLE",
+        "horizon": inputs.get("horizon") or "UNAVAILABLE",
+        "lane_recovery_status": inputs.get("lane_recovery_status") or "UNAVAILABLE",
+        "horizon_recovery_status": inputs.get("horizon_recovery_status") or "UNAVAILABLE",
+        "lane_source": inputs.get("lane_source") or "UNAVAILABLE",
+        "horizon_source": inputs.get("horizon_source") or "UNAVAILABLE",
+        "recovery_method": inputs.get("recovery_method") or "NONE",
         "ownership_classification": ownership_classification,
         "legacy_current_classification": ownership_classification,
         "entry_price": inputs.get("entry_price"),
@@ -828,6 +850,8 @@ def evaluate_position_profit_protection_v1(
             "peak_gain_source": "canonical_peak_unrealized_gain" if metrics.get("peak_evidence_available") else "no_canonical_peak_evidence",
             "ownership_source": "provided_ownership" if ownership_dict else "not_provided",
             "loss_containment_source": "provided_loss_containment_decision" if loss_containment_decision else "not_provided",
+            "lane_recovery_source": inputs.get("lane_source") or "UNAVAILABLE",
+            "horizon_recovery_source": inputs.get("horizon_source") or "UNAVAILABLE",
         },
         "advisory_only": True,
         "execution_authorized": False,

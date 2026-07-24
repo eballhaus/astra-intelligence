@@ -656,11 +656,12 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(result.get("positions_evaluated"), 1)
         self.assertEqual(result["metrics"]["hard_boundary_breaches"], 0)
         decision = result["position_decisions"][0]
-        self.assertEqual(decision["threshold_state"], "HEALTHY")
+        self.assertEqual(decision["threshold_state"], "DATA_INCOMPLETE_FAIL_CLOSED")
+        self.assertIn("CANONICAL_LANE_EVIDENCE_UNAVAILABLE", decision["exact_blockers"])
         self.assertEqual(decision["symbol"], "AAPL")
 
-    def test_broker_rows_enriched_with_db_lane_metadata(self):
-        """Broker rows without lane/horizon must be enriched from DB rows for the same symbol."""
+    def test_symbol_only_db_metadata_is_not_used_for_broker_lane(self):
+        """A same-symbol historical DB row cannot assign a current broker lane."""
         PaperAutopilotEngine = self._can_import_paper_autopilot()
         engine = PaperAutopilotEngine(
             db_path=self.db_path,
@@ -706,11 +707,11 @@ class IntegrationTests(unittest.TestCase):
             max_positions=100,
         )
         self.assertEqual(result.get("positions_evaluated"), 1)
-        self.assertEqual(result["metrics"]["incomplete_data_fail_closed"], 0)
         self.assertEqual(result["metrics"]["hard_boundary_breaches"], 0)
         decision = result["position_decisions"][0]
-        self.assertEqual(decision["threshold_state"], "HEALTHY")
-        self.assertEqual(decision["lane"], "DAY")
+        self.assertEqual(decision["threshold_state"], "DATA_INCOMPLETE_FAIL_CLOSED")
+        self.assertEqual(decision["lane"], "UNAVAILABLE")
+        self.assertIn("CANONICAL_LANE_EVIDENCE_UNAVAILABLE", decision["exact_blockers"])
         self.assertEqual(decision["symbol"], "AAPL")
 
     def test_failed_broker_fetch_evicts_prior_decisions(self):

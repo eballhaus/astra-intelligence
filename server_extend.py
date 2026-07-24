@@ -759,6 +759,10 @@ except Exception:
     CryptoMarketDataCapabilityMatrixV1 = None  # type: ignore[assignment,misc]
     AstraMultilaneCompletionMatrixV1 = None  # type: ignore[assignment,misc]
 try:
+    from engine.astra_position_lane_horizon_recovery_v1 import AstraPositionLaneHorizonRecoveryV1
+except Exception:
+    AstraPositionLaneHorizonRecoveryV1 = None  # type: ignore[assignment,misc]
+try:
     from engine.trade_lifecycle_excursion_v2 import TradeLifecycleExcursionV2
 except Exception:
     class TradeLifecycleExcursionV2:  # type: ignore[override]
@@ -70471,6 +70475,7 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
     scanner = ContinuousSystemIntegrityScannerV1(STATE).snapshot() if ContinuousSystemIntegrityScannerV1 is not None else {"status": "UNAVAILABLE_FAIL_CLOSED"}
     matrix = CryptoMarketDataCapabilityMatrixV1(STATE).snapshot() if CryptoMarketDataCapabilityMatrixV1 is not None else {}
     completion = AstraMultilaneCompletionMatrixV1(STATE).snapshot() if AstraMultilaneCompletionMatrixV1 is not None else {}
+    recovery = AstraPositionLaneHorizonRecoveryV1(STATE).snapshot() if AstraPositionLaneHorizonRecoveryV1 is not None else {}
     active = [dict(row) for row in (persisted.get("issues") or []) if isinstance(row, dict) and row.get("state") not in {"RESOLVED"}]
     cortex = cortex_truth_summary_v1({**arbitration, "contradictions": active}) if callable(cortex_truth_summary_v1) else {"truth_promotion_allowed": False}
     compliance = [
@@ -70492,6 +70497,13 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
             "governance_issue_classifications": ([{"root_cause_id": row.get("root_cause_id"), "category": row.get("category"), "severity": row.get("severity"), "state": row.get("state"), "first_bad_handoff": row.get("first_bad_handoff")} for row in scanner_roots[:20]] + ([{"root_cause_id": "CURRENT_MULTILANE_MATRIX_WARNING", "category": "MONITORING_COVERAGE_GAP", "severity": "HIGH", "state": "OPEN", "first_bad_handoff": "multilane completion matrix -> sentinel/governance summary"}] if completion_warning and not any(str(row.get("category")) == "MONITORING_COVERAGE_GAP" for row in scanner_roots) else [])),
             "crypto_market_data_capability_matrix_summary": dict(matrix.get("summary") or {}),
             "multilane_completion_matrix_summary": {"status": completion.get("status"), "lanes": {lane: dict(row).get("first_blocker") for lane, row in (completion.get("lanes") or {}).items() if isinstance(row, dict)}},
+            "position_lane_horizon_recovery_summary": {key: recovery.get(key) for key in ("position_count", "resolved_lane_count", "unresolved_lane_count", "lane_conflict_count", "lane_ambiguous_count", "resolved_horizon_count", "unresolved_horizon_count", "horizon_conflict_count", "horizon_ambiguous_count", "conflict_count")},
+            "position_lane_horizon_invariants": {
+                "POSITION_LANE_RECOVERY_GAP": int(_to_float(recovery.get("unresolved_lane_count"), 0)) == 0,
+                "POSITION_HORIZON_RECOVERY_GAP": int(_to_float(recovery.get("unresolved_horizon_count"), 0)) == 0,
+                "POSITION_LANE_CONFLICT": int(_to_float(recovery.get("lane_conflict_count"), 0)) == 0,
+                "POSITION_HORIZON_CONFLICT": int(_to_float(recovery.get("horizon_conflict_count"), 0)) == 0,
+            },
             "remaining_blockers": ["open truth-arbitration contradiction requires sustained worker verification"] if active else [],
             "recommended_repairs": ["retain canonical SQLite open-position reader; do not use broad adapters as active state"],
             "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "state_mutations_from_get": 0,
@@ -70515,7 +70527,9 @@ def _astra_sentinel_integrity_v1_payload() -> dict:
         matrix = CryptoMarketDataCapabilityMatrixV1(STATE).snapshot() if CryptoMarketDataCapabilityMatrixV1 is not None else {}
         payload["crypto_market_data"]["capability_matrix_summary"] = dict(matrix.get("summary") or {})
         completion = AstraMultilaneCompletionMatrixV1(STATE).snapshot() if AstraMultilaneCompletionMatrixV1 is not None else {}
+        recovery = AstraPositionLaneHorizonRecoveryV1(STATE).snapshot() if AstraPositionLaneHorizonRecoveryV1 is not None else {}
         payload["multilane_completion_summary"] = {"status": completion.get("status"), "shared_root_causes": completion.get("shared_root_causes") or [], "lane_specific_root_causes": completion.get("lane_specific_root_causes") or []}
+        payload["position_lane_horizon_recovery_summary"] = {key: recovery.get(key) for key in ("position_count", "resolved_lane_count", "unresolved_lane_count", "resolved_horizon_count", "unresolved_horizon_count", "conflict_count")}
         if str(completion.get("status") or "").upper() == "WARNING" and str(payload.get("status") or "").upper() == "PASS":
             payload["status"] = "WARNING"
             payload["monitoring_coverage_warning"] = "multilane_completion_matrix_warning_not_yet_absorbed_by_worker_scan"
@@ -70542,6 +70556,20 @@ def _astra_multilane_completion_matrix_v1_payload() -> dict:
                 "provider_calls_from_get": 0, "broker_actions_from_get": 0, "llm_calls_from_get": 0,
                 "state_mutations_from_get": 0, "get_route_read_only": True, **_safety_flags_v1()}
     return AstraMultilaneCompletionMatrixV1(STATE).snapshot()
+
+
+def _astra_position_lane_horizon_recovery_v1_payload() -> dict:
+    """Read the worker-persisted recovery ledger; never read a broker on GET."""
+    if AstraPositionLaneHorizonRecoveryV1 is None:
+        return {"endpoint": "/api/astra_position_lane_horizon_recovery_v1", "status": "UNAVAILABLE_FAIL_CLOSED",
+                "provider_calls_from_get": 0, "broker_actions_from_get": 0, "llm_calls_from_get": 0,
+                "state_mutations_from_get": 0, "get_route_read_only": True, **_safety_flags_v1()}
+    payload = AstraPositionLaneHorizonRecoveryV1(STATE).snapshot()
+    if not payload:
+        payload = {"status": "AWAITING_WORKER_RECOVERY", "positions": []}
+    return {"endpoint": "/api/astra_position_lane_horizon_recovery_v1", **payload,
+            "provider_calls_from_get": 0, "broker_actions_from_get": 0, "llm_calls_from_get": 0,
+            "state_mutations_from_get": 0, "get_route_read_only": True, **_safety_flags_v1()}
 
 
 def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
@@ -74418,6 +74446,11 @@ def crypto_market_data_capability_matrix_v1():
 @router.get("/api/astra_multilane_completion_matrix_v1")
 def astra_multilane_completion_matrix_v1():
     return _astra_multilane_completion_matrix_v1_payload()
+
+
+@router.get("/api/astra_position_lane_horizon_recovery_v1")
+def astra_position_lane_horizon_recovery_v1():
+    return _astra_position_lane_horizon_recovery_v1_payload()
 
 
 @router.get("/api/crypto_lane_paper_readiness_v1")

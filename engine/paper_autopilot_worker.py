@@ -425,6 +425,7 @@ class PaperAutopilotWorker:
                 "crypto_ranking_snapshot": dict(getattr(self.autopilot, "_runtime_state", {}).get("crypto_rankings_snapshot_v1") or {}),
                 "crypto_market_data_matrix": crypto_matrix,
                 "multilane_completion_matrix": multilane_completion,
+                "position_lane_horizon_recovery": dict(runtime.get("position_lane_horizon_recovery_v1") or {}),
                 "canonical_capacity_fact": dict(lane.get("canonical_capacity_fact") or {}),
                 "targeted_reasons": targeted_reasons,
                 "get_side_effects": 0,

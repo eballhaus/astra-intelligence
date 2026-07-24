@@ -233,6 +233,16 @@ def snapshot_to_loss_containment_rows(snapshot: dict[str, Any]) -> list[dict[str
             "asset_type": pos.get("asset_class"),
             "lane_id": pos.get("lane") if pos.get("lane") != "UNAVAILABLE" else "",
             "paper_entry_horizon_style": pos.get("horizon") if pos.get("horizon") != "UNAVAILABLE" else "",
+            # Recovery is metadata-only.  Consumers must use these explicit
+            # states instead of deriving a lane from asset class or horizon.
+            "lane_recovery_status": pos.get("lane_recovery_status"),
+            "horizon_recovery_status": pos.get("horizon_recovery_status"),
+            "lane_source": pos.get("lane_source"),
+            "horizon_source": pos.get("horizon_source"),
+            "lane_recovery_source_id": pos.get("lane_recovery_source_id"),
+            "horizon_recovery_source_id": pos.get("horizon_recovery_source_id"),
+            "recovery_method": pos.get("recovery_method"),
+            "recovery_exact_blockers": list(pos.get("recovery_exact_blockers") or []),
             "qty": pos.get("quantity"),
             "quantity": pos.get("quantity"),
             "avg_entry_price": pos.get("average_entry_price"),

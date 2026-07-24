@@ -62,6 +62,11 @@ from engine.astra_canonical_position_snapshot_v1 import (
     snapshot_to_loss_containment_rows,
     snapshot_to_broker_position_by_symbol,
 )
+from engine.astra_position_lane_horizon_recovery_v1 import (
+    AstraPositionLaneHorizonRecoveryV1,
+    build_position_lane_horizon_recovery_v1,
+    enrich_canonical_position_snapshot_v1,
+)
 from engine.astra_position_peak_memory_v1 import (
     build_peak_memory,
     load_peak_memory,
@@ -1377,6 +1382,9 @@ class PaperAutopilotEngine:
         self.profit_protection_state_path = str(
             kwargs.get("profit_protection_state_path")
             or os.path.join(os.path.dirname(self.state_path) or "state", "profit_protection_state_v1.json")
+        )
+        self.position_lane_horizon_recovery = AstraPositionLaneHorizonRecoveryV1(
+            os.path.dirname(self.state_path) or "state"
         )
         self.get_crypto_candidate_rows_fn = kwargs.get("get_crypto_candidate_rows_fn")
         # Snapshot refresh is worker-owned; API readers only consume the
@@ -5003,10 +5011,31 @@ class PaperAutopilotEngine:
             "exit_readiness_state", "position_age_days", "last_review_at", "next_review_at",
             "review_state", "hold_exception_state",
         )
-        snapshot["position_rows_for_read_only_consumers"] = [
-            {key: row.get(key) for key in safe_position_fields if row.get(key) not in (None, "")}
-            for row in positions[:100]
-        ]
+        recovery_rows = {
+            _text(row.get("symbol")).upper(): dict(row)
+            for row in (self._runtime_state.get("position_lane_horizon_recovery_v1") or {}).get("positions", [])
+            if isinstance(row, dict) and _text(row.get("symbol"))
+        }
+        snapshot["position_rows_for_read_only_consumers"] = []
+        for row in positions[:100]:
+            safe_row = {key: row.get(key) for key in safe_position_fields if row.get(key) not in (None, "")}
+            recovered = recovery_rows.get(_text(row.get("symbol")).upper())
+            if recovered:
+                safe_row.update({
+                    "recovered_lane": recovered.get("lane"),
+                    "recovered_horizon": recovered.get("horizon"),
+                    "lane_recovery_status": recovered.get("lane_status"),
+                    "horizon_recovery_status": recovered.get("horizon_status"),
+                    "lane_source": recovered.get("lane_source"),
+                    "horizon_source": recovered.get("horizon_source"),
+                    "recovery_method": recovered.get("recovery_method"),
+                    "recovery_exact_blockers": list(recovered.get("exact_blockers") or []),
+                })
+            snapshot["position_rows_for_read_only_consumers"].append(safe_row)
+        snapshot["position_lane_horizon_recovery_v1"] = {
+            key: value for key, value in dict(self._runtime_state.get("position_lane_horizon_recovery_v1") or {}).items()
+            if key != "positions"
+        }
         snapshot["position_resolution_inventory_v1"] = build_position_resolution_inventory_v1(
             positions,
             prior_reviews_by_position=refreshed_reviews,
@@ -6973,54 +7002,96 @@ class PaperAutopilotEngine:
         self._load_state_file()
         return {"ok": True, "autopilot_enabled": self._enabled}
 
-    @staticmethod
-    def _enrich_broker_rows_from_db_rows(
-        broker_rows: list[dict[str, Any]],
+    def _recover_broker_position_lane_horizon_v1(
+        self,
+        broker_positions: Mapping[str, Mapping[str, Any]],
         db_rows: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Merge Astra-owned metadata from DB rows into broker-truth rows.
+    ) -> dict[str, Any]:
+        """Build the one recovery ledger used by both protection engines.
 
-        Broker positions are authoritative for existence, quantity, and price.
-        DB rows are only consulted for lane/horizon/ownership enrichment when
-        the same symbol is still open at the broker.
+        The prior symbol-only metadata merge was unsafe for reopened symbols.
+        An active SQLite row is admitted only when it has a unique, current
+        reconciliation row with a consistent entry timestamp.  Broker facts
+        are not copied from any Astra record.
         """
-        enrichment: dict[str, dict[str, Any]] = {}
-        for row in db_rows or []:
-            if not isinstance(row, dict):
-                continue
+        prior_capacity = dict(self._runtime_state.get("last_evidence_capacity_snapshot") or {})
+        prior_current = [
+            dict(row) for row in (prior_capacity.get("position_rows_for_read_only_consumers") or [])
+            if isinstance(row, dict) and _text(row.get("symbol"))
+        ]
+        reviews = [
+            {**dict(row), "recovery_source_type": "CURRENT_RECONCILIATION_RECORD"}
+            for row in dict(self._runtime_state.get("position_resolution_reviews") or {}).values()
+            if isinstance(row, dict) and _text(row.get("symbol"))
+        ]
+        current_by_symbol: dict[str, list[dict[str, Any]]] = {}
+        for row in prior_current:
             symbol = _text(row.get("symbol")).upper()
-            if not symbol:
+            if symbol:
+                current_by_symbol.setdefault(symbol, []).append({
+                    **row,
+                    "current_reconciled": True,
+                    "recovery_source_type": "CURRENT_RECONCILIATION_RECORD",
+                })
+        # Reviews hold governance-owned original-lane metadata.  Join them
+        # only to the already current broker-reconciled row, never to history.
+        for review in reviews:
+            symbol = _text(review.get("symbol")).upper()
+            current_rows = current_by_symbol.get(symbol) or []
+            if len(current_rows) != 1:
                 continue
-            enrichment[symbol] = row
+            current_rows[0].update({
+                key: value for key, value in review.items()
+                if key in {"original_lane", "original_horizon", "lane_id", "paper_entry_horizon_style", "position_id", "as_of"}
+                and value not in (None, "")
+            })
 
-        enriched: list[dict[str, Any]] = []
-        for row in broker_rows:
-            if not isinstance(row, dict):
-                continue
+        # Current reconciliation rows establish symbol/timestamp continuity;
+        # they are not independently treated as entry evidence here.  This
+        # prevents the review overlay and the active SQLite row from becoming
+        # two competing symbol-only claims for the same position.
+        evidence: list[dict[str, Any]] = []
+        for raw in db_rows or []:
+            row = dict(raw or {})
             symbol = _text(row.get("symbol")).upper()
-            src = enrichment.get(symbol)
-            if not src:
-                enriched.append(row)
+            current_rows = current_by_symbol.get(symbol) or []
+            if len(current_rows) != 1:
                 continue
-            merged = dict(row)
-            for key in (
-                "lane_id",
-                "paper_entry_horizon_style",
-                "intended_horizon",
-                "original_horizon",
-                "position_owner",
-                "exit_policy_owner",
-                "entry_timestamp",
-                "created_at",
-                "updated_at",
-                "last_update_ts",
-            ):
-                if not merged.get(key) and src.get(key):
-                    merged[key] = src[key]
-            if not merged.get("lane_id") and src.get("lane"):
-                merged["lane_id"] = src["lane"]
-            enriched.append(merged)
-        return enriched
+            current = current_rows[0]
+            # A row must be explicitly open, asset-compatible, and tied to
+            # the current reconciliation timestamp before symbol fallback.
+            if _norm_asset(row.get("asset_type") or "stock") != _norm_asset(current.get("asset_type") or current.get("asset_class") or "stock"):
+                continue
+            entry_at = _text(row.get("entry_filled_at") or row.get("entry_timestamp"))
+            current_at = _text(current.get("entry_filled_at") or current.get("entry_timestamp"))
+            if not entry_at or not current_at or entry_at != current_at:
+                continue
+            evidence.append({
+                **row,
+                "current_reconciled": True,
+                "recovery_source_type": "ACTIVE_POSITION_LIFECYCLE",
+            })
+
+        broker_for_recovery: dict[str, dict[str, Any]] = {}
+        for symbol, raw in broker_positions.items():
+            broker = dict(raw or {})
+            normalized = _text(broker.get("symbol") or symbol).upper()
+            current_rows = current_by_symbol.get(normalized) or []
+            if len(current_rows) == 1:
+                current = current_rows[0]
+                for key in ("entry_timestamp", "entry_filled_at", "asset_class", "asset_type"):
+                    if not broker.get(key) and current.get(key):
+                        broker[key] = current.get(key)
+            broker_for_recovery[normalized] = broker
+
+        ledger = build_position_lane_horizon_recovery_v1(
+            broker_for_recovery,
+            evidence_rows=evidence,
+            snapshot_generated_at=_now_iso(),
+        )
+        self.position_lane_horizon_recovery.persist(ledger)
+        self._runtime_state["position_lane_horizon_recovery_v1"] = ledger
+        return ledger
 
     def _load_loss_containment_state(self) -> dict[str, Any]:
         return load_loss_containment_state_v1(self.loss_containment_state_path)
@@ -7064,10 +7135,10 @@ class PaperAutopilotEngine:
         broker_failed = broker_fetch_succeeded is False
         if broker_fetch_succeeded is True:
             canonical_snapshot = build_canonical_position_snapshot(broker_positions)
+            recovery = self._recover_broker_position_lane_horizon_v1(broker_positions, db_rows)
+            canonical_snapshot = enrich_canonical_position_snapshot_v1(canonical_snapshot, recovery)
             broker_rows = snapshot_to_loss_containment_rows(canonical_snapshot)
-            # Enrich broker-truth rows with Astra-owned lane/horizon/ownership metadata
-            # from DB rows.  Lane/horizon are UNAVAILABLE in raw broker positions.
-            rows = self._enrich_broker_rows_from_db_rows(broker_rows, db_rows)
+            rows = broker_rows
             # Stale decision eviction: keep only decisions for symbols still open at broker.
             current_symbols = set(broker_positions.keys())
             prior_decisions = dict(prior_state.get("decisions") or {})
@@ -7165,9 +7236,11 @@ class PaperAutopilotEngine:
         broker_failed = broker_fetch_succeeded is False
         if broker_fetch_succeeded is True:
             canonical_snapshot = build_canonical_position_snapshot(broker_positions)
-            broker_rows = snapshot_to_loss_containment_rows(canonical_snapshot)
-            # Enrich broker-truth rows with Astra-owned lane/horizon/ownership metadata.
-            rows = self._enrich_broker_rows_from_db_rows(broker_rows, db_rows)
+            recovery = dict(self._runtime_state.get("position_lane_horizon_recovery_v1") or {})
+            if set(str(row.get("symbol") or "").upper() for row in (recovery.get("positions") or [])) != set(broker_positions):
+                recovery = self._recover_broker_position_lane_horizon_v1(broker_positions, db_rows)
+            canonical_snapshot = enrich_canonical_position_snapshot_v1(canonical_snapshot, recovery)
+            rows = snapshot_to_loss_containment_rows(canonical_snapshot)
             # Stale decision eviction: keep only decisions for symbols still open at broker.
             current_symbols = set(broker_positions.keys())
             prior_decisions = dict(prior_state.get("decisions") or {})

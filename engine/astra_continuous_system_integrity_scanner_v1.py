@@ -188,6 +188,23 @@ class ContinuousSystemIntegrityScannerV1:
                             "canonical_fact_ids": [contradiction.get("fact_id")], "affected_endpoints": ["readiness", "Governance", "Cortex"],
                             "affected_components": [contradiction.get("owning_component") or "truth arbitration"],
                             "safe_correction_available": True})
+        recovery = dict(context.get("position_lane_horizon_recovery") or {})
+        if recovery:
+            lane_conflicts = _number(recovery.get("lane_conflict_count"))
+            horizon_conflicts = _number(recovery.get("horizon_conflict_count"))
+            if lane_conflicts or horizon_conflicts:
+                signals.append({"kind": "CANONICAL_POSITION_METADATA_CONFLICT", "severity": "HIGH",
+                                "canonical_fact_ids": ["CURRENT_BROKER_POSITION_LANE", "CURRENT_BROKER_POSITION_HORIZON"],
+                                "affected_endpoints": ["loss containment", "profit protection", "position recovery"],
+                                "affected_components": ["position lane/horizon recovery"],
+                                "first_bad_handoff": "canonical entry evidence -> position metadata recovery",
+                                "owner": "position lane/horizon recovery",
+                                "repair": "retain conflict fail-closed; require an exact entry-linked record"})
+            if _number(recovery.get("unresolved_lane_count")) or _number(recovery.get("unresolved_horizon_count")):
+                waiting.append({"state": "LEGITIMATE_WAITING_STATE", "reason": "canonical_position_lane_or_horizon_evidence_unavailable",
+                                "lane_unavailable": _number(recovery.get("unresolved_lane_count")),
+                                "horizon_unavailable": _number(recovery.get("unresolved_horizon_count")),
+                                "fail_closed": True})
         handoffs = list(context.get("quote_handoffs") or [])[:max_rows]
         for handoff in handoffs:
             if not isinstance(handoff, dict):
