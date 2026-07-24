@@ -60,6 +60,9 @@ class ShadowExitFoundationTests(unittest.TestCase):
         self.assertGreater(cycle["diagnostics"]["pending_observations"], 0)
         repeat = run_shadow_exit_cycle_v1({"AAA": _position()}, previous={**cycle["state"], "observations": cycle["observations"]["observations"]}, now=NOW, **inputs)
         self.assertEqual(repeat["diagnostics"]["evaluations_created"], 0)
+        refreshed = _inputs(); refreshed["exit_readiness"]["positions"][0]["generated_at"] = "2026-07-24T16:30:00Z"
+        later_signal_epoch = run_shadow_exit_cycle_v1({"AAA": _position()}, previous={**cycle["state"], "observations": cycle["observations"]["observations"]}, now=NOW + timedelta(minutes=30), **refreshed)
+        self.assertEqual(later_signal_epoch["diagnostics"]["evaluations_created"], 0)
         with tempfile.TemporaryDirectory() as root:
             save_shadow_exit_cycle_v1(cycle, root)
             restored = load_shadow_exit_state_v1(root)

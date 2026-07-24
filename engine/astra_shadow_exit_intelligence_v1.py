@@ -165,6 +165,12 @@ def run_shadow_exit_cycle_v1(
     exits = {_text(x.get("symbol")).upper(): dict(x) for x in (exit_readiness or {}).get("positions", []) if isinstance(x, Mapping)}
     evaluations = {str(x.get("shadow_evaluation_id")): dict(x) for x in prior.get("evaluations", []) if isinstance(x, Mapping)}
     observations = {str(x.get("shadow_observation_id")): dict(x) for x in prior.get("observations", []) if isinstance(x, Mapping)}
+    # A regenerated advisory timestamp is not a new shadow signal. Retain one
+    # active evaluation per exact identity/strategy/signal until it finalizes.
+    active_keys = {
+        (_text(row.get("position_identity")), _text(row.get("shadow_strategy")), _text(row.get("exit_signal_type")))
+        for row in evaluations.values() if row.get("evaluation_status") in {"ACTIVE", "PARTIALLY_OBSERVED"}
+    }
     active_identities, created, deduplicated, considered, eligible = set(), 0, 0, 0, 0
     for symbol, position in _position_rows(broker_positions):
         considered += 1; identity = shadow_position_identity_v1(position, recoveries.get(symbol)); active_identities.add(identity.get("position_identity"))
@@ -178,7 +184,8 @@ def run_shadow_exit_cycle_v1(
         for strategy in BASELINE_STRATEGIES:
             strategy_ok, reason = _strategy_eligibility(strategy, exit_row)
             evaluation_id = f"shadow-eval:{_digest(identity['position_identity'], strategy, _iso(epoch))}"
-            if evaluation_id in evaluations:
+            signal_key = (identity["position_identity"], strategy, _text(exit_row.get("recommendation") or "NOT_EVALUATED"))
+            if evaluation_id in evaluations or signal_key in active_keys:
                 deduplicated += 1; continue
             if created >= max_new_evaluations: continue
             status = "ACTIVE" if strategy_ok else "EXTERNALLY_BLOCKED"
@@ -198,7 +205,7 @@ def run_shadow_exit_cycle_v1(
                 "hold_return_from_signal": None, "maximum_favorable_excursion_after_signal": 0.0, "maximum_adverse_excursion_after_signal": 0.0,
                 "actual_position_still_open": True, "actual_exit_timestamp": None, "actual_exit_price": None, "actual_realized_result": None,
                 "shadow_only": True, "execution_authority": "DISABLED", "promotion_status": "NOT_PROMOTED"}
-            evaluations[evaluation_id] = evaluation; created += 1
+            evaluations[evaluation_id] = evaluation; active_keys.add(signal_key); created += 1
             if strategy_ok:
                 for window in evaluation["required_observation_windows"]:
                     observation_id = f"shadow-observation:{_digest(evaluation_id, window)}"
@@ -231,7 +238,17 @@ def run_shadow_exit_cycle_v1(
         done = [x.get("observation_window") for x in observations.values() if x.get("shadow_evaluation_id") == evaluation.get("shadow_evaluation_id") and x.get("observation_status") == "COMPLETED"]
         evaluation["completed_observation_windows"] = sorted(done); evaluation["pending_observation_windows"] = [x for x in evaluation.get("required_observation_windows", []) if x not in done]
         evaluation["evaluation_status"] = "PARTIALLY_OBSERVED" if done else "ACTIVE"
-    ordered_evaluations = sorted(evaluations.values(), key=lambda x: _text(x.get("generated_at")), reverse=True)[:MAX_EVALUATIONS]
+    # Migrate any prior timestamp-epoch duplicates deterministically. Completed
+    # and terminal records are retained; only competing active rows collapse.
+    ordered_all = sorted(evaluations.values(), key=lambda x: _text(x.get("generated_at")), reverse=True)
+    seen_active: set[tuple[str, str]] = set(); ordered_evaluations = []
+    for row in ordered_all:
+        key = (_text(row.get("position_identity")), _text(row.get("shadow_strategy")))
+        if row.get("evaluation_status") in {"ACTIVE", "PARTIALLY_OBSERVED"} and key in seen_active:
+            continue
+        if row.get("evaluation_status") in {"ACTIVE", "PARTIALLY_OBSERVED"}: seen_active.add(key)
+        ordered_evaluations.append(row)
+        if len(ordered_evaluations) >= MAX_EVALUATIONS: break
     kept = {x["shadow_evaluation_id"] for x in ordered_evaluations}; ordered_observations = [x for x in observations.values() if x.get("shadow_evaluation_id") in kept]
     ordered_observations.sort(key=lambda x: _text(x.get("created_at")), reverse=True); ordered_observations = ordered_observations[:MAX_OBSERVATIONS]
     counts = {status: sum(1 for x in ordered_evaluations if x.get("evaluation_status") == status) for status in ("ACTIVE", "PARTIALLY_OBSERVED", "COMPLETED", "EXPIRED_INSUFFICIENT_DATA", "EXTERNALLY_BLOCKED")}
