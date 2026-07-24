@@ -6989,18 +6989,20 @@ class PaperAutopilotEngine:
         summaries, and durable shadow records. Execution is never authorized.
 
         Broker positions are authoritative for current open-position existence.
-        When broker snapshot is available, always build canonical rows from
-        broker positions (authoritative), regardless of DB state.
+        When broker snapshot is available and caller did not explicitly provide
+        rows, always build canonical rows from broker positions (authoritative),
+        regardless of DB state.
         """
+        has_explicit_rows = open_rows is not None
         rows = list(open_rows or self._fetch_open_positions() or [])
         broker_positions = dict(broker_position_by_symbol or {})
         latest_prices = dict(latest_price_by_symbol or {})
         prior_state = self._load_loss_containment_state()
 
-        # Authoritative broker truth: When broker positions are available,
-        # always build canonical snapshot rows. Broker positions define the
-        # authoritative current open-position set.
-        if broker_positions:
+        # Authoritative broker truth: When broker positions are available and
+        # no explicit rows were provided, build canonical snapshot rows.
+        # Broker positions define the authoritative current open-position set.
+        if not has_explicit_rows and broker_positions:
             canonical_snapshot = build_canonical_position_snapshot(broker_positions)
             broker_rows = snapshot_to_loss_containment_rows(canonical_snapshot)
             if broker_rows:
@@ -7064,14 +7066,13 @@ class PaperAutopilotEngine:
 
         Broker positions are authoritative for current open-position existence.
         """
+        has_explicit_rows = open_rows is not None
         rows = list(open_rows or self._fetch_open_positions() or [])
         broker_positions = dict(broker_position_by_symbol or {})
         prior_state = self._load_profit_protection_state()
 
-        # Authoritative broker truth: When broker positions are available,
-        # always build canonical snapshot rows. Broker positions define the
-        # authoritative current open-position set.
-        if broker_positions:
+        # Authoritative broker truth: same as loss containment
+        if not has_explicit_rows and broker_positions:
             canonical_snapshot = build_canonical_position_snapshot(broker_positions)
             broker_rows = snapshot_to_loss_containment_rows(canonical_snapshot)
             if broker_rows:

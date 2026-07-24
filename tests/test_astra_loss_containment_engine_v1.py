@@ -441,7 +441,7 @@ class IntegrationTests(unittest.TestCase):
             }
         ]
         broker_positions = {
-            "AAPL": {"qty": 10, "avg_entry_price": 100.0, "current_price": 90.0, "asset_class": "stock"},
+            "AAPL": {"qty": 10, "avg_entry_price": 100.0, "current_price": 90.0, "asset_class": "stock", "lane_id": "DAY"},
         }
         result = engine._loss_containment_review_phase(
             open_rows=open_rows,
