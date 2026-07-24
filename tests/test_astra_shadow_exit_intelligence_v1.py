@@ -85,6 +85,13 @@ class ShadowExitFoundationTests(unittest.TestCase):
         self.assertEqual(handoff["shadow_promotion_status"], "NOT_PROMOTED")
         self.assertEqual(handoff["shadow_signal_confidence"], "INSUFFICIENT_SAMPLE")
 
+    def test_unchanged_externally_blocked_strategy_is_deduplicated(self):
+        inputs = _inputs(); inputs["exit_readiness"]["positions"][0].update({"recommendation": "HOLD", "profit_protection_state": ""})
+        first = run_shadow_exit_cycle_v1({"AAA": _position()}, now=NOW, **inputs)
+        refreshed = _inputs(); refreshed["exit_readiness"]["positions"][0].update({"recommendation": "HOLD", "profit_protection_state": "", "generated_at": "2026-07-24T16:30:00Z"})
+        second = run_shadow_exit_cycle_v1({"AAA": _position()}, previous={**first["state"], "observations": first["observations"]["observations"]}, now=NOW + timedelta(minutes=30), **refreshed)
+        self.assertEqual(second["diagnostics"]["evaluations_created"], 0)
+
     def test_exit_and_unified_advisory_preserve_shadow_handoff(self):
         inputs = _inputs(); cycle = run_shadow_exit_cycle_v1({"AAA": _position()}, now=NOW, **inputs)
         handoff = shadow_handoff_by_symbol_v1(cycle["state"])

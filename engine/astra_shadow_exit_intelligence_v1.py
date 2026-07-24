@@ -169,7 +169,7 @@ def run_shadow_exit_cycle_v1(
     # active evaluation per exact identity/strategy/signal until it finalizes.
     active_keys = {
         (_text(row.get("position_identity")), _text(row.get("shadow_strategy")), _text(row.get("exit_signal_type")))
-        for row in evaluations.values() if row.get("evaluation_status") in {"ACTIVE", "PARTIALLY_OBSERVED"}
+        for row in evaluations.values() if row.get("evaluation_status") in {"ACTIVE", "PARTIALLY_OBSERVED", "EXTERNALLY_BLOCKED"}
     }
     active_identities, created, deduplicated, considered, eligible = set(), 0, 0, 0, 0
     for symbol, position in _position_rows(broker_positions):
@@ -241,12 +241,12 @@ def run_shadow_exit_cycle_v1(
     # Migrate any prior timestamp-epoch duplicates deterministically. Completed
     # and terminal records are retained; only competing active rows collapse.
     ordered_all = sorted(evaluations.values(), key=lambda x: _text(x.get("generated_at")), reverse=True)
-    seen_active: set[tuple[str, str]] = set(); ordered_evaluations = []
+    seen_current: set[tuple[str, str, str]] = set(); ordered_evaluations = []
     for row in ordered_all:
-        key = (_text(row.get("position_identity")), _text(row.get("shadow_strategy")))
-        if row.get("evaluation_status") in {"ACTIVE", "PARTIALLY_OBSERVED"} and key in seen_active:
+        key = (_text(row.get("position_identity")), _text(row.get("shadow_strategy")), _text(row.get("exit_signal_type")))
+        if row.get("evaluation_status") in {"ACTIVE", "PARTIALLY_OBSERVED", "EXTERNALLY_BLOCKED"} and key in seen_current:
             continue
-        if row.get("evaluation_status") in {"ACTIVE", "PARTIALLY_OBSERVED"}: seen_active.add(key)
+        if row.get("evaluation_status") in {"ACTIVE", "PARTIALLY_OBSERVED", "EXTERNALLY_BLOCKED"}: seen_current.add(key)
         ordered_evaluations.append(row)
         if len(ordered_evaluations) >= MAX_EVALUATIONS: break
     kept = {x["shadow_evaluation_id"] for x in ordered_evaluations}; ordered_observations = [x for x in observations.values() if x.get("shadow_evaluation_id") in kept]
