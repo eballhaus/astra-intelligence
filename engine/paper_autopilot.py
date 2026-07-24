@@ -87,6 +87,14 @@ from engine.astra_legacy_position_risk_triage_v1 import (
     build_legacy_position_risk_triage_v1,
     save_legacy_position_risk_triage_v1,
 )
+from engine.astra_position_evidence_completeness_v1 import (
+    build_position_evidence_completeness_v1,
+    save_position_evidence_completeness_v1,
+)
+from engine.astra_unified_position_advisory_v1 import (
+    build_unified_position_advisory_v1,
+    save_unified_position_advisory_v1,
+)
 from engine.astra_provider_consumption_telemetry_v1 import (
     build_provider_consumption_telemetry_v1,
     load_fmp_production_verification_v1,
@@ -1422,6 +1430,12 @@ class PaperAutopilotEngine:
             kwargs.get("legacy_position_risk_triage_state_path")
             or os.path.join(os.path.dirname(self.state_path) or "state", "astra_legacy_position_risk_triage_v1.json")
         )
+        self.position_evidence_completeness_state_path = str(
+            os.path.join(os.path.dirname(self.state_path) or "state", "astra_position_evidence_completeness_v1.json")
+        )
+        self.unified_position_advisory_state_path = str(
+            os.path.join(os.path.dirname(self.state_path) or "state", "astra_unified_position_advisory_v1.json")
+        )
         self.position_lane_horizon_recovery = AstraPositionLaneHorizonRecoveryV1(
             os.path.dirname(self.state_path) or "state"
         )
@@ -2557,11 +2571,24 @@ class PaperAutopilotEngine:
                 continue
             row["legacy_activation_timestamp"] = _now_iso()
             baseline = build_legacy_forward_baseline_v1(row)
-            if baseline.get("baseline_state") == "NOT_APPLICABLE":
-                continue
+            # Every broker-confirmed current position needs a bounded evidence
+            # registration even when it is outside the legacy canary cohort.
+            # This registration is observation-only; it does not infer a lane
+            # or horizon and cannot make the position execution eligible.
+            evidence_only_registration = baseline.get("baseline_state") == "NOT_APPLICABLE"
             horizon = estimate_legacy_provisional_horizon_v1(row, baseline)
             twin = build_position_shadow_twin_v1(row, baseline, horizon)
-            registry[key] = {**baseline, "activation_id": baseline.get("baseline_id"), "provisional_horizon": horizon, "shadow_twin": twin, "created_at": _now_iso(), "last_observed_at": _now_iso(), "registry_version": 1}
+            registry[key] = {
+                **baseline,
+                "activation_id": baseline.get("baseline_id"),
+                "provisional_horizon": horizon,
+                "shadow_twin": twin,
+                "evidence_only_registration": evidence_only_registration,
+                "metadata_inference_allowed": False,
+                "created_at": _now_iso(),
+                "last_observed_at": _now_iso(),
+                "registry_version": 1,
+            }
             created += 1
         self._runtime_state["legacy_forward_activations"] = registry
         return {"ACTIVATION_WORKER_CALLED": True, "ACTIVATION_RECORD_CREATED": created, "ACTIVATION_RECORD_REUSED": reused, "records": len(registry)}
@@ -7360,9 +7387,44 @@ class PaperAutopilotEngine:
         payload = dict(state or self._runtime_state.get("profit_protection_state_v1") or {})
         save_profit_protection_state_v1(self.profit_protection_state_path, payload)
 
+    def _position_evidence_and_advisory_phase(
+        self,
+        broker_position_by_symbol: Mapping[str, Mapping[str, Any]],
+        *,
+        loss_containment: Mapping[str, Any] | None = None,
+        profit_protection: Mapping[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        """Project worker-cached evidence into complete, non-executing advisories.
+
+        This is intentionally downstream of broker truth and existing bounded
+        provider loops.  It performs no network, broker, or order operation.
+        """
+        recovery = dict(self._runtime_state.get("position_lane_horizon_recovery_v1") or {})
+        evidence = build_position_evidence_completeness_v1(
+            broker_position_by_symbol,
+            recovery,
+            market_evidence=dict(self._runtime_state.get("legacy_swing_market_evidence") or {}),
+            fmp_evidence=dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {}),
+        )
+        save_position_evidence_completeness_v1(evidence, os.path.dirname(self.position_evidence_completeness_state_path) or "state")
+        self._runtime_state["position_evidence_completeness_v1"] = evidence
+        triage = self._legacy_position_risk_triage_phase(broker_position_by_symbol, position_evidence=evidence)
+        advisory = build_unified_position_advisory_v1(
+            broker_position_by_symbol,
+            evidence=evidence,
+            triage=triage,
+            loss_containment=loss_containment or self._runtime_state.get("loss_containment_state_v1") or {},
+            profit_protection=profit_protection or self._runtime_state.get("profit_protection_state_v1") or {},
+        )
+        save_unified_position_advisory_v1(advisory, os.path.dirname(self.unified_position_advisory_state_path) or "state")
+        self._runtime_state["unified_position_advisory_v1"] = advisory
+        return evidence, triage, advisory
+
     def _legacy_position_risk_triage_phase(
         self,
         broker_position_by_symbol: Mapping[str, Mapping[str, Any]],
+        *,
+        position_evidence: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Persist advisory legacy triage after canonical recovery is available.
 
@@ -7374,6 +7436,7 @@ class PaperAutopilotEngine:
             broker_position_by_symbol,
             recovery,
             fmp_evidence=dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {}),
+            position_evidence={str(row.get("symbol") or "").upper(): row for row in (position_evidence or {}).get("positions") or [] if isinstance(row, Mapping)},
         )
         save_legacy_position_risk_triage_v1(
             triage,
@@ -7839,12 +7902,17 @@ class PaperAutopilotEngine:
                 loss_containment_review = {"observation_state": "FAILED", "error": str(exc)[:180]}
             try:
                 fmp_production_verification = self._run_fmp_production_verification_v1(broker_positions)
-                legacy_position_risk_triage = self._legacy_position_risk_triage_phase(broker_positions)
+                position_evidence_completeness, legacy_position_risk_triage, unified_position_advisory = self._position_evidence_and_advisory_phase(
+                    broker_positions,
+                    loss_containment=loss_containment_review,
+                )
                 provider_consumption_telemetry = self._refresh_provider_consumption_telemetry_v1(legacy_position_risk_triage)
             except Exception as exc:
                 fmp_production_verification = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 legacy_position_risk_triage = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 provider_consumption_telemetry = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                position_evidence_completeness = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                unified_position_advisory = {"observation_state": "FAILED", "error": str(exc)[:180]}
             safety = self._alpaca_safety_snapshot()
             out = {
                 "ok": True,
@@ -7856,6 +7924,8 @@ class PaperAutopilotEngine:
                 "legacy_quarantine_review_v1": quarantine_review,
                 "loss_containment_review_v1": loss_containment_review,
                 "legacy_position_risk_triage_v1": legacy_position_risk_triage,
+                "position_evidence_completeness_v1": position_evidence_completeness,
+                "unified_position_advisory_v1": unified_position_advisory,
                 "provider_consumption_telemetry_v1": provider_consumption_telemetry,
                 "fmp_production_verification_v1": fmp_production_verification,
             }
@@ -7877,6 +7947,8 @@ class PaperAutopilotEngine:
                 "legacy_quarantine_review_v1": quarantine_review,
                 "loss_containment_review_v1": loss_containment_review,
                 "legacy_position_risk_triage_v1": legacy_position_risk_triage,
+                "position_evidence_completeness_v1": position_evidence_completeness,
+                "unified_position_advisory_v1": unified_position_advisory,
                 "provider_consumption_telemetry_v1": provider_consumption_telemetry,
                 "fmp_production_verification_v1": fmp_production_verification,
             }
@@ -7956,12 +8028,18 @@ class PaperAutopilotEngine:
                     self._note_worker_progress("fmp_production_verification")
                     fmp_production_verification_partial = self._run_fmp_production_verification_v1(broker_position_by_symbol)
                     self._note_worker_progress("legacy_position_risk_triage")
-                    legacy_position_risk_triage_partial = self._legacy_position_risk_triage_phase(broker_position_by_symbol)
+                    position_evidence_completeness_partial, legacy_position_risk_triage_partial, unified_position_advisory_partial = self._position_evidence_and_advisory_phase(
+                        broker_position_by_symbol,
+                        loss_containment=loss_containment_review_partial,
+                        profit_protection=profit_protection_review_partial,
+                    )
                     provider_consumption_telemetry_partial = self._refresh_provider_consumption_telemetry_v1(legacy_position_risk_triage_partial)
                 except Exception as exc:
                     fmp_production_verification_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
                     legacy_position_risk_triage_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
                     provider_consumption_telemetry_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                    position_evidence_completeness_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                    unified_position_advisory_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 # Update peak memory from broker snapshot
                 peak_memory_update: dict[str, Any] = {}
                 try:
@@ -8143,6 +8221,8 @@ class PaperAutopilotEngine:
                     "loss_containment_review_v1": loss_containment_review_partial,
                     "profit_protection_review_v1": profit_protection_review_partial,
                     "legacy_position_risk_triage_v1": legacy_position_risk_triage_partial,
+                    "position_evidence_completeness_v1": position_evidence_completeness_partial,
+                    "unified_position_advisory_v1": unified_position_advisory_partial,
                     "provider_consumption_telemetry_v1": provider_consumption_telemetry_partial,
                     "fmp_production_verification_v1": fmp_production_verification_partial,
                     "partial_cycle_streak": partial_streak,
@@ -8163,6 +8243,8 @@ class PaperAutopilotEngine:
                     "loss_containment_review_v1": loss_containment_review_partial,
                     "profit_protection_review_v1": profit_protection_review_partial,
                     "legacy_position_risk_triage_v1": legacy_position_risk_triage_partial,
+                    "position_evidence_completeness_v1": position_evidence_completeness_partial,
+                    "unified_position_advisory_v1": unified_position_advisory_partial,
                     "provider_consumption_telemetry_v1": provider_consumption_telemetry_partial,
                     "fmp_production_verification_v1": fmp_production_verification_partial,
                     "live_trading_changed": False, "secrets_exposed": False,
@@ -8254,8 +8336,10 @@ class PaperAutopilotEngine:
                     broker_position_by_symbol,
                 )
                 self._note_worker_progress("legacy_position_risk_triage")
-                legacy_position_risk_triage = self._legacy_position_risk_triage_phase(
+                position_evidence_completeness, legacy_position_risk_triage, unified_position_advisory = self._position_evidence_and_advisory_phase(
                     broker_position_by_symbol,
+                    loss_containment=loss_containment_review,
+                    profit_protection=profit_protection_review,
                 )
                 provider_consumption_telemetry = self._refresh_provider_consumption_telemetry_v1(
                     legacy_position_risk_triage,
@@ -8264,6 +8348,8 @@ class PaperAutopilotEngine:
                 fmp_production_verification = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 legacy_position_risk_triage = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 provider_consumption_telemetry = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                position_evidence_completeness = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                unified_position_advisory = {"observation_state": "FAILED", "error": str(exc)[:180]}
             # Market evidence is a restart-stable worker product.  Persist it
             # before the broader candidate scan, which may take longer than a
             # bounded provider refresh cycle.
@@ -9076,6 +9162,8 @@ class PaperAutopilotEngine:
                 "loss_containment_review_v1": dict(loss_containment_review or {}),
                 "profit_protection_review_v1": dict(profit_protection_review or {}),
                 "legacy_position_risk_triage_v1": dict(legacy_position_risk_triage or {}),
+                "position_evidence_completeness_v1": dict(position_evidence_completeness or {}),
+                "unified_position_advisory_v1": dict(unified_position_advisory or {}),
                 "provider_consumption_telemetry_v1": dict(provider_consumption_telemetry or {}),
                 "fmp_production_verification_v1": dict(fmp_production_verification or {}),
                 **self._learned_exit_runtime_summary(),
@@ -9168,6 +9256,8 @@ class PaperAutopilotEngine:
                 "loss_containment_review_v1": dict(loss_containment_review or {}),
                 "profit_protection_review_v1": dict(profit_protection_review or {}),
                 "legacy_position_risk_triage_v1": dict(legacy_position_risk_triage or {}),
+                "position_evidence_completeness_v1": dict(position_evidence_completeness or {}),
+                "unified_position_advisory_v1": dict(unified_position_advisory or {}),
                 "provider_consumption_telemetry_v1": dict(provider_consumption_telemetry or {}),
                 "fmp_production_verification_v1": dict(fmp_production_verification or {}),
                 "live_trading_changed": False,

@@ -50,6 +50,13 @@ class LegacyPositionRiskTriageTests(unittest.TestCase):
         self.assertEqual(loaded["triaged_count"], 1)
         self.assertEqual(loaded["positions"][0]["symbol"], "AAA")
 
+    def test_position_evidence_propagates_precise_missing_producer(self):
+        triage = build_legacy_position_risk_triage_v1(
+            {"AAA": {"symbol": "AAA", "unrealized_plpc": -0.01}}, _recovery(),
+            position_evidence={"AAA": {"symbol": "AAA", "momentum_status": "MISSING", "fundamentals_status": "MISSING", "first_missing_producer": "CURRENT_QUOTE_PRODUCER_UNAVAILABLE"}},
+        )
+        self.assertEqual(triage["positions"][0]["first_causal_blocker"], "CURRENT_QUOTE_PRODUCER_UNAVAILABLE")
+
 
 if __name__ == "__main__":
     unittest.main()

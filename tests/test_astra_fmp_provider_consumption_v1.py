@@ -54,6 +54,17 @@ class FmpProviderConsumptionTests(unittest.TestCase):
             save_provider_consumption_telemetry_v1(telemetry, directory)
             self.assertEqual(load_provider_consumption_telemetry_v1(directory)["provider_count"], 1)
 
+    def test_governor_block_is_not_counted_as_provider_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "fmp_efficiency_ledger_v1.jsonl")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({"timestamp": "2026-07-24T00:00:00Z", "ok": False, "blocked_reason": "call_limit"}) + "\n")
+            telemetry = build_provider_consumption_telemetry_v1(state_dir=directory, configured=True, key_fingerprint="deadbeef")
+            provider = telemetry["providers"][0]
+            self.assertEqual(provider["governor_blocked"], 1)
+            self.assertEqual(provider["failed_calls"], 0)
+            self.assertEqual(provider["network_sent"], 0)
+
     def test_scanner_detects_configured_unused_provider_and_success_not_consumed(self):
         telemetry = {"providers": [{"provider": "FMP", "configured": True, "attempted_calls": 0, "responses_accepted": 1, "last_consumer": ""}]}
         signals, _waiting, _compliance = ContinuousSystemIntegrityScannerV1._signals(

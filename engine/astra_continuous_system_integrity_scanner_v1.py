@@ -239,6 +239,27 @@ class ContinuousSystemIntegrityScannerV1:
                                 "first_bad_handoff": "accepted FMP response -> advisory consumer",
                                 "owner": "engine.astra_legacy_position_risk_triage_v1",
                                 "repair": "retain source attribution and consume accepted FMP context in advisory triage"})
+        position_evidence = dict(context.get("position_evidence_completeness") or {})
+        if position_evidence:
+            represented = _number(position_evidence.get("positions_represented"))
+            expected = _number(position_evidence.get("broker_position_count"))
+            if represented < expected:
+                signals.append({"kind": "OPEN_POSITION_REFRESH_STARVATION", "severity": "HIGH", "confidence": "VERIFIED",
+                                "canonical_fact_ids": ["CURRENT_BROKER_POSITION_EVIDENCE"],
+                                "affected_endpoints": ["position evidence completeness", "legacy position triage"],
+                                "affected_components": ["PaperAutopilot open-position evidence phase"],
+                                "first_bad_handoff": "broker position snapshot -> position evidence completeness",
+                                "owner": "PaperAutopilot._position_evidence_and_advisory_phase"})
+            if _number(position_evidence.get("first_missing_producer_count")):
+                waiting.append({"state": "LEGITIMATE_WAITING_STATE", "reason": "POSITION_EVIDENCE_PRODUCER_MISSING",
+                                "affected_position_count": _number(position_evidence.get("first_missing_producer_count")), "fail_closed": True})
+        unified_advisory = dict(context.get("unified_position_advisory") or {})
+        if unified_advisory and _number(unified_advisory.get("silent_drop_count")):
+            signals.append({"kind": "POSITION_UNIFIED_ADVISORY_NOT_RUN", "severity": "HIGH", "confidence": "VERIFIED",
+                            "canonical_fact_ids": ["CURRENT_BROKER_POSITION_ADVISORY"],
+                            "affected_endpoints": ["unified position advisory"],
+                            "affected_components": ["astra_unified_position_advisory_v1"],
+                            "first_bad_handoff": "position evidence -> unified advisory"})
         handoffs = list(context.get("quote_handoffs") or [])[:max_rows]
         for handoff in handoffs:
             if not isinstance(handoff, dict):

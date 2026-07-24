@@ -63,25 +63,27 @@ def triage_legacy_position_v1(
     *,
     fmp_context: Mapping[str, Any] | None = None,
     replacement: Mapping[str, Any] | None = None,
+    evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return an explainable non-executing recommendation from current facts."""
     row = dict(position or {})
     fmp = dict(fmp_context or {})
+    completeness = dict(evidence or {})
     fields = dict(fmp.get("normalized_fields") or {})
     symbol = _text(row.get("symbol")).upper()
     return_pct = _number(row.get("unrealized_plpc"), _number(row.get("unrealized_return_pct"), _number(row.get("return_pct"), 0.0) / 100.0))
     if abs(return_pct) > 1.0:
         return_pct /= 100.0
-    momentum = _text(row.get("momentum_state") or row.get("momentum")) or "UNAVAILABLE"
-    thesis = _text(row.get("thesis_state")) or "UNAVAILABLE"
-    catalyst = _text(row.get("catalyst_state")) or "UNAVAILABLE"
-    opportunity = _text(row.get("opportunity_cost_state")) or "UNAVAILABLE"
+    momentum = _text(completeness.get("momentum_status") or row.get("momentum_state") or row.get("momentum")) or "UNAVAILABLE"
+    thesis = _text(row.get("thesis_state")) or "ORIGINAL_THESIS_UNAVAILABLE"
+    catalyst = _text(row.get("catalyst_state")) or ("CURRENT_CATALYST_NEUTRAL" if completeness.get("catalyst_status") in {"FRESH", "AGING"} else "NO_CURRENT_CATALYST_EVIDENCE")
+    opportunity = _text(row.get("opportunity_cost_state")) or _text(completeness.get("opportunity_cost_status")) or "UNAVAILABLE"
     replacement_state = _text((replacement or {}).get("state")) or "UNAVAILABLE"
     missing = []
-    if str(fmp.get("response_state") or "").upper() != "SUCCESS":
-        missing.append("FMP_CONTEXT_UNAVAILABLE")
-    if momentum == "UNAVAILABLE":
-        missing.append("MOMENTUM_EVIDENCE_UNAVAILABLE")
+    if str(fmp.get("response_state") or "").upper() != "SUCCESS" and completeness.get("fundamentals_status") not in {"FRESH", "AGING"}:
+        missing.append(_text(completeness.get("first_missing_producer")) or "FMP_CONTEXT_UNAVAILABLE")
+    if momentum in {"UNAVAILABLE", "MISSING", "STALE"}:
+        missing.append("MOMENTUM_EVIDENCE_UNAVAILABLE" if momentum != "STALE" else "MOMENTUM_EVIDENCE_STALE")
     broken = thesis.upper() in {"BROKEN", "INVALIDATED"} or catalyst.upper() in {"BROKEN", "NEGATIVE_CATALYST"}
     deteriorating = momentum.upper() in {"DETERIORATING", "WEAK", "NEGATIVE"}
     replacement_superior = replacement_state.upper() in {"SUPERIOR", "ELIGIBLE_SUPERIOR"}
@@ -109,12 +111,12 @@ def triage_legacy_position_v1(
             "momentum_state": momentum,
             "thesis_state": thesis,
             "catalyst_state": catalyst,
-            "position_age_state": _text(row.get("position_age_state")) or "UNAVAILABLE",
-            "liquidity_state": _text(row.get("liquidity_state")) or "UNAVAILABLE",
+            "position_age_state": _text(row.get("position_age_state") or completeness.get("position_age_status")) or "UNAVAILABLE",
+            "liquidity_state": _text(row.get("liquidity_state") or completeness.get("liquidity_status")) or "UNAVAILABLE",
             "profit_giveback_state": _text(row.get("profit_giveback_state")) or "UNAVAILABLE",
             "opportunity_cost_state": opportunity,
             "replacement_state": replacement_state,
-            "market_regime_state": _text(row.get("market_regime_state")) or "UNAVAILABLE",
+            "market_regime_state": _text(row.get("market_regime_state") or completeness.get("market_regime_status")) or "UNAVAILABLE",
             "fmp_profile_fields": sorted(fields),
         },
         "evidence_missing": missing,
@@ -132,6 +134,7 @@ def build_legacy_position_risk_triage_v1(
     recovery: Mapping[str, Any],
     *,
     fmp_evidence: Mapping[str, Mapping[str, Any]] | None = None,
+    position_evidence: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     legacy = _legacy_symbols(recovery)
     evidence_by_symbol = {
@@ -139,8 +142,17 @@ def build_legacy_position_risk_triage_v1(
         for record in (fmp_evidence or {}).values()
         if isinstance(record, Mapping) and _text(record.get("symbol"))
     }
+    completeness_by_symbol = {
+        _text(record.get("symbol")).upper(): dict(record)
+        for record in (position_evidence or {}).values()
+        if isinstance(record, Mapping) and _text(record.get("symbol"))
+    }
     positions = [
-        triage_legacy_position_v1(dict(raw or {}, symbol=_text((raw or {}).get("symbol") or symbol)), fmp_context=evidence_by_symbol.get(_text(symbol).upper()))
+        triage_legacy_position_v1(
+            dict(raw or {}, symbol=_text((raw or {}).get("symbol") or symbol)),
+            fmp_context=evidence_by_symbol.get(_text(symbol).upper()),
+            evidence=completeness_by_symbol.get(_text(symbol).upper()),
+        )
         for symbol, raw in sorted(broker_positions.items())
         if _text(symbol).upper() in legacy
     ]

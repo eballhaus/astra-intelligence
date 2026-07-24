@@ -67,11 +67,14 @@ def build_provider_consumption_telemetry_v1(
     root = Path(state_dir)
     events = _read_tail(root / "fmp_efficiency_ledger_v1.jsonl")
     attempts = len(events)
-    successes = [row for row in events if bool(row.get("ok"))]
-    failures = [row for row in events if not bool(row.get("ok")) and not bool(row.get("cache_hit"))]
+    cache_hits = [row for row in events if bool(row.get("cache_hit"))]
+    governor_blocked = [row for row in events if str(row.get("blocked_reason") or "").lower() in {"call_limit", "bandwidth_budget", "governor_blocked", "provider_cooldown_or_budget"}]
+    deduplicated = [row for row in events if bool(row.get("deduplicated"))]
+    network_sent = [row for row in events if row not in cache_hits and row not in governor_blocked and row not in deduplicated]
+    successes = [row for row in network_sent if bool(row.get("ok"))]
+    failures = [row for row in network_sent if not bool(row.get("ok"))]
     accepted = [row for row in successes if _number(row.get("useful_fields_count")) > 0]
     bytes_received = int(sum(max(0.0, _number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta"))) for row in events))
-    cache_hits = len([row for row in events if bool(row.get("cache_hit"))])
     consumer_rows = [dict(row) for row in consumer_events if isinstance(row, Mapping) and row.get("consumer")]
     consumed = [row for row in consumer_rows if bool(row.get("accepted"))]
     last_event = dict(events[-1]) if events else {}
@@ -81,11 +84,19 @@ def build_provider_consumption_telemetry_v1(
         "configured": bool(configured),
         "key_fingerprint": str(key_fingerprint or ""),
         "eligible": bool(configured),
+        "scheduled": attempts,
+        "attempted": attempts,
+        "network_sent": len(network_sent),
         "attempted_calls": attempts,
         "successful_calls": len(successes),
         "failed_calls": len(failures),
-        "cache_hits": cache_hits,
-        "cache_misses": max(0, attempts - cache_hits),
+        "HTTP_failed": len([row for row in failures if _number(row.get("status_code")) >= 400]),
+        "network_failed": len([row for row in failures if not _number(row.get("status_code"))]),
+        "governor_blocked": len(governor_blocked),
+        "cache_hits": len(cache_hits),
+        "cache_misses": max(0, attempts - len(cache_hits)),
+        "deduplicated": len(deduplicated),
+        "responses_parsed": len(successes),
         "responses_accepted": len(accepted),
         "responses_rejected": max(0, len(successes) - len(accepted)),
         "bytes_received": bytes_received,
@@ -98,6 +109,8 @@ def build_provider_consumption_telemetry_v1(
         "last_accepted_symbol": str(consumed[-1].get("symbol") or "") if consumed else "",
         "first_causal_blocker": str(last_event.get("blocked_reason") or ""),
         "budget_limit_per_minute": 750,
+        "budget_used": len(network_sent),
+        "budget_remaining": max(0, 750 - len(network_sent)),
         "bounded_usage_status": (
             "CONFIGURED_UNUSED" if configured and not attempts else
             "SUCCESS_NOT_CONSUMED" if accepted and not consumed else
@@ -114,6 +127,9 @@ def build_provider_consumption_telemetry_v1(
         "successful_but_unconsumed_count": int(bool(accepted and not consumed)),
         "provider_starvation_count": int(bool(configured and not attempts)),
         "budget_warning_count": int(any(str(row.get("blocked_reason") or "") in {"call_limit", "bandwidth_budget"} for row in events)),
+        "governor_blocked_count": len(governor_blocked),
+        "expected_traffic_missing_count": int(bool(configured and not attempts)),
+        "success_not_consumed_count": int(bool(accepted and not consumed)),
         "stale_evidence_count": 0,
         "provider_calls_used": 0,
         "broker_actions_used": 0,
