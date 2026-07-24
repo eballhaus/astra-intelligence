@@ -72,7 +72,7 @@ class FmpProviderConsumptionTests(unittest.TestCase):
             engine.state_path = os.path.join(directory, "paper_autopilot_state.json")
             engine._runtime_state = {}
             engine._legacy_swing_fmp_router = Router()
-            engine._legacy_swing_fmp_fetcher = lambda symbol: {"response_state": "SUCCESS", "http_status": 200, "records_valid": 1}
+            engine._legacy_swing_fmp_fetcher = lambda symbol: {"response_state": "SUCCESS", "http_status": 200, "records_valid": 1, "normalized_fields": {"sector": "Technology"}}
             engine._legacy_swing_fmp_historical_fetcher = lambda symbol, **_kwargs: {"response_state": "SUCCESS", "http_status": 200, "records_valid": 2}
             result = engine._run_fmp_production_verification_v1({"AAA": {"symbol": "AAA"}})
             self.assertEqual(result["attempted_count"], 3)
@@ -80,6 +80,8 @@ class FmpProviderConsumptionTests(unittest.TestCase):
             self.assertFalse(result["candidate_created"])
             self.assertFalse(result["order_created"])
             self.assertEqual(result["broker_actions_used"], 0)
+            evidence = engine._runtime_state["legacy_swing_fmp_evidence"]["fmp-production-profile:AAA"]
+            self.assertEqual(evidence["acknowledgement_state"], "CONSUMED_BY_LEGACY_POSITION_RISK_TRIAGE_V1")
 
 
 if __name__ == "__main__":

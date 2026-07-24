@@ -7444,12 +7444,30 @@ class PaperAutopilotEngine:
             previous = None
         now = datetime.now(UTC)
         if previous and (now - previous).total_seconds() < 24 * 60 * 60:
-            return {**prior, "cached": True, "provider_calls_used": 0, "broker_actions_used": 0}
+            # Older verification snapshots predate profile-consumer linkage.
+            # Make one bounded profile request to complete that deterministic
+            # advisory handoff without repeating the quote/bar validation.
+            if isinstance(prior.get("profile_context"), Mapping):
+                return {**prior, "cached": True, "provider_calls_used": 0, "broker_actions_used": 0}
+            symbol = str(prior.get("symbol") or next((str(key).upper() for key in sorted(broker_position_by_symbol) if str(key).strip()), "AAPL"))
+            profile = dict(self._legacy_swing_fmp_fetcher(symbol) or {}) if callable(self._legacy_swing_fmp_fetcher) else {}
+            self._consume_fmp_profile_context_v1(symbol, profile)
+            result = dict(prior)
+            result["generated_at"] = _now_iso()
+            result["profile_context"] = dict(profile.get("normalized_fields") or {})
+            result["profile_consumer_linked"] = str(profile.get("response_state") or "") == "SUCCESS"
+            result["profile_consumer_recovery_call"] = True
+            result["provider_calls_used"] = int(bool(profile))
+            result["broker_actions_used"] = 0
+            save_fmp_production_verification_v1(result, state_dir)
+            self._runtime_state["fmp_production_verification_v1"] = result
+            return result
         symbol = next((str(key).upper() for key in sorted(broker_position_by_symbol) if str(key).strip()), "AAPL")
         router = self._legacy_swing_fmp_router
         quote = dict(router.deliberate_fmp_probe(symbol) or {})
         profile = dict(self._legacy_swing_fmp_fetcher(symbol) or {}) if callable(self._legacy_swing_fmp_fetcher) else {}
         bars = dict(self._legacy_swing_fmp_historical_fetcher(symbol, timeframe="1Hour", limit=2) or {}) if callable(self._legacy_swing_fmp_historical_fetcher) else {}
+        self._consume_fmp_profile_context_v1(symbol, profile)
         endpoints = {
             "quote": {"attempted": bool(quote.get("probe_attempted")), "success": bool(quote.get("probe_success")), "status": int(_to_float(quote.get("status_code"), 0.0)), "bytes": int(_to_float(quote.get("response_bytes"), 0.0)), "blocker": str(quote.get("exact_blocker") or "")},
             "profile": {"attempted": bool(profile), "success": str(profile.get("response_state") or "") == "SUCCESS", "status": int(_to_float(profile.get("http_status"), 0.0)), "records_valid": int(_to_float(profile.get("records_valid"), 0.0)), "blocker": str(profile.get("error_category") or "")},
@@ -7466,10 +7484,36 @@ class PaperAutopilotEngine:
             "provider_calls_used": sum(int(item["attempted"]) for item in endpoints.values()),
             "broker_actions_used": 0, "llm_calls_used": 0, "candidate_created": False,
             "order_created": False, "execution_authority": "DISABLED", "secret_exposed": False,
+            "profile_context": dict(profile.get("normalized_fields") or {}),
+            "profile_consumer_linked": str(profile.get("response_state") or "") == "SUCCESS",
         }
         save_fmp_production_verification_v1(result, state_dir)
         self._runtime_state["fmp_production_verification_v1"] = result
         return result
+
+    def _consume_fmp_profile_context_v1(self, symbol: str, profile: Mapping[str, Any]) -> None:
+        """Publish only an accepted FMP profile as advisory evidence for triage."""
+        response = dict(profile or {})
+        if str(response.get("response_state") or "") != "SUCCESS" or not dict(response.get("normalized_fields") or {}):
+            return
+        records = dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {})
+        key = f"fmp-production-profile:{str(symbol or '').upper()}"
+        records[key] = {
+            "record_id": key,
+            "symbol": str(symbol or "").upper(),
+            "provider": "FMP",
+            "endpoint_family": str(response.get("endpoint_family") or "company_profile"),
+            "requested_at": response.get("requested_at"),
+            "response_at": response.get("response_at"),
+            "response_state": "SUCCESS",
+            "freshness_state": "CURRENT",
+            "quality_state": "VALID",
+            "normalized_fields": dict(response.get("normalized_fields") or {}),
+            "consumer_acknowledged": True,
+            "acknowledgement_state": "CONSUMED_BY_LEGACY_POSITION_RISK_TRIAGE_V1",
+            "broker_actions": 0,
+        }
+        self._runtime_state["legacy_swing_fmp_evidence"] = records
 
     def _profit_protection_review_phase(
         self,
