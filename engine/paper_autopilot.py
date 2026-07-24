@@ -101,6 +101,12 @@ from engine.astra_unified_position_advisory_v1 import (
     save_position_exit_readiness_v1,
     save_unified_position_advisory_v1,
 )
+from engine.astra_shadow_exit_intelligence_v1 import (
+    load_shadow_exit_state_v1,
+    run_shadow_exit_cycle_v1,
+    save_shadow_exit_cycle_v1,
+    shadow_handoff_by_symbol_v1,
+)
 from engine.astra_provider_consumption_telemetry_v1 import (
     build_provider_consumption_telemetry_v1,
     load_fmp_production_verification_v1,
@@ -1445,6 +1451,7 @@ class PaperAutopilotEngine:
         self.position_exit_readiness_state_path = str(
             os.path.join(os.path.dirname(self.state_path) or "state", "astra_position_exit_readiness_v1.json")
         )
+        self.shadow_exit_state_dir = os.path.dirname(self.state_path) or "state"
         self.position_lane_horizon_recovery = AstraPositionLaneHorizonRecoveryV1(
             os.path.dirname(self.state_path) or "state"
         )
@@ -7511,6 +7518,30 @@ class PaperAutopilotEngine:
             profit_protection=profit_protection or self._runtime_state.get("profit_protection_state_v1") or {},
             resolution=resolution,
         )
+        # Shadow evaluation is downstream of broker truth and cached evidence.
+        # It creates no provider or broker calls and cannot authorize an exit.
+        shadow_cycle = run_shadow_exit_cycle_v1(
+            broker_position_by_symbol,
+            recovery=recovery,
+            evidence=evidence,
+            exit_readiness=exit_readiness,
+            previous=load_shadow_exit_state_v1(self.shadow_exit_state_dir),
+        )
+        save_shadow_exit_cycle_v1(shadow_cycle, self.shadow_exit_state_dir)
+        shadow_state = dict(shadow_cycle.get("state") or {})
+        shadow_handoff = shadow_handoff_by_symbol_v1(shadow_state)
+        self._runtime_state["shadow_exit_intelligence_v1"] = shadow_state
+        self._runtime_state["shadow_exit_diagnostics_v1"] = dict(shadow_cycle.get("diagnostics") or {})
+        self._runtime_state["shadow_exit_module_handoff_v1"] = dict(shadow_cycle.get("handoff") or {})
+        exit_readiness = build_position_exit_readiness_v1(
+            broker_position_by_symbol,
+            evidence=evidence,
+            triage=triage,
+            loss_containment=loss_containment or self._runtime_state.get("loss_containment_state_v1") or {},
+            profit_protection=profit_protection or self._runtime_state.get("profit_protection_state_v1") or {},
+            resolution=resolution,
+            shadow_handoff=shadow_handoff,
+        )
         save_position_exit_readiness_v1(exit_readiness, os.path.dirname(self.position_exit_readiness_state_path) or "state")
         self._runtime_state["position_exit_readiness_v1"] = exit_readiness
         advisory = build_unified_position_advisory_v1(
@@ -7521,6 +7552,7 @@ class PaperAutopilotEngine:
             profit_protection=profit_protection or self._runtime_state.get("profit_protection_state_v1") or {},
             exit_readiness=exit_readiness,
             resolution=resolution,
+            shadow_handoff=shadow_handoff,
         )
         save_unified_position_advisory_v1(advisory, os.path.dirname(self.unified_position_advisory_state_path) or "state")
         self._runtime_state["unified_position_advisory_v1"] = advisory
@@ -7534,6 +7566,8 @@ class PaperAutopilotEngine:
                 if isinstance(row, Mapping)
             ],
             "handoff_active": bool(advisory.get("positions")),
+            "shadow_source": "astra_shadow_exit_intelligence_v1",
+            "shadow_evaluations_available": len(shadow_state.get("evaluations") or []),
             "execution_authority": "DISABLED", "advisory_only": True,
         }
         # Mark an FMP record consumed only after the actual position triage

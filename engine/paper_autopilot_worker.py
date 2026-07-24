@@ -431,6 +431,7 @@ class PaperAutopilotWorker:
                 "position_evidence_completeness": dict(runtime.get("position_evidence_completeness_v1") or {}),
                 "unified_position_advisory": dict(runtime.get("unified_position_advisory_v1") or {}),
                 "copilot_position_advisory_handoff": dict(runtime.get("copilot_position_advisory_handoff_v1") or {}),
+                "shadow_exit_diagnostics": dict(runtime.get("shadow_exit_diagnostics_v1") or {}),
                 "canonical_capacity_fact": dict(lane.get("canonical_capacity_fact") or {}),
                 "targeted_reasons": targeted_reasons,
                 "get_side_effects": 0,

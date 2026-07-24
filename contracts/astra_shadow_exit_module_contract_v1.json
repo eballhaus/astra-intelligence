@@ -1,0 +1,37 @@
+{
+  "schema_version": "astra_shadow_exit_module_contract_v1",
+  "integration_owner": "Codex",
+  "execution_authority": "DISABLED",
+  "promotion_status": "NOT_PROMOTED",
+  "shadow_only": true,
+  "kimi_allowed_files": [
+    "engine/astra_shadow_exit_regret_v1.py",
+    "engine/astra_shadow_bounce_back_v1.py",
+    "engine/astra_shadow_profit_giveback_v1.py",
+    "engine/astra_shadow_exit_confirmation_v1.py",
+    "engine/astra_shadow_exit_performance_v1.py",
+    "tests/test_astra_shadow_exit_*_v1.py"
+  ],
+  "kimi_forbidden_files": [
+    "engine/paper_autopilot.py",
+    "server_extend.py",
+    "engine/astra_shadow_exit_intelligence_v1.py",
+    "engine/astra_unified_position_advisory_v1.py",
+    "engine/astra_continuous_system_integrity_scanner_v1.py",
+    "engine/astra_continuous_governance_v1.py"
+  ],
+  "invariants": [
+    "inputs contain only real cached market evidence",
+    "no future observation may be used before its target timestamp",
+    "zero denominators return status INSUFFICIENT_SAMPLE rather than raising",
+    "results never create orders or modify broker truth",
+    "all results retain position_identity and shadow_evaluation_id"
+  ],
+  "functions": {
+    "calculate_exit_regret": {"inputs": ["evaluation", "observations"], "returns": ["status", "net_regret", "blockers", "sample_size"]},
+    "evaluate_bounce_back": {"inputs": ["evaluation", "observations"], "returns": ["status", "bounce_state", "blockers"]},
+    "evaluate_profit_giveback": {"inputs": ["evaluation", "observations"], "returns": ["status", "giveback_state", "blockers"]},
+    "evaluate_confirmation_path": {"inputs": ["evaluation", "observations"], "returns": ["status", "confirmation_state", "blockers"]},
+    "aggregate_shadow_exit_performance": {"inputs": ["outcomes"], "returns": ["status", "sample_size", "metrics", "blockers"]}
+  }
+}

@@ -294,6 +294,20 @@ class ContinuousSystemIntegrityScannerV1:
                             "canonical_fact_ids": ["CURRENT_BROKER_POSITION_ADVISORY"],
                             "affected_components": ["astra_unified_position_advisory_v1", "astra_copilot_suite_v1"],
                             "first_bad_handoff": "unified position advisory -> cached Copilot action handoff"})
+        shadow_exit = dict(context.get("shadow_exit_diagnostics") or {})
+        if shadow_exit:
+            if _number(shadow_exit.get("positions_considered")) <= 0:
+                signals.append({"kind": "SHADOW_EXIT_PRODUCER_NOT_RUNNING", "severity": "HIGH", "confidence": "VERIFIED",
+                                "affected_components": ["astra_shadow_exit_intelligence_v1"], "first_bad_handoff": "position evidence -> shadow evaluation producer"})
+            if _number(shadow_exit.get("identity_conflicts")):
+                signals.append({"kind": "SHADOW_EVALUATION_IDENTITY_CONFLICT", "severity": "HIGH", "confidence": "VERIFIED",
+                                "affected_components": ["astra_shadow_exit_intelligence_v1"], "first_bad_handoff": "position lifecycle -> shadow identity"})
+            if _number(shadow_exit.get("stale_rejected_observations")):
+                waiting.append({"state": "LEGITIMATE_WAITING_STATE", "reason": "SHADOW_PRICE_EVIDENCE_STALE",
+                                "affected_observation_count": _number(shadow_exit.get("stale_rejected_observations")), "fail_closed": True})
+            if _number(shadow_exit.get("active_evaluations")) and _number(shadow_exit.get("analysis_module_inputs_emitted")) == 0:
+                signals.append({"kind": "SHADOW_RESULT_NOT_CONSUMED", "severity": "HIGH", "confidence": "VERIFIED",
+                                "affected_components": ["astra_shadow_exit_module_handoff_v1"], "first_bad_handoff": "shadow evaluation -> module handoff"})
         handoffs = list(context.get("quote_handoffs") or [])[:max_rows]
         for handoff in handoffs:
             if not isinstance(handoff, dict):

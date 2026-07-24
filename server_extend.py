@@ -70727,6 +70727,16 @@ def _astra_position_exit_readiness_v1_payload() -> dict:
             **_safety_flags_v1()}
 
 
+def _astra_shadow_exit_payload_v1(filename: str, endpoint: str) -> dict:
+    """Read worker-persisted shadow state only; GET never advances observations."""
+    payload = _read_json_file(os.path.join(STATE, filename), default={})
+    return {"endpoint": endpoint, "status": "PASS" if payload else "AWAITING_WORKER_SHADOW_CYCLE",
+            **dict(payload or {}), "provider_calls_from_get": 0, "broker_actions_from_get": 0,
+            "llm_calls_from_get": 0, "state_mutations_from_get": 0, "get_route_read_only": True,
+            "shadow_only": True, "execution_authority": "DISABLED", "promotion_status": "NOT_PROMOTED",
+            **_safety_flags_v1()}
+
+
 def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
     lane = _crypto_paper_lane_validation_v1_payload(statuses)
     rows = _crypto_ranking_rows_cached_v1()
@@ -74656,6 +74666,21 @@ def astra_unified_position_advisory_v1():
 @router.get("/api/astra_position_exit_readiness_v1")
 def astra_position_exit_readiness_v1():
     return _astra_position_exit_readiness_v1_payload()
+
+
+@router.get("/api/astra_shadow_exit_intelligence_v1")
+def astra_shadow_exit_intelligence_v1():
+    return _astra_shadow_exit_payload_v1("astra_shadow_exit_intelligence_v1.json", "/api/astra_shadow_exit_intelligence_v1")
+
+
+@router.get("/api/astra_shadow_exit_diagnostics_v1")
+def astra_shadow_exit_diagnostics_v1():
+    return _astra_shadow_exit_payload_v1("astra_shadow_exit_diagnostics_v1.json", "/api/astra_shadow_exit_diagnostics_v1")
+
+
+@router.get("/api/astra_shadow_exit_module_contract_v1")
+def astra_shadow_exit_module_contract_v1():
+    return _astra_shadow_exit_payload_v1("astra_shadow_exit_module_handoff_v1.json", "/api/astra_shadow_exit_module_contract_v1")
 
 
 @router.get("/api/crypto_lane_paper_readiness_v1")
