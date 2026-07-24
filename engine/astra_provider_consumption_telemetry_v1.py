@@ -67,6 +67,12 @@ def _within_window(row: Mapping[str, Any], window_start: str) -> bool:
         return False
 
 
+def _consumer_event_within_window(row: Mapping[str, Any], window_start: str) -> bool:
+    if not window_start:
+        return True
+    return _within_window({"timestamp": row.get("assigned_at") or row.get("consumed_at") or row.get("evidence_at")}, window_start)
+
+
 def _family(value: Mapping[str, Any]) -> str:
     """Normalize persisted FMP endpoint identities without changing router policy."""
     raw = str(value.get("endpoint_family") or "unknown").strip().lower()
@@ -141,7 +147,10 @@ def build_provider_consumption_telemetry_v1(
     failures = [row for row in network_sent if not bool(row.get("ok"))]
     accepted = [row for row in successes if _number(row.get("useful_fields_count")) > 0]
     bytes_received = int(sum(max(0.0, _number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta"))) for row in events))
-    consumer_rows = [dict(row) for row in consumer_events if isinstance(row, Mapping) and row.get("consumer")]
+    consumer_rows = [
+        dict(row) for row in consumer_events
+        if isinstance(row, Mapping) and row.get("consumer") and _consumer_event_within_window(row, window_start)
+    ]
     consumed = [row for row in consumer_rows if bool(row.get("consumed"))]
     last_event = dict(events[-1]) if events else {}
     last_consumer = str(consumed[-1].get("consumer") or "") if consumed else ""
