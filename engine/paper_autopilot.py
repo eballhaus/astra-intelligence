@@ -102,6 +102,7 @@ from engine.astra_unified_position_advisory_v1 import (
     save_unified_position_advisory_v1,
 )
 from engine.astra_shadow_exit_intelligence_v1 import (
+    load_shadow_exit_module_outputs_v1,
     load_shadow_exit_state_v1,
     run_shadow_exit_cycle_v1,
     save_shadow_exit_cycle_v1,
@@ -7526,6 +7527,7 @@ class PaperAutopilotEngine:
             evidence=evidence,
             exit_readiness=exit_readiness,
             previous=load_shadow_exit_state_v1(self.shadow_exit_state_dir),
+            analysis_outputs=load_shadow_exit_module_outputs_v1(self.shadow_exit_state_dir),
         )
         save_shadow_exit_cycle_v1(shadow_cycle, self.shadow_exit_state_dir)
         shadow_state = dict(shadow_cycle.get("state") or {})

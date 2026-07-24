@@ -20,6 +20,7 @@ EVALUATION_FILE = "astra_shadow_exit_intelligence_v1.json"
 OBSERVATION_FILE = "astra_shadow_exit_observations_v1.json"
 DIAGNOSTIC_FILE = "astra_shadow_exit_diagnostics_v1.json"
 HANDOFF_FILE = "astra_shadow_exit_module_handoff_v1.json"
+OUTPUT_FILE = "astra_shadow_exit_module_outputs_v1.json"
 MAX_EVALUATIONS = 600
 MAX_OBSERVATIONS = 3000
 BASELINE_STRATEGIES = (
@@ -157,6 +158,7 @@ def run_shadow_exit_cycle_v1(
     broker_positions: Mapping[str, Mapping[str, Any]], *, recovery: Mapping[str, Any] | None = None,
     evidence: Mapping[str, Any] | None = None, exit_readiness: Mapping[str, Any] | None = None,
     previous: Mapping[str, Any] | None = None, now: datetime | None = None, max_new_evaluations: int = 200,
+    analysis_outputs: Mapping[str, Any] | None = None, closure_records: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Pure worker-owned cycle. It reads cached evidence only and never calls a broker/provider."""
     now = now or _now(); now_iso = _iso(now); prior = dict(previous or {})
@@ -165,6 +167,8 @@ def run_shadow_exit_cycle_v1(
     exits = {_text(x.get("symbol")).upper(): dict(x) for x in (exit_readiness or {}).get("positions", []) if isinstance(x, Mapping)}
     evaluations = {str(x.get("shadow_evaluation_id")): dict(x) for x in prior.get("evaluations", []) if isinstance(x, Mapping)}
     observations = {str(x.get("shadow_observation_id")): dict(x) for x in prior.get("observations", []) if isinstance(x, Mapping)}
+    output_by_evaluation = {_text(x.get("shadow_evaluation_id")): dict(x) for x in (analysis_outputs or {}).get("outputs", []) if isinstance(x, Mapping)}
+    closures = {str(key): dict(value) for key, value in (closure_records or {}).items() if isinstance(value, Mapping)}
     # A regenerated advisory timestamp is not a new shadow signal. Retain one
     # active evaluation per exact identity/strategy/signal until it finalizes.
     active_keys = {
@@ -217,7 +221,13 @@ def run_shadow_exit_cycle_v1(
                         "shadow_only": True, "execution_authority": "DISABLED", "promotion_status": "NOT_PROMOTED"}
     for evaluation in evaluations.values():
         if evaluation.get("evaluation_status") in {"ACTIVE", "PARTIALLY_OBSERVED"} and evaluation.get("position_identity") not in active_identities:
-            evaluation.update({"evaluation_status": "CANCELED_POSITION_IDENTITY_CHANGED", "first_causal_blocker": "POSITION_IDENTITY_NO_LONGER_OPEN", "actual_position_still_open": False, "updated_at": now_iso})
+            closure = closures.get(_text(evaluation.get("position_identity")))
+            if closure:
+                evaluation.update({"evaluation_status": "COMPLETED", "first_causal_blocker": "", "actual_position_still_open": False,
+                                   "actual_exit_timestamp": closure.get("exit_timestamp"), "actual_exit_price": closure.get("exit_price"),
+                                   "actual_realized_result": closure.get("realized_result"), "updated_at": now_iso})
+            else:
+                evaluation.update({"evaluation_status": "CANCELED_POSITION_IDENTITY_CHANGED", "first_causal_blocker": "POSITION_IDENTITY_NO_LONGER_OPEN", "actual_position_still_open": False, "updated_at": now_iso})
     due = completed = 0
     symbol_by_identity = {shadow_position_identity_v1(pos, recoveries.get(sym)).get("position_identity"): (sym, pos) for sym, pos in _position_rows(broker_positions)}
     for observation in observations.values():
@@ -250,6 +260,13 @@ def run_shadow_exit_cycle_v1(
         ordered_evaluations.append(row)
         if len(ordered_evaluations) >= MAX_EVALUATIONS: break
     kept = {x["shadow_evaluation_id"] for x in ordered_evaluations}; ordered_observations = [x for x in observations.values() if x.get("shadow_evaluation_id") in kept]
+    consumed_outputs = []
+    for evaluation in ordered_evaluations:
+        output = output_by_evaluation.get(_text(evaluation.get("shadow_evaluation_id")))
+        if output and _text(output.get("position_identity")) == _text(evaluation.get("position_identity")):
+            evaluation["analysis_module_output"] = output
+            evaluation["analysis_module_output_status"] = _text(output.get("status") or "INSUFFICIENT_SAMPLE")
+            consumed_outputs.append(evaluation.get("shadow_evaluation_id"))
     ordered_observations.sort(key=lambda x: _text(x.get("created_at")), reverse=True); ordered_observations = ordered_observations[:MAX_OBSERVATIONS]
     counts = {status: sum(1 for x in ordered_evaluations if x.get("evaluation_status") == status) for status in ("ACTIVE", "PARTIALLY_OBSERVED", "COMPLETED", "EXPIRED_INSUFFICIENT_DATA", "EXTERNALLY_BLOCKED")}
     diagnostics = {"schema_version": SCHEMA_VERSION, "generated_at": now_iso, "positions_considered": considered, "positions_eligible": eligible,
@@ -263,7 +280,7 @@ def run_shadow_exit_cycle_v1(
         "identity_conflicts": 0, "reopened_symbol_events": 0, "quantity_change_events": 0, "real_closure_reconciliations": 0,
         "provider_requests": 0, "provider_cache_hits": 0, "provider_blockers": [], "freshness_blockers": ["CURRENT_QUOTE_EVIDENCE_STALE"] if any(x.get("observation_status") == "STALE_EVIDENCE_REJECTED" for x in ordered_observations) else [],
         "exit_readiness_handoffs": eligible, "unified_advisory_handoffs": eligible, "copilot_handoffs": eligible,
-        "analysis_module_inputs_emitted": len(ordered_evaluations), "analysis_module_outputs_consumed": 0,
+        "analysis_module_inputs_emitted": len(ordered_evaluations), "analysis_module_outputs_consumed": len(consumed_outputs),
         "first_causal_blockers": sorted({str(x.get("first_causal_blocker")) for x in ordered_evaluations if x.get("first_causal_blocker")}),
         "execution_authority": "DISABLED", "shadow_only": True, "promotion_status": "NOT_PROMOTED"}
     state = {"schema_version": SCHEMA_VERSION, "generated_at": now_iso, "evaluations": ordered_evaluations, "position_count": considered,
@@ -272,7 +289,7 @@ def run_shadow_exit_cycle_v1(
                          "execution_authority": "DISABLED", "shadow_only": True, "promotion_status": "NOT_PROMOTED"}
     handoff = {"schema_version": SCHEMA_VERSION, "generated_at": now_iso, "contract_version": "astra_shadow_exit_module_contract_v1",
                "inputs": [{"shadow_evaluation_id": x["shadow_evaluation_id"], "position_identity": x["position_identity"], "strategy": x["shadow_strategy"], "hold_benchmark": {k: x.get(k) for k in ("hold_price_at_signal", "hold_price_at_window", "hold_return_from_signal", "maximum_favorable_excursion_after_signal", "maximum_adverse_excursion_after_signal")}} for x in ordered_evaluations],
-               "outputs_consumed": [], "execution_authority": "DISABLED", "shadow_only": True, "promotion_status": "NOT_PROMOTED"}
+               "outputs_consumed": consumed_outputs, "execution_authority": "DISABLED", "shadow_only": True, "promotion_status": "NOT_PROMOTED"}
     return {"state": state, "observations": observation_state, "diagnostics": diagnostics, "handoff": handoff}
 
 
@@ -284,6 +301,11 @@ def save_shadow_exit_cycle_v1(cycle: Mapping[str, Mapping[str, Any]], state_dir:
 def load_shadow_exit_state_v1(state_dir: str | Path = "state") -> dict[str, Any]:
     root = Path(state_dir); state = _load(root / EVALUATION_FILE); state["observations"] = _load(root / OBSERVATION_FILE).get("observations", [])
     return state
+
+
+def load_shadow_exit_module_outputs_v1(state_dir: str | Path = "state") -> dict[str, Any]:
+    """Read optional contained-module output only; absent output is normal."""
+    return _load(Path(state_dir) / OUTPUT_FILE)
 
 
 def shadow_handoff_by_symbol_v1(state: Mapping[str, Any]) -> dict[str, dict[str, Any]]:

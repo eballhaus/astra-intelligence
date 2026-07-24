@@ -100,3 +100,15 @@ class ShadowExitFoundationTests(unittest.TestCase):
         self.assertEqual(exit_rows["positions"][0]["shadow_promotion_status"], "NOT_PROMOTED")
         self.assertEqual(advisory["positions"][0]["execution_authority"], "DISABLED")
         self.assertTrue(advisory["positions"][0]["shadow_active_strategies"])
+
+    def test_module_outputs_and_real_closure_contract_are_consumed_without_broker_mutation(self):
+        first = run_shadow_exit_cycle_v1({"AAA": _position()}, now=NOW, **_inputs())
+        evaluation = first["state"]["evaluations"][0]
+        output = {"outputs": [{"shadow_evaluation_id": evaluation["shadow_evaluation_id"], "position_identity": evaluation["position_identity"], "status": "INSUFFICIENT_SAMPLE"}]}
+        closed = run_shadow_exit_cycle_v1({}, previous={**first["state"], "observations": first["observations"]["observations"]}, analysis_outputs=output,
+            closure_records={evaluation["position_identity"]: {"exit_timestamp": "2026-07-24T17:00:00Z", "exit_price": 94, "realized_result": -0.06}}, now=NOW + timedelta(hours=2))
+        row = next(x for x in closed["state"]["evaluations"] if x["shadow_evaluation_id"] == evaluation["shadow_evaluation_id"])
+        self.assertEqual(row["evaluation_status"], "COMPLETED")
+        self.assertEqual(row["actual_exit_price"], 94)
+        self.assertEqual(row["analysis_module_output_status"], "INSUFFICIENT_SAMPLE")
+        self.assertGreater(closed["diagnostics"]["analysis_module_outputs_consumed"], 0)
