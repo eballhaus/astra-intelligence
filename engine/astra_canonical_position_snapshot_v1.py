@@ -134,13 +134,13 @@ def build_canonical_position_snapshot(
         # These will be UNAVAILABLE unless enriched from Astra-owned metadata.
         lane = _text(bp.get("lane_id") or bp.get("lane"), "")
         horizon = _text(bp.get("paper_entry_horizon_style") or bp.get("intended_horizon") or bp.get("original_horizon"), "")
-        
+
         lane_source = "broker_position" if lane else "UNAVAILABLE"
         horizon_source = "broker_position" if horizon else "UNAVAILABLE"
-        
+
         # Position opened time - from broker if available
         position_opened_at = _text(bp.get("created_at") or bp.get("filled_at"))
-        
+
         # Evidence freshness - based on actual evidence age, not just price positivity
         if broker_timestamp:
             evidence_freshness = "current"  # Has broker evidence time
