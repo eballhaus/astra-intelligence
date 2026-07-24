@@ -104,6 +104,15 @@ class FmpProviderConsumptionTests(unittest.TestCase):
             self.assertFalse(provider["telemetry_complete"])
             self.assertEqual(provider["endpoint_families"][0]["responses_assigned"], 0)
 
+    def test_telemetry_window_excludes_prior_worker_generation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "fmp_efficiency_ledger_v1.jsonl")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({"timestamp": "2026-07-24T00:00:00Z", "endpoint_family": "company_profile", "ok": True, "useful_fields_count": 2}) + "\n")
+                handle.write(json.dumps({"timestamp": "2026-07-24T01:00:00Z", "endpoint_family": "company_profile", "ok": True, "useful_fields_count": 2}) + "\n")
+            telemetry = build_provider_consumption_telemetry_v1(state_dir=directory, configured=True, key_fingerprint="deadbeef", window_start="2026-07-24T00:30:00Z")
+            self.assertEqual(telemetry["providers"][0]["responses_accepted"], 1)
+
     def test_scanner_detects_configured_unused_provider_and_success_not_consumed(self):
         telemetry = {"providers": [{"provider": "FMP", "configured": True, "attempted_calls": 0, "responses_accepted": 1, "last_consumer": ""}]}
         signals, _waiting, _compliance = ContinuousSystemIntegrityScannerV1._signals(

@@ -56,6 +56,17 @@ def _read_tail(path: Path, limit: int = 200) -> list[dict[str, Any]]:
     return rows
 
 
+def _within_window(row: Mapping[str, Any], window_start: str) -> bool:
+    if not window_start:
+        return True
+    try:
+        observed = datetime.fromisoformat(str(row.get("timestamp") or "").replace("Z", "+00:00")).astimezone(UTC)
+        start = datetime.fromisoformat(str(window_start).replace("Z", "+00:00")).astimezone(UTC)
+        return observed >= start
+    except (TypeError, ValueError):
+        return False
+
+
 def _family(value: Mapping[str, Any]) -> str:
     """Normalize persisted FMP endpoint identities without changing router policy."""
     raw = str(value.get("endpoint_family") or "unknown").strip().lower()
@@ -116,10 +127,11 @@ def build_provider_consumption_telemetry_v1(
     configured: bool,
     key_fingerprint: str,
     consumer_events: Iterable[Mapping[str, Any]] = (),
+    window_start: str = "",
 ) -> dict[str, Any]:
     """Summarize existing router ledger events without issuing provider calls."""
     root = Path(state_dir)
-    events = _read_tail(root / "fmp_efficiency_ledger_v1.jsonl")
+    events = [row for row in _read_tail(root / "fmp_efficiency_ledger_v1.jsonl") if _within_window(row, window_start)]
     attempts = len(events)
     cache_hits = [row for row in events if bool(row.get("cache_hit"))]
     governor_blocked = [row for row in events if str(row.get("blocked_reason") or "").lower() in {"call_limit", "bandwidth_budget", "governor_blocked", "provider_cooldown_or_budget"}]
@@ -184,7 +196,7 @@ def build_provider_consumption_telemetry_v1(
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": _now(),
-        "window_start": str(events[0].get("timestamp") or "") if events else "",
+        "window_start": str(window_start or (events[0].get("timestamp") if events else "") or ""),
         "provider_count": 1,
         "providers": [{**provider, "endpoint_families": family_rows, "telemetry_complete": complete}],
         "endpoint_families": family_rows,

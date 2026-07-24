@@ -7577,8 +7577,20 @@ class PaperAutopilotEngine:
         """Project existing router accounting into one cache-only telemetry state."""
         key, _source = resolve_fmp_key()
         fingerprint = hashlib.sha256(key.encode("utf-8")).hexdigest()[:8] if key else ""
+        state_dir = os.path.dirname(self.state_path) or "state"
+        worker_window = {}
+        try:
+            with open(os.path.join(state_dir, "astra_worker_runtime_state_v1.json"), "r", encoding="utf-8") as handle:
+                worker_window = dict(json.load(handle) or {})
+        except (OSError, ValueError, TypeError):
+            worker_window = {}
         consumer_events = []
-        for record in dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {}).values():
+        fmp_records = dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {})
+        fmp_records.update({
+            key: value for key, value in dict((self._runtime_state.get("legacy_swing_canary") or {}).get("fmp_records") or {}).items()
+            if key not in fmp_records and isinstance(value, Mapping)
+        })
+        for record in fmp_records.values():
             if not isinstance(record, Mapping) or not record.get("record_id"):
                 continue
             consumer_events.append({
@@ -7600,13 +7612,28 @@ class PaperAutopilotEngine:
                     "consumer_record_id": event.get("consumer_record_id") or event.get("record_id"),
                     "evidence_at": event.get("response_at"),
                 })
+        market_records = dict(self._runtime_state.get("legacy_swing_market_evidence") or {})
+        for activation_id, bundle in market_records.items():
+            fmp_bar = dict((dict(bundle or {})).get("HISTORICAL_BARS_FMP") or {})
+            if not fmp_bar.get("record_id") or not int(fmp_bar.get("records_valid") or 0):
+                continue
+            routing = dict((dict(bundle or {})).get("HISTORICAL_BARS_ROUTING") or {})
+            consumer_events.append({
+                "endpoint_family": "completed_bars", "symbol": fmp_bar.get("symbol"),
+                "assigned": True, "assigned_at": fmp_bar.get("received_at") or fmp_bar.get("response_at"),
+                "consumed": bool(routing.get("record_id")), "consumed_at": routing.get("as_of") or fmp_bar.get("received_at"),
+                "consumer": "legacy_swing_bar_routing_v1" if routing.get("record_id") else "",
+                "consumer_record_id": routing.get("record_id") or fmp_bar.get("record_id"),
+                "evidence_at": fmp_bar.get("last_bar_at") or fmp_bar.get("received_at"),
+            })
         telemetry = build_provider_consumption_telemetry_v1(
-            state_dir=os.path.dirname(self.state_path) or "state",
+            state_dir=state_dir,
             configured=bool(key),
             key_fingerprint=fingerprint,
             consumer_events=consumer_events,
+            window_start=str(worker_window.get("started_at") or ""),
         )
-        save_provider_consumption_telemetry_v1(telemetry, os.path.dirname(self.state_path) or "state")
+        save_provider_consumption_telemetry_v1(telemetry, state_dir)
         self._runtime_state["provider_consumption_telemetry_v1"] = telemetry
         return telemetry
 
