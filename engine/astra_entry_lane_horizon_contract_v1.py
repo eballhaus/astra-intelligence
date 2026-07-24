@@ -125,14 +125,17 @@ class AstraEntryLaneHorizonLedgerV1:
         except Exception:
             return {"schema_version": VERSION, "entries": []}
 
-    def record(self, contract: Mapping[str, Any], stage: str, blockers: list[str] | None = None) -> dict[str, Any]:
-        current = self.snapshot(); entries = [dict(x) for x in current.get("entries") or [] if isinstance(x, dict)]
-        item = dict(contract or {}); item["stage"] = stage; item["exact_blockers"] = list(dict.fromkeys(list(item.get("exact_blockers") or []) + list(blockers or [])))
-        key = _text(item.get("order_intent_id")); entries = [x for x in entries if _text(x.get("order_intent_id")) != key]; entries.append(item)
-        entries = entries[-250:]
-        payload = {"schema_version": VERSION, "generated_at": _now(), "entries": entries,
-                   "summary": {"entries": len(entries), "blocked": sum(bool(x.get("exact_blockers")) for x in entries),
-                               "resolved": sum(not bool(x.get("exact_blockers")) for x in entries)}}
+    def ensure_snapshot(self) -> dict[str, Any]:
+        """Worker-only initialization so an empty forward window is explicit."""
+        current = self.snapshot()
+        if current.get("generated_at"):
+            return current
+        return self._write([])
+
+    def _write(self, entries: list[dict[str, Any]]) -> dict[str, Any]:
+        payload = {"schema_version": VERSION, "generated_at": _now(), "entries": entries[-250:],
+                   "summary": {"entries": len(entries[-250:]), "blocked": sum(bool(x.get("exact_blockers")) for x in entries[-250:]),
+                               "resolved": sum(not bool(x.get("exact_blockers")) for x in entries[-250:])}}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(prefix=self.path.name + ".", dir=str(self.path.parent))
         try:
@@ -141,3 +144,9 @@ class AstraEntryLaneHorizonLedgerV1:
         finally:
             if os.path.exists(tmp): os.unlink(tmp)
         return payload
+
+    def record(self, contract: Mapping[str, Any], stage: str, blockers: list[str] | None = None) -> dict[str, Any]:
+        current = self.snapshot(); entries = [dict(x) for x in current.get("entries") or [] if isinstance(x, dict)]
+        item = dict(contract or {}); item["stage"] = stage; item["exact_blockers"] = list(dict.fromkeys(list(item.get("exact_blockers") or []) + list(blockers or [])))
+        key = _text(item.get("order_intent_id")); entries = [x for x in entries if _text(x.get("order_intent_id")) != key]; entries.append(item)
+        return self._write(entries)

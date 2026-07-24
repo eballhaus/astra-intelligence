@@ -54,6 +54,12 @@ class EntryLaneHorizonContractTests(unittest.TestCase):
         self.assertEqual(loaded["stage"], "ENTRY_FILL_LINKED")
         self.assertEqual((loaded["broker_order_id"], loaded["entry_fill_id"]), ("order-1", "fill-1"))
 
+    def test_empty_worker_window_is_durably_timestamped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = AstraEntryLaneHorizonLedgerV1(directory).ensure_snapshot()
+        self.assertTrue(snapshot["generated_at"])
+        self.assertEqual(snapshot["summary"]["entries"], 0)
+
     def test_exact_new_entry_recovery_prefers_order_link(self):
         contract = link_entry_contract_v1(build_entry_lane_horizon_contract_v1(_row()), broker_order_id="order-1")
         ledger = build_position_lane_horizon_recovery_v1(

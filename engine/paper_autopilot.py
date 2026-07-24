@@ -7633,6 +7633,8 @@ class PaperAutopilotEngine:
         }
 
     def run_cycle(self):
+        # The canonical worker makes an empty forward-entry window explicit.
+        self._runtime_state["entry_lane_horizon_integrity_v1"] = self.entry_lane_horizon_ledger.ensure_snapshot()
         if not self._enabled:
             # Evidence acquisition must remain worker-owned even when the
             # global order worker is disabled.  This calls only the existing
