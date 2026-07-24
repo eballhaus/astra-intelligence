@@ -43,7 +43,7 @@ def _text(value: Any, default: str = "") -> str:
 def _integer(value: Any, default: int = 0) -> int:
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 

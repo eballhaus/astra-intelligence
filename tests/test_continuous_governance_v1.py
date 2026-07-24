@@ -1,3 +1,4 @@
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -178,6 +179,25 @@ class ContinuousGovernanceTests(unittest.TestCase):
         rows = {row["invariant_id"]: row for row in result["invariants"]}
         self.assertEqual(rows["SWING_CAPACITY_MATCHES_APPROVED_ACTIVE_SLOTS"]["state"], "PASS")
         self.assertEqual(rows["SWING_ENTRY_VELOCITY_BOUNDED"]["state"], "PASS")
+
+    def test_sentinel_state_file_bound_uses_safe_integer_conversion(self):
+        for value, expected in ((0, "PASS"), ("0", "PASS"), ("1", "WARN"), (None, "PASS"), ("bad", "PASS"), (math.nan, "PASS"), (math.inf, "PASS")):
+            runtime_state = runtime(review=False)
+            runtime_state["system_integrity_scanner_v1"] = {
+                "status": "PASS",
+                "scan_owner": "canonical_worker",
+                "resource_protection": {"state_files_over_limit": value},
+                "crypto_market_data": {},
+                "state_mutations_from_get": 0,
+            }
+            with tempfile.TemporaryDirectory() as directory:
+                result = ContinuousGovernanceV1(directory).run_worker_cycle(
+                    worker_state=worker_state(), runtime_state=runtime_state, safety=SAFETY,
+                )
+            rows = {row["invariant_id"]: row for row in result["invariants"]}
+            self.assertEqual(rows["SENTINEL_STATE_FILES_REMAIN_BOUNDED"]["state"], expected)
+            self.assertTrue(result["paper_only_preserved"])
+            self.assertFalse(result["forced_exits_enabled"])
 
 
 if __name__ == "__main__":
