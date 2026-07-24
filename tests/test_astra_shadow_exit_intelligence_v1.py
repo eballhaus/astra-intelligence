@@ -45,6 +45,14 @@ class ShadowExitFoundationTests(unittest.TestCase):
         self.assertNotEqual(first["position_identity"], reopened["position_identity"])
         self.assertNotEqual(first["position_identity"], changed["position_identity"])
 
+    def test_recovered_active_lifecycle_id_is_exact_identity(self):
+        identity = shadow_position_identity_v1(
+            _position(broker_position_id="", position_id=""),
+            {"lane": "DAY", "horizon": "scalp", "lane_source": "ACTIVE_POSITION_LIFECYCLE", "lane_source_id": "life-recovered"},
+        )
+        self.assertEqual(identity["lifecycle_id"], "life-recovered")
+        self.assertEqual(identity["identity_confidence"], "CANONICAL")
+
     def test_cycle_creates_deduplicates_and_persists_baseline_evaluations(self):
         inputs = _inputs(); cycle = run_shadow_exit_cycle_v1({"AAA": _position()}, now=NOW, **inputs)
         self.assertEqual(len(cycle["state"]["evaluations"]), 5)

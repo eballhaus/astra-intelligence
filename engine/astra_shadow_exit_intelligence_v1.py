@@ -90,6 +90,10 @@ def shadow_position_identity_v1(position: Mapping[str, Any], recovery: Mapping[s
     asset_class = _text(position.get("asset_class") or position.get("asset_type") or "equity").lower()
     linked = {name: _text(position.get(name) or recovery.get(name)) for name in
               ("broker_position_id", "position_id", "lifecycle_id", "entry_fill_id", "astra_order_id", "candidate_id")}
+    # The recovery owner may have the authoritative active lifecycle ID even
+    # when the broker-normalized row intentionally omits Astra metadata.
+    if not linked["lifecycle_id"] and _text(recovery.get("lane_source")) == "ACTIVE_POSITION_LIFECYCLE":
+        linked["lifecycle_id"] = _text(recovery.get("lane_source_id"))
     entry_timestamp = _text(position.get("entry_timestamp") or position.get("opened_at") or recovery.get("entry_timestamp"))
     entry_price = _number(position.get("avg_entry_price") or position.get("average_entry_price") or position.get("entry_price"))
     quantity = _number(position.get("qty") or position.get("quantity"))
