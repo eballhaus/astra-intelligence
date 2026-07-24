@@ -7793,6 +7793,14 @@ class PaperAutopilotEngine:
                 )
             except Exception as exc:
                 loss_containment_review = {"observation_state": "FAILED", "error": str(exc)[:180]}
+            try:
+                fmp_production_verification = self._run_fmp_production_verification_v1(broker_positions)
+                legacy_position_risk_triage = self._legacy_position_risk_triage_phase(broker_positions)
+                provider_consumption_telemetry = self._refresh_provider_consumption_telemetry_v1(legacy_position_risk_triage)
+            except Exception as exc:
+                fmp_production_verification = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                legacy_position_risk_triage = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                provider_consumption_telemetry = {"observation_state": "FAILED", "error": str(exc)[:180]}
             safety = self._alpaca_safety_snapshot()
             out = {
                 "ok": True,
@@ -7803,6 +7811,9 @@ class PaperAutopilotEngine:
                 "legacy_swing_observation": legacy_refresh,
                 "legacy_quarantine_review_v1": quarantine_review,
                 "loss_containment_review_v1": loss_containment_review,
+                "legacy_position_risk_triage_v1": legacy_position_risk_triage,
+                "provider_consumption_telemetry_v1": provider_consumption_telemetry,
+                "fmp_production_verification_v1": fmp_production_verification,
             }
             trace = {
                 "paper_worker_running": bool(self._thread and self._thread.is_alive()),
@@ -7821,6 +7832,9 @@ class PaperAutopilotEngine:
                 "legacy_swing_observation": legacy_refresh,
                 "legacy_quarantine_review_v1": quarantine_review,
                 "loss_containment_review_v1": loss_containment_review,
+                "legacy_position_risk_triage_v1": legacy_position_risk_triage,
+                "provider_consumption_telemetry_v1": provider_consumption_telemetry,
+                "fmp_production_verification_v1": fmp_production_verification,
             }
             self._runtime_state["last_cycle_utc"] = _now_iso()
             self._runtime_state["last_cycle_summary"] = out
@@ -7894,6 +7908,16 @@ class PaperAutopilotEngine:
                     )
                 except Exception as exc:
                     profit_protection_review_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                try:
+                    self._note_worker_progress("fmp_production_verification")
+                    fmp_production_verification_partial = self._run_fmp_production_verification_v1(broker_position_by_symbol)
+                    self._note_worker_progress("legacy_position_risk_triage")
+                    legacy_position_risk_triage_partial = self._legacy_position_risk_triage_phase(broker_position_by_symbol)
+                    provider_consumption_telemetry_partial = self._refresh_provider_consumption_telemetry_v1(legacy_position_risk_triage_partial)
+                except Exception as exc:
+                    fmp_production_verification_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                    legacy_position_risk_triage_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                    provider_consumption_telemetry_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 # Update peak memory from broker snapshot
                 peak_memory_update: dict[str, Any] = {}
                 try:
@@ -8074,6 +8098,9 @@ class PaperAutopilotEngine:
                     "equity_risk_envelope_refresh": equity_risk_refresh,
                     "loss_containment_review_v1": loss_containment_review_partial,
                     "profit_protection_review_v1": profit_protection_review_partial,
+                    "legacy_position_risk_triage_v1": legacy_position_risk_triage_partial,
+                    "provider_consumption_telemetry_v1": provider_consumption_telemetry_partial,
+                    "fmp_production_verification_v1": fmp_production_verification_partial,
                     "partial_cycle_streak": partial_streak,
                     "partial_candidate_microphase": partial_candidate_results,
                 }
@@ -8091,6 +8118,9 @@ class PaperAutopilotEngine:
                     "equity_risk_envelope_refresh": equity_risk_refresh,
                     "loss_containment_review_v1": loss_containment_review_partial,
                     "profit_protection_review_v1": profit_protection_review_partial,
+                    "legacy_position_risk_triage_v1": legacy_position_risk_triage_partial,
+                    "provider_consumption_telemetry_v1": provider_consumption_telemetry_partial,
+                    "fmp_production_verification_v1": fmp_production_verification_partial,
                     "live_trading_changed": False, "secrets_exposed": False,
                 }
                 self._note_worker_progress("legacy_market_evidence_checkpoint")
