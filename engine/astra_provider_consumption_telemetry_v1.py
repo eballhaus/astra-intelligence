@@ -106,7 +106,8 @@ def append_fmp_provider_event_v1(
                 handle.write(line)
                 handle.flush()
                 os.fsync(handle.fileno())
-            if path.stat().st_size > max(1, int(max_bytes)):
+            tail_over_limit = len(_read_tail_lines(path, max(1, int(max_rows)) + 1)) > int(max_rows)
+            if path.stat().st_size > max(1, int(max_bytes)) or tail_over_limit:
                 rows = _read_tail(path, max(1, int(max_rows)))
                 compacted = "".join(
                     json.dumps(item, ensure_ascii=False, separators=(",", ":")) + "\n"
