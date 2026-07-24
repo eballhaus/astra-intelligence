@@ -7096,6 +7096,59 @@ class PaperAutopilotEngine:
     def _load_loss_containment_state(self) -> dict[str, Any]:
         return load_loss_containment_state_v1(self.loss_containment_state_path)
 
+    @staticmethod
+    def _attach_current_recovery_metadata_v1(
+        state: dict[str, Any] | None,
+        recovery: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Project current canonical recovery metadata onto retained advisory decisions.
+
+        A decision can remain current while its bounded review is deferred.  The
+        recovery ledger is the canonical owner for lane and horizon, so refresh
+        only those derived fields without changing the decision, broker facts,
+        or its original evaluation timestamp.
+        """
+        result = dict(state or {})
+        recovery_by_symbol = {
+            _text(row.get("symbol")).upper(): dict(row)
+            for row in (recovery or {}).get("positions") or []
+            if isinstance(row, dict) and _text(row.get("symbol"))
+        }
+        decisions: dict[str, Any] = {}
+        for decision_id, raw_decision in (result.get("decisions") or {}).items():
+            if not isinstance(raw_decision, dict):
+                decisions[decision_id] = raw_decision
+                continue
+            decision = dict(raw_decision)
+            resolved = recovery_by_symbol.get(_text(decision.get("symbol")).upper())
+            if resolved:
+                decision.update({
+                    "lane": resolved.get("lane"),
+                    "horizon": resolved.get("horizon"),
+                    "lane_recovery_status": resolved.get("lane_status"),
+                    "horizon_recovery_status": resolved.get("horizon_status"),
+                    "lane_source": resolved.get("lane_source"),
+                    "horizon_source": resolved.get("horizon_source"),
+                    "recovery_method": resolved.get("recovery_method"),
+                    "recovery_metadata_generated_at": (recovery or {}).get("generated_at"),
+                })
+                provenance = dict(decision.get("evidence_provenance") or {})
+                provenance["position_lane_horizon_recovery_v1"] = {
+                    "lane_source_id": resolved.get("lane_source_id"),
+                    "horizon_source_id": resolved.get("horizon_source_id"),
+                    "lane_source_timestamp": resolved.get("lane_source_timestamp"),
+                    "horizon_source_timestamp": resolved.get("horizon_source_timestamp"),
+                }
+                decision["evidence_provenance"] = provenance
+                blockers = list(decision.get("exact_blockers") or [])
+                for blocker in resolved.get("exact_blockers") or []:
+                    if blocker not in blockers:
+                        blockers.append(blocker)
+                decision["exact_blockers"] = blockers
+            decisions[decision_id] = decision
+        result["decisions"] = decisions
+        return result
+
     def _save_loss_containment_state(self, state: dict[str, Any] | None = None) -> None:
         payload = dict(state or self._runtime_state.get("loss_containment_state_v1") or {})
         save_loss_containment_state_v1(self.loss_containment_state_path, payload)
@@ -7126,6 +7179,7 @@ class PaperAutopilotEngine:
         broker_positions = dict(broker_position_by_symbol or {})
         latest_prices = dict(latest_price_by_symbol or {})
         prior_state = self._load_loss_containment_state()
+        recovery: dict[str, Any] = {}
 
         # Broker positions are authoritative for current open-position existence.
         # broker_fetch_succeeded is the canonical signal:
@@ -7188,7 +7242,7 @@ class PaperAutopilotEngine:
             "first_phase_blocker": first_phase_blocker,
         }
         result.update(phase_meta)
-        state = dict(result.get("state") or {})
+        state = self._attach_current_recovery_metadata_v1(result.get("state") or {}, recovery)
         state.update(phase_meta)
         result["state"] = state
 
@@ -7231,6 +7285,7 @@ class PaperAutopilotEngine:
         db_rows = list(open_rows if open_rows is not None else self._fetch_open_positions() or [])
         broker_positions = dict(broker_position_by_symbol or {})
         prior_state = self._load_profit_protection_state()
+        recovery: dict[str, Any] = {}
 
         # Same broker-truth logic as loss containment
         broker_failed = broker_fetch_succeeded is False
@@ -7291,7 +7346,7 @@ class PaperAutopilotEngine:
             "first_phase_blocker": first_phase_blocker,
         }
         result.update(phase_meta)
-        state = dict(result.get("state") or {})
+        state = self._attach_current_recovery_metadata_v1(result.get("state") or {}, recovery)
         state.update(phase_meta)
         result["state"] = state
 

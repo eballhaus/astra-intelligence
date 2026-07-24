@@ -136,6 +136,23 @@ class PositionLaneHorizonRecoveryTests(unittest.TestCase):
         row = ledger["positions"][0]
         self.assertEqual((row["lane"], row["horizon"]), ("DAY", "scalp"))
 
+    def test_retained_advisory_decision_receives_current_recovery_metadata(self):
+        from engine.paper_autopilot import PaperAutopilotEngine
+
+        state = {"decisions": {"PH": {
+            "symbol": "PH", "as_of": "2026-07-24T03:55:00Z",
+            "average_entry_price": 100.0, "current_price": 97.0,
+            "exact_blockers": ["PRICE_STALE_FAIL_CLOSED"],
+        }}}
+        recovery = build_position_lane_horizon_recovery_v1({"PH": _broker()}, evidence_rows=[_evidence()])
+        updated = PaperAutopilotEngine._attach_current_recovery_metadata_v1(state, recovery)
+        decision = updated["decisions"]["PH"]
+        self.assertEqual((decision["lane"], decision["horizon"]), ("DAY", "scalp"))
+        self.assertEqual(decision["lane_source"], "ACTIVE_POSITION_LIFECYCLE")
+        self.assertEqual(decision["as_of"], "2026-07-24T03:55:00Z")
+        self.assertEqual((decision["average_entry_price"], decision["current_price"]), (100.0, 97.0))
+        self.assertIn("position_lane_horizon_recovery_v1", decision["evidence_provenance"])
+
 
 if __name__ == "__main__":
     unittest.main()
