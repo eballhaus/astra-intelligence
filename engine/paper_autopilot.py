@@ -67,6 +67,12 @@ from engine.astra_position_lane_horizon_recovery_v1 import (
     build_position_lane_horizon_recovery_v1,
     enrich_canonical_position_snapshot_v1,
 )
+from engine.astra_entry_lane_horizon_contract_v1 import (
+    AstraEntryLaneHorizonLedgerV1,
+    build_entry_lane_horizon_contract_v1,
+    link_entry_contract_v1,
+    validate_entry_submission_contract_v1,
+)
 from engine.astra_position_peak_memory_v1 import (
     build_peak_memory,
     load_peak_memory,
@@ -1079,6 +1085,17 @@ def _forward_contract_plan_from_existing_evidence(row: dict[str, Any]) -> dict[s
 
 def _normalize_paper_entry_bridge(row: dict[str, Any]) -> dict[str, Any]:
     r = dict(row or {})
+    # Preserve the producer's explicit values before the legacy compatibility
+    # lane registry can derive display metadata.  New entries may only use
+    # these pretrade values through the mandatory contract below.
+    r["_entry_raw_lane"] = r.get("lane_id")
+    r["_entry_raw_horizon"] = next((r.get(key) for key in (
+        "paper_entry_horizon_style", "trade_horizon_style", "best_horizon_style", "intended_horizon", "horizon"
+    ) if r.get(key) not in (None, "")), "")
+    if r.get("_entry_raw_lane") and not r.get("lane_assignment_source"):
+        r["lane_assignment_source"] = "CANDIDATE_EXPLICIT_LANE"
+    if r.get("_entry_raw_horizon") and not (r.get("paper_entry_horizon_source") or r.get("horizon_source")):
+        r["paper_entry_horizon_source"] = "CANDIDATE_EXPLICIT_HORIZON"
     score, source = _entry_bridge_quality(r)
     if score is not None:
         r.setdefault("buy_quality_score", round(score, 2))
@@ -1156,6 +1173,14 @@ def _normalize_paper_entry_bridge(row: dict[str, Any]) -> dict[str, Any]:
     r["exit_owner"] = str(r.get("exit_owner") or r.get("exit_policy_owner") or r.get("lane_id") or "").strip()
     r["candidate_fingerprint"] = str(r.get("candidate_fingerprint") or r.get("candidate_id") or "").strip()
     r["paper_entry_eligibility_bridge_v1"] = True
+    contract = build_entry_lane_horizon_contract_v1(r)
+    r["entry_lane_horizon_contract_v1"] = contract
+    r["metadata_generation"] = contract["metadata_generation"]
+    if not contract["exact_blockers"]:
+        r["lane_id"] = contract["lane"]
+        r["paper_entry_horizon_style"] = contract["horizon"]
+        r["paper_entry_horizon_source"] = contract["horizon_source"]
+        r["order_intent_id"] = contract["order_intent_id"]
     # Enrichment and contract capture are owned by
     # astra_premarket_certification_v1 after this normalization boundary. That
     # keeps PaperAutopilot and certification on one evidence/preference path.
@@ -1384,6 +1409,9 @@ class PaperAutopilotEngine:
             or os.path.join(os.path.dirname(self.state_path) or "state", "profit_protection_state_v1.json")
         )
         self.position_lane_horizon_recovery = AstraPositionLaneHorizonRecoveryV1(
+            os.path.dirname(self.state_path) or "state"
+        )
+        self.entry_lane_horizon_ledger = AstraEntryLaneHorizonLedgerV1(
             os.path.dirname(self.state_path) or "state"
         )
         self.get_crypto_candidate_rows_fn = kwargs.get("get_crypto_candidate_rows_fn")
@@ -1715,6 +1743,9 @@ class PaperAutopilotEngine:
                 "entry_filled_at": "TEXT",
                 "exit_order_id": "TEXT",
                 "exit_fill_id": "TEXT",
+                "order_intent_id": "TEXT",
+                "entry_metadata_generation": "TEXT",
+                "entry_metadata_json": "TEXT",
             }
             for col, ddl in needed.items():
                 if col in cols:
@@ -5811,6 +5842,21 @@ class PaperAutopilotEngine:
         if broker is None or not hasattr(broker, "submit_paper_order"):
             return {"enabled": False, "paper_order_submitted": False, "reason": "alpaca_paper_broker_unavailable"}
         r = _normalize_paper_entry_bridge(row)
+        entry_contract = dict(r.get("entry_lane_horizon_contract_v1") or {})
+        entry_validation = validate_entry_submission_contract_v1(entry_contract)
+        if not bool(entry_validation.get("allowed")):
+            self._runtime_state["entry_lane_horizon_integrity_v1"] = self.entry_lane_horizon_ledger.record(
+                entry_contract, "BLOCKED_PRE_SUBMISSION", entry_validation.get("exact_blockers")
+            )
+            return {
+                "ok": False, "paper_order_submitted": False,
+                "error": str((entry_validation.get("exact_blockers") or ["ENTRY_METADATA_PERSISTENCE_FAILED"])[0]),
+                "entry_lane_horizon_contract_v1": entry_contract,
+                "entry_metadata_gate": entry_validation,
+            }
+        # This is the durable pre-submission identity record. It records no
+        # broker truth and does not alter order behavior.
+        self._runtime_state["entry_lane_horizon_integrity_v1"] = self.entry_lane_horizon_ledger.record(entry_contract, "ORDER_INTENT_PERSISTED")
         meta = dict(gate_meta or {})
         activation = canonical_lane_activation_contract(
             str(r.get("lane_id") or ""),
@@ -6031,6 +6077,9 @@ class PaperAutopilotEngine:
             "natural_exit_logic_preserved": True,
             "entry_price_reference": round(_to_float(entry_price), 6),
             "entry_commitment_score": round(_to_float((gate_meta or {}).get("commitment_score"), 0.0), 2),
+            "entry_lane_horizon_contract_v1": entry_contract,
+            "order_intent_id": entry_contract.get("order_intent_id"),
+            "astra_order_id": entry_contract.get("astra_order_id"),
         }
         order.update({field: r.get(field) for field in CONTRACT_FIELDS if field in r})
         if attribution_client_order_id:
@@ -6076,6 +6125,16 @@ class PaperAutopilotEngine:
             res.setdefault("eligibility_evaluation_id", attribution["eligibility_evaluation_id"])
             res.setdefault("candidate_id", attribution["candidate_id"])
             res.setdefault("client_order_id", attribution_client_order_id)
+            broker_payload = dict(res.get("order") or {})
+            linked = link_entry_contract_v1(
+                entry_contract,
+                broker_client_order_id=broker_payload.get("client_order_id") or res.get("client_order_id"),
+                broker_order_id=broker_payload.get("id") or broker_payload.get("broker_order_id") or res.get("broker_order_id"),
+            )
+            self._runtime_state["entry_lane_horizon_integrity_v1"] = self.entry_lane_horizon_ledger.record(
+                linked, "BROKER_ACKNOWLEDGED" if bool(res.get("ok")) else "SUBMISSION_FAILED"
+            )
+            res["entry_lane_horizon_contract_v1"] = linked
             return res
         except Exception as exc:
             return {
@@ -6339,6 +6398,17 @@ class PaperAutopilotEngine:
         source_client_order_id = str(entry_price_lineage.get("source_client_order_id") or source_client_order_id).strip()
         entry_filled_at = str(entry_price_lineage.get("entry_filled_at") or "").strip()
         entry_fill_id = str(entry_price_lineage.get("entry_fill_id") or "").strip()
+        entry_contract = link_entry_contract_v1(
+            dict(submit_row.get("entry_lane_horizon_contract_v1") or broker_order.get("entry_lane_horizon_contract_v1") or {}),
+            broker_client_order_id=source_client_order_id,
+            broker_order_id=source_broker_order_id,
+            entry_fill_id=entry_fill_id,
+            lifecycle_id=pid,
+        )
+        self._runtime_state["entry_lane_horizon_integrity_v1"] = self.entry_lane_horizon_ledger.record(
+            entry_contract,
+            "ENTRY_FILL_LINKED" if entry_fill_id else "ACTIVE_POSITION_AWAITING_FILL_LINK",
+        )
         entry_context = self._build_entry_context_v1(
             submit_row,
             entry_price,
@@ -6348,6 +6418,7 @@ class PaperAutopilotEngine:
         )
         entry_context["position_id"] = pid
         entry_context["alpaca_paper_order"] = broker_order
+        entry_context["entry_lane_horizon_contract_v1"] = entry_contract
         entry_context.update({
             "lane_id": entry_row.get("lane_id"),
             "capital_book_id": entry_row.get("capital_book_id"),
@@ -6379,8 +6450,9 @@ class PaperAutopilotEngine:
                     canonical_horizon, canonical_horizon_source, canonical_horizon_confidence,
                     source_broker_order_id, source_client_order_id,
                     source_recommendation_id, source_decision_id, source_eligibility_evaluation_id,
-                    source_bucket, lifecycle_notes, row_json, created_at, updated_at
-                ) VALUES (?, ?, ?, 'OPEN', ?, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    source_bucket, lifecycle_notes, row_json, entry_metadata_generation,
+                    entry_metadata_json, order_intent_id, created_at, updated_at
+                ) VALUES (?, ?, ?, 'OPEN', ?, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     pid,
@@ -6400,6 +6472,9 @@ class PaperAutopilotEngine:
                     source_bucket,
                     _safe_json(entry_context),
                     _safe_json(entry_row),
+                    entry_contract.get("metadata_generation"),
+                    _safe_json(entry_contract),
+                    entry_contract.get("order_intent_id"),
                     now_iso,
                     now_iso,
                 ),
@@ -6477,7 +6552,8 @@ class PaperAutopilotEngine:
                         "entry_price_lineage_status": entry_price_lineage.get("entry_price_lineage_status"),
                         "entry_price_lineage_reason": entry_price_lineage.get("entry_price_lineage_reason"),
                         "entry_order_id": source_broker_order_id,
-                        "entry_fill_id": entry_fill_id,
+                    "entry_fill_id": entry_fill_id,
+                    "entry_lane_horizon_contract_v1": entry_contract,
                         "source_client_order_id": source_client_order_id,
                         "confidence": _to_float(row.get("confidence"), _to_float(row.get("predicted_win_probability"), 0.0)),
                         "grade": _to_float(row.get("grade_percent"), _to_float(row.get("persona_weighted_grade"), 0.0)),
@@ -6520,6 +6596,7 @@ class PaperAutopilotEngine:
             "asset_type": asset_type,
             "broker_order_id": source_broker_order_id,
             "entry_fill_id": entry_fill_id,
+            "entry_lane_horizon_contract_v1": entry_contract,
             "broker_order_status": str(broker_order_payload.get("status") or ""),
             "paper_autopilot_limits_ok": bool(broker_order.get("paper_autopilot_limits_ok", True)) if isinstance(broker_order, dict) else True,
             "paper_autopilot_limits_reason": str(broker_order.get("paper_autopilot_limits_reason") or "") if isinstance(broker_order, dict) else "",

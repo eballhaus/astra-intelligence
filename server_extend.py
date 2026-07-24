@@ -763,6 +763,10 @@ try:
 except Exception:
     AstraPositionLaneHorizonRecoveryV1 = None  # type: ignore[assignment,misc]
 try:
+    from engine.astra_entry_lane_horizon_contract_v1 import AstraEntryLaneHorizonLedgerV1
+except Exception:
+    AstraEntryLaneHorizonLedgerV1 = None  # type: ignore[assignment,misc]
+try:
     from engine.trade_lifecycle_excursion_v2 import TradeLifecycleExcursionV2
 except Exception:
     class TradeLifecycleExcursionV2:  # type: ignore[override]
@@ -70572,6 +70576,29 @@ def _astra_position_lane_horizon_recovery_v1_payload() -> dict:
             "state_mutations_from_get": 0, "get_route_read_only": True, **_safety_flags_v1()}
 
 
+def _astra_entry_lane_horizon_integrity_v1_payload() -> dict:
+    """Read the bounded worker-owned forward-entry ledger only."""
+    if AstraEntryLaneHorizonLedgerV1 is None:
+        payload = {"status": "UNAVAILABLE_FAIL_CLOSED", "entries": []}
+    else:
+        payload = AstraEntryLaneHorizonLedgerV1(STATE).snapshot()
+    entries = [dict(row) for row in (payload.get("entries") or []) if isinstance(row, dict)]
+    blocked = [row for row in entries if row.get("exact_blockers")]
+    return {"endpoint": "/api/astra_entry_lane_horizon_integrity_v1", **payload,
+            "status": "FAIL_CLOSED" if blocked else "READY_NO_NEW_ENTRIES",
+            "new_entry_window": "bounded_current_ledger",
+            "submission_attempts": len(entries),
+            "submission_blocked_missing_lane": sum("MISSING_CANONICAL_ENTRY_LANE" in (row.get("exact_blockers") or []) for row in entries),
+            "submission_blocked_missing_horizon": sum("MISSING_CANONICAL_ENTRY_HORIZON" in (row.get("exact_blockers") or []) for row in entries),
+            "order_ready_with_lane_horizon": sum(not bool(row.get("exact_blockers")) for row in entries),
+            "broker_ack_linked_count": sum(str(row.get("stage")) == "BROKER_ACKNOWLEDGED" for row in entries),
+            "fills_linked_count": sum(str(row.get("stage")) == "ENTRY_FILL_LINKED" for row in entries),
+            "metadata_loss_count": 0, "identity_link_failure_count": sum("ENTRY_LANE_HORIZON_IDENTITY_MISSING" in (row.get("exact_blockers") or []) for row in entries),
+            "conflict_count": sum(any("CONFLICT" in str(x) for x in (row.get("exact_blockers") or [])) for row in entries),
+            "provider_calls_from_get": 0, "broker_actions_from_get": 0, "llm_calls_from_get": 0,
+            "state_mutations_from_get": 0, "get_route_read_only": True, **_safety_flags_v1()}
+
+
 def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
     lane = _crypto_paper_lane_validation_v1_payload(statuses)
     rows = _crypto_ranking_rows_cached_v1()
@@ -74451,6 +74478,11 @@ def astra_multilane_completion_matrix_v1():
 @router.get("/api/astra_position_lane_horizon_recovery_v1")
 def astra_position_lane_horizon_recovery_v1():
     return _astra_position_lane_horizon_recovery_v1_payload()
+
+
+@router.get("/api/astra_entry_lane_horizon_integrity_v1")
+def astra_entry_lane_horizon_integrity_v1():
+    return _astra_entry_lane_horizon_integrity_v1_payload()
 
 
 @router.get("/api/crypto_lane_paper_readiness_v1")

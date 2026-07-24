@@ -475,6 +475,24 @@ class ContinuousGovernanceV1:
                     "exact_blocker": None if count == 0 else blocker,
                     "allowed_remediations": ["REBUILD_RECOVERY_LEDGER_FROM_EXISTING_CANONICAL_EVIDENCE"] if not conflict else [],
                 })
+        entry_metadata = _dict(runtime_state.get("entry_lane_horizon_integrity_v1"))
+        if entry_metadata:
+            for row in list(entry_metadata.get("entries") or [])[-250:]:
+                if not isinstance(row, dict):
+                    continue
+                blockers = list(row.get("exact_blockers") or [])
+                if not blockers:
+                    continue
+                invariants.append({
+                    "invariant_id": "NEW_ENTRY_LANE_HORIZON_METADATA_COMPLETE",
+                    "owner": "astra_entry_lane_horizon_contract_v1",
+                    "dependencies": [str(row.get("order_intent_id") or row.get("candidate_id") or "new_entry")],
+                    "state": "WARN", "observed_value": {"symbol": row.get("symbol"), "blockers": blockers},
+                    "expected_value": "resolved lane, horizon, and durable identity before submission",
+                    "first_failed_at": _now(), "last_checked_at": _now(), "failure_count": 1,
+                    "severity": "HIGH", "repairability": "DIAGNOSTIC",
+                    "exact_blocker": blockers[0], "allowed_remediations": [],
+                })
         swing_capacity = _dict(_dict(capacity.get("lanes")).get("swing"))
         if swing_capacity:
             active_remaining = _integer(capacity.get("active_strategy_slot_capacity_remaining"), -1)

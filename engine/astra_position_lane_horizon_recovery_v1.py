@@ -109,14 +109,21 @@ def _source_claim(
     source_timestamp: str,
     match_method: str,
 ) -> dict[str, Any]:
+    metadata = row.get("entry_metadata_json") or row.get("entry_lane_horizon_contract_v1") or {}
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except Exception:
+            metadata = {}
+    metadata = dict(metadata) if isinstance(metadata, Mapping) else {}
     return {
         "source_type": source_type,
         "source_id": source_id,
         "source_timestamp": source_timestamp,
         "match_method": match_method,
-        "lane": _lane(row.get("lane_id") or row.get("original_lane") or row.get("lane")),
+        "lane": _lane(metadata.get("lane") or row.get("lane_id") or row.get("original_lane") or row.get("lane")),
         "horizon": _horizon(
-            row.get("canonical_horizon")
+            metadata.get("horizon") or row.get("canonical_horizon")
             or row.get("paper_entry_horizon_style")
             or row.get("original_horizon")
             or row.get("intended_horizon")
@@ -217,6 +224,9 @@ def build_position_lane_horizon_recovery_v1(
             source_type = _text(row.get("recovery_source_type")) or (
                 "CURRENT_RECONCILIATION_RECORD" if method.startswith("CURRENT_") else "ACTIVE_POSITION_LIFECYCLE"
             )
+            if _text(row.get("entry_metadata_generation")) == "V1_MANDATORY":
+                source_type = "ORDER_LINKED_ASSIGNMENT"
+                method = "ORDER_LINKED"
             claims.append(_source_claim(
                 row,
                 source_type=source_type,

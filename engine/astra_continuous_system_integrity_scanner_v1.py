@@ -205,6 +205,16 @@ class ContinuousSystemIntegrityScannerV1:
                                 "lane_unavailable": _number(recovery.get("unresolved_lane_count")),
                                 "horizon_unavailable": _number(recovery.get("unresolved_horizon_count")),
                                 "fail_closed": True})
+        entry_metadata = dict(context.get("entry_lane_horizon_integrity") or {})
+        for row in list(entry_metadata.get("entries") or [])[-max_rows:]:
+            if not isinstance(row, dict) or not row.get("exact_blockers"):
+                continue
+            signals.append({"kind": "NEW_ENTRY_METADATA_GATE_BLOCKED", "severity": "HIGH", "confidence": "VERIFIED",
+                            "canonical_fact_ids": ["NEW_ENTRY_CANONICAL_LANE", "NEW_ENTRY_CANONICAL_HORIZON"],
+                            "affected_endpoints": ["entry lane/horizon integrity", "candidate execution diagnostics"],
+                            "affected_components": ["astra_entry_lane_horizon_contract_v1", "PaperAutopilot._submit_alpaca_paper_entry_order"],
+                            "first_bad_handoff": "pretrade candidate -> mandatory entry metadata gate",
+                            "owner": "astra_entry_lane_horizon_contract_v1", "repair": "preserve explicit candidate lane/horizon and identity linkage"})
         handoffs = list(context.get("quote_handoffs") or [])[:max_rows]
         for handoff in handoffs:
             if not isinstance(handoff, dict):
