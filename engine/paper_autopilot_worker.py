@@ -427,6 +427,7 @@ class PaperAutopilotWorker:
                 "multilane_completion_matrix": multilane_completion,
                 "position_lane_horizon_recovery": dict(runtime.get("position_lane_horizon_recovery_v1") or {}),
                 "entry_lane_horizon_integrity": dict(getattr(self.autopilot, "entry_lane_horizon_ledger", None).snapshot() if getattr(self.autopilot, "entry_lane_horizon_ledger", None) is not None else {}),
+                "provider_consumption_telemetry": dict(runtime.get("provider_consumption_telemetry_v1") or {}),
                 "canonical_capacity_fact": dict(lane.get("canonical_capacity_fact") or {}),
                 "targeted_reasons": targeted_reasons,
                 "get_side_effects": 0,

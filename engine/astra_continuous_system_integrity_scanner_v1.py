@@ -47,6 +47,10 @@ def _number(value: Any, default: int = 0) -> int:
         return default
 
 
+def _text(value: Any) -> str:
+    return str(value or "").strip()
+
+
 class ContinuousSystemIntegrityScannerV1:
     """Bounded scanner run by PaperAutopilotWorker only.
 
@@ -215,6 +219,26 @@ class ContinuousSystemIntegrityScannerV1:
                             "affected_components": ["astra_entry_lane_horizon_contract_v1", "PaperAutopilot._submit_alpaca_paper_entry_order"],
                             "first_bad_handoff": "pretrade candidate -> mandatory entry metadata gate",
                             "owner": "astra_entry_lane_horizon_contract_v1", "repair": "preserve explicit candidate lane/horizon and identity linkage"})
+        provider_telemetry = dict(context.get("provider_consumption_telemetry") or {})
+        for provider in list(provider_telemetry.get("providers") or [])[:max_rows]:
+            if not isinstance(provider, dict) or str(provider.get("provider") or "").upper() != "FMP":
+                continue
+            if bool(provider.get("configured")) and not _number(provider.get("attempted_calls")):
+                signals.append({"kind": "CONFIGURED_PROVIDER_UNUSED", "severity": "HIGH",
+                                "canonical_fact_ids": ["FMP_PROVIDER_CONSUMPTION"],
+                                "affected_endpoints": ["provider consumption telemetry", "provider usage"],
+                                "affected_components": ["ProviderRouter", "PaperAutopilot"],
+                                "first_bad_handoff": "configured FMP credential -> worker-owned provider request",
+                                "owner": "engine.provider_router.ProviderRouter",
+                                "repair": "verify bounded smart-budget FMP eligibility and worker request scheduling"})
+            if _number(provider.get("responses_accepted")) and not _text(provider.get("last_consumer")):
+                signals.append({"kind": "PROVIDER_SUCCESS_NOT_CONSUMED", "severity": "HIGH",
+                                "canonical_fact_ids": ["FMP_PROVIDER_CONSUMPTION"],
+                                "affected_endpoints": ["provider consumption telemetry", "legacy position triage"],
+                                "affected_components": ["ProviderRouter", "legacy position risk triage"],
+                                "first_bad_handoff": "accepted FMP response -> advisory consumer",
+                                "owner": "engine.astra_legacy_position_risk_triage_v1",
+                                "repair": "retain source attribution and consume accepted FMP context in advisory triage"})
         handoffs = list(context.get("quote_handoffs") or [])[:max_rows]
         for handoff in handoffs:
             if not isinstance(handoff, dict):

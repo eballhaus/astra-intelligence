@@ -480,7 +480,11 @@ class ProviderRouter:
 
     @staticmethod
     def _fmp_probe_hard_limited() -> bool:
-        hard_limit = str(os.getenv("ASTRA_FMP_REST_HARD_LIMIT_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+        # Smart-budget mode is the canonical bounded FMP policy.  The old
+        # default hard limit silently prevented every normal FMP REST request
+        # unless an operator supplied a second, undocumented override.
+        hard_default = "0" if _FMP_SMART_BUDGET_ENABLED else "1"
+        hard_limit = str(os.getenv("ASTRA_FMP_REST_HARD_LIMIT_ENABLED", hard_default)).strip().lower() in {"1", "true", "yes", "on"}
         skip_probes = str(os.getenv("ASTRA_FMP_SKIP_PROBES_WHEN_LIMITED", "1")).strip().lower() in {"1", "true", "yes", "on"}
         return bool(hard_limit and skip_probes)
 

@@ -70480,6 +70480,8 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
     matrix = CryptoMarketDataCapabilityMatrixV1(STATE).snapshot() if CryptoMarketDataCapabilityMatrixV1 is not None else {}
     completion = AstraMultilaneCompletionMatrixV1(STATE).snapshot() if AstraMultilaneCompletionMatrixV1 is not None else {}
     recovery = AstraPositionLaneHorizonRecoveryV1(STATE).snapshot() if AstraPositionLaneHorizonRecoveryV1 is not None else {}
+    provider_telemetry = _read_json_file(os.path.join(STATE, "astra_provider_consumption_telemetry_v1.json"), default={})
+    legacy_triage = _read_json_file(os.path.join(STATE, "astra_legacy_position_risk_triage_v1.json"), default={})
     active = [dict(row) for row in (persisted.get("issues") or []) if isinstance(row, dict) and row.get("state") not in {"RESOLVED"}]
     cortex = cortex_truth_summary_v1({**arbitration, "contradictions": active}) if callable(cortex_truth_summary_v1) else {"truth_promotion_allowed": False}
     compliance = [
@@ -70508,6 +70510,8 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
                 "POSITION_LANE_CONFLICT": int(_to_float(recovery.get("lane_conflict_count"), 0)) == 0,
                 "POSITION_HORIZON_CONFLICT": int(_to_float(recovery.get("horizon_conflict_count"), 0)) == 0,
             },
+            "provider_consumption_summary": {key: provider_telemetry.get(key) for key in ("generated_at", "configured_but_unused_count", "successful_but_unconsumed_count", "provider_starvation_count", "budget_warning_count")},
+            "legacy_position_risk_triage_summary": {key: legacy_triage.get(key) for key in ("legacy_position_count", "triaged_count", "insufficient_evidence_count", "FMP_evidence_used_count", "execution_authority")},
             "remaining_blockers": ["open truth-arbitration contradiction requires sustained worker verification"] if active else [],
             "recommended_repairs": ["retain canonical SQLite open-position reader; do not use broad adapters as active state"],
             "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "state_mutations_from_get": 0,
@@ -70534,6 +70538,8 @@ def _astra_sentinel_integrity_v1_payload() -> dict:
         recovery = AstraPositionLaneHorizonRecoveryV1(STATE).snapshot() if AstraPositionLaneHorizonRecoveryV1 is not None else {}
         payload["multilane_completion_summary"] = {"status": completion.get("status"), "shared_root_causes": completion.get("shared_root_causes") or [], "lane_specific_root_causes": completion.get("lane_specific_root_causes") or []}
         payload["position_lane_horizon_recovery_summary"] = {key: recovery.get(key) for key in ("position_count", "resolved_lane_count", "unresolved_lane_count", "resolved_horizon_count", "unresolved_horizon_count", "conflict_count")}
+        provider_telemetry = _read_json_file(os.path.join(STATE, "astra_provider_consumption_telemetry_v1.json"), default={})
+        payload["provider_consumption_summary"] = {key: provider_telemetry.get(key) for key in ("generated_at", "configured_but_unused_count", "successful_but_unconsumed_count", "provider_starvation_count", "budget_warning_count")}
         if str(completion.get("status") or "").upper() == "WARNING" and str(payload.get("status") or "").upper() == "PASS":
             payload["status"] = "WARNING"
             payload["monitoring_coverage_warning"] = "multilane_completion_matrix_warning_not_yet_absorbed_by_worker_scan"
@@ -70597,6 +70603,32 @@ def _astra_entry_lane_horizon_integrity_v1_payload() -> dict:
             "conflict_count": sum(any("CONFLICT" in str(x) for x in (row.get("exact_blockers") or [])) for row in entries),
             "provider_calls_from_get": 0, "broker_actions_from_get": 0, "llm_calls_from_get": 0,
             "state_mutations_from_get": 0, "get_route_read_only": True, **_safety_flags_v1()}
+
+
+def _astra_provider_consumption_telemetry_v1_payload() -> dict:
+    """Read worker-committed provider telemetry only; never call a provider."""
+    payload = _read_json_file(os.path.join(STATE, "astra_provider_consumption_telemetry_v1.json"), default={})
+    return {"endpoint": "/api/astra_provider_consumption_telemetry_v1", "status": "PASS" if payload else "AWAITING_WORKER_TELEMETRY",
+            **dict(payload or {}), "provider_calls_from_get": 0, "broker_actions_from_get": 0,
+            "llm_calls_from_get": 0, "state_mutations_from_get": 0, "get_route_read_only": True,
+            **_safety_flags_v1()}
+
+
+def _astra_fmp_production_verification_v1_payload() -> dict:
+    payload = _read_json_file(os.path.join(STATE, "astra_fmp_production_verification_v1.json"), default={})
+    return {"endpoint": "/api/astra_fmp_production_verification_v1", "status": "PASS" if payload else "AWAITING_WORKER_VERIFICATION",
+            **dict(payload or {}), "provider_calls_from_get": 0, "broker_actions_from_get": 0,
+            "llm_calls_from_get": 0, "state_mutations_from_get": 0, "get_route_read_only": True,
+            **_safety_flags_v1()}
+
+
+def _astra_legacy_position_risk_triage_v1_payload() -> dict:
+    """Read bounded advisory triage state only; execution authority is disabled."""
+    payload = _read_json_file(os.path.join(STATE, "astra_legacy_position_risk_triage_v1.json"), default={})
+    return {"endpoint": "/api/astra_legacy_position_risk_triage_v1", "status": "PASS" if payload else "AWAITING_WORKER_TRIAGE",
+            **dict(payload or {}), "provider_calls_from_get": 0, "broker_actions_from_get": 0,
+            "llm_calls_from_get": 0, "state_mutations_from_get": 0, "get_route_read_only": True,
+            **_safety_flags_v1()}
 
 
 def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
@@ -74483,6 +74515,21 @@ def astra_position_lane_horizon_recovery_v1():
 @router.get("/api/astra_entry_lane_horizon_integrity_v1")
 def astra_entry_lane_horizon_integrity_v1():
     return _astra_entry_lane_horizon_integrity_v1_payload()
+
+
+@router.get("/api/astra_provider_consumption_telemetry_v1")
+def astra_provider_consumption_telemetry_v1():
+    return _astra_provider_consumption_telemetry_v1_payload()
+
+
+@router.get("/api/astra_fmp_production_verification_v1")
+def astra_fmp_production_verification_v1():
+    return _astra_fmp_production_verification_v1_payload()
+
+
+@router.get("/api/astra_legacy_position_risk_triage_v1")
+def astra_legacy_position_risk_triage_v1():
+    return _astra_legacy_position_risk_triage_v1_payload()
 
 
 @router.get("/api/crypto_lane_paper_readiness_v1")

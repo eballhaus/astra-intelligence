@@ -15,7 +15,7 @@ from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
 from engine.candidate_execution_integrity_v1 import candidate_execution_integrity
-from engine.runtime_environment import load_runtime_environment
+from engine.runtime_environment import load_runtime_environment, resolve_fmp_key
 from engine.astra_evidence_accumulation_capacity_v1 import (
     build_capacity_snapshot,
     candidate_capacity_decision,
@@ -82,6 +82,16 @@ from engine.astra_profit_protection_giveback_v1 import (
     load_profit_protection_state_v1,
     run_profit_protection_review_v1,
     save_profit_protection_state_v1,
+)
+from engine.astra_legacy_position_risk_triage_v1 import (
+    build_legacy_position_risk_triage_v1,
+    save_legacy_position_risk_triage_v1,
+)
+from engine.astra_provider_consumption_telemetry_v1 import (
+    build_provider_consumption_telemetry_v1,
+    load_fmp_production_verification_v1,
+    save_fmp_production_verification_v1,
+    save_provider_consumption_telemetry_v1,
 )
 
 
@@ -1407,6 +1417,10 @@ class PaperAutopilotEngine:
         self.profit_protection_state_path = str(
             kwargs.get("profit_protection_state_path")
             or os.path.join(os.path.dirname(self.state_path) or "state", "profit_protection_state_v1.json")
+        )
+        self.legacy_position_risk_triage_state_path = str(
+            kwargs.get("legacy_position_risk_triage_state_path")
+            or os.path.join(os.path.dirname(self.state_path) or "state", "astra_legacy_position_risk_triage_v1.json")
         )
         self.position_lane_horizon_recovery = AstraPositionLaneHorizonRecoveryV1(
             os.path.dirname(self.state_path) or "state"
@@ -7346,6 +7360,117 @@ class PaperAutopilotEngine:
         payload = dict(state or self._runtime_state.get("profit_protection_state_v1") or {})
         save_profit_protection_state_v1(self.profit_protection_state_path, payload)
 
+    def _legacy_position_risk_triage_phase(
+        self,
+        broker_position_by_symbol: Mapping[str, Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        """Persist advisory legacy triage after canonical recovery is available.
+
+        This phase consumes current broker truth and accepted worker context only.
+        It never submits an order or alters a position, lifecycle, or recovery fact.
+        """
+        recovery = dict(self._runtime_state.get("position_lane_horizon_recovery_v1") or {})
+        triage = build_legacy_position_risk_triage_v1(
+            broker_position_by_symbol,
+            recovery,
+            fmp_evidence=dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {}),
+        )
+        save_legacy_position_risk_triage_v1(
+            triage,
+            os.path.dirname(self.legacy_position_risk_triage_state_path) or "state",
+        )
+        self._runtime_state["legacy_position_risk_triage_v1"] = triage
+        # This is a source-attributed advisory handoff only.  Existing exit
+        # readiness remains the sole recommendation surface and execution is off.
+        self._runtime_state["legacy_position_risk_triage_handoff_v1"] = {
+            "source": "LEGACY_POSITION_RISK_TRIAGE_V1",
+            "positions": [
+                {
+                    "symbol": row.get("symbol"),
+                    "recommendation": row.get("recommendation"),
+                    "confidence": row.get("confidence"),
+                    "first_causal_blocker": row.get("first_causal_blocker"),
+                    "execution_authority": "DISABLED",
+                }
+                for row in triage.get("positions") or []
+            ],
+            "execution_authority": "DISABLED",
+            "advisory_only": True,
+        }
+        return triage
+
+    def _refresh_provider_consumption_telemetry_v1(
+        self,
+        triage: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Project existing router accounting into one cache-only telemetry state."""
+        key, _source = resolve_fmp_key()
+        fingerprint = hashlib.sha256(key.encode("utf-8")).hexdigest()[:8] if key else ""
+        consumer_events = [
+            {
+                "consumer": "legacy_position_risk_triage_v1",
+                "symbol": row.get("symbol"),
+                "accepted": bool(row.get("provider_sources")),
+            }
+            for row in (triage or {}).get("positions") or []
+            if isinstance(row, Mapping)
+        ]
+        telemetry = build_provider_consumption_telemetry_v1(
+            state_dir=os.path.dirname(self.state_path) or "state",
+            configured=bool(key),
+            key_fingerprint=fingerprint,
+            consumer_events=consumer_events,
+        )
+        save_provider_consumption_telemetry_v1(telemetry, os.path.dirname(self.state_path) or "state")
+        self._runtime_state["provider_consumption_telemetry_v1"] = telemetry
+        return telemetry
+
+    def _run_fmp_production_verification_v1(
+        self,
+        broker_position_by_symbol: Mapping[str, Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        """Run at most three worker-owned, non-trading FMP validations per day.
+
+        It verifies the real configured provider path and records only response
+        metadata.  The normal legacy profile consumer remains responsible for
+        downstream advisory evidence; this routine never creates candidates or
+        interacts with the broker.
+        """
+        state_dir = os.path.dirname(self.state_path) or "state"
+        prior = load_fmp_production_verification_v1(state_dir)
+        try:
+            previous = datetime.fromisoformat(str(prior.get("generated_at") or "").replace("Z", "+00:00")).astimezone(UTC)
+        except (TypeError, ValueError):
+            previous = None
+        now = datetime.now(UTC)
+        if previous and (now - previous).total_seconds() < 24 * 60 * 60:
+            return {**prior, "cached": True, "provider_calls_used": 0, "broker_actions_used": 0}
+        symbol = next((str(key).upper() for key in sorted(broker_position_by_symbol) if str(key).strip()), "AAPL")
+        router = self._legacy_swing_fmp_router
+        quote = dict(router.deliberate_fmp_probe(symbol) or {})
+        profile = dict(self._legacy_swing_fmp_fetcher(symbol) or {}) if callable(self._legacy_swing_fmp_fetcher) else {}
+        bars = dict(self._legacy_swing_fmp_historical_fetcher(symbol, timeframe="1Hour", limit=2) or {}) if callable(self._legacy_swing_fmp_historical_fetcher) else {}
+        endpoints = {
+            "quote": {"attempted": bool(quote.get("probe_attempted")), "success": bool(quote.get("probe_success")), "status": int(_to_float(quote.get("status_code"), 0.0)), "bytes": int(_to_float(quote.get("response_bytes"), 0.0)), "blocker": str(quote.get("exact_blocker") or "")},
+            "profile": {"attempted": bool(profile), "success": str(profile.get("response_state") or "") == "SUCCESS", "status": int(_to_float(profile.get("http_status"), 0.0)), "records_valid": int(_to_float(profile.get("records_valid"), 0.0)), "blocker": str(profile.get("error_category") or "")},
+            "historical_bars": {"attempted": bool(bars), "success": str(bars.get("response_state") or "") == "SUCCESS", "status": int(_to_float(bars.get("http_status"), 0.0)), "records_valid": int(_to_float(bars.get("records_valid"), 0.0)), "blocker": str(bars.get("error_category") or "")},
+        }
+        result = {
+            "schema_version": "astra_fmp_production_verification_v1",
+            "generated_at": _now_iso(), "worker_owner": "PaperAutopilotWorker",
+            "symbol": symbol, "endpoint_families": endpoints,
+            "attempted_count": sum(int(item["attempted"]) for item in endpoints.values()),
+            "successful_count": sum(int(item["success"]) for item in endpoints.values()),
+            "failed_count": sum(int(item["attempted"] and not item["success"]) for item in endpoints.values()),
+            "bytes_received": sum(int(item.get("bytes") or 0) for item in endpoints.values()),
+            "provider_calls_used": sum(int(item["attempted"]) for item in endpoints.values()),
+            "broker_actions_used": 0, "llm_calls_used": 0, "candidate_created": False,
+            "order_created": False, "execution_authority": "DISABLED", "secret_exposed": False,
+        }
+        save_fmp_production_verification_v1(result, state_dir)
+        self._runtime_state["fmp_production_verification_v1"] = result
+        return result
+
     def _profit_protection_review_phase(
         self,
         open_rows: list[dict[str, Any]] | None = None,
@@ -8049,6 +8174,22 @@ class PaperAutopilotEngine:
                 )
             except Exception as exc:
                 profit_protection_review = {"observation_state": "FAILED", "error": str(exc)[:180]}
+            try:
+                self._note_worker_progress("fmp_production_verification")
+                fmp_production_verification = self._run_fmp_production_verification_v1(
+                    broker_position_by_symbol,
+                )
+                self._note_worker_progress("legacy_position_risk_triage")
+                legacy_position_risk_triage = self._legacy_position_risk_triage_phase(
+                    broker_position_by_symbol,
+                )
+                provider_consumption_telemetry = self._refresh_provider_consumption_telemetry_v1(
+                    legacy_position_risk_triage,
+                )
+            except Exception as exc:
+                fmp_production_verification = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                legacy_position_risk_triage = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                provider_consumption_telemetry = {"observation_state": "FAILED", "error": str(exc)[:180]}
             # Market evidence is a restart-stable worker product.  Persist it
             # before the broader candidate scan, which may take longer than a
             # bounded provider refresh cycle.
@@ -8860,6 +9001,9 @@ class PaperAutopilotEngine:
                 "legacy_quarantine_review_v1": dict(quarantine_review or {}),
                 "loss_containment_review_v1": dict(loss_containment_review or {}),
                 "profit_protection_review_v1": dict(profit_protection_review or {}),
+                "legacy_position_risk_triage_v1": dict(legacy_position_risk_triage or {}),
+                "provider_consumption_telemetry_v1": dict(provider_consumption_telemetry or {}),
+                "fmp_production_verification_v1": dict(fmp_production_verification or {}),
                 **self._learned_exit_runtime_summary(),
             }
             trace = {
@@ -8949,6 +9093,9 @@ class PaperAutopilotEngine:
                 "legacy_quarantine_review_v1": dict(quarantine_review or {}),
                 "loss_containment_review_v1": dict(loss_containment_review or {}),
                 "profit_protection_review_v1": dict(profit_protection_review or {}),
+                "legacy_position_risk_triage_v1": dict(legacy_position_risk_triage or {}),
+                "provider_consumption_telemetry_v1": dict(provider_consumption_telemetry or {}),
+                "fmp_production_verification_v1": dict(fmp_production_verification or {}),
                 "live_trading_changed": False,
                 "secrets_exposed": False,
             }
