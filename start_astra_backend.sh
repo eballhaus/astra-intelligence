@@ -153,7 +153,11 @@ start_uvicorn() {
   )
   (
     cd "${ROOT_DIR}"
-    ASTRA_PROCESS_ROLE=api "${cmd[@]}" >> "${BACKEND_LOG_FILE}" 2>&1
+    # A fresh temporary cache avoids loading stale project bytecode after a
+    # source deployment while keeping all runtime artifacts outside the repo.
+    ASTRA_PROCESS_ROLE=api PYTHONDONTWRITEBYTECODE=1 \
+      PYTHONPYCACHEPREFIX="/tmp/astra_backend_pycache_$(date +%s)" \
+      "${cmd[@]}" >> "${BACKEND_LOG_FILE}" 2>&1
   ) &
   local launcher_pid="$!"
   echo "${launcher_pid}" > "${UVICORN_PID_FILE}"
