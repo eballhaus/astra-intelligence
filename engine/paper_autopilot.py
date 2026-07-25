@@ -102,9 +102,12 @@ from engine.astra_unified_position_advisory_v1 import (
     save_unified_position_advisory_v1,
 )
 from engine.astra_shadow_exit_intelligence_v1 import (
+    attach_shadow_exit_analysis_outputs_v1,
+    build_shadow_exit_analysis_outputs_v1,
     load_shadow_exit_module_outputs_v1,
     load_shadow_exit_state_v1,
     run_shadow_exit_cycle_v1,
+    save_shadow_exit_analysis_outputs_v1,
     save_shadow_exit_cycle_v1,
     shadow_handoff_by_symbol_v1,
 )
@@ -7521,20 +7524,28 @@ class PaperAutopilotEngine:
         )
         # Shadow evaluation is downstream of broker truth and cached evidence.
         # It creates no provider or broker calls and cannot authorize an exit.
+        prior_shadow_outputs = load_shadow_exit_module_outputs_v1(self.shadow_exit_state_dir)
         shadow_cycle = run_shadow_exit_cycle_v1(
             broker_position_by_symbol,
             recovery=recovery,
             evidence=evidence,
             exit_readiness=exit_readiness,
             previous=load_shadow_exit_state_v1(self.shadow_exit_state_dir),
-            analysis_outputs=load_shadow_exit_module_outputs_v1(self.shadow_exit_state_dir),
+            analysis_outputs=prior_shadow_outputs,
         )
+        shadow_analysis = build_shadow_exit_analysis_outputs_v1(
+            shadow_cycle.get("state") or {}, shadow_cycle.get("observations") or {}, previous=prior_shadow_outputs,
+        )
+        shadow_cycle = attach_shadow_exit_analysis_outputs_v1(shadow_cycle, shadow_analysis)
         save_shadow_exit_cycle_v1(shadow_cycle, self.shadow_exit_state_dir)
+        save_shadow_exit_analysis_outputs_v1(shadow_analysis, self.shadow_exit_state_dir)
         shadow_state = dict(shadow_cycle.get("state") or {})
-        shadow_handoff = shadow_handoff_by_symbol_v1(shadow_state)
+        shadow_handoff = shadow_handoff_by_symbol_v1(shadow_state, shadow_analysis)
         self._runtime_state["shadow_exit_intelligence_v1"] = shadow_state
         self._runtime_state["shadow_exit_diagnostics_v1"] = dict(shadow_cycle.get("diagnostics") or {})
         self._runtime_state["shadow_exit_module_handoff_v1"] = dict(shadow_cycle.get("handoff") or {})
+        self._runtime_state["shadow_exit_analysis_outputs_v1"] = shadow_analysis
+        self._runtime_state["shadow_exit_performance_v1"] = dict(shadow_analysis.get("performance") or {})
         exit_readiness = build_position_exit_readiness_v1(
             broker_position_by_symbol,
             evidence=evidence,

@@ -295,6 +295,8 @@ class ContinuousSystemIntegrityScannerV1:
                             "affected_components": ["astra_unified_position_advisory_v1", "astra_copilot_suite_v1"],
                             "first_bad_handoff": "unified position advisory -> cached Copilot action handoff"})
         shadow_exit = dict(context.get("shadow_exit_diagnostics") or {})
+        shadow_outputs = dict(context.get("shadow_exit_analysis_outputs") or {})
+        shadow_performance = dict(context.get("shadow_exit_performance") or {})
         if shadow_exit:
             if _number(shadow_exit.get("positions_considered")) <= 0:
                 signals.append({"kind": "SHADOW_EXIT_PRODUCER_NOT_RUNNING", "severity": "HIGH", "confidence": "VERIFIED",
@@ -308,6 +310,22 @@ class ContinuousSystemIntegrityScannerV1:
             if _number(shadow_exit.get("active_evaluations")) and _number(shadow_exit.get("analysis_module_inputs_emitted")) == 0:
                 signals.append({"kind": "SHADOW_RESULT_NOT_CONSUMED", "severity": "HIGH", "confidence": "VERIFIED",
                                 "affected_components": ["astra_shadow_exit_module_handoff_v1"], "first_bad_handoff": "shadow evaluation -> module handoff"})
+            if _number(shadow_exit.get("analysis_module_inputs_emitted")) and _number(shadow_exit.get("analysis_module_outputs_consumed")) == 0:
+                signals.append({"kind": "SHADOW_ANALYSIS_OUTPUT_NOT_CONSUMED", "severity": "HIGH", "confidence": "VERIFIED",
+                                "affected_components": ["astra_shadow_exit_intelligence_v1", "astra_unified_position_advisory_v1"],
+                                "first_bad_handoff": "shadow contained analysis -> advisory handoff"})
+        if shadow_outputs:
+            invalid = [row for row in (shadow_outputs.get("outputs") or []) if isinstance(row, dict) and str(row.get("status") or "").upper() == "INVALID_INPUT"]
+            unsafe = [row for row in (shadow_outputs.get("outputs") or []) if isinstance(row, dict) and (not bool(row.get("shadow_only", False)) or str(row.get("execution_authority") or "") != "DISABLED" or str(row.get("promotion_status") or "") != "NOT_PROMOTED")]
+            if invalid:
+                signals.append({"kind": "SHADOW_ANALYSIS_OUTPUT_INVALID", "severity": "HIGH", "confidence": "VERIFIED",
+                                "affected_components": ["astra_shadow_exit_intelligence_v1"], "first_bad_handoff": "shadow evaluation -> contained analysis"})
+            if unsafe:
+                signals.append({"kind": "SHADOW_EXECUTION_AUTHORITY_VIOLATION", "severity": "CRITICAL", "confidence": "VERIFIED",
+                                "affected_components": ["astra_shadow_exit_intelligence_v1"], "first_bad_handoff": "contained analysis safety envelope"})
+        if shadow_performance and str(shadow_performance.get("status") or "").upper() == "INSUFFICIENT_SAMPLE":
+            waiting.append({"state": "LEGITIMATE_WAITING_STATE", "reason": "SHADOW_PERFORMANCE_SAMPLE_TOO_SMALL", "fail_closed": True,
+                            "sample_size": _number(shadow_performance.get("sample_size"))})
         handoffs = list(context.get("quote_handoffs") or [])[:max_rows]
         for handoff in handoffs:
             if not isinstance(handoff, dict):

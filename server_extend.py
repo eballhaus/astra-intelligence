@@ -74683,6 +74683,16 @@ def astra_shadow_exit_module_contract_v1():
     return _astra_shadow_exit_payload_v1("astra_shadow_exit_module_handoff_v1.json", "/api/astra_shadow_exit_module_contract_v1")
 
 
+@router.get("/api/astra_shadow_exit_analysis_outputs_v1")
+def astra_shadow_exit_analysis_outputs_v1():
+    return _astra_shadow_exit_payload_v1("astra_shadow_exit_module_outputs_v1.json", "/api/astra_shadow_exit_analysis_outputs_v1")
+
+
+@router.get("/api/astra_shadow_exit_performance_v1")
+def astra_shadow_exit_performance_v1():
+    return _astra_shadow_exit_payload_v1("astra_shadow_exit_performance_v1.json", "/api/astra_shadow_exit_performance_v1")
+
+
 @router.get("/api/crypto_lane_paper_readiness_v1")
 def crypto_lane_paper_readiness_v1(force: bool = False):
     """Compact readiness that keeps broker capability separate from enablement."""
@@ -88808,6 +88818,10 @@ def unified_learning_diagnostics_v1(force: bool = False):
             }
         _safe_status("astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1", lambda: ASTRA_HORIZON_LIFECYCLE_CAPACITY_PROMOTION_READINESS_BUNDLE.status(statuses=statuses, force=True))
         _safe_status("controlled_paper_learned_exit_validation_v1", lambda: CONTROLLED_PAPER_LEARNED_EXIT_VALIDATION.status(statuses=statuses, force=False))
+        _safe_status("astra_shadow_exit_intelligence_v1", lambda: _astra_shadow_exit_payload_v1("astra_shadow_exit_intelligence_v1.json", "/api/astra_shadow_exit_intelligence_v1"))
+        _safe_status("astra_shadow_exit_diagnostics_v1", lambda: _astra_shadow_exit_payload_v1("astra_shadow_exit_diagnostics_v1.json", "/api/astra_shadow_exit_diagnostics_v1"))
+        _safe_status("astra_shadow_exit_analysis_outputs_v1", lambda: _astra_shadow_exit_payload_v1("astra_shadow_exit_module_outputs_v1.json", "/api/astra_shadow_exit_analysis_outputs_v1"))
+        _safe_status("astra_shadow_exit_performance_v1", lambda: _astra_shadow_exit_payload_v1("astra_shadow_exit_performance_v1.json", "/api/astra_shadow_exit_performance_v1"))
         _safe_status("astra_copilot_suite_v1", lambda: _astra_copilot_suite_v1(limit=12, force=False))
         _safe_status("ask_astra_local_ai_status_v1", lambda: _astra_local_ai_status_v1(force=False))
         _safe_status("astra_recovery_center_v1", lambda: ASTRA_RECOVERY_CENTER.status(force=False))
@@ -88844,6 +88858,10 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_provider_orchestration_data_governance_v1"] = dict(statuses.get("astra_provider_orchestration_data_governance_v1") or {})
             out["astra_aios_intelligence_maturation_bundle_v1"] = dict(statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {})
             out["astra_aios_throughput_institutional_memory_optimization_v1"] = dict(statuses.get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
+            out["astra_shadow_exit_intelligence_v1"] = dict(statuses.get("astra_shadow_exit_intelligence_v1") or {})
+            out["astra_shadow_exit_diagnostics_v1"] = dict(statuses.get("astra_shadow_exit_diagnostics_v1") or {})
+            out["astra_shadow_exit_analysis_outputs_v1"] = dict(statuses.get("astra_shadow_exit_analysis_outputs_v1") or {})
+            out["astra_shadow_exit_performance_v1"] = dict(statuses.get("astra_shadow_exit_performance_v1") or {})
             market_intelligence = _astra_market_intelligence_v1(out)
             out["astra_market_intelligence_v1"] = market_intelligence
             cio_intelligence = _astra_cio_intelligence_v1(out)

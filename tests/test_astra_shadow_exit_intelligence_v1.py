@@ -3,6 +3,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from engine.astra_shadow_exit_intelligence_v1 import (
+    attach_shadow_exit_analysis_outputs_v1,
+    build_shadow_exit_analysis_outputs_v1,
     load_shadow_exit_state_v1,
     run_shadow_exit_cycle_v1,
     save_shadow_exit_cycle_v1,
@@ -112,3 +114,14 @@ class ShadowExitFoundationTests(unittest.TestCase):
         self.assertEqual(row["actual_exit_price"], 94)
         self.assertEqual(row["analysis_module_output_status"], "INSUFFICIENT_SAMPLE")
         self.assertGreater(closed["diagnostics"]["analysis_module_outputs_consumed"], 0)
+
+    def test_completed_cached_observations_flow_to_analysis_and_advisories(self):
+        first = run_shadow_exit_cycle_v1({"AAA": _position()}, now=NOW, **_inputs())
+        second = run_shadow_exit_cycle_v1({"AAA": _position(current_price=94)}, previous={**first["state"], "observations": first["observations"]["observations"]}, now=NOW + timedelta(hours=2), **_inputs())
+        analysis = build_shadow_exit_analysis_outputs_v1(second["state"], second["observations"], now=NOW + timedelta(hours=2))
+        attached = attach_shadow_exit_analysis_outputs_v1(second, analysis)
+        handoff = shadow_handoff_by_symbol_v1(attached["state"], analysis)
+        self.assertTrue(analysis["outputs"])
+        self.assertGreater(attached["diagnostics"]["analysis_module_outputs_consumed"], 0)
+        self.assertIn("shadow_regret_status", handoff["AAA"])
+        self.assertEqual(handoff["AAA"]["shadow_promotion_status"], "NOT_PROMOTED")

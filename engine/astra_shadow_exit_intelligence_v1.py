@@ -14,6 +14,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from engine.astra_shadow_bounce_back_v1 import evaluate_bounce_back
+from engine.astra_shadow_exit_confirmation_v1 import evaluate_confirmation_path
+from engine.astra_shadow_exit_performance_v1 import aggregate_shadow_exit_performance
+from engine.astra_shadow_exit_regret_v1 import calculate_exit_regret
+from engine.astra_shadow_profit_giveback_v1 import evaluate_profit_giveback
+
 
 SCHEMA_VERSION = "astra_shadow_exit_intelligence_v1"
 EVALUATION_FILE = "astra_shadow_exit_intelligence_v1.json"
@@ -21,6 +27,7 @@ OBSERVATION_FILE = "astra_shadow_exit_observations_v1.json"
 DIAGNOSTIC_FILE = "astra_shadow_exit_diagnostics_v1.json"
 HANDOFF_FILE = "astra_shadow_exit_module_handoff_v1.json"
 OUTPUT_FILE = "astra_shadow_exit_module_outputs_v1.json"
+PERFORMANCE_FILE = "astra_shadow_exit_performance_v1.json"
 MAX_EVALUATIONS = 600
 MAX_OBSERVATIONS = 3000
 BASELINE_STRATEGIES = (
@@ -308,8 +315,131 @@ def load_shadow_exit_module_outputs_v1(state_dir: str | Path = "state") -> dict[
     return _load(Path(state_dir) / OUTPUT_FILE)
 
 
-def shadow_handoff_by_symbol_v1(state: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+def _analysis_fingerprint(evaluation: Mapping[str, Any], observations: list[Mapping[str, Any]]) -> str:
+    """Fingerprint only immutable analysis inputs so unchanged rows are not recalculated."""
+    relevant_evaluation = {key: evaluation.get(key) for key in (
+        "shadow_evaluation_id", "position_identity", "shadow_strategy", "shadow_reference_price",
+        "shadow_reference_timestamp", "quantity_at_evaluation", "evaluation_status", "actual_exit_price",
+        "actual_exit_timestamp", "legacy_status", "lane", "horizon", "strategy_parameters",
+    )}
+    relevant_observations = [{key: row.get(key) for key in (
+        "shadow_observation_id", "shadow_evaluation_id", "position_identity", "observation_status",
+        "actual_observation_timestamp", "market_evidence_at", "market_price", "target_timestamp",
+    )} for row in observations]
+    return _digest(json.dumps(relevant_evaluation, sort_keys=True, default=str), json.dumps(relevant_observations, sort_keys=True, default=str))
+
+
+def _not_eligible_module(evaluation: Mapping[str, Any], module: str, reason: str) -> dict[str, Any]:
+    return {
+        "schema_version": "astra_shadow_exit_module_contract_v1", "module": module,
+        "shadow_evaluation_id": _text(evaluation.get("shadow_evaluation_id")),
+        "position_identity": _text(evaluation.get("position_identity")), "status": "NOT_ELIGIBLE",
+        "blockers": [reason], "sample_size": 0, "shadow_only": True,
+        "execution_authority": "DISABLED", "promotion_status": "NOT_PROMOTED", "human_review_required": True,
+    }
+
+
+def _analysis_status(modules: Mapping[str, Mapping[str, Any]]) -> str:
+    statuses = {_text(row.get("status")).upper() for row in modules.values() if isinstance(row, Mapping)}
+    if "COMPLETED" in statuses: return "COMPLETED"
+    if "PARTIAL" in statuses: return "PARTIAL"
+    if "PENDING_OBSERVATION" in statuses: return "PENDING_OBSERVATION"
+    if "EXTERNALLY_BLOCKED" in statuses: return "EXTERNALLY_BLOCKED"
+    if "INVALID_INPUT" in statuses: return "INVALID_INPUT"
+    return "INSUFFICIENT_SAMPLE"
+
+
+def build_shadow_exit_analysis_outputs_v1(
+    state: Mapping[str, Any], observations: Mapping[str, Any] | list[Mapping[str, Any]], *,
+    previous: Mapping[str, Any] | None = None, now: datetime | None = None,
+) -> dict[str, Any]:
+    """Run all eligible contained modules over persisted cached observations only.
+
+    The function is pure: durable writes remain worker-owned and it does not
+    contact a provider or broker.  Unchanged input fingerprints retain their
+    previous output, preventing repeated work across natural cycles.
+    """
+    now = now or _now()
+    evaluation_rows = [dict(row) for row in state.get("evaluations", []) if isinstance(row, Mapping)]
+    observation_rows = list(observations.get("observations", []) if isinstance(observations, Mapping) else observations or [])
+    by_evaluation: dict[str, list[Mapping[str, Any]]] = {}
+    for observation in observation_rows:
+        if isinstance(observation, Mapping):
+            by_evaluation.setdefault(_text(observation.get("shadow_evaluation_id")), []).append(observation)
+    prior_by_id = {_text(row.get("shadow_evaluation_id")): dict(row) for row in (previous or {}).get("outputs", []) if isinstance(row, Mapping)}
+    outputs, reused = [], 0
+    for evaluation in sorted(evaluation_rows, key=lambda row: _text(row.get("shadow_evaluation_id"))):
+        evaluation_id = _text(evaluation.get("shadow_evaluation_id"))
+        rows = by_evaluation.get(evaluation_id, [])
+        fingerprint = _analysis_fingerprint(evaluation, rows)
+        prior = prior_by_id.get(evaluation_id)
+        if prior and _text(prior.get("analysis_input_fingerprint")) == fingerprint:
+            outputs.append(prior); reused += 1; continue
+        strategy = _text(evaluation.get("shadow_strategy")).upper()
+        terminal = _text(evaluation.get("evaluation_status")).upper()
+        if terminal in {"EXTERNALLY_BLOCKED", "CANCELED_POSITION_IDENTITY_CHANGED"}:
+            modules = {name: _not_eligible_module(evaluation, name, evaluation.get("first_causal_blocker") or terminal) for name in ("regret", "bounce_back", "profit_giveback", "confirmation")}
+        else:
+            modules = {
+                "regret": calculate_exit_regret(evaluation, rows, now=now),
+                "bounce_back": evaluate_bounce_back(evaluation, rows, now=now) if strategy == "PROTECT_ON_BOUNCE" else _not_eligible_module(evaluation, "bounce_back", "STRATEGY_NOT_PROTECT_ON_BOUNCE"),
+                "profit_giveback": evaluate_profit_giveback(evaluation, rows, now=now) if strategy == "PROTECT_PROFIT" else _not_eligible_module(evaluation, "profit_giveback", "STRATEGY_NOT_PROTECT_PROFIT"),
+                "confirmation": evaluate_confirmation_path(evaluation, rows, now=now) if strategy == "EXIT_AFTER_CONFIRMATION" else _not_eligible_module(evaluation, "confirmation", "STRATEGY_NOT_EXIT_AFTER_CONFIRMATION"),
+            }
+        blockers = sorted({str(blocker) for module in modules.values() for blocker in (module.get("blockers") or []) if blocker})
+        outputs.append({
+            "schema_version": "astra_shadow_exit_analysis_output_v1", "shadow_evaluation_id": evaluation_id,
+            "position_identity": _text(evaluation.get("position_identity")), "symbol": _text(evaluation.get("symbol")).upper(),
+            "asset_class": _text(evaluation.get("asset_class")), "shadow_strategy": strategy,
+            "exit_signal_type": _text(evaluation.get("exit_signal_type")), "lane": _text(evaluation.get("lane") or "UNAVAILABLE"),
+            "horizon": _text(evaluation.get("horizon") or "UNAVAILABLE"), "legacy_status": _text(evaluation.get("legacy_status") or "UNKNOWN"),
+            "market_regime": _text(evaluation.get("market_regime") or "UNAVAILABLE"), "sector_regime": _text(evaluation.get("sector_regime") or "UNAVAILABLE"),
+            "volatility_regime": _text(evaluation.get("volatility_regime") or "UNAVAILABLE"), "status": _analysis_status(modules),
+            "evaluation_status": terminal,
+            "blockers": blockers, "sample_size": max((int(_number(module.get("sample_size")) or 0) for module in modules.values()), default=0),
+            "modules": modules, "analysis_input_fingerprint": fingerprint, "consumer_status": "PERSISTED_PENDING_ADVISORY_HANDOFF",
+            "shadow_only": True, "execution_authority": "DISABLED", "promotion_status": "NOT_PROMOTED", "human_review_required": True,
+            "generated_at": _iso(now),
+        })
+    outputs = outputs[:MAX_EVALUATIONS]
+    performance = aggregate_shadow_exit_performance(outputs)
+    return {"schema_version": "astra_shadow_exit_analysis_outputs_v1", "generated_at": _iso(now), "outputs": outputs,
+            "performance": performance, "outputs_created": len(outputs) - reused, "outputs_reused": reused,
+            "shadow_only": True, "execution_authority": "DISABLED", "promotion_status": "NOT_PROMOTED"}
+
+
+def save_shadow_exit_analysis_outputs_v1(payload: Mapping[str, Any], state_dir: str | Path = "state") -> None:
+    root = Path(state_dir)
+    _atomic_write(root / OUTPUT_FILE, payload)
+    _atomic_write(root / PERFORMANCE_FILE, dict(payload.get("performance") or {}))
+
+
+def attach_shadow_exit_analysis_outputs_v1(cycle: Mapping[str, Any], analysis: Mapping[str, Any]) -> dict[str, Any]:
+    """Attach persisted analysis to the existing cycle without rerunning it."""
+    result = {key: dict(value) if isinstance(value, Mapping) else value for key, value in dict(cycle or {}).items()}
+    state = dict(result.get("state") or {})
+    outputs = {_text(row.get("shadow_evaluation_id")): dict(row) for row in analysis.get("outputs", []) if isinstance(row, Mapping)}
+    consumed = []
+    for evaluation in state.get("evaluations", []):
+        if not isinstance(evaluation, dict): continue
+        output = outputs.get(_text(evaluation.get("shadow_evaluation_id")))
+        if output and _text(output.get("position_identity")) == _text(evaluation.get("position_identity")):
+            evaluation["analysis_module_output"] = output
+            evaluation["analysis_module_output_status"] = output.get("status")
+            consumed.append(evaluation.get("shadow_evaluation_id"))
+    result["state"] = state
+    diagnostics = dict(result.get("diagnostics") or {})
+    diagnostics.update({"analysis_module_outputs_created": int(analysis.get("outputs_created") or 0), "analysis_module_outputs_reused": int(analysis.get("outputs_reused") or 0),
+                        "analysis_module_outputs_consumed": len(consumed), "confirmation_outputs_created": sum(1 for row in outputs.values() if (row.get("modules") or {}).get("confirmation", {}).get("status") not in {"NOT_ELIGIBLE", ""}),
+                        "performance_summary_status": (analysis.get("performance") or {}).get("status"), "performance_summary_sample_size": (analysis.get("performance") or {}).get("sample_size", 0)})
+    result["diagnostics"] = diagnostics
+    handoff = dict(result.get("handoff") or {}); handoff.update({"outputs_consumed": consumed, "performance_summary": analysis.get("performance") or {}}); result["handoff"] = handoff
+    return result
+
+
+def shadow_handoff_by_symbol_v1(state: Mapping[str, Any], analysis_outputs: Mapping[str, Any] | None = None) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
+    outputs = {_text(row.get("shadow_evaluation_id")): dict(row) for row in (analysis_outputs or {}).get("outputs", []) if isinstance(row, Mapping)}
     for row in state.get("evaluations", []):
         if not isinstance(row, Mapping): continue
         symbol = _text(row.get("symbol")).upper(); current = result.setdefault(symbol, {"shadow_evaluation_status": "NOT_EVALUATED", "shadow_active_strategies": [], "shadow_completed_outcome_count": 0, "shadow_pending_observation_count": 0, "shadow_signal_support": "INSUFFICIENT_SAMPLE", "shadow_signal_confidence": "INSUFFICIENT_SAMPLE", "shadow_sample_size": 0, "shadow_expected_benefit": None, "shadow_regret_risk": None, "shadow_promotion_status": "NOT_PROMOTED", "shadow_first_causal_blocker": ""})
@@ -318,4 +448,18 @@ def shadow_handoff_by_symbol_v1(state: Mapping[str, Any]) -> dict[str, dict[str,
         if row.get("evaluation_status") == "PARTIALLY_OBSERVED": current["shadow_completed_outcome_count"] += len(row.get("completed_observation_windows") or [])
         current["shadow_pending_observation_count"] += len(row.get("pending_observation_windows") or [])
         current["shadow_first_causal_blocker"] = current["shadow_first_causal_blocker"] or row.get("first_causal_blocker") or "PENDING_OBSERVATION"
+        output = outputs.get(_text(row.get("shadow_evaluation_id"))) or row.get("analysis_module_output") or {}
+        if isinstance(output, Mapping):
+            modules = dict(output.get("modules") or {})
+            regret, bounce, giveback, confirmation = (dict(modules.get(name) or {}) for name in ("regret", "bounce_back", "profit_giveback", "confirmation"))
+            current.update({
+                "shadow_regret_status": regret.get("status") or current.get("shadow_regret_status", "INSUFFICIENT_SAMPLE"),
+                "shadow_late_exit_regret": regret.get("late_exit_regret"), "shadow_early_exit_regret": regret.get("early_exit_regret"), "shadow_net_exit_regret": regret.get("net_regret"),
+                "shadow_bounce_status": bounce.get("status") or current.get("shadow_bounce_status", "NOT_ELIGIBLE"), "shadow_bounce_preferred_path": bounce.get("bounce_state"), "shadow_bounce_net_benefit": bounce.get("net_bounce_benefit"),
+                "shadow_profit_giveback_status": giveback.get("status") or current.get("shadow_profit_giveback_status", "NOT_ELIGIBLE"), "shadow_profit_protection_value": giveback.get("net_profit_protection_value"), "shadow_profit_giveback_preferred_path": giveback.get("best_observed_policy"),
+                "shadow_confirmation_status": confirmation.get("status") or current.get("shadow_confirmation_status", "NOT_ELIGIBLE"), "shadow_confirmation_preferred_path": confirmation.get("best_observed_path"), "shadow_confirmation_net_capital_saved": confirmation.get("net_capital_saved"),
+                "shadow_signal_confidence": "DESCRIPTIVE" if int(_number(output.get("sample_size")) or 0) >= 3 else "INSUFFICIENT_SAMPLE",
+                "shadow_expected_benefit": confirmation.get("net_capital_saved") or giveback.get("net_profit_protection_value") or bounce.get("net_bounce_benefit"),
+                "shadow_regret_risk": regret.get("net_regret"), "shadow_first_causal_blocker": current.get("shadow_first_causal_blocker") or (output.get("blockers") or [""])[0],
+            })
     return result
