@@ -25,6 +25,7 @@ def _evaluation(
         "asset_class": "equity",
         "shadow_strategy": "PROTECT_PROFIT",
         "shadow_reference_price": signal_price,
+        "shadow_reference_timestamp": NOW.isoformat().replace("+00:00", "Z"),
         "hold_price_at_signal": signal_price,
         "quantity_at_evaluation": quantity,
         "maximum_favorable_excursion_after_signal": mfe_return,
@@ -127,6 +128,15 @@ class ProfitGivebackTests(unittest.TestCase):
         self.assertTrue(result["shadow_only"])
         self.assertEqual(result["execution_authority"], "DISABLED")
         self.assertEqual(result["promotion_status"], "NOT_PROMOTED")
+
+    def test_identity_mismatch_and_future_price_are_not_usable_evidence(self):
+        evaluation = _evaluation()
+        mismatch = _observation(80.0, NOW + timedelta(minutes=10))
+        mismatch["position_identity"] = "other-position"
+        future = _observation(10.0, NOW + timedelta(days=1))
+        result = evaluate_profit_giveback(evaluation, [mismatch, future], now=NOW + timedelta(hours=1))
+        self.assertEqual(result["status"], "PENDING_OBSERVATION")
+        self.assertIn("IDENTITY_MISMATCH_REJECTED", result["blockers"])
 
 
 if __name__ == "__main__":

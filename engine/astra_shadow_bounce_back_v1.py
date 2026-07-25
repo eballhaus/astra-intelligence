@@ -88,6 +88,9 @@ def _param(evaluation: Mapping[str, Any], key: str, default: float) -> float:
 
 def _completed_observations_in_window(
     observations: list[Mapping[str, Any]],
+    *,
+    position_identity: str,
+    shadow_evaluation_id: str,
     signal_at: datetime,
     window: timedelta,
     cutoff: datetime | None = None,
@@ -102,6 +105,8 @@ def _completed_observations_in_window(
         if not _is_completed(obs):
             continue
         ts = _observation_timestamp(obs)
+        if _text(obs.get("position_identity")) != position_identity or _text(obs.get("shadow_evaluation_id")) != shadow_evaluation_id:
+            continue
         if ts is None or ts < signal_at or ts > deadline:
             continue
         rows.append({**obs, "_ts": ts})
@@ -155,13 +160,15 @@ def evaluate_bounce_back(
         "shadow_only": True,
         "execution_authority": "DISABLED",
         "promotion_status": "NOT_PROMOTED",
+        "human_review_required": True,
         "generated_at": _iso(now),
     }
 
     identity = _text(evaluation.get("position_identity"))
-    if not identity:
+    evaluation_id = _text(evaluation.get("shadow_evaluation_id"))
+    if not identity or not evaluation_id:
         result["status"] = "INVALID_INPUT"
-        result["blockers"].append("MISSING_POSITION_IDENTITY")
+        result["blockers"].append("MISSING_EVALUATION_IDENTITY")
         return result
 
     if _text(evaluation.get("legacy_status")).upper() == "LEGACY":
@@ -183,7 +190,11 @@ def evaluate_bounce_back(
         result["blockers"].append("MISSING_OR_INVALID_QUANTITY")
         return result
 
-    signal_at = _parse(evaluation.get("shadow_reference_timestamp") or evaluation.get("generated_at")) or now
+    signal_at = _parse(evaluation.get("shadow_reference_timestamp") or evaluation.get("generated_at"))
+    if signal_at is None:
+        result["status"] = "INVALID_INPUT"
+        result["blockers"].append("MISSING_SIGNAL_TIMESTAMP")
+        return result
     window_delta, window_name = _wait_window(evaluation)
     result["wait_window"] = window_name
 
@@ -192,7 +203,15 @@ def evaluate_bounce_back(
     result["rebound_threshold_pct"] = rebound_threshold_pct
     result["max_additional_drawdown_pct"] = max_drawdown_pct
 
-    rows = _completed_observations_in_window(observations, signal_at, window_delta, cutoff=now)
+    rows = _completed_observations_in_window(
+        observations, position_identity=identity, shadow_evaluation_id=evaluation_id, signal_at=signal_at, window=window_delta, cutoff=now,
+    )
+    if observations and not rows and any(
+        isinstance(obs, Mapping) and _is_completed(obs)
+        and (_text(obs.get("position_identity")) != identity or _text(obs.get("shadow_evaluation_id")) != evaluation_id)
+        for obs in observations
+    ):
+        result["blockers"].append("IDENTITY_MISMATCH_REJECTED")
     result["sample_size"] = len(rows)
 
     if not rows:

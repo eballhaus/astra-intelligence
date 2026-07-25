@@ -24,6 +24,7 @@ def _evaluation(
         "asset_class": "equity",
         "shadow_strategy": strategy,
         "shadow_reference_price": signal_price,
+        "shadow_reference_timestamp": NOW.isoformat().replace("+00:00", "Z"),
         "hold_price_at_signal": signal_price,
         "quantity_at_evaluation": quantity,
         "actual_exit_price": actual_exit_price,
@@ -127,6 +128,16 @@ class ExitRegretTests(unittest.TestCase):
         self.assertEqual(result["outcome_price"], 95.0)
         self.assertEqual(result["net_exit_regret"], -50.0)
 
+    def test_mismatched_or_pre_signal_observations_are_rejected(self):
+        evaluation = _evaluation("EXIT_NOW")
+        observations = [
+            _observation(20.0, NOW - timedelta(minutes=1)),
+            _observation(20.0, NOW + timedelta(minutes=30), position_identity="other-position"),
+        ]
+        result = calculate_exit_regret(evaluation, observations, now=NOW + timedelta(hours=1))
+        self.assertEqual(result["status"], "PENDING_OBSERVATION")
+        self.assertIn("IDENTITY_MISMATCH_REJECTED", result["blockers"])
+
     def test_invalid_signal_price_returns_invalid_input(self):
         evaluation = _evaluation("EXIT_NOW", signal_price=0.0, quantity=10.0)
         result = calculate_exit_regret(evaluation, [], now=NOW)
@@ -144,7 +155,7 @@ class ExitRegretTests(unittest.TestCase):
         del evaluation["position_identity"]
         result = calculate_exit_regret(evaluation, [], now=NOW)
         self.assertEqual(result["status"], "INVALID_INPUT")
-        self.assertIn("MISSING_POSITION_IDENTITY", result["blockers"])
+        self.assertIn("MISSING_EVALUATION_IDENTITY", result["blockers"])
 
     def test_tiny_fractional_quantity(self):
         """Micro-fractional quantities are preserved without dropping."""

@@ -55,6 +55,10 @@ def _observation_timestamp(obs: Mapping[str, Any]) -> datetime | None:
 
 def _completed_observations(
     observations: list[Mapping[str, Any]],
+    *,
+    position_identity: str,
+    shadow_evaluation_id: str,
+    signal_at: datetime,
     cutoff: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Return completed observations sorted by actual timestamp, optionally capped."""
@@ -65,7 +69,9 @@ def _completed_observations(
         if not _is_completed(obs):
             continue
         ts = _observation_timestamp(obs)
-        if cutoff is not None and (ts is None or ts > cutoff):
+        if _text(obs.get("position_identity")) != position_identity or _text(obs.get("shadow_evaluation_id")) != shadow_evaluation_id:
+            continue
+        if ts is None or ts < signal_at or (cutoff is not None and ts > cutoff):
             continue
         rows.append({**obs, "_ts": ts})
     rows.sort(key=lambda x: x["_ts"] or datetime.min.replace(tzinfo=timezone.utc))
@@ -126,13 +132,15 @@ def calculate_exit_regret(
         "shadow_only": True,
         "execution_authority": "DISABLED",
         "promotion_status": "NOT_PROMOTED",
+        "human_review_required": True,
         "generated_at": _iso(now),
     }
 
     identity = _text(evaluation.get("position_identity"))
-    if not identity:
+    evaluation_id = _text(evaluation.get("shadow_evaluation_id"))
+    if not identity or not evaluation_id:
         result["status"] = "INVALID_INPUT"
-        result["blockers"].append("MISSING_POSITION_IDENTITY")
+        result["blockers"].append("MISSING_EVALUATION_IDENTITY")
         return result
 
     signal_price = _num(evaluation.get("shadow_reference_price") or evaluation.get("hold_price_at_signal"))
@@ -142,13 +150,27 @@ def calculate_exit_regret(
         return result
     result["signal_price"] = signal_price
 
+    signal_at = _parse(evaluation.get("shadow_reference_timestamp") or evaluation.get("generated_at"))
+    if signal_at is None:
+        result["status"] = "INVALID_INPUT"
+        result["blockers"].append("MISSING_SIGNAL_TIMESTAMP")
+        return result
+
     quantity = _num(evaluation.get("quantity_at_evaluation"))
     if quantity is None or quantity <= 0:
         result["status"] = "INVALID_INPUT"
         result["blockers"].append("MISSING_OR_INVALID_QUANTITY")
         return result
 
-    completed = _completed_observations(observations, cutoff=now)
+    completed = _completed_observations(
+        observations, position_identity=identity, shadow_evaluation_id=evaluation_id, signal_at=signal_at, cutoff=now,
+    )
+    if observations and not completed and any(
+        isinstance(obs, Mapping) and _is_completed(obs)
+        and (_text(obs.get("position_identity")) != identity or _text(obs.get("shadow_evaluation_id")) != evaluation_id)
+        for obs in observations
+    ):
+        result["blockers"].append("IDENTITY_MISMATCH_REJECTED")
     result["sample_size"] = len(completed)
 
     has_actual_exit = (_num(evaluation.get("actual_exit_price")) or 0) > 0

@@ -37,7 +37,6 @@ def _evaluation(
         **extra,
     }
 
-
 def _observation(
     price: float,
     timestamp: datetime,
@@ -156,6 +155,22 @@ class BounceBackTests(unittest.TestCase):
         self.assertTrue(result["shadow_only"])
         self.assertEqual(result["execution_authority"], "DISABLED")
         self.assertEqual(result["promotion_status"], "NOT_PROMOTED")
+
+    def test_identity_mismatch_is_not_usable_evidence(self):
+        evaluation = _evaluation()
+        observation = _observation(80.0, NOW + timedelta(minutes=30))
+        observation["shadow_evaluation_id"] = "different-evaluation"
+        result = evaluate_bounce_back(evaluation, [observation], now=NOW + timedelta(hours=1))
+        self.assertEqual(result["status"], "PENDING_OBSERVATION")
+        self.assertIn("IDENTITY_MISMATCH_REJECTED", result["blockers"])
+
+    def test_missing_signal_timestamp_fails_closed(self):
+        evaluation = _evaluation()
+        evaluation.pop("shadow_reference_timestamp")
+        evaluation.pop("generated_at")
+        result = evaluate_bounce_back(evaluation, [], now=NOW)
+        self.assertEqual(result["status"], "INVALID_INPUT")
+        self.assertIn("MISSING_SIGNAL_TIMESTAMP", result["blockers"])
 
 
 if __name__ == "__main__":
