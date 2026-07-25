@@ -88270,6 +88270,17 @@ def unified_learning_diagnostics_v1(force: bool = False):
                 return dict(value)
         return {}
 
+    def _attach_shadow_exit_summaries(payload: dict) -> None:
+        # These compact summaries are worker-persisted and GET-pure. Keep every
+        # unified cache path aligned with the dedicated shadow diagnostics.
+        for key, filename, endpoint in (
+            ("astra_shadow_exit_intelligence_v1", "astra_shadow_exit_intelligence_v1.json", "/api/astra_shadow_exit_intelligence_v1"),
+            ("astra_shadow_exit_diagnostics_v1", "astra_shadow_exit_diagnostics_v1.json", "/api/astra_shadow_exit_diagnostics_v1"),
+            ("astra_shadow_exit_analysis_outputs_v1", "astra_shadow_exit_module_outputs_v1.json", "/api/astra_shadow_exit_analysis_outputs_v1"),
+            ("astra_shadow_exit_performance_v1", "astra_shadow_exit_performance_v1.json", "/api/astra_shadow_exit_performance_v1"),
+        ):
+            payload[key] = _astra_shadow_exit_payload_v1(filename, endpoint)
+
     if force:
         try:
             disk_cache_path = os.path.join(STATE, "dashboard_cache", "unified_learning_diagnostics_v1.json")
@@ -88346,6 +88357,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
                     "broker_actions_used": 0, "llm_calls_used": 0,
                     **_safety_flags_v1(),
                 }
+            _attach_shadow_exit_summaries(force_cached)
             _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(force_cached), "ts": time.time()}
             return force_cached
 
@@ -88381,6 +88393,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             fast["astra_governance_coverage_consolidation_v1"] = _astra_governance_coverage_snapshot_v1()
             fast["astra_runtime_resource_governance_v1"] = _astra_runtime_resource_governance_payload_v1()
             fast["astra_operational_preflight_v1"] = astra_operational_preflight_v1()
+            _attach_shadow_exit_summaries(fast)
             return fast
             if "astra_autonomous_improvement_performance_attribution_completion_v1" not in fast:
                 try:
@@ -89182,21 +89195,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["natural_exit_preserved"] = True
             out["forced_trades_enabled"] = False
             out["forced_exits_enabled"] = False
-            # Several executive attachers consume and compact nested status
-            # dictionaries. Attach the worker-persisted shadow summaries last
-            # so unified diagnostics preserves their dedicated-route contract.
-            out["astra_shadow_exit_intelligence_v1"] = _astra_shadow_exit_payload_v1(
-                "astra_shadow_exit_intelligence_v1.json", "/api/astra_shadow_exit_intelligence_v1"
-            )
-            out["astra_shadow_exit_diagnostics_v1"] = _astra_shadow_exit_payload_v1(
-                "astra_shadow_exit_diagnostics_v1.json", "/api/astra_shadow_exit_diagnostics_v1"
-            )
-            out["astra_shadow_exit_analysis_outputs_v1"] = _astra_shadow_exit_payload_v1(
-                "astra_shadow_exit_module_outputs_v1.json", "/api/astra_shadow_exit_analysis_outputs_v1"
-            )
-            out["astra_shadow_exit_performance_v1"] = _astra_shadow_exit_payload_v1(
-                "astra_shadow_exit_performance_v1.json", "/api/astra_shadow_exit_performance_v1"
-            )
+            _attach_shadow_exit_summaries(out)
             out["cache_hit"] = False
             out["cache_age_seconds"] = 0.0
             _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(out), "ts": time.time()}
