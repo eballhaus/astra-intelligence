@@ -88835,18 +88835,6 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("astra_aios_intelligence_maturation_bundle_v1", lambda: ASTRA_AIOS_INTELLIGENCE_MATURATION_BUNDLE.status(statuses=statuses, force=False))
         statuses["astra_aios_throughput_institutional_memory_optimization_v1"] = dict((statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {}).get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
 
-        # The unified builder may compact status payloads in place. Preserve the
-        # worker-persisted shadow analysis summaries so the executive response
-        # retains the same cache-only truth exposed by their dedicated routes.
-        shadow_exit_statuses = {
-            name: dict(statuses.get(name) or {})
-            for name in (
-                "astra_shadow_exit_intelligence_v1",
-                "astra_shadow_exit_diagnostics_v1",
-                "astra_shadow_exit_analysis_outputs_v1",
-                "astra_shadow_exit_performance_v1",
-            )
-        }
         sources["statuses"] = statuses
         out = UNIFIED_LEARNING_DIAGNOSTICS.build(sources, force=bool(force))
         if isinstance(out, dict):
@@ -88870,10 +88858,6 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_provider_orchestration_data_governance_v1"] = dict(statuses.get("astra_provider_orchestration_data_governance_v1") or {})
             out["astra_aios_intelligence_maturation_bundle_v1"] = dict(statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {})
             out["astra_aios_throughput_institutional_memory_optimization_v1"] = dict(statuses.get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
-            out["astra_shadow_exit_intelligence_v1"] = dict(shadow_exit_statuses.get("astra_shadow_exit_intelligence_v1") or {})
-            out["astra_shadow_exit_diagnostics_v1"] = dict(shadow_exit_statuses.get("astra_shadow_exit_diagnostics_v1") or {})
-            out["astra_shadow_exit_analysis_outputs_v1"] = dict(shadow_exit_statuses.get("astra_shadow_exit_analysis_outputs_v1") or {})
-            out["astra_shadow_exit_performance_v1"] = dict(shadow_exit_statuses.get("astra_shadow_exit_performance_v1") or {})
             market_intelligence = _astra_market_intelligence_v1(out)
             out["astra_market_intelligence_v1"] = market_intelligence
             cio_intelligence = _astra_cio_intelligence_v1(out)
@@ -89198,6 +89182,21 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["natural_exit_preserved"] = True
             out["forced_trades_enabled"] = False
             out["forced_exits_enabled"] = False
+            # Several executive attachers consume and compact nested status
+            # dictionaries. Attach the worker-persisted shadow summaries last
+            # so unified diagnostics preserves their dedicated-route contract.
+            out["astra_shadow_exit_intelligence_v1"] = _astra_shadow_exit_payload_v1(
+                "astra_shadow_exit_intelligence_v1.json", "/api/astra_shadow_exit_intelligence_v1"
+            )
+            out["astra_shadow_exit_diagnostics_v1"] = _astra_shadow_exit_payload_v1(
+                "astra_shadow_exit_diagnostics_v1.json", "/api/astra_shadow_exit_diagnostics_v1"
+            )
+            out["astra_shadow_exit_analysis_outputs_v1"] = _astra_shadow_exit_payload_v1(
+                "astra_shadow_exit_module_outputs_v1.json", "/api/astra_shadow_exit_analysis_outputs_v1"
+            )
+            out["astra_shadow_exit_performance_v1"] = _astra_shadow_exit_payload_v1(
+                "astra_shadow_exit_performance_v1.json", "/api/astra_shadow_exit_performance_v1"
+            )
             out["cache_hit"] = False
             out["cache_age_seconds"] = 0.0
             _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(out), "ts": time.time()}
