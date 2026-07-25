@@ -88835,6 +88835,18 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("astra_aios_intelligence_maturation_bundle_v1", lambda: ASTRA_AIOS_INTELLIGENCE_MATURATION_BUNDLE.status(statuses=statuses, force=False))
         statuses["astra_aios_throughput_institutional_memory_optimization_v1"] = dict((statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {}).get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
 
+        # The unified builder may compact status payloads in place. Preserve the
+        # worker-persisted shadow analysis summaries so the executive response
+        # retains the same cache-only truth exposed by their dedicated routes.
+        shadow_exit_statuses = {
+            name: dict(statuses.get(name) or {})
+            for name in (
+                "astra_shadow_exit_intelligence_v1",
+                "astra_shadow_exit_diagnostics_v1",
+                "astra_shadow_exit_analysis_outputs_v1",
+                "astra_shadow_exit_performance_v1",
+            )
+        }
         sources["statuses"] = statuses
         out = UNIFIED_LEARNING_DIAGNOSTICS.build(sources, force=bool(force))
         if isinstance(out, dict):
@@ -88858,10 +88870,10 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_provider_orchestration_data_governance_v1"] = dict(statuses.get("astra_provider_orchestration_data_governance_v1") or {})
             out["astra_aios_intelligence_maturation_bundle_v1"] = dict(statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {})
             out["astra_aios_throughput_institutional_memory_optimization_v1"] = dict(statuses.get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
-            out["astra_shadow_exit_intelligence_v1"] = dict(statuses.get("astra_shadow_exit_intelligence_v1") or {})
-            out["astra_shadow_exit_diagnostics_v1"] = dict(statuses.get("astra_shadow_exit_diagnostics_v1") or {})
-            out["astra_shadow_exit_analysis_outputs_v1"] = dict(statuses.get("astra_shadow_exit_analysis_outputs_v1") or {})
-            out["astra_shadow_exit_performance_v1"] = dict(statuses.get("astra_shadow_exit_performance_v1") or {})
+            out["astra_shadow_exit_intelligence_v1"] = dict(shadow_exit_statuses.get("astra_shadow_exit_intelligence_v1") or {})
+            out["astra_shadow_exit_diagnostics_v1"] = dict(shadow_exit_statuses.get("astra_shadow_exit_diagnostics_v1") or {})
+            out["astra_shadow_exit_analysis_outputs_v1"] = dict(shadow_exit_statuses.get("astra_shadow_exit_analysis_outputs_v1") or {})
+            out["astra_shadow_exit_performance_v1"] = dict(shadow_exit_statuses.get("astra_shadow_exit_performance_v1") or {})
             market_intelligence = _astra_market_intelligence_v1(out)
             out["astra_market_intelligence_v1"] = market_intelligence
             cio_intelligence = _astra_cio_intelligence_v1(out)
