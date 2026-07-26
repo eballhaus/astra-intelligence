@@ -39,6 +39,7 @@ from engine.astra_truth_arbitration_v1 import TruthContradictionRegistryV1, arbi
 from engine.astra_continuous_system_integrity_scanner_v1 import ContinuousSystemIntegrityScannerV1
 from engine.astra_crypto_market_data_capability_matrix_v1 import CryptoMarketDataCapabilityMatrixV1
 from engine.astra_multilane_completion_matrix_v1 import AstraMultilaneCompletionMatrixV1
+from engine.astra_operating_health_contract_v1 import AstraOperatingHealthContractV1
 from engine.astra_evidence_accumulation_capacity_v1 import canonical_candidate_capacity_fact
 from engine.candidate_execution_integrity_v1 import derive_crypto_horizon_evidence_v1
 
@@ -61,6 +62,7 @@ class PaperAutopilotWorker:
         self.system_integrity_scanner = ContinuousSystemIntegrityScannerV1(STATE)
         self.crypto_market_data_matrix = CryptoMarketDataCapabilityMatrixV1(STATE)
         self.multilane_completion_matrix = AstraMultilaneCompletionMatrixV1(STATE)
+        self.operating_health_contract = AstraOperatingHealthContractV1(STATE)
 
     def _base_state(self) -> dict[str, Any]:
         previous = read_snapshot()
@@ -559,6 +561,22 @@ class PaperAutopilotWorker:
                 "get_side_effects": 0,
             },
         )
+        # One compact worker-written control-plane view keeps lane truth,
+        # Sentinel, Governance, and Cortex evidence aligned for GET consumers.
+        # It only composes the current cycle's committed records.
+        truth_rows = [dict(row) for row in (runtime.get("broker_truth_records_v1") or []) if isinstance(row, dict)]
+        learning_rows = [dict(row) for row in (runtime.get("canonical_lifecycle_lessons_v1") or []) if isinstance(row, dict)]
+        operating_health = self.operating_health_contract.build(
+            multilane=multilane_completion,
+            worker_state=worker_state,
+            continuous=result,
+            sentinel=integrity_scan,
+            cortex=dict(integrity_scan.get("cortex_summary") or {}),
+            truth_records=truth_rows,
+            learning_records=learning_rows,
+        )
+        self.operating_health_contract.write(operating_health)
+        runtime["astra_operating_health_contract_v1"] = dict(operating_health)
         getattr(self.autopilot, "_runtime_state", {})["system_integrity_scanner_v1"] = dict(integrity_scan)
         self._publish(continuous_governance={
             "status": result.get("status"),

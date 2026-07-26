@@ -2658,6 +2658,10 @@ try:
 except Exception:
     ContinuousGovernanceV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
 try:
+    from engine.astra_operating_health_contract_v1 import AstraOperatingHealthContractV1
+except Exception:
+    AstraOperatingHealthContractV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
+try:
     from engine.astra_governance_coverage_consolidation_v1 import AstraGovernanceCoverageConsolidationV1
 except Exception:
     AstraGovernanceCoverageConsolidationV1 = _IntelligenceQualityUnavailable  # type: ignore[assignment]
@@ -3426,6 +3430,7 @@ ASTRA_AUTONOMOUS_SAFE_REPAIR = AstraAutonomousSafeRepairV1(state_dir=STATE)
 ASTRA_GOVERNANCE_OVERSIGHT_V2 = AstraGovernanceOversightV2(state_dir=STATE)
 ASTRA_BUILD_K_FINAL_VALIDATION = BuildKFinalValidationV1(state_dir=STATE)
 ASTRA_CONTINUOUS_GOVERNANCE = ContinuousGovernanceV1(state_dir=STATE)
+ASTRA_OPERATING_HEALTH_CONTRACT = AstraOperatingHealthContractV1(state_dir=STATE)
 ASTRA_GOVERNANCE_COVERAGE_CONSOLIDATION = AstraGovernanceCoverageConsolidationV1(state_dir=STATE)
 ASTRA_MOMENTUM_EXIT_READINESS_LOSS_ACCEPTANCE = MomentumExitReadinessLossAcceptanceV1(state_dir=STATE)
 ASTRA_HORIZON_CAPACITY_TURNOVER_RESEARCH = HorizonCapacityTurnoverResearchV1(state_dir=STATE)
@@ -46678,6 +46683,21 @@ def _astra_continuous_governance_snapshot_v1() -> dict:
         }
 
 
+def _astra_operating_health_contract_snapshot_v1() -> dict:
+    """Read the committed worker summary; GET never performs a health scan."""
+    try:
+        return dict(ASTRA_OPERATING_HEALTH_CONTRACT.snapshot() or {})
+    except Exception as exc:
+        return {
+            "endpoint": "/api/astra_operating_health_contract_v1",
+            "status": "FAIL_CLOSED_OPERATING_HEALTH_UNAVAILABLE",
+            "degraded_reason": f"operating_health_snapshot_unavailable:{str(exc)[:140]}",
+            "get_route_read_only": True, "provider_calls_used": 0,
+            "broker_actions_used": 0, "llm_calls_used": 0,
+            "behavior_safe_to_apply": False, "paper_only_preserved": True,
+        }
+
+
 def _astra_governance_coverage_snapshot_v1() -> dict:
     """Read worker-committed certification state without launching a scan."""
     try:
@@ -46699,6 +46719,11 @@ def _astra_governance_coverage_snapshot_v1() -> dict:
 @router.get("/api/astra_continuous_governance_v1")
 def astra_continuous_governance_v1():
     return _astra_continuous_governance_snapshot_v1()
+
+
+@router.get("/api/astra_operating_health_contract_v1")
+def astra_operating_health_contract_v1():
+    return _astra_operating_health_contract_snapshot_v1()
 
 
 @router.get("/api/astra_governance_coverage_consolidation_v1")
@@ -88340,6 +88365,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             })
             _attach_premarket_certification_compact_v1(force_cached)
             force_cached["astra_continuous_governance_v1"] = _astra_continuous_governance_snapshot_v1()
+            force_cached["astra_operating_health_contract_v1"] = _astra_operating_health_contract_snapshot_v1()
             force_cached["astra_governance_coverage_consolidation_v1"] = _astra_governance_coverage_snapshot_v1()
             force_cached["astra_runtime_resource_governance_v1"] = _astra_runtime_resource_governance_payload_v1()
             force_cached["astra_operational_preflight_v1"] = astra_operational_preflight_v1()
@@ -88390,6 +88416,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             }
             _attach_pladeu_statuses_v1(fast, force=False)
             fast["astra_continuous_governance_v1"] = _astra_continuous_governance_snapshot_v1()
+            fast["astra_operating_health_contract_v1"] = _astra_operating_health_contract_snapshot_v1()
             fast["astra_governance_coverage_consolidation_v1"] = _astra_governance_coverage_snapshot_v1()
             fast["astra_runtime_resource_governance_v1"] = _astra_runtime_resource_governance_payload_v1()
             fast["astra_operational_preflight_v1"] = astra_operational_preflight_v1()
