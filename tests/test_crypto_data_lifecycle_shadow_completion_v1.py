@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 import tempfile
 import unittest
@@ -9,6 +9,8 @@ from unittest.mock import Mock, patch
 from engine import data_orchestrator
 from engine.alpaca_paper_broker import AlpacaPaperBroker
 from engine.shadow_profit_loss_protection_validation_v1 import build_shadow_profit_loss_protection_validation_v1
+from engine.candidate_execution_integrity_v1 import derive_crypto_pretrade_forecast_v1
+from engine.astra_premarket_certification_v1 import build_pretrade_decision_contract, enrich_candidate_for_pretrade_contract
 import server_extend
 
 
@@ -36,6 +38,94 @@ def _lifecycle(lifecycle_id: str, *, closed: bool, verified: bool = True):
 
 
 class CryptoDataLifecycleShadowCompletionTests(unittest.TestCase):
+    def _completed_bars(self):
+        now = datetime.now(timezone.utc)
+        rows = []
+        for index in range(8):
+            close = 100.0 + index
+            rows.append({
+                "t": (now.replace(microsecond=0)).isoformat().replace("+00:00", "Z"),
+                "c": close,
+                "h": close + 0.6,
+                "l": close - 0.4,
+            })
+        return rows
+
+    def test_completed_crypto_bars_produce_provenance_backed_pretrade_forecast(self):
+        now = datetime.now(timezone.utc)
+        row = {
+            "symbol": "LINK/USD", "asset_class": "crypto", "lane_id": "CRYPTO",
+            "paper_entry_horizon_style": "day_trade", "price": 107.5,
+            "provider_quote_timestamp": now.isoformat().replace("+00:00", "Z"),
+            "bar_timestamp": now.isoformat().replace("+00:00", "Z"),
+            "crypto_risk_pct": 0.9, "completed_bar_return_pct": 0.8,
+        }
+        forecast = derive_crypto_pretrade_forecast_v1(row, completed_bars=self._completed_bars(), now=now)
+        self.assertEqual(forecast["forecast_state"], "FORECAST_COMPLETE")
+        self.assertGreater(forecast["expected_target_low"], row["price"])
+        self.assertGreater(forecast["expected_target_high"], forecast["expected_target_low"])
+        self.assertLess(forecast["expected_downside_range"]["high_pct"], 0.0)
+        self.assertEqual(forecast["source_provenance"]["source_system"], "PaperAutopilotWorker.crypto_rankings_snapshot_v1")
+
+    def test_negative_or_incomplete_completed_bar_evidence_remains_fail_closed(self):
+        now = datetime.now(timezone.utc)
+        bars = self._completed_bars()
+        for index, bar in enumerate(bars):
+            close = 108.0 - index
+            bar.update({"c": close, "h": close + 0.4, "l": close - 0.6})
+        forecast = derive_crypto_pretrade_forecast_v1({
+            "symbol": "LINK/USD", "asset_class": "crypto", "lane_id": "CRYPTO",
+            "paper_entry_horizon_style": "day_trade", "price": 100.0,
+            "provider_quote_timestamp": now.isoformat().replace("+00:00", "Z"),
+            "bar_timestamp": now.isoformat().replace("+00:00", "Z"),
+            "crypto_risk_pct": 1.0, "completed_bar_return_pct": -0.5,
+        }, completed_bars=bars, now=now)
+        self.assertEqual(forecast["forecast_state"], "INSUFFICIENT_FORECAST_EVIDENCE")
+        self.assertIn("LATEST_COMPLETED_BAR_CONTINUATION_NOT_POSITIVE", forecast["missing_inputs"])
+        self.assertNotIn("expected_target_high", forecast)
+
+    def test_crypto_forecast_survives_canonical_contract_with_provenance(self):
+        now = datetime.now(timezone.utc)
+        quote_timestamp = now.isoformat().replace("+00:00", "Z")
+        forecast = derive_crypto_pretrade_forecast_v1({
+            "symbol": "LINK/USD", "asset_class": "crypto", "lane_id": "CRYPTO",
+            "paper_entry_horizon_style": "day_trade", "price": 107.5,
+            "provider_quote_timestamp": quote_timestamp, "bar_timestamp": quote_timestamp,
+            "crypto_risk_pct": 0.9, "completed_bar_return_pct": 0.8,
+        }, completed_bars=self._completed_bars(), now=now)
+        row = {
+            "symbol": "LINK/USD", "candidate_id": "cand-link", "recommendation_id": "rec-link",
+            "lane_id": "CRYPTO", "asset_class": "crypto", "paper_entry_horizon_style": "day_trade",
+            # Broad research labels must not override the worker's concrete
+            # execution horizon when the pretrade contract computes per-day evidence.
+            "intended_horizon": "crypto_multi_horizon",
+            "strategy_archetype": "momentum_continuation", "summary": "Completed-bar momentum remains positive.",
+            "ranked_reason": "Current completed-bar continuation and liquidity support.",
+            "ranking_score": 82.0, "confidence": 82.0, "price": 107.5,
+            "provider_quote_timestamp": quote_timestamp, "quote_timestamp": quote_timestamp,
+            "candidate_generated_at": quote_timestamp,
+            "expires_at": (now.replace(microsecond=0) + timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+            "crypto_risk_pct": 0.9, "completed_bar_return_pct": 0.8,
+            "crypto_pretrade_forecast_v1": forecast,
+            "expected_return_range": forecast["expected_return_range"],
+            "expected_return_pct": forecast["expected_return_pct"],
+            "expected_target_low": forecast["expected_target_low"],
+            "expected_target_high": forecast["expected_target_high"],
+            "expected_downside_range": forecast["expected_downside_range"],
+            "expected_drawdown": forecast["expected_drawdown"],
+            "invalidation_level": forecast["invalidation_level"],
+            "expected_return_method": forecast["calculation_method"],
+        }
+        enriched = enrich_candidate_for_pretrade_contract(row, now=now)
+        contract = build_pretrade_decision_contract(enriched, now=now)
+        self.assertEqual(contract["contract_status"], "VALID")
+        self.assertEqual(contract["intended_horizon"], "day_trade")
+        self.assertIsNotNone(contract["expected_return_per_day_range"])
+        self.assertEqual(contract["calculation_method"], "crypto_completed_bar_continuation_v1")
+        self.assertEqual(contract["target"]["high"], forecast["expected_target_high"])
+        self.assertEqual(contract["source_provenance"]["source_system"], "PaperAutopilotWorker.crypto_rankings_snapshot_v1")
+        self.assertEqual(contract["field_provenance_v1"]["expected_return_range"]["source_system"], "PaperAutopilotWorker.crypto_rankings_snapshot_v1")
+
     def test_normalized_quote_preserves_bid_ask_and_lineage(self):
         row, meta = data_orchestrator._quote_to_rank_row("LINK/USD", _quote(), "crypto", NOW)
         self.assertTrue(meta["valid_quote"])

@@ -1,6 +1,7 @@
 from engine.runtime_environment import load_runtime_environment, resolve_fmp_key
 from engine.candidate_execution_integrity_v1 import (
     candidate_execution_integrity,
+    derive_crypto_pretrade_forecast_v1,
     derive_crypto_horizon_evidence_v1,
     normalize_crypto_pair_strict,
 )
@@ -21565,6 +21566,11 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         final_row = _preserve_crypto_quote_microstructure_v1(dict(ranked[0]), quote_row, quote_provider)
         provider_quote_timestamp = str(final_row.get("provider_quote_timestamp") or final_row.get("quote_timestamp") or quote_row.get("provider_quote_timestamp") or quote_row.get("quote_timestamp") or "")
         final_row.update({"symbol": symbol, "asset_class": "crypto", "asset_type": "crypto", "lane_id": "CRYPTO", "rank_position": rank, "ranking_run_id": f"crypto-worker:{int(now)}", "generated_at": _now_utc_iso(), "candidate_generated_at": _now_utc_iso(), "quote_timestamp": provider_quote_timestamp, "provider_quote_timestamp": provider_quote_timestamp or None, "quote_timestamp_origin": "provider" if provider_quote_timestamp else "missing", "bar_timestamp": volume["latest_completed_bar_timestamp"], "bar_evidence": {"source": "AlpacaPaperBroker.historical_bars", "resolution": "15Min", "count": len(bars), **volume}, "crypto_risk_pct": risk_pct, "completed_bar_return_pct": completed_return_pct, "freshness_state": "CURRENT"})
+        # Carry the exact bounded completed-bar window through the existing
+        # ranking/regime decorators. It is consumed and removed before the
+        # worker persists the candidate below.
+        completed_bars = bars[:latest_completed_index + 1] if latest_completed_index >= 0 else []
+        final_row["_crypto_completed_bars_for_forecast_v1"] = completed_bars
         output.append(_ensure_persona_fields(final_row))
         quote_integrity_rows.append({"symbol": symbol, "quote_received": True, "provider_bid": quote.get("bid") or quote.get("bp"), "provider_ask": quote.get("ask") or quote.get("ap"), "bid_present": final_row.get("bid") is not None, "ask_present": final_row.get("ask") is not None, "spread_present": final_row.get("spread_pct") is not None, "quote_timestamp": final_row.get("quote_timestamp"), "quote_observed_at": _now_utc_iso(), "snapshot_generated_at": None, "quote_age_seconds": final_row.get("quote_age_seconds"), "quote_provider": final_row.get("quote_provider"), "quote_record_id": final_row.get("quote_record_id"), "volume_available": True, "completed_volume_upstream": True, "bars_available": True, "candidate_persisted": True, "provider_diagnostics": dict(quote.get("provider_diagnostics") or {}), "provider_response_status": (quote.get("provider_diagnostics") or {}).get("http_status"), "provider_response_keys": list((quote.get("provider_diagnostics") or {}).get("response_keys") or [])[:20], "failure_reason": ""})
     output = PORTFOLIO_RISK_ENGINE.enrich(output, asset_type="crypto", companion_rows=LAST_RANKINGS.get("stocks", []))
@@ -21573,7 +21579,33 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
     # Persisted candidate horizon evidence is a producer contract.  It is not
     # a ranking change and deliberately leaves the horizon absent when the
     # bounded worker lacks a required fact.
-    output = [{**dict(row), **derive_crypto_horizon_evidence_v1(row)} for row in output]
+    enriched_output = []
+    for row in output:
+        enriched = {**dict(row), **derive_crypto_horizon_evidence_v1(row)}
+        completed_bars = list(enriched.pop("_crypto_completed_bars_for_forecast_v1", []) or [])
+        # Produce the bounded continuation forecast only after the existing
+        # regime decorator and canonical horizon owner have supplied the
+        # required current context. The persisted output retains the compact
+        # inputs/provenance, never the raw bar window.
+        forecast = derive_crypto_pretrade_forecast_v1(enriched, completed_bars=completed_bars)
+        enriched["crypto_pretrade_forecast_v1"] = forecast
+        if forecast.get("forecast_state") == "FORECAST_COMPLETE":
+            enriched.update({
+                "expected_return_range": forecast.get("expected_return_range"),
+                "expected_return_pct": forecast.get("expected_return_pct"),
+                "expected_target_low": forecast.get("expected_target_low"),
+                "expected_target_high": forecast.get("expected_target_high"),
+                "expected_downside_range": forecast.get("expected_downside_range"),
+                "expected_drawdown": forecast.get("expected_drawdown"),
+                "invalidation_level": forecast.get("invalidation_level"),
+                "expected_return_method": forecast.get("calculation_method"),
+                "forecast_timestamp": forecast.get("forecast_timestamp"),
+                "forecast_source_inputs": forecast.get("source_inputs"),
+                "forecast_source_provenance": forecast.get("source_provenance"),
+                "forecast_schema_version": forecast.get("schema_version"),
+            })
+        enriched_output.append(enriched)
+    output = enriched_output
     generated_at = _now_utc_iso()
     for row in quote_integrity_rows:
         row["snapshot_generated_at"] = generated_at
@@ -50575,6 +50607,23 @@ def _candidate_risk_outcome_order_truth_closure_diagnostic_v1(force: bool = Fals
     }
 
 
+def _pretrade_certification_broker_snapshot_v1() -> dict:
+    """Return the existing cache-first broker truth for contract certification.
+
+    Certification GET paths cannot refresh the broker.  When the compact
+    Alpaca status cache is cold after a restart, reuse the established local
+    safety fallback rather than converting an already-verified paper boundary
+    into a false negative.  The fallback only reads persisted/runtime safety
+    state and reports zero broker actions.
+    """
+    broker = dict(_cached_alpaca_paper_status_payload({}) or {})
+    if not broker:
+        broker = dict(_alpaca_paper_status_fast_fallback_v1(
+            "pretrade_certification_status_cache_cold"
+        ) or {})
+    return broker
+
+
 def _astra_pre_market_trading_certification_payload_v1(force: bool = False) -> dict:
     """Certify the existing PaperAutopilot boundary without a broker mutation.
 
@@ -50614,7 +50663,7 @@ def _astra_pre_market_trading_certification_payload_v1(force: bool = False) -> d
         dry_run = dict(PAPER_AUTOPILOT.operational_dry_run(candidates, max_candidates=30, capacity_snapshot=capacity) or {})
     except Exception as exc:
         dry_run = {"per_candidate_decision_trace": [], "final_blocker_reason": f"production_dry_run_unavailable:{str(exc)[:120]}"}
-    broker = _cached_alpaca_paper_status_payload({})
+    broker = _pretrade_certification_broker_snapshot_v1()
     activation = canonical_multilane_activation_contract(
         broker_safety={
             "paper_mode_verified": bool(broker.get("paper_mode_verified")),

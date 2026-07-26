@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from engine.astra_premarket_certification_v1 import (
     build_lane_certification,
@@ -9,6 +10,7 @@ from engine.astra_premarket_certification_v1 import (
     deterministic_failure_injection_summary,
 )
 from engine.paper_autopilot import normalize_operational_candidate
+import server_extend
 
 
 def qualifying_candidate(**overrides):
@@ -100,6 +102,22 @@ class PreMarketCertificationContractTests(unittest.TestCase):
         coverage = deterministic_failure_injection_summary()
         self.assertEqual(coverage["total_cases"], 32)
         self.assertTrue(all(row["broker_actions_used"] == 0 for row in coverage["cases"]))
+
+    def test_cold_status_cache_uses_existing_read_only_paper_safety_fallback(self):
+        fallback = {
+            "paper_mode_verified": True,
+            "broker_live_endpoint_allowed": False,
+            "broker_execution_enabled": True,
+            "broker_actions_used": 0,
+        }
+        with patch.object(server_extend, "_cached_alpaca_paper_status_payload", return_value={}), patch.object(
+            server_extend, "_alpaca_paper_status_fast_fallback_v1", return_value=fallback
+        ) as fast_fallback:
+            snapshot = server_extend._pretrade_certification_broker_snapshot_v1()
+        self.assertTrue(snapshot["paper_mode_verified"])
+        self.assertFalse(snapshot["broker_live_endpoint_allowed"])
+        self.assertEqual(snapshot["broker_actions_used"], 0)
+        fast_fallback.assert_called_once_with("pretrade_certification_status_cache_cold")
 
 
 if __name__ == "__main__":

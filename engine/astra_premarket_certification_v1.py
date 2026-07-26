@@ -155,6 +155,42 @@ def _lane(value: Any) -> str:
     return raw or "UNKNOWN"
 
 
+def _pretrade_execution_horizon(row: Mapping[str, Any]) -> tuple[str, str]:
+    """Resolve a concrete existing execution horizon without broad reclassification.
+
+    A candidate can carry a broad research label such as
+    ``crypto_multi_horizon`` alongside the worker's already-assigned
+    ``paper_entry_horizon_style``.  The broad label is useful diagnostics but
+    cannot price a bounded holding window.  For pretrade-contract math only,
+    prefer the existing concrete execution style and normalize legacy aliases.
+    This neither changes the upstream horizon assignment nor creates a new
+    horizon where none was assigned.
+    """
+    aliases = {
+        "scalp": "scalp",
+        "day": "day_trade",
+        "daytrade": "day_trade",
+        "day_trade": "day_trade",
+        "intraday": "day_trade",
+        "swing": "swing_trade",
+        "swing_trade": "swing_trade",
+        "short_swing": "swing_trade",
+        "standard_swing": "swing_trade",
+        "extended_swing": "swing_trade",
+    }
+    for field in (
+        "paper_entry_horizon_style",
+        "trade_horizon_style",
+        "intended_horizon",
+        "best_horizon_style",
+        "horizon",
+    ):
+        value = aliases.get(_text(row.get(field)).strip().lower())
+        if value:
+            return value, field
+    return "", ""
+
+
 def _stable_decision_id(candidate_id: str, recommendation_id: str) -> str:
     if not candidate_id and not recommendation_id:
         return ""
@@ -482,7 +518,8 @@ def build_candidate_risk_envelope_v1(
     reward_to_risk = None
     if upside_range and downside and float(downside["low_pct"]) < 0:
         reward_to_risk = _range(float(upside_range["low_pct"]) / abs(float(downside["low_pct"])), float(upside_range["high_pct"]) / abs(float(downside["high_pct"])), label="EXPECTED_REWARD_TO_RISK")
-    horizon = _text(_first(row, "intended_horizon", "paper_entry_horizon_style", "trade_horizon_style"))
+    execution_horizon, _ = _pretrade_execution_horizon(row)
+    horizon = execution_horizon or _text(_first(row, "intended_horizon", "paper_entry_horizon_style", "trade_horizon_style"))
     hold_days = 1.0 / 24.0 if horizon == "day_trade" else 3.0 if horizon == "swing_trade" else None
     per_day = None
     if upside_range and hold_days:
@@ -495,6 +532,37 @@ def build_candidate_risk_envelope_v1(
     valid_until = _iso(_now(now) + timedelta(minutes=5)) if quote_freshness == "CURRENT" else ""
     expected_median = round((float(upside_range["low_pct"]) + float(upside_range["high_pct"])) / 2.0, 4) if upside_range else None
     downside_median = round((float(downside["low_pct"]) + float(downside["high_pct"])) / 2.0, 4) if downside else None
+    # The crypto worker can persist a bounded continuation forecast built from
+    # the same completed bars and provider quote that created the candidate.
+    # Preserve that producer identity instead of relabeling its fields as an
+    # opaque candidate alias.  A malformed or incomplete forecast is ignored
+    # here and the normal contract remains fail-closed.
+    forecast = dict(row.get("crypto_pretrade_forecast_v1") or {})
+    forecast_provenance = dict(forecast.get("source_provenance") or {})
+    if forecast.get("forecast_state") == "FORECAST_COMPLETE" and forecast_provenance:
+        source_row = {
+            "source_timestamp": forecast.get("forecast_timestamp") or forecast_provenance.get("observation_timestamp"),
+            "confidence": _first(row, "confidence", "risk_confidence"),
+        }
+        forecast_fields = {
+            "expected_upside_range": upside_range,
+            "expected_downside_range": downside,
+            "expected_drawdown": drawdown,
+        }
+        for field, value in forecast_fields.items():
+            if value not in (None, "", [], {}):
+                provenance[field] = _provenance(
+                    value,
+                    source_system=str(forecast_provenance.get("source_system") or "crypto_completed_bar_continuation_v1"),
+                    source_field=f"crypto_pretrade_forecast_v1.{field}",
+                    source_row=source_row,
+                    evidence_class=str(forecast_provenance.get("evidence_class") or "CURRENT_CANDIDATE_DIRECT"),
+                    confidence=_first(row, "confidence", "risk_confidence"),
+                    now=now,
+                    candidate_specific=True,
+                    symbol_specific=True,
+                    derived=True,
+                )
     return {
         "risk_envelope_id": envelope_id, "candidate_id": _text(row.get("candidate_id")), "symbol": symbol, "lane": lane,
         "asset_type": asset, "asset_class": _text(_first(row, "asset_class", "asset_type")).lower() or "equity",
@@ -635,6 +703,23 @@ def enrich_candidate_for_pretrade_contract(
                 now=now, candidate_specific=True, symbol_specific=True, derived=True,
             )
     horizon = choose("intended_horizon", FIELD_ALIASES["intended_horizon"])
+    execution_horizon, execution_horizon_field = _pretrade_execution_horizon(row)
+    if execution_horizon:
+        # The direct worker assignment is the actionable horizon for this
+        # contract.  Keep broader research labels in their source rows, but
+        # do not let them suppress bounded per-day evidence production.
+        horizon = execution_horizon
+        provenance["intended_horizon"] = _provenance(
+            horizon,
+            source_system="candidate_row",
+            source_field=execution_horizon_field,
+            source_row=row,
+            evidence_class="CURRENT_CANDIDATE_DIRECT",
+            confidence=_first(row, "confidence", "confidence_score"),
+            now=now,
+            candidate_specific=True,
+            symbol_specific=True,
+        )
     if not horizon and strategy in STRATEGY_HORIZON_MAP:
         horizon = STRATEGY_HORIZON_MAP[str(strategy)]
         provenance["intended_horizon"] = _provenance(
@@ -842,6 +927,13 @@ def enrich_candidate_for_pretrade_contract(
     row["expected_outcome_envelope_v1"] = expected_outcome
     row["risk_envelope_id"] = risk_envelope.get("risk_envelope_id")
     row["expected_outcome_id"] = expected_outcome.get("expected_outcome_id")
+    risk_provenance_fields = {
+        "expected_return_range": "expected_upside_range",
+        "expected_downside_range": "expected_downside_range",
+        "expected_drawdown": "expected_drawdown",
+        "expected_return_per_day_range": "expected_return_per_day_range",
+        "reward_to_risk_range": "reward_to_risk_range",
+    }
     for field, value in {
         "expected_return_range": expected_outcome.get("expected_return_range"),
         "expected_downside_range": expected_outcome.get("expected_downside_range"),
@@ -851,8 +943,9 @@ def enrich_candidate_for_pretrade_contract(
     }.items():
         if row.get(field) in (None, "", [], {}) and value not in (None, "", [], {}):
             row[field] = value
-        if field in risk_envelope.get("field_provenance_v1", {}):
-            provenance[field] = dict(risk_envelope["field_provenance_v1"][field])
+        source_field = risk_provenance_fields[field]
+        if source_field in risk_envelope.get("field_provenance_v1", {}):
+            provenance[field] = dict(risk_envelope["field_provenance_v1"][source_field])
     # Alias probes may have failed before a supported target/stop or
     # confidence fallback resolved the canonical field. Do not report those
     # stale probes as missing evidence once the contract has the value.
@@ -944,12 +1037,22 @@ def build_pretrade_decision_contract(
     lane = _lane(_first(row, "lane_id", "lane", "asset_lane"))
     if lane == "UNKNOWN" and _text(_first(row, "asset_class", "asset_type")).lower() == "crypto":
         lane = "CRYPTO"
-    horizon = _text(_first(row, "intended_horizon", "paper_entry_horizon_style", "trade_horizon_style", "best_horizon_style"))
+    execution_horizon, _ = _pretrade_execution_horizon(row)
+    horizon = execution_horizon or _text(_first(row, "intended_horizon", "paper_entry_horizon_style", "trade_horizon_style", "best_horizon_style"))
     generated_snapshot = _text(certification_snapshot_id or row.get("certification_snapshot_id"))
     if not generated_snapshot and candidate_id:
         generated_snapshot = "candidate-enrichment:" + hashlib.sha256(
             f"{candidate_id}|{recommendation_id}".encode("utf-8")
         ).hexdigest()[:16]
+    forecast = dict(row.get("crypto_pretrade_forecast_v1") or {})
+    forecast_provenance = dict(forecast.get("source_provenance") or row.get("forecast_source_provenance") or {})
+    forecast_inputs = dict(forecast.get("source_inputs") or row.get("forecast_source_inputs") or {})
+    target = {
+        "low": _first(row, "expected_target_low", "target_zone_low", "target_1"),
+        "high": _first(row, "expected_target_high", "target_zone_high", "target_2", "stretch_target"),
+    }
+    if target["low"] in (None, "") and target["high"] in (None, ""):
+        target = {}
     contract = {
         "contract_version": VERSION,
         "candidate_id": candidate_id,
@@ -966,6 +1069,19 @@ def build_pretrade_decision_contract(
         "thesis_invalidation_conditions": _as_list(_first(row, "thesis_invalidation_conditions", "invalidation_conditions", "what_invalidates_setup")),
         "intended_horizon": horizon,
         "expected_hold_window": _text(_first(row, "expected_hold_window", "hold_window")),
+        # Versioned evidence fields are observational contract metadata.  The
+        # existing required fields and order gates remain authoritative.
+        "schema_version": _text(forecast.get("schema_version") or row.get("forecast_schema_version") or VERSION),
+        "observation_timestamp": _text(_first(row, "candidate_generated_at", "generated_at", "timestamp")),
+        "market_data_timestamp": _text(_first(row, "provider_quote_timestamp", "quote_timestamp", "bar_timestamp")),
+        "forecast_timestamp": _text(forecast.get("forecast_timestamp") or row.get("forecast_timestamp")),
+        "valid_until": _text(forecast.get("valid_until") or row.get("forecast_valid_until") or expiry),
+        "target": target,
+        "downside_or_risk": _first(row, "expected_downside_range", "crypto_risk_pct", "risk_pct", "atr_pct"),
+        "risk_envelope": dict(row.get("candidate_risk_envelope_v1") or {}),
+        "calculation_method": _text(forecast.get("calculation_method") or row.get("expected_return_method")),
+        "source_inputs": forecast_inputs,
+        "source_provenance": forecast_provenance,
         "risk_envelope_id": _text(row.get("risk_envelope_id")),
         "candidate_risk_envelope_v1": dict(row.get("candidate_risk_envelope_v1") or {}),
         "expected_outcome_envelope_v1": dict(row.get("expected_outcome_envelope_v1") or {}),

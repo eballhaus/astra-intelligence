@@ -7,7 +7,7 @@ always classified as non-executable.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 
@@ -114,6 +114,135 @@ def derive_crypto_horizon_evidence_v1(candidate: Mapping[str, Any] | None) -> di
             "resolution": bars.get("resolution"), "completed_bar_count": completed,
             "completed_bar_return_pct": round(momentum, 6), "rolling_completed_bar_volume": volume,
             "risk_pct": risk, "regime": regime,
+        },
+    }
+
+
+def derive_crypto_pretrade_forecast_v1(
+    candidate: Mapping[str, Any] | None,
+    *,
+    completed_bars: list[Mapping[str, Any]] | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Derive a bounded CRYPTO continuation forecast from completed bars.
+
+    The worker already owns the quote and completed-bar request that establish
+    crypto candidate freshness.  This helper turns those same authoritative
+    inputs into explicit forecast, target, and risk fields for the canonical
+    pretrade contract.  It deliberately declines to forecast when either the
+    latest completed-bar momentum or the bounded trend disagrees; no default
+    target, return, or stop is supplied to make a candidate executable.
+    """
+    row = dict(candidate or {})
+    source_bars = completed_bars if completed_bars is not None else row.get("completed_bars")
+    bars = [dict(item) for item in (source_bars or []) if isinstance(item, Mapping)]
+    parsed: list[dict[str, float | str]] = []
+    for bar in bars[-24:]:
+        close = _number(bar.get("c") if "c" in bar else bar.get("close"), -1.0)
+        high = _number(bar.get("h") if "h" in bar else bar.get("high"), -1.0)
+        low = _number(bar.get("l") if "l" in bar else bar.get("low"), -1.0)
+        timestamp = _text(bar.get("t") or bar.get("timestamp"))
+        if close > 0 and high >= close and 0 < low <= close and timestamp:
+            parsed.append({"close": close, "high": high, "low": low, "timestamp": timestamp})
+    price = _number(row.get("price") or row.get("current_price") or row.get("last_price"), -1.0)
+    if price <= 0 and parsed:
+        price = float(parsed[-1]["close"])
+    horizon = _text(row.get("paper_entry_horizon_style") or row.get("assigned_horizon") or row.get("trade_horizon_style"))
+    observation_timestamp = _text(row.get("provider_quote_timestamp") or row.get("quote_timestamp"))
+    bar_timestamp = _text(row.get("bar_timestamp") or (parsed[-1]["timestamp"] if parsed else ""))
+    risk_pct = _number(row.get("crypto_risk_pct") or row.get("risk_pct") or row.get("atr_pct"), 0.0)
+    latest_return_pct = _number(row.get("completed_bar_return_pct") or row.get("crypto_completed_bar_return_pct"), 0.0)
+    if latest_return_pct == 0.0 and len(parsed) >= 2:
+        prior_close = float(parsed[-2]["close"])
+        latest_return_pct = ((float(parsed[-1]["close"]) - prior_close) / prior_close) * 100.0 if prior_close > 0 else 0.0
+    window = parsed[-8:]
+    trend_pct = 0.0
+    if len(window) >= 2:
+        first_close = float(window[0]["close"])
+        if first_close > 0:
+            trend_pct = ((float(window[-1]["close"]) - first_close) / first_close) * 100.0
+    missing: list[str] = []
+    if len(window) < 8:
+        missing.append("COMPLETED_15MIN_BAR_WINDOW_INSUFFICIENT")
+    if price <= 0:
+        missing.append("CURRENT_PRICE_MISSING")
+    if not observation_timestamp:
+        missing.append("PROVIDER_QUOTE_TIMESTAMP_MISSING")
+    if not bar_timestamp:
+        missing.append("COMPLETED_BAR_TIMESTAMP_MISSING")
+    if risk_pct <= 0:
+        missing.append("BAR_RISK_ENVELOPE_MISSING")
+    if latest_return_pct <= 0:
+        missing.append("LATEST_COMPLETED_BAR_CONTINUATION_NOT_POSITIVE")
+    if trend_pct <= 0:
+        missing.append("BOUNDED_COMPLETED_BAR_TREND_NOT_POSITIVE")
+    if horizon != "day_trade":
+        missing.append("UNSUPPORTED_CRYPTO_FORECAST_HORIZON")
+    if missing:
+        return {
+            "forecast_state": "INSUFFICIENT_FORECAST_EVIDENCE",
+            "calculation_method": "crypto_completed_bar_continuation_v1",
+            "schema_version": "1.0.0",
+            "missing_inputs": missing,
+            "source_inputs": {
+                "completed_bar_count": len(parsed), "latest_completed_bar_return_pct": round(latest_return_pct, 6),
+                "bounded_trend_pct": round(trend_pct, 6), "crypto_risk_pct": round(risk_pct, 6),
+                "observation_timestamp": observation_timestamp, "bar_timestamp": bar_timestamp,
+            },
+            "source_provenance": {
+                "source_system": "PaperAutopilotWorker.crypto_rankings_snapshot_v1",
+                "source_fields": ["completed_15min_bars", "provider_quote_timestamp", "crypto_risk_pct"],
+                "evidence_class": "CURRENT_CANDIDATE_DIRECT",
+            },
+        }
+    # Both continuation measures are observed completed-bar returns.  The
+    # lower target uses their weaker positive observation; the higher target
+    # extends the stronger observation by one currently observed bar range.
+    # This preserves an explicit, bounded calculation instead of a fixed
+    # crypto return or target percentage.
+    low_pct = min(latest_return_pct, trend_pct)
+    high_pct = max(latest_return_pct, trend_pct) + risk_pct
+    if low_pct <= 0 or high_pct <= 0:
+        return {
+            "forecast_state": "INSUFFICIENT_FORECAST_EVIDENCE",
+            "calculation_method": "crypto_completed_bar_continuation_v1",
+            "schema_version": "1.0.0",
+            "missing_inputs": ["POSITIVE_CONTINUATION_RANGE_UNAVAILABLE"],
+            "source_inputs": {"latest_completed_bar_return_pct": latest_return_pct, "bounded_trend_pct": trend_pct, "crypto_risk_pct": risk_pct},
+            "source_provenance": {"source_system": "PaperAutopilotWorker.crypto_rankings_snapshot_v1", "evidence_class": "CURRENT_CANDIDATE_DIRECT"},
+        }
+    support = min(float(bar["low"]) for bar in window)
+    invalidation = support if 0 < support < price else None
+    downside_low = ((invalidation - price) / price) * 100.0 if invalidation else -risk_pct
+    generated_time = now or datetime.now(timezone.utc)
+    generated_at = generated_time.isoformat().replace("+00:00", "Z")
+    target_low = price * (1.0 + low_pct / 100.0)
+    target_high = price * (1.0 + high_pct / 100.0)
+    return {
+        "forecast_state": "FORECAST_COMPLETE",
+        "schema_version": "1.0.0",
+        "calculation_method": "crypto_completed_bar_continuation_v1",
+        "forecast_timestamp": generated_at,
+        "valid_until": (generated_time + timedelta(seconds=120)).isoformat().replace("+00:00", "Z"),
+        "expected_return_range": {"low_pct": round(low_pct, 6), "high_pct": round(high_pct, 6), "evidence_label": "COMPLETED_BAR_CONTINUATION"},
+        "expected_return_pct": round((low_pct + high_pct) / 2.0, 6),
+        "expected_target_low": round(target_low, 8),
+        "expected_target_high": round(target_high, 8),
+        "expected_downside_range": {"low_pct": round(min(downside_low, -risk_pct), 6), "high_pct": round(max(downside_low, -risk_pct), 6), "evidence_label": "COMPLETED_BAR_RISK"},
+        "expected_drawdown": {"low_pct": round(-2.0 * risk_pct, 6), "high_pct": round(-risk_pct, 6), "evidence_label": "COMPLETED_BAR_VOLATILITY"},
+        "invalidation_level": round(invalidation, 8) if invalidation else None,
+        "source_inputs": {
+            "completed_bar_count": len(parsed), "latest_completed_bar_return_pct": round(latest_return_pct, 6),
+            "bounded_trend_pct": round(trend_pct, 6), "crypto_risk_pct": round(risk_pct, 6),
+            "current_price": round(price, 8), "observation_timestamp": observation_timestamp,
+            "bar_timestamp": bar_timestamp, "horizon": horizon,
+        },
+        "source_provenance": {
+            "source_system": "PaperAutopilotWorker.crypto_rankings_snapshot_v1",
+            "source_fields": ["completed_15min_bars", "provider_quote_timestamp", "crypto_risk_pct", "paper_entry_horizon_style"],
+            "evidence_class": "CURRENT_CANDIDATE_DIRECT",
+            "observation_timestamp": observation_timestamp,
+            "bar_timestamp": bar_timestamp,
         },
     }
 
