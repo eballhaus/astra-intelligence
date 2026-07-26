@@ -90,10 +90,14 @@ class LegacySwingBrokerMarketEvidenceTests(unittest.TestCase):
             engine = PaperAutopilotEngine(state_path=state_path)
             engine._runtime_state["last_evidence_capacity_snapshot"] = {"capacity_authority_state": "CURRENT"}
             engine._runtime_state["crypto_rankings_snapshot_v1"] = {"generated_at": "2026-07-18T00:00:00Z", "rows": [{"symbol": "BTC/USD"}]}
+            engine._runtime_state["partial_cycle_streak"] = 2
+            engine._runtime_state["execution_continuity_override_v1"] = {"status": "DUE"}
             engine._save_state_file()
             restarted = PaperAutopilotEngine(state_path=state_path)
             self.assertEqual(restarted._runtime_state["last_evidence_capacity_snapshot"]["capacity_authority_state"], "CURRENT")
             self.assertEqual(restarted._runtime_state["crypto_rankings_snapshot_v1"]["rows"][0]["symbol"], "BTC/USD")
+            self.assertEqual(restarted._runtime_state["partial_cycle_streak"], 2)
+            self.assertEqual(restarted._runtime_state["execution_continuity_override_v1"]["status"], "DUE")
 
     def test_partial_legacy_cycle_publishes_read_only_capacity_and_refreshes_crypto(self):
         with tempfile.TemporaryDirectory() as state_dir:
@@ -111,6 +115,30 @@ class LegacySwingBrokerMarketEvidenceTests(unittest.TestCase):
             self.assertEqual(refreshes, ["called"])
             self.assertTrue(trace["broker_positions_fetch_ok"])
             self.assertEqual(trace["evidence_accumulation_capacity_v1"]["capacity_authority_state"], "CURRENT")
+            self.assertFalse(engine._runtime_state.get("last_full_cycle_at"))
+
+    def test_legacy_partial_backlog_cannot_starve_canonical_cycle(self):
+        with tempfile.TemporaryDirectory() as state_dir:
+            engine = PaperAutopilotEngine(state_path=f"{state_dir}/paper_autopilot_state.json", enabled=True)
+            engine._runtime_state["partial_cycle_streak"] = 2
+            engine._refresh_legacy_swing_canary_pre_submit = lambda _positions: {"market_activity": {"cycle_state": "CYCLE_PARTIAL_BUDGET"}}  # type: ignore[method-assign]
+            engine._alpaca_safety_snapshot = lambda: {"broker_execution_enabled": False, "paper_mode_verified": True, "live_endpoint_detected": False}  # type: ignore[method-assign]
+            engine._broker_open_symbols_snapshot = lambda: {  # type: ignore[method-assign]
+                "broker_open_symbols": set(), "broker_position_by_symbol": {},
+                "broker_reconciliation_active": True, "broker_positions_fetch_ok": True,
+                "broker_open_positions_count": 0,
+            }
+            engine._fetch_open_positions = lambda: []  # type: ignore[method-assign]
+            engine._collect_candidate_rows = lambda: []  # type: ignore[method-assign]
+
+            result = engine.run_cycle()
+
+            override = engine._runtime_state["execution_continuity_override_v1"]
+            self.assertEqual(override["status"], "DUE")
+            self.assertEqual(engine._runtime_state["partial_cycle_streak"], 0)
+            self.assertNotEqual(result.get("cycle_reason"), "legacy_market_evidence_bounded")
+            self.assertEqual(result.get("orders_submitted"), 0)
+            self.assertEqual(engine._runtime_state["last_full_cycle_at"], result["cycle_timestamp"])
 
     def test_runtime_reduced_batch_bounds_existing_legacy_loop(self):
         engine = _engine(_MarketDataFixture())

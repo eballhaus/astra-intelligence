@@ -319,6 +319,19 @@ class AlpacaPaperBroker:
                 "status": _safe_text(row.get("status"), "unknown"),
             }
         capability_ok = bool(account.get("ok") and supported and tradable)
+        # The activation contract requires an explicit market-data entitlement
+        # fact.  Asset discovery alone proves neither that entitlement nor a
+        # usable data path, so the worker-owned refresh performs one bounded,
+        # read-only crypto-bar request and persists the result for cache-only
+        # consumers.  Candidate-level freshness and completed-bar checks stay
+        # separate and remain fail-closed at the execution boundary.
+        market_probe = self.historical_bars(
+            "BTC/USD", timeframe="1Min", limit=5, asset_class="crypto", max_pages=1,
+        )
+        market_data_entitlement_confirmed = bool(market_probe.get("ok"))
+        market_data_status = "CONFIRMED" if market_data_entitlement_confirmed else _safe_text(
+            market_probe.get("response_state") or market_probe.get("error"), "UNAVAILABLE",
+        )
         activation_state = "VALIDATED_PAPER_READY" if capability_ok else "BLOCKED_CRYPTO_UNSUPPORTED"
         payload = {
             "generated_at": _now_iso(),
@@ -342,12 +355,18 @@ class AlpacaPaperBroker:
             "supported_order_types": ["market", "limit"],
             "supported_time_in_force": ["gtc", "ioc"],
             "fractional_quantity_supported": any(bool(v.get("fractionable")) for v in asset_rules.values()),
+            "market_data_entitlement_confirmed": market_data_entitlement_confirmed,
+            "market_data_status": market_data_status,
+            "market_data_probe_symbol": "BTC/USD",
+            "market_data_probe_http_status": int(market_probe.get("http_status") or 0),
             "position_retrieval_confirmed": True,
             "order_retrieval_confirmed": True,
             "status_mapping_confirmed": True,
             "session_model": "24_7_crypto",
-            "exact_blocker": "" if capability_ok else (_safe_text(err) or "no_supported_tradable_crypto_assets_returned"),
-            "broker_read_calls_used": 2,
+            "exact_blocker": "" if capability_ok and market_data_entitlement_confirmed else (
+                _safe_text(err) or _safe_text(market_probe.get("error")) or "crypto_market_data_entitlement_unverified"
+            ),
+            "broker_read_calls_used": 3,
             "broker_actions_used": 0,
             "secrets_exposed": False,
             "live_trading_changed": False,

@@ -21445,7 +21445,10 @@ def _worker_refresh_crypto_capability_v1() -> dict:
     except Exception:
         pass
     interval_seconds = max(3600.0, float(os.getenv("ASTRA_CRYPTO_CAPABILITY_REFRESH_SECONDS", "21600") or 21600))
-    if age_seconds is not None and age_seconds < interval_seconds:
+    entitlement_unverified = not bool(capability.get("market_data_entitlement_confirmed")) or str(
+        capability.get("market_data_status") or ""
+    ).upper() in {"", "UNKNOWN", "UNAVAILABLE"}
+    if age_seconds is not None and age_seconds < interval_seconds and not entitlement_unverified:
         return {"status": "CURRENT_CACHE_REUSED", "capability_age_seconds": round(age_seconds, 3), "broker_read_calls_used": 0, "broker_actions_used": 0}
     try:
         refreshed = dict(ALPACA_PAPER_BROKER.crypto_capability_status(True) or {})

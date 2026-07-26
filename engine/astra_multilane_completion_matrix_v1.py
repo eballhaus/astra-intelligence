@@ -146,6 +146,7 @@ class AstraMultilaneCompletionMatrixV1:
         runtime_unexercised: list[dict[str, Any]] = []
         for lane in LANES:
             candidates, traces = by_lane[lane], trace_by_lane[lane]
+            crypto_ready_pending_full_cycle = False
             observation = _partial_observation(observations, lane)
             observation_state = str(observation.get("observation_state") or "")
             observed_count = _number(observation.get("candidate_count"))
@@ -182,7 +183,14 @@ class AstraMultilaneCompletionMatrixV1:
                     # The worker supplies evaluated candidates. This fallback
                     # keeps old snapshots observable without inventing proof.
                     readiness_rows = [dict(row) for row in ((crypto_readiness.get("pair_eligibility") or {}).get("evaluated_candidates") or []) if isinstance(row, dict)]
-                    if not blocker and readiness_rows:
+                    ready_rows = [row for row in readiness_rows if bool(row.get("execution_eligible"))]
+                    if ready_rows:
+                        # A stale peer cannot replace a current eligible row
+                        # as the lane-level causal blocker.
+                        failed = dict(ready_rows[0])
+                        blocker, reason = "", ""
+                        crypto_ready_pending_full_cycle = True
+                    elif not blocker and readiness_rows:
                         failed = next((row for row in readiness_rows if _causal_blocker(row)[0]), {})
                         crypto_first, crypto_reason = _causal_blocker(failed)
                     else:
@@ -214,6 +222,11 @@ class AstraMultilaneCompletionMatrixV1:
                     stages["eligibility"] = _stage("eligibility", classification, reason=reason, first_bad_handoff="candidate contract -> eligibility gate", runtime=True)
                     if lane == "DAY" and "CONTRACT_INCOMPLETE" in blocker:
                         stages["horizon_assignment"] = _stage("horizon_assignment", "BLOCKED_BY_UPSTREAM", upstream="CONTRACT_INCOMPLETE")
+                elif lane == "CRYPTO" and crypto_ready_pending_full_cycle:
+                    first = "CANDIDATE_ELIGIBLE_AWAITING_FULL_CYCLE"
+                    stages["eligibility"] = _stage("eligibility", "PASS", runtime=True)
+                    stages["horizon_assignment"] = _stage("horizon_assignment", "PASS", runtime=True)
+                    stages["execution_integrity"] = _stage("execution_integrity", "LEGITIMATE_WAITING", reason="current execution-eligible candidate awaits the bounded full candidate cycle", runtime=True)
                 else:
                     first = "ELIGIBILITY_NOT_RUNTIME_EXERCISED"
                     stages["eligibility"] = _stage("eligibility", "RUNTIME_NOT_EXERCISED")
@@ -230,7 +243,7 @@ class AstraMultilaneCompletionMatrixV1:
             lanes[lane] = {
                 "lane": lane, "current_stage": next((stage for stage in STAGES if stages[stage]["status"] not in {"PASS", "RUNTIME_NOT_EXERCISED"}), "candidate_discovery"),
                 "first_blocker": first,
-                "first_blocker_validity": _blocker_validity(failed) or ("PARTIAL_CANDIDATE_INTEGRITY" if observation_current else ""),
+                "first_blocker_validity": _blocker_validity(failed) or ("VALID_SCHEDULING_WAIT" if lane == "CRYPTO" and crypto_ready_pending_full_cycle else "PARTIAL_CANDIDATE_INTEGRITY" if observation_current else ""),
                 "candidate_count": len(candidates) or (observed_count if observation_current else 0),
                 "fresh_candidate_count": len(candidates) if source_freshness in {"CURRENT", "FRESH", ""} or lane == "CRYPTO" else (_number(observation.get("fresh_candidate_count")) if observation_current else 0),
                 "eligible_candidate_count": sum(bool(row.get("eligible") or row.get("execution_eligible")) for row in candidates),

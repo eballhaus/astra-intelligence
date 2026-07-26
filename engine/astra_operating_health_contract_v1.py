@@ -109,7 +109,8 @@ class AstraOperatingHealthContractV1:
             valid_wait = blocker in {
                 "CANDIDATE_OBSERVATION_PENDING", "NO_CURRENT_MARKET_OPPORTUNITY", "MARKET_CLOSED",
                 "lane_activation", "PENDING_LANE_ACTIVATION", "CANDIDATE_TIMESTAMP_STALE",
-            } or _text(row.get("first_blocker_validity")) == "VALID_STRATEGY_REJECTION"
+                "CANDIDATE_ELIGIBLE_AWAITING_FULL_CYCLE",
+            } or _text(row.get("first_blocker_validity")) in {"VALID_STRATEGY_REJECTION", "VALID_SCHEDULING_WAIT"}
             lanes[lane] = {
                 "lane": lane, "current_lifecycle_stage": row.get("current_stage") or "candidate_discovery",
                 "first_causal_blocker": blocker, "blocker_source": "astra_multilane_completion_matrix_v1",

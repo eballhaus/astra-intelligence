@@ -113,6 +113,36 @@ class MultiLaneRuntimeWiringContractTests(unittest.TestCase):
         self.assertFalse(dry_run["submit_order"])
         self.assertEqual(dry_run["broker_actions_used"], 0)
 
+    def test_crypto_activation_owner_publishes_worker_canonical_aliases(self):
+        class CapabilityBroker:
+            def crypto_capability_status(self, _refresh):
+                return {
+                    "paper_mode_verified": True,
+                    "paper_endpoint_confirmed": True,
+                    "live_endpoint_detected": False,
+                    "crypto_trading_supported": True,
+                    "tradable_pairs": ["BTC/USD"],
+                    "market_data_entitlement_confirmed": True,
+                }
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "ASTRA_ENABLE_ALPACA_CRYPTO_PAPER": "1",
+            "ASTRA_CRYPTO_PAPER_CAPITAL_LIMIT": "100",
+        }, clear=False):
+            engine = PaperAutopilotEngine(
+                db_path=str(pathlib.Path(directory) / "paper.db"),
+                state_path=str(pathlib.Path(directory) / "state.json"),
+                alpaca_paper_broker=CapabilityBroker(),
+            )
+            activation = engine._crypto_paper_activation_status()
+
+        self.assertTrue(activation["paper_active_bounded"])
+        self.assertTrue(activation["paper_crypto_enabled"])
+        self.assertTrue(activation["execution_enabled"])
+        self.assertEqual(activation["lane_state"], "LANE_PAPER_ACTIVE_BOUNDED")
+        self.assertEqual(activation["crypto_day_trade_capacity"], activation["day_trade_capacity"])
+        self.assertEqual(activation["crypto_short_swing_capacity"], activation["short_swing_capacity"])
+
 
 if __name__ == "__main__":
     unittest.main()

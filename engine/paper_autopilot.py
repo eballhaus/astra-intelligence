@@ -1890,6 +1890,13 @@ class PaperAutopilotEngine:
                 if payload.get("last_cycle_utc"):
                     self._runtime_state["last_cycle_utc"] = str(payload.get("last_cycle_utc") or "")
                 for key in (
+                    "partial_cycle_streak",
+                    "last_full_cycle_at",
+                    "execution_continuity_override_v1",
+                ):
+                    if key in payload:
+                        self._runtime_state[key] = payload.get(key)
+                for key in (
                     "worker_generation_id", "worker_heartbeat_at", "worker_cycle_started_at",
                     "worker_cycle_completed_at", "worker_cycle_phase", "worker_cycle_count", "worker_cycle_error",
                 ):
@@ -1903,6 +1910,9 @@ class PaperAutopilotEngine:
             "autopilot_enabled": bool(getattr(self, "_enabled", False)),
             "paper_mode": self.paper_mode,
             "last_cycle_utc": self._runtime_state.get("last_cycle_utc") or "",
+            "partial_cycle_streak": _to_int(self._runtime_state.get("partial_cycle_streak"), 0),
+            "last_full_cycle_at": str(self._runtime_state.get("last_full_cycle_at") or ""),
+            "execution_continuity_override_v1": dict(self._runtime_state.get("execution_continuity_override_v1") or {}),
             "worker_generation_id": str(self._runtime_state.get("worker_generation_id") or ""),
             "worker_heartbeat_at": str(self._runtime_state.get("worker_heartbeat_at") or ""),
             "worker_cycle_started_at": str(self._runtime_state.get("worker_cycle_started_at") or ""),
@@ -4318,10 +4328,18 @@ class PaperAutopilotEngine:
             and capability.get("market_data_entitlement_confirmed")
             and capital_configured
         )
+        # The dedicated worker consumes this owner directly for its bounded
+        # integrity snapshot.  Publish the canonical lane names alongside the
+        # legacy status fields so a valid active lane is not reclassified as
+        # blocked merely because the consumer expects a different alias.
+        lane_state = "LANE_PAPER_ACTIVE_BOUNDED" if paper_ready else "LANE_BLOCKED"
         return {
             "activation_requested": requested,
             "kill_switch_enabled": kill_switch,
             "paper_active_bounded": paper_ready,
+            "paper_crypto_enabled": paper_ready,
+            "execution_enabled": paper_ready,
+            "lane_state": lane_state,
             "capital_book_id": "paper_crypto_separate",
             "capital_configured": capital_configured,
             "capital_limit": capital_limit,
@@ -4330,6 +4348,8 @@ class PaperAutopilotEngine:
             "capability": capability,
             "day_trade_capacity": 6,
             "short_swing_capacity": 2,
+            "crypto_day_trade_capacity": 6,
+            "crypto_short_swing_capacity": 2,
             "scalp_broker_capacity": 0,
             "exact_blocker": "" if paper_ready else str(capital.get("capital_configuration_status") or "CRYPTO_CAPITAL_CONFIGURATION_REQUIRED") if not capital_configured else str(capability.get("exact_blocker") or "crypto_runtime_capability_not_validated"),
         }
@@ -8211,7 +8231,14 @@ class PaperAutopilotEngine:
             except Exception as exc:
                 legacy_canary_refresh = {"observation_state": "FAILED", "error": str(exc)[:180]}
             market_cycle = dict(legacy_canary_refresh.get("market_activity") or {})
-            if str(market_cycle.get("cycle_state") or "").startswith("CYCLE_PARTIAL"):
+            partial_legacy_cycle = str(market_cycle.get("cycle_state") or "").startswith("CYCLE_PARTIAL")
+            prior_partial_streak = _to_int(self._runtime_state.get("partial_cycle_streak"), 0)
+            # Legacy-SWING evidence has a deliberately small per-cycle budget.
+            # A permanent backlog must not prevent the canonical candidate and
+            # order-ready path from ever running, so periodically continue the
+            # normal bounded cycle using the already-refreshed cache.
+            partial_execution_due = partial_legacy_cycle and prior_partial_streak >= 2
+            if partial_legacy_cycle and not partial_execution_due:
                 # Keep the bounded cursor cooperative while still publishing
                 # the read-only broker truth that capacity diagnostics need.
                 # No entry, exit, or order path is reached from this branch.
@@ -8448,9 +8475,8 @@ class PaperAutopilotEngine:
                 except Exception as exc:
                     partial_candidate_results = {"microphase_failed": True, "error": str(exc)[:180]}
                 # Phase rotation: track partial cycle streak
-                partial_streak = _to_int(self._runtime_state.get("partial_cycle_streak"), 0) + 1
+                partial_streak = prior_partial_streak + 1
                 self._runtime_state["partial_cycle_streak"] = partial_streak
-                self._runtime_state["last_full_cycle_at"] = self._runtime_state.get("last_full_cycle_at") or _now_iso()
                 self._runtime_state["last_cycle_utc"] = _now_iso()
                 self._runtime_state["last_cycle_summary"] = {
                     "ok": True, "orders_submitted": 0, "positions_closed": 0,
@@ -8496,6 +8522,15 @@ class PaperAutopilotEngine:
                 self._note_worker_progress("legacy_market_evidence_checkpoint")
                 self._save_state_file()
                 return dict(self._runtime_state["last_cycle_summary"])
+            if partial_execution_due:
+                self._runtime_state["partial_cycle_streak"] = 0
+                self._runtime_state["execution_continuity_override_v1"] = {
+                    "status": "DUE",
+                    "reason": "legacy_partial_backlog_must_not_starve_canonical_candidate_path",
+                    "prior_partial_streak": prior_partial_streak,
+                    "legacy_market_cycle_state": str(market_cycle.get("cycle_state") or ""),
+                    "triggered_at": _now_iso(),
+                }
             self._note_worker_progress("safety_preflight")
             opened = 0
             closed = 0
@@ -8526,7 +8561,8 @@ class PaperAutopilotEngine:
             entry_price_lineage_refresh = self._reconcile_entry_price_lineage_v1(broker_snapshot)
             legacy_activation_refresh = self._refresh_legacy_forward_activations(broker_position_by_symbol)
             self._note_worker_progress("legacy_market_evidence")
-            legacy_canary_refresh = self._refresh_legacy_swing_canary_pre_submit(broker_position_by_symbol)
+            if not legacy_canary_refresh:
+                legacy_canary_refresh = self._refresh_legacy_swing_canary_pre_submit(broker_position_by_symbol)
             try:
                 self._note_worker_progress("legacy_quarantine_review")
                 quarantine_review = self._bounded_legacy_quarantine_review_phase(
@@ -9529,6 +9565,7 @@ class PaperAutopilotEngine:
                     # the existing paper execution outcome.
                     trace["lane_execution_ledger"] = {"appended": 0, "suppressed": 0, "status": "ledger_write_failed"}
             self._runtime_state["last_cycle_utc"] = out["cycle_timestamp"]
+            self._runtime_state["last_full_cycle_at"] = out["cycle_timestamp"]
             self._runtime_state["last_cycle_summary"] = dict(out)
             self._runtime_state["last_execution_trace"] = dict(trace)
             # Reuse the worker as the existing scheduler. The audit observes

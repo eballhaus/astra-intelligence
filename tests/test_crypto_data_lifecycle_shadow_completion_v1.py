@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from engine import data_orchestrator
+from engine.alpaca_paper_broker import AlpacaPaperBroker
 from engine.shadow_profit_loss_protection_validation_v1 import build_shadow_profit_loss_protection_validation_v1
 import server_extend
 
@@ -81,6 +82,43 @@ class CryptoDataLifecycleShadowCompletionTests(unittest.TestCase):
         self.assertEqual(refreshed["status"], "CURRENT")
         self.assertEqual(refreshed["broker_actions_used"], 0)
         broker._save_crypto_capability.assert_called_once()
+
+    def test_capability_refresh_repairs_unverified_market_data_entitlement(self):
+        broker = Mock()
+        broker.crypto_capability_status.side_effect = [
+            {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "market_data_entitlement_confirmed": False,
+                "market_data_status": "UNKNOWN",
+            },
+            {"crypto_trading_supported": True, "market_data_entitlement_confirmed": True, "broker_read_calls_used": 3},
+        ]
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}, clear=False), patch.object(server_extend, "ALPACA_PAPER_BROKER", broker):
+            refreshed = server_extend._worker_refresh_crypto_capability_v1()
+        self.assertEqual(refreshed["status"], "CURRENT")
+        self.assertEqual(broker.crypto_capability_status.call_count, 2)
+        broker._save_crypto_capability.assert_called_once()
+
+    def test_capability_probe_persists_read_only_market_data_entitlement(self):
+        with tempfile.TemporaryDirectory() as root:
+            broker = AlpacaPaperBroker()
+            broker._crypto_capability_path = f"{root}/capability.json"
+            broker.safety_status = Mock(return_value={
+                "credentials_present": True, "paper_mode_verified": True,
+                "paper_endpoint_detected": True, "live_endpoint_detected": False,
+            })
+            broker.account = Mock(return_value={"ok": True, "account_status": "ACTIVE"})
+            broker._request = Mock(return_value=(True, [{
+                "symbol": "BTC/USD", "tradable": True, "fractionable": True,
+                "status": "active", "min_order_size": "0.0001",
+            }], ""))
+            broker._market_data_request = Mock(return_value=(True, {"bars": {"BTC/USD": []}}, "", 200))
+            payload = broker.crypto_capability_status(True)
+        self.assertTrue(payload["market_data_entitlement_confirmed"])
+        self.assertEqual(payload["market_data_status"], "CONFIRMED")
+        self.assertEqual(payload["market_data_probe_symbol"], "BTC/USD")
+        self.assertEqual(payload["broker_actions_used"], 0)
+        broker._market_data_request.assert_called_once()
 
     def test_shadow_consumes_only_complete_verified_lifecycle(self):
         payload = build_shadow_profit_loss_protection_validation_v1([
