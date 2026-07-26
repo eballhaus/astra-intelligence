@@ -202,6 +202,82 @@ class PaperAutopilotWorker:
         acknowledgements["all_required_consumers_acknowledged"] = bool(momentum and all(value > 0 for value in acknowledgements.values()))
         return {"daily_sufficient_count": sufficient, "daily_insufficient_count": insufficient, "daily_failed_count": failed, "momentum_records_built": momentum, "downstream_acknowledgements": acknowledgements, "recovered_daily_symbols": recovered}
 
+    def _canonical_crypto_matrix_candidates(
+        self,
+        *,
+        candidate_rows: list[dict[str, Any]],
+        evaluated_rows: list[dict[str, Any]],
+        capacity_snapshot: dict[str, Any],
+        open_symbols: set[str],
+    ) -> list[dict[str, Any]]:
+        """Project cached crypto rows through the existing final trace owner.
+
+        ``CryptoOperationalIntegrityReadinessV1`` intentionally reports its
+        pre-execution guard.  The completion matrix needs the earlier
+        PaperAutopilot decision gate as well, otherwise a guard alias can hide
+        the actual first candidate rejection.  This calls no provider, broker,
+        order, or reservation path and is diagnostic-only.
+        """
+        by_symbol = {
+            str(row.get("symbol") or "").upper(): dict(row)
+            for row in evaluated_rows if isinstance(row, dict)
+        }
+        trace_builder = getattr(self.autopilot, "_candidate_trace_row", None)
+        capacity_reader = getattr(self.autopilot, "_current_execution_capacities", None)
+        if not callable(trace_builder) or not callable(capacity_reader):
+            return list(by_symbol.values())
+        try:
+            capacities = dict(capacity_reader() or {})
+        except Exception:
+            return list(by_symbol.values())
+        stock_capacity = int(capacities.get("stock_capacity") or 0)
+        crypto_capacity = int(capacities.get("crypto_capacity") or 0)
+        total_capacity = int(capacities.get("total_capacity") or 0)
+        reconciliation_current = bool(capacity_snapshot.get("broker_positions_fetch_ok"))
+        projected: list[dict[str, Any]] = []
+        for raw in candidate_rows[:25]:
+            if not isinstance(raw, dict):
+                continue
+            candidate = {**dict(raw), "lane_id": "CRYPTO", "asset_class": "crypto", "asset_type": "crypto"}
+            symbol = str(candidate.get("symbol") or candidate.get("ticker") or "").upper()
+            merged = dict(by_symbol.get(symbol) or candidate)
+            # Integrity readiness rows are intentionally pre-execution records.
+            # They do not always include the final candidate fields consumed by
+            # PaperAutopilot qualification.  Projecting such a row would create
+            # a synthetic CONTRACT_INCOMPLETE blocker, rather than preserving
+            # the real earlier freshness/activation gate that stopped it.
+            if not candidate.get("entry_commitment") or not (
+                candidate.get("candidate_generated_at") or candidate.get("generated_at")
+            ):
+                merged["canonical_execution_projection_owner"] = "PRE_EXECUTION_INTEGRITY_ONLY"
+                merged["pre_execution_integrity_blocker"] = dict(merged.get("first_causal_blocker") or {})
+                projected.append(merged)
+                continue
+            try:
+                trace, _allowed, _reason, _meta = trace_builder(
+                    candidate,
+                    open_syms=set(open_symbols),
+                    stock_capacity=stock_capacity,
+                    crypto_capacity=crypto_capacity,
+                    total_capacity=total_capacity,
+                    internal_open_syms=set(open_symbols),
+                    broker_open_syms=set(open_symbols),
+                    broker_reconciliation_active=reconciliation_current,
+                    capacity_snapshot=capacity_snapshot,
+                    current_candidates=candidate_rows[:25],
+                )
+            except Exception:
+                projected.append(merged)
+                continue
+            attribution = dict(trace.get("eligibility_gate_attribution_v1") or {})
+            if dict(attribution.get("first_failing_gate") or {}).get("code"):
+                merged["eligibility_gate_attribution_v1"] = attribution
+                merged["first_failing_gate"] = dict(attribution.get("first_failing_gate") or {})
+                merged["canonical_execution_projection_owner"] = "PaperAutopilot._candidate_trace_row"
+                merged["pre_execution_integrity_blocker"] = dict(merged.get("first_causal_blocker") or {})
+            projected.append(merged)
+        return projected or list(by_symbol.values())
+
     def _on_signal(self, _signum: int, _frame: Any) -> None:
         self.stop_requested = True
 
@@ -373,13 +449,57 @@ class PaperAutopilotWorker:
                 dict(row) for row in ((crypto_integrity.get("pair_eligibility") or {}).get("evaluated_candidates") or [])
                 if isinstance(row, dict)
             ]
-            completion_candidates = [*evaluated_crypto_rows, *[dict(row) for row in (getattr(self.autopilot, "_runtime_state", {}).get("last_execution_trace") or {}).get("per_candidate_decision_trace") or [] if isinstance(row, dict)]]
+            runtime = getattr(self.autopilot, "_runtime_state", {})
+            execution_trace = dict(runtime.get("last_execution_trace") or {})
+            partial = dict((runtime.get("last_cycle_summary") or {}).get("partial_candidate_microphase") or {})
+            target_lane = str(partial.get("target_lane") or "").upper()
+            lane_observations = {
+                lane: {"observation_state": "NOT_EVALUATED_THIS_PARTIAL_CYCLE", "observation_scope": "bounded_partial_cycle"}
+                for lane in ("SWING", "DAY", "CRYPTO")
+            }
+            if target_lane in lane_observations and partial.get("microphase_completed"):
+                lane_observations[target_lane] = {
+                    "observation_state": "CURRENT_PARTIAL_EVALUATION",
+                    "observation_scope": "bounded_candidate_integrity_only",
+                    "candidate_count": partial.get("candidates_evaluated", partial.get("candidate_rows_loaded", 0)),
+                    "fresh_candidate_count": partial.get("fresh", 0),
+                    # The microphase never performs PaperAutopilot selection
+                    # or order construction. Keep its preliminary count
+                    # separate from executable eligibility.
+                    "preliminary_eligible_candidate_count": partial.get("eligible", 0),
+                    "first_causal_blocker": partial.get("first_causal_blocker"),
+                    "exact_blocker_reason": partial.get("exact_blocker_reason"),
+                }
+            matrix_crypto_rows = self._canonical_crypto_matrix_candidates(
+                candidate_rows=crypto_rows,
+                evaluated_rows=evaluated_crypto_rows,
+                capacity_snapshot=capacity,
+                open_symbols={str(row.get("symbol") or "").upper() for row in canonical_crypto_positions if row.get("symbol")},
+            )
+            completion_candidates = [*matrix_crypto_rows, *[dict(row) for row in execution_trace.get("per_candidate_decision_trace") or [] if isinstance(row, dict)]]
+            capacity_lanes = dict((capacity.get("lanes") or {}))
+            active_positions_by_lane = {
+                lane: dict(capacity_lanes.get(lane.lower()) or {}).get("raw_broker_position_count", 0)
+                for lane in ("SWING", "DAY", "CRYPTO")
+            }
+            managed_capacity_positions_by_lane = {
+                lane: dict(capacity_lanes.get(lane.lower()) or {}).get("positions_used", 0)
+                for lane in ("SWING", "DAY", "CRYPTO")
+            }
+            legacy_excluded_positions_by_lane = {
+                lane: dict(capacity_lanes.get(lane.lower()) or {}).get("legacy_excluded_position_count", 0)
+                for lane in ("SWING", "DAY", "CRYPTO")
+            }
             multilane_completion = self.multilane_completion_matrix.build(
                 candidate_rows=completion_candidates,
-                execution_trace=dict(getattr(self.autopilot, "_runtime_state", {}).get("last_execution_trace") or {}),
+                execution_trace=execution_trace,
                 crypto_readiness=crypto_integrity,
                 shadow=shadow_protection,
-                source_freshness=str((getattr(self.autopilot, "_runtime_state", {}).get("last_execution_trace") or {}).get("candidate_freshness") or "UNKNOWN"),
+                source_freshness=str(execution_trace.get("candidate_freshness") or "UNKNOWN"),
+                lane_observations=lane_observations,
+                active_positions_by_lane=active_positions_by_lane,
+                managed_capacity_positions_by_lane=managed_capacity_positions_by_lane,
+                legacy_excluded_positions_by_lane=legacy_excluded_positions_by_lane,
             )
             self.multilane_completion_matrix.write(multilane_completion)
         except Exception:
