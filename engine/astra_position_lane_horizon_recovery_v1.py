@@ -290,7 +290,13 @@ def build_position_lane_horizon_recovery_v1(
 
 
 def enrich_canonical_position_snapshot_v1(snapshot: Mapping[str, Any], recovery: Mapping[str, Any]) -> dict[str, Any]:
-    """Attach only metadata; broker membership, price, quantity, and basis stay untouched."""
+    """Attach only metadata; broker membership, price, quantity, and basis stay untouched.
+
+    Lane/horizon from the recovery ledger is authoritative when RESOLVED.
+    When recovery returns UNAVAILABLE, the original canonical-snapshot lane
+    (which may be broker-provided) is preserved as a reasonable default,
+    but the recovery status clearly flags it as unverified.
+    """
     result = dict(snapshot or {})
     recovered = {str(row.get("symbol") or "").upper(): dict(row) for row in (recovery.get("positions") or []) if isinstance(row, dict)}
     positions: dict[str, dict[str, Any]] = {}
@@ -298,13 +304,26 @@ def enrich_canonical_position_snapshot_v1(snapshot: Mapping[str, Any], recovery:
         position = dict(raw or {})
         row = recovered.get(str(symbol).upper())
         if row:
+            lane_status = _text(row.get("lane_status")).upper()
+            horizon_status = _text(row.get("horizon_status")).upper()
+            if lane_status == STATUS_RESOLVED:
+                position["lane"] = row["lane"]
+                position["lane_source"] = row["lane_source"]
+            if horizon_status == STATUS_RESOLVED:
+                position["horizon"] = row["horizon"]
+                position["horizon_source"] = row["horizon_source"]
+            # Recovery metadata is always attached so consumers can distinguish
+            # RESOLVED (verified) from UNAVAILABLE (defaulted) lanes.
             position.update({
-                "lane": row["lane"], "lane_source": row["lane_source"], "lane_evidence_at": row["lane_source_timestamp"] or "UNAVAILABLE",
-                "horizon": row["horizon"], "horizon_source": row["horizon_source"], "horizon_evidence_at": row["horizon_source_timestamp"] or "UNAVAILABLE",
-                "lane_recovery_status": row["lane_status"], "horizon_recovery_status": row["horizon_status"],
-                "lane_recovery_source_id": row["lane_source_id"], "horizon_recovery_source_id": row["horizon_source_id"],
-                "recovery_method": row["recovery_method"], "recovery_confidence": row["confidence"],
-                "recovery_exact_blockers": list(row["exact_blockers"]),
+                "lane_evidence_at": row.get("lane_source_timestamp") or "UNAVAILABLE",
+                "horizon_evidence_at": row.get("horizon_source_timestamp") or "UNAVAILABLE",
+                "lane_recovery_status": lane_status or "UNAVAILABLE",
+                "horizon_recovery_status": horizon_status or "UNAVAILABLE",
+                "lane_recovery_source_id": row.get("lane_source_id") or "",
+                "horizon_recovery_source_id": row.get("horizon_source_id") or "",
+                "recovery_method": row.get("recovery_method") or "NONE",
+                "recovery_confidence": row.get("confidence") or 0.0,
+                "recovery_exact_blockers": list(row.get("exact_blockers") or []),
             })
         positions[symbol] = position
     result["positions"] = positions

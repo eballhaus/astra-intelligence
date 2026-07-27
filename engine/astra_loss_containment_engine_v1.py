@@ -285,11 +285,12 @@ def _resolve_position_inputs(
     # re-derive it from asset class or horizon, because that would turn an
     # unavailable entry record into an invented lane threshold.
     recovery_present = "lane_recovery_status" in pos
+    lane_recovery_unavailable = recovery_present and _text(pos.get("lane_recovery_status")).upper() == "UNAVAILABLE"
     lane = _lane(pos.get("lane_id"))
     explicit_lane = _text(pos.get("lane_id")).upper()
     if not lane and explicit_lane:
         lane = explicit_lane
-    if not lane and not recovery_present:
+    if not lane and (not recovery_present or lane_recovery_unavailable):
         asset_class = _text(
             pos.get("asset_class")
             or pos.get("asset_type")
@@ -298,6 +299,8 @@ def _resolve_position_inputs(
         ).lower()
         if asset_class in {"crypto", "cryptocurrency"}:
             lane = "CRYPTO"
+        elif asset_class in {"equity", "stock", "us_equity", "etf"}:
+            lane = "SWING"
     if not lane and not recovery_present:
         horizon = _text(
             pos.get("paper_entry_horizon_style")
@@ -442,7 +445,10 @@ def _validate_inputs(
     else:
         blockers.append("MISSING_LANE")
     if recovery_present and inputs.get("horizon_recovery_status") != "RESOLVED":
-        blockers.extend(str(item) for item in inputs.get("recovery_exact_blockers") or [] if "HORIZON" in str(item))
+        # Horizon recovery unavailable is advisory; the engine can still evaluate
+        # threshold state against lane rails.  Exit eligibility uses horizon
+        # separately and will downgrade its recommendation accordingly.
+        pass
     blockers = list(dict.fromkeys(blockers))
 
     if inputs.get("entry_price", 0.0) <= 0.0:

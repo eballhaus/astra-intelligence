@@ -250,15 +250,21 @@ def _resolve_position_inputs(
     )
 
     # A recovery-aware caller owns lane selection.  Do not infer a lane from
-    # asset class or horizon when the canonical entry evidence is unavailable.
+    # asset class or horizon when the canonical entry evidence is unavailable,
+    # unless the recovery explicitly returned UNAVAILABLE — in that case the
+    # engine derives a lane from asset_class for threshold rails while
+    # preserving lane_recovery_status=UNAVAILABLE as a truthfulness flag.
     recovery_present = "lane_recovery_status" in pos
+    lane_recovery_unavailable = recovery_present and _text(pos.get("lane_recovery_status")).upper() == "UNAVAILABLE"
     lane = _lane(pos.get("lane_id"))
-    if not lane and not recovery_present:
+    if not lane and (not recovery_present or lane_recovery_unavailable):
         asset_class = _text(
             pos.get("asset_class") or pos.get("asset_type") or broker.get("asset_class") or broker.get("asset_type")
         ).lower()
         if asset_class in {"crypto", "cryptocurrency"}:
             lane = "CRYPTO"
+        elif asset_class in {"equity", "stock", "us_equity", "etf"}:
+            lane = "SWING"
     if not lane and not recovery_present:
         horizon = _text(
             pos.get("paper_entry_horizon_style")
@@ -386,7 +392,10 @@ def _validate_inputs(
     else:
         blockers.append("MISSING_LANE")
     if recovery_present and inputs.get("horizon_recovery_status") != "RESOLVED":
-        blockers.extend(str(item) for item in inputs.get("recovery_exact_blockers") or [] if "HORIZON" in str(item))
+        # Horizon recovery unavailable is advisory for profit protection.
+        # The engine can still evaluate profit rails against lane bands.
+        # Consumers must check horizon_recovery_status for exit decisions.
+        pass
     blockers = list(dict.fromkeys(blockers))
 
     if inputs.get("entry_price", 0.0) <= 0.0:

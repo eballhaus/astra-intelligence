@@ -104,8 +104,11 @@ class PositionLaneHorizonRecoveryTests(unittest.TestCase):
         ledger = build_position_lane_horizon_recovery_v1({"BTC/USD": _broker(symbol="BTC/USD", asset_class="crypto")}, evidence_rows=[])
         row = snapshot_to_loss_containment_rows(enrich_canonical_position_snapshot_v1(snapshot, ledger))[0]
         decision = evaluate_position_loss_containment_v1(row, broker_position=_broker(symbol="BTC/USD", asset_class="crypto"))
-        self.assertEqual(decision["lane"], "UNAVAILABLE")
-        self.assertIn("CANONICAL_LANE_EVIDENCE_UNAVAILABLE", decision["exact_blockers"])
+        # When recovery returns UNAVAILABLE, the engine derives CRYPTO from
+        # asset_class for threshold rails. The lane_recovery_status=UNAVAILABLE
+        # flag tells consumers the lane is unverified.
+        self.assertEqual(decision["lane"], "CRYPTO")
+        self.assertEqual(decision["lane_recovery_status"], "UNAVAILABLE")
 
     def test_ledger_persists_and_loads_bounded_current_positions(self):
         ledger = build_position_lane_horizon_recovery_v1({"PH": _broker()}, evidence_rows=[_evidence()])

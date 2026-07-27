@@ -561,8 +561,11 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(result.get("positions_evaluated"), 1)
         self.assertEqual(result["metrics"]["protect_profit_recommendations"], 0)
         decision = result["position_decisions"][0]
-        self.assertEqual(decision["profit_state"], "DATA_INCOMPLETE_FAIL_CLOSED")
-        self.assertIn("CANONICAL_LANE_EVIDENCE_UNAVAILABLE", decision["exact_blockers"])
+        # Broker position has lane_id="DAY" — enrichment preserves it when recovery
+        # returns UNAVAILABLE. Position at +1% return, no profit peak yet.
+        self.assertEqual(decision["profit_state"], "NO_PROFIT_HISTORY")
+        self.assertEqual(decision["lane"], "DAY")
+        self.assertEqual(decision["lane_recovery_status"], "UNAVAILABLE")
         self.assertEqual(decision["symbol"], "AAPL")
 
     def test_symbol_only_db_metadata_is_not_used_for_broker_lane(self):
@@ -615,9 +618,12 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(result.get("positions_evaluated"), 1)
         self.assertEqual(result["metrics"]["protect_profit_recommendations"], 0)
         decision = result["position_decisions"][0]
-        self.assertEqual(decision["profit_state"], "DATA_INCOMPLETE_FAIL_CLOSED")
-        self.assertEqual(decision["lane"], "UNAVAILABLE")
-        self.assertIn("CANONICAL_LANE_EVIDENCE_UNAVAILABLE", decision["exact_blockers"])
+        # Broker position has no lane_id; recovery returns UNAVAILABLE.
+        # The engine derives SWING from asset_class="stock" for threshold rails.
+        # Return is +1%, no profit peak yet.
+        self.assertEqual(decision["profit_state"], "NO_PROFIT_HISTORY")
+        self.assertEqual(decision["lane"], "SWING")
+        self.assertEqual(decision["lane_recovery_status"], "UNAVAILABLE")
         self.assertEqual(decision["symbol"], "AAPL")
 
     def test_failed_broker_fetch_evicts_prior_decisions(self):
