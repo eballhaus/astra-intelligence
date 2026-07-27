@@ -54,11 +54,11 @@ LANE_RECOVERY_WINDOW_MINUTES: dict[str, float] = {
 }
 
 # Staleness tolerance for critical price evidence (minutes).
-# Broker prices are refreshed each worker cycle via the Alpaca API.
-# Position metadata timestamps reflect when the position was last modified,
-# not market data freshness. A 360-minute window allows multi-day positions
-# to be evaluated while still failing closed on genuinely stale data.
-DEFAULT_PRICE_STALENESS_MINUTES = 360.0
+# The latest_price_by_symbol timestamp is set to the cycle snapshot time
+# (_now_iso()) at the moment broker data is fetched, so it is always fresh.
+# This tolerance catches the edge case where the timestamp resolution falls
+# through to a stale position DB timestamp.
+DEFAULT_PRICE_STALENESS_MINUTES = 30.0
 
 # Canonical loss-containment states.
 LOSS_CONTAINMENT_STATES = frozenset({
@@ -374,12 +374,12 @@ def _resolve_position_inputs(
     )
 
     price_timestamp = _text(
-        broker.get("timestamp")
-        or broker.get("quote_timestamp")
-        or latest.get("timestamp")
-        or latest.get("quote_timestamp")
-        or pos.get("last_update_ts")
-        or pos.get("updated_at")
+        latest.get("timestamp")           # Cycle snapshot time (_now_iso()) — fresh
+        or latest.get("quote_timestamp")  # Actual quote timestamp if available
+        or broker.get("quote_timestamp")  # Broker quote timestamp
+        or broker.get("timestamp")        # Broker position timestamp
+        or pos.get("last_update_ts")      # DB position timestamp
+        or pos.get("updated_at")          # DB position timestamp
     )
 
     holding_minutes = _age_minutes(

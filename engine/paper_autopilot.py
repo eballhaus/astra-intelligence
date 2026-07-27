@@ -7020,6 +7020,25 @@ class PaperAutopilotEngine:
         hold_seconds = max(0.0, _to_float(open_row.get("hold_seconds"), 0.0))
         hold_minutes = hold_seconds / 60.0
 
+        # Loss containment precedence — if the canonical engine reports a hard
+        # breach or thesis failure, that overrides local threshold evaluation.
+        lc_decisions = dict((self._runtime_state.get("loss_containment_state_v1") or {}).get("decisions") or {})
+        lc_match = None
+        for decision_id, decision in lc_decisions.items():
+            if isinstance(decision, dict) and str(decision.get("symbol") or "").upper() == str(open_row.get("symbol") or "").upper():
+                lc_match = decision
+                break
+        if lc_match:
+            lc_state = str(lc_match.get("threshold_state") or "")
+            if lc_state == "HARD_BOUNDARY_BREACH":
+                return True, f"loss_containment_hard_boundary_breach:{lc_match.get('current_return_pct', 0)}"
+            if lc_state == "THESIS_BROKEN":
+                return True, "loss_containment_thesis_broken"
+            if lc_state == "MANDATORY_REVIEW":
+                # Mandatory review elevates to exit if also time-expired
+                if hold_minutes >= 240:
+                    return True, "loss_containment_mandatory_review_time_expired"
+
         if ret <= -2.4:
             return True, "stop_loss_breach"
         if peak >= 2.2 and drawdown >= 1.7:

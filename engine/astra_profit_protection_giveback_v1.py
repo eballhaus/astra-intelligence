@@ -332,8 +332,10 @@ def _resolve_position_inputs(
     mae_pct = _num(pos.get("max_adverse_excursion_pct") or pos.get("mae_pct"))
 
     price_timestamp = _text(
-        broker.get("timestamp") or broker.get("quote_timestamp")
-        or pos.get("last_update_ts") or pos.get("updated_at")
+        broker.get("quote_timestamp")
+        or broker.get("timestamp")
+        or pos.get("last_update_ts")
+        or pos.get("updated_at")
     )
 
     holding_minutes = _age_minutes(
