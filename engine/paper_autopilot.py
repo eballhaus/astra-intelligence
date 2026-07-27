@@ -57,6 +57,10 @@ from engine.astra_loss_containment_engine_v1 import (
     run_loss_containment_review_v1,
     save_loss_containment_state_v1,
 )
+from engine.astra_paper_exit_approval_contract_v1 import (
+    validate_paper_sell_approval_v1,
+    consume_paper_sell_approval_v1,
+)
 from engine.astra_canonical_position_snapshot_v1 import (
     build_canonical_position_snapshot,
     snapshot_to_loss_containment_rows,
@@ -2178,6 +2182,37 @@ class PaperAutopilotEngine:
     def _authorized_lane_exit_pending_map(self) -> dict[str, Any]:
         return dict(self._runtime_state.get("authorized_lane_exit_pending") or {})
 
+    def _validate_sell_approval(self, open_row: dict[str, Any]) -> dict[str, Any]:
+        """Canonical gate — every paper sell must pass this human-approval check.
+
+        Returns {"valid": True} or {"valid": False, "reason": ..., "blocker": ...}.
+
+        Only bypassed when approval_enforcement is explicitly False during
+        controlled testing of lower-level logic.  Production always True.
+        """
+        if not getattr(self, "approval_enforcement", True):
+            return {"valid": True, "reason": "APPROVAL_ENFORCEMENT_BYPASSED_TEST_ONLY"}
+
+        # The approval is stored in runtime state under a per-symbol key.
+        approvals = dict(self._runtime_state.get("paper_sell_approvals") or {})
+        symbol = str(open_row.get("symbol") or "").upper().strip()
+        approval = dict(approvals.get(symbol) or {}) if symbol else None
+
+        safety = self._alpaca_safety_snapshot()
+        kill_switch = bool(getattr(self, "learned_exit_validation_kill_switch", True))
+        paper_mode = bool(safety.get("paper_mode_verified", False))
+        live_detected = bool(safety.get("live_endpoint_detected", False))
+
+        return validate_paper_sell_approval_v1(
+            approval if approval.get("approval_id") else None,
+            symbol=symbol,
+            quantity=float(open_row.get("quantity") or open_row.get("qty") or 0.0),
+            decision_id=str(open_row.get("position_id") or ""),
+            paper_mode_verified=paper_mode,
+            live_endpoint_detected=live_detected,
+            kill_switch_active=kill_switch,
+        )
+
     def _legacy_swing_canary_execution_guard(self, pre_submit: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
         """Fail closed before the shared writer can see an active SWING canary."""
         pre = dict(pre_submit or {})
@@ -2413,6 +2448,10 @@ class PaperAutopilotEngine:
 
     def _submit_authorized_lane_exit(self, open_row: dict[str, Any], broker_position: dict[str, Any], exit_reason: str) -> dict[str, Any]:
         """Submit an approved lane-owned paper exit and wait for its broker fill."""
+        # Canonical human-approval gate — all sell paths must pass this.
+        approval_result = self._validate_sell_approval(open_row)
+        if not approval_result["valid"]:
+            return {"ok": False, "submitted": False, "reason": approval_result["reason"], "blocker": approval_result.get("blocker", "approval")}
         contract = self._authorized_lane_exit_contract(open_row)
         if not contract.get("authorized"):
             if contract.get("writer_path_connected"):
@@ -3957,6 +3996,10 @@ class PaperAutopilotEngine:
         latest_row: dict[str, Any],
         broker_position: dict[str, Any],
     ) -> dict[str, Any]:
+        # Canonical human-approval gate — all sell paths must pass this.
+        approval_result = self._validate_sell_approval(open_row)
+        if not approval_result["valid"]:
+            return {"ok": False, "submitted": False, "reason": approval_result["reason"], "blocker": approval_result.get("blocker", "approval")}
         enabled, reason = self._learned_exit_bucket_enabled_runtime()
         state = self._learned_exit_daily_state()
         if not enabled:

@@ -52,6 +52,8 @@ class LegacySwingCanaryWriterAdapterTests(unittest.TestCase):
         self.broker = _CountingBroker()
         self.engine.alpaca_paper_broker = self.broker
         self.engine._runtime_state = {}
+        self.engine.approval_enforcement = False  # Tests bypass approval gate to test lower logic
+        self.engine.learned_exit_validation_kill_switch = True
         self.engine._alpaca_safety_snapshot = lambda: {"paper_mode_verified": True, "live_endpoint_detected": False}  # type: ignore[method-assign]
         self._disabled_config = patch("engine.paper_autopilot.legacy_swing_canary_configuration_v1", return_value=legacy_swing_canary_configuration_v1({}))
         self._disabled_config.start()
