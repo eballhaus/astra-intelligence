@@ -54,10 +54,11 @@ LANE_RECOVERY_WINDOW_MINUTES: dict[str, float] = {
 }
 
 # Staleness tolerance for critical price evidence (minutes).
-# Set to 1440 min (24h) to accommodate multi-day positions whose broker price
-# IS refreshed every cycle via the Alpaca API but whose position metadata
-# timestamp reflects the last position modification, not market data freshness.
-DEFAULT_PRICE_STALENESS_MINUTES = 1440.0
+# Broker prices are refreshed each worker cycle via the Alpaca API.
+# Position metadata timestamps reflect when the position was last modified,
+# not market data freshness. A 360-minute window allows multi-day positions
+# to be evaluated while still failing closed on genuinely stale data.
+DEFAULT_PRICE_STALENESS_MINUTES = 360.0
 
 # Canonical loss-containment states.
 LOSS_CONTAINMENT_STATES = frozenset({
