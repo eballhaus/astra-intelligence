@@ -93,12 +93,12 @@ class ControlledPaperLearnedExitValidationV1:
         configured = (
             bool(paper_status.get("learned_exit_validation_bucket_configured"))
             if paper_has_config
-            else bool(multi.get("learned_exit_bucket_configured") or _bool_env("ASTRA_LEARNED_EXIT_VALIDATION_BUCKET_ENABLED", True))
+            else bool(multi.get("learned_exit_bucket_configured") or _bool_env("ASTRA_LEARNED_EXIT_VALIDATION_BUCKET_ENABLED", False))
         )
         kill_switch = (
             bool(paper_status.get("learned_exit_validation_kill_switch"))
             if paper_has_kill
-            else bool(_bool_env("ASTRA_LEARNED_EXIT_VALIDATION_KILL_SWITCH", False))
+            else bool(_bool_env("ASTRA_LEARNED_EXIT_VALIDATION_KILL_SWITCH", True))
         )
         max_daily = max(0, min(5, _to_int(
             paper_status.get("learned_exit_validation_max_exits_per_day")

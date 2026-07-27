@@ -1498,9 +1498,9 @@ class PaperAutopilotEngine:
         self.horizon_swing_capacity = max(0, _to_int(os.getenv("ASTRA_PAPER_HORIZON_SWING_CAPACITY"), 8))
         self.horizon_day_capacity = max(0, _to_int(os.getenv("ASTRA_PAPER_HORIZON_DAY_CAPACITY"), 8))
         self.horizon_scalp_capacity = max(0, _to_int(os.getenv("ASTRA_PAPER_HORIZON_SCALP_CAPACITY"), 4))
-        self.learned_exit_validation_bucket_configured = str(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_BUCKET_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
-        self.learned_exit_validation_kill_switch = str(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_KILL_SWITCH", "0")).strip().lower() in {"1", "true", "yes", "on"}
-        self.learned_exit_validation_max_exits_per_day = max(0, min(5, _to_int(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_MAX_EXITS_PER_DAY"), 5)))
+        self.learned_exit_validation_bucket_configured = str(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_BUCKET_ENABLED", "0")).strip().lower() in {"1", "true", "yes", "on"}
+        self.learned_exit_validation_kill_switch = str(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_KILL_SWITCH", "1")).strip().lower() in {"1", "true", "yes", "on"}
+        self.learned_exit_validation_max_exits_per_day = max(0, min(5, _to_int(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_MAX_EXITS_PER_DAY"), 0)))
         self.learned_exit_validation_max_exit_pct = max(0.0, min(25.0, _to_float(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_MAX_EXIT_PCT"), 25.0)))
         self.learned_exit_validation_min_confidence = max(0.0, min(100.0, _to_float(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_MIN_CONFIDENCE"), 70.0)))
         self.learned_exit_validation_min_evidence = max(1, _to_int(os.getenv("ASTRA_LEARNED_EXIT_VALIDATION_MIN_EVIDENCE"), 100))
@@ -3733,6 +3733,29 @@ class PaperAutopilotEngine:
                 "entry_price_verified": entry_verified,
                 "entry_order_id_present": bool(entry_order_id),
                 "entry_fill_id_present": bool(entry_fill_id),
+            }
+        # Strict truth requires canonical managed ownership and zero broker residual.
+        ownership_status = str(open_row.get("source_bucket") or open_row.get("ownership_status") or "").upper()
+        if ownership_status in ("LEGACY_MANAGED", "LEGACY_POSITION_RESOLUTION", "LEGACY"):
+            return {
+                "persisted": False,
+                "reason": "LEGACY_RECOVERY_CLOSURE",
+                "ownership_status": ownership_status,
+            }
+        residual_raw = broker_fill.get("remaining_qty") or broker_fill.get("residual_qty")
+        residual_qty = _to_float(residual_raw, 0.0) if residual_raw is not None else None
+        if residual_qty is not None and residual_qty > 0.0:
+            return {
+                "persisted": False,
+                "reason": "BROKER_RESIDUAL_NONZERO",
+                "residual_qty": residual_qty,
+            }
+        if not exit_fill_id or not exit_order_id:
+            return {
+                "persisted": False,
+                "reason": "EXIT_FILL_UNVERIFIED",
+                "exit_fill_id_present": bool(exit_fill_id),
+                "exit_order_id_present": bool(exit_order_id),
             }
         record = {
             "evidence_class": "BROKER_CONFIRMED_COMPLETE",
@@ -6795,6 +6818,11 @@ class PaperAutopilotEngine:
                 return {"ok": False, "error": str(contract.get("reason") or "lane_exit_not_authorized"), "contract": contract}
             if not isinstance(broker_fill, dict) or not str(broker_fill.get("exit_order_id") or "").strip() or not str(broker_fill.get("exit_fill_id") or "").strip():
                 return {"ok": False, "error": "broker_exit_fill_required_before_lane_lifecycle_close", "contract": contract}
+            # Verify broker residual quantity is zero after fill.
+            filled_qty = _to_float(broker_fill.get("filled_qty") or broker_fill.get("quantity"), 0.0)
+            remaining_qty = _to_float(broker_fill.get("remaining_qty") or broker_fill.get("qty") or broker_fill.get("qty_after_fill"), None)
+            if remaining_qty is not None and remaining_qty > 0.0:
+                return {"ok": False, "error": "broker_residual_quantity_nonzero", "remaining_qty": remaining_qty, "filled_qty": filled_qty}
 
         entry_price = _to_float(open_row.get("entry_price"), 0.0)
         now_iso = _now_iso()

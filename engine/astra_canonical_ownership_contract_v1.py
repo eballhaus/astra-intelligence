@@ -12,9 +12,17 @@ OWNERSHIP_STATES = frozenset({
     "LEGACY_MANAGED",
     "LEGACY_UNLINKED",
     "BROKER_ONLY",
+    "BROKER_DUST_MONITORED",
 })
 
 VALID_LANES = frozenset({"DAY", "SWING", "CRYPTO"})
+
+# Statuses that are NOT active broker-linked positions
+NON_ACTIVE_STATUSES = frozenset({
+    "SIMULATED", "SHADOW", "STALE_RUNTIME_ARTIFACT", "FAILED_ENTRY",
+    "CLOSED", "CLOSED_STALE_RECONCILED", "DUPLICATE_STALE",
+    "HISTORICAL_SIMULATION", "HISTORICAL_CONVERSION",
+})
 
 
 def _text(value: Any, default: str = "") -> str:
@@ -183,10 +191,15 @@ def build_ownership_integrity_report_v1(
     broker_only_count = len(broker_only_symbols)
     db_only_count = len(db_only_symbols)
     duplicate_count = len(set(s for s in duplicate_symbols if duplicate_symbols.count(s) > 1))
+    dust_count = state_counts.get("BROKER_DUST_MONITORED", 0)
 
-    non_managed = total_broker - managed_count
+    # Ownership score: positions with accurate DB representation (MANAGED or
+    # LEGACY_MANAGED) divided by all broker positions requiring representation.
+    # Legacy positions count as reconciled when their current broker state is
+    # mirrored, even if historical lane is UNKNOWN.  Dust is in denominator.
+    represented = managed_count + legacy_managed_count
     ownership_score = 100.0 if total_broker == 0 else round(
-        (managed_count / total_broker) * 100.0, 2
+        (represented / total_broker) * 100.0, 2
     )
 
     first_blocker = ""
@@ -212,6 +225,7 @@ def build_ownership_integrity_report_v1(
             "broker_only_positions_without_astra_record": broker_only_count,
             "db_only_positions_not_at_broker": db_only_count,
             "duplicate_ownership_count": duplicate_count,
+            "dust_positions_monitored": dust_count,
             "ownership_score": ownership_score,
             "first_blocker": first_blocker,
             "affected_symbols": list(dict.fromkeys(affected_symbols)),
@@ -221,4 +235,77 @@ def build_ownership_integrity_report_v1(
         },
         "positions": classified,
         "as_of": as_of,
+    }
+
+
+def is_broker_linked_active_position(
+    record: Mapping[str, Any],
+    *,
+    allow_dust: bool = True,
+    min_qty: float | None = None,
+) -> bool:
+    """Canonical predicate: is this a genuine, broker-linked, actively-held position?
+
+    Returns False for: SIMULATED, SHADOW, STALE, FAILED, CLOSED, and
+    other non-active statuses.  Returns False for zero-quantity positions.
+
+    Dust positions (qty < 0.001) are included by default because they
+    represent real broker exposure and must not disappear from monitoring
+    or reconciliation.  Set allow_dust=False to exclude them from tradable
+    exit eligibility.
+    """
+    row = dict(record or {})
+    status = _text(row.get("status") or "").upper()
+    if status in NON_ACTIVE_STATUSES:
+        return False
+    qty = _num(row.get("quantity") or row.get("qty") or 0.0) or 0.0
+    if min_qty is not None and abs(qty) < min_qty:
+        return False
+    if abs(qty) < 0.0000001:
+        return False
+    if not allow_dust and abs(qty) < 0.001:
+        return False
+    return True
+
+
+def classify_dust_position_v1(
+    position: Mapping[str, Any],
+    is_broker_position: bool = True,
+) -> dict[str, Any]:
+    """Classify a dust position for durable representation."""
+    row = dict(position or {})
+    symbol = _text(row.get("symbol")).upper()
+    qty = _num(row.get("quantity") or row.get("qty") or 0.0) or 0.0
+    market_value = _num(row.get("market_value") or 0.0) or 0.0
+
+    is_dust = 0.0 < abs(qty) < 0.001
+    is_below_notional = market_value > 0 and market_value < 0.01
+
+    if not is_dust and not is_below_notional:
+        return {
+            "symbol": symbol,
+            "is_dust": False,
+            "dust_state": "NOT_DUST",
+            "qty": round(qty, 8),
+            "market_value": round(market_value, 6),
+        }
+
+    reasons: list[str] = []
+    if is_dust:
+        reasons.append("quantity_below_tradable_minimum")
+    if is_below_notional:
+        reasons.append("market_value_below_notional_minimum")
+
+    return {
+        "symbol": symbol,
+        "is_dust": True,
+        "dust_state": "BROKER_DUST_MONITORED",
+        "qty": round(qty, 8),
+        "market_value": round(market_value, 6),
+        "dust_reasons": reasons,
+        "tradable": False,
+        "eligible_for_exit": False,
+        "counts_toward_exposure": True,
+        "counts_toward_reconciliation": True,
+        "as_of": _iso(),
     }

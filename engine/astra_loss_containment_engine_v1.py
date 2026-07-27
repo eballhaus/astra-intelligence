@@ -389,14 +389,24 @@ def _resolve_position_inputs(
         or (market_value - cost_basis if market_value > 0 and cost_basis > 0 else 0.0)
     )
 
-    price_timestamp = _text(
-        latest.get("timestamp")           # Cycle snapshot time (_now_iso()) — fresh
-        or latest.get("quote_timestamp")  # Actual quote timestamp if available
-        or broker.get("quote_timestamp")  # Broker quote timestamp
-        or broker.get("timestamp")        # Broker position timestamp
+    # Market observation timestamp: when the provider reported the price.
+    # This is distinct from retrieval timestamp (_now_iso()).
+    # Falls back to retrieval timestamp when provider observation time is not
+    # carried by the data, but provenance flags the approximation.
+    retrieval_timestamp = _text(
+        latest.get("timestamp")           # Cycle snapshot time (_now_iso())
+        or latest.get("quote_timestamp")  # Quote timestamp if available
+    )
+    market_observation_timestamp = _text(
+        broker.get("quote_timestamp")     # Broker quote timestamp
+        or broker.get("timestamp")        # Broker position last update
+        or latest.get("quote_timestamp")  # Actual quote timestamp
+        or broker.get("timestamp")        # Broker timestamp (from position)
         or pos.get("last_update_ts")      # DB position timestamp
         or pos.get("updated_at")          # DB position timestamp
+        or ""  # Truly unavailable
     )
+    price_timestamp = market_observation_timestamp or retrieval_timestamp
 
     holding_minutes = _age_minutes(
         pos.get("entry_timestamp")
@@ -430,6 +440,9 @@ def _resolve_position_inputs(
         "unrealized_pl_pct": unrealized_pl_pct,
         "unrealized_pl_dollars": unrealized_pl_dollars,
         "price_timestamp": price_timestamp,
+        "market_observation_timestamp": market_observation_timestamp,
+        "retrieval_timestamp": retrieval_timestamp,
+        "market_observation_unavailable": not bool(market_observation_timestamp),
         "holding_minutes": holding_minutes,
         "peak_unrealized_pct": peak_unrealized_pct,
         "max_adverse_pct": max_adverse_pct,
@@ -478,8 +491,12 @@ def _validate_inputs(
     if inputs.get("quantity", 0.0) <= 0.0:
         blockers.append("MISSING_OR_INVALID_QUANTITY")
 
-    price_ts = inputs.get("price_timestamp")
-    if price_ts:
+    price_ts = inputs.get("market_observation_timestamp") or inputs.get("price_timestamp")
+    if inputs.get("market_observation_unavailable"):
+        # When market observation timestamp is missing, the price cannot be
+        # proven fresh.  Retrieval time alone is insufficient.
+        blockers.append("MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE")
+    elif price_ts:
         age = _age_minutes(price_ts, now)
         if age is None:
             blockers.append("PRICE_TIMESTAMP_UNPARSEABLE")
@@ -1133,6 +1150,9 @@ def evaluate_position_loss_containment_v1(
             "ownership_source": "provided_ownership" if ownership_dict else "not_provided",
             "lane_recovery_source": inputs.get("lane_source") or "UNAVAILABLE",
             "horizon_recovery_source": inputs.get("horizon_source") or "UNAVAILABLE",
+            "market_observation_timestamp": inputs.get("market_observation_timestamp") or "UNAVAILABLE",
+            "retrieval_timestamp": inputs.get("retrieval_timestamp") or "UNAVAILABLE",
+            "market_observation_unavailable": bool(inputs.get("market_observation_unavailable")),
         },
         "advisory_only": True,
         "execution_authorized": False,

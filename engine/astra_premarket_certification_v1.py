@@ -443,9 +443,16 @@ def build_candidate_risk_envelope_v1(
                                                                evidence_class="CURRENT_CANDIDATE_DIRECT", now=now, candidate_specific=True,
                                                                symbol_specific=True, derived=True)
     if downside is None and volatility and volatility > 0:
+        # During closed markets, volatility may come from historical completed-bar data.
+        # Only classify as HISTORICAL when freshness is explicitly STALE.
+        if quote_timestamp:
+            freshness = _freshness(quote_timestamp, now)
+            evidence_class = "HISTORICAL_COMPLETED_BAR_RISK" if freshness == "STALE" else "CURRENT_SYMBOL_RISK"
+        else:
+            evidence_class = "CURRENT_SYMBOL_RISK"
         downside = _range(-abs(volatility), -abs(volatility), label="CURRENT_VOLATILITY_RISK")
         provenance["expected_downside_range"] = _provenance(downside, source_system="current_volatility_risk", source_field="atr_pct/volatility_pct", source_row=row,
-                                                               evidence_class="CURRENT_SYMBOL_RISK", now=now, candidate_specific=True,
+                                                               evidence_class=evidence_class, now=now, candidate_specific=True,
                                                                symbol_specific=True, derived=True)
     drawdown_raw = resolve("expected_drawdown", FIELD_ALIASES["expected_drawdown"])
     drawdown_source = str((provenance.get("expected_drawdown") or {}).get("source_field") or "")
