@@ -249,22 +249,27 @@ def _resolve_position_inputs(
         pos.get("position_id") or pos.get("asset_id") or broker.get("id") or broker.get("asset_id") or symbol
     )
 
-    # A recovery-aware caller owns lane selection.  Do not infer a lane from
-    # asset class or horizon when the canonical entry evidence is unavailable,
-    # unless the recovery explicitly returned UNAVAILABLE — in that case the
-    # engine derives a lane from asset_class for threshold rails while
-    # preserving lane_recovery_status=UNAVAILABLE as a truthfulness flag.
+    # When recovery returns UNAVAILABLE and no broker lane exists, the engine
+    # derives an *effective_lane* from asset_class for threshold rails only.
+    # The *historical_lane* remains UNKNOWN — management policy is not ownership.
     recovery_present = "lane_recovery_status" in pos
     lane_recovery_unavailable = recovery_present and _text(pos.get("lane_recovery_status")).upper() == "UNAVAILABLE"
     lane = _lane(pos.get("lane_id"))
+    historical_lane = lane if lane else "UNKNOWN"
+    derived_lane = False
+    management_policy = "NONE"
+
     if not lane and (not recovery_present or lane_recovery_unavailable):
         asset_class = _text(
             pos.get("asset_class") or pos.get("asset_type") or broker.get("asset_class") or broker.get("asset_type")
         ).lower()
         if asset_class in {"crypto", "cryptocurrency"}:
             lane = "CRYPTO"
+            management_policy = "LEGACY_CRYPTO_RECOVERY"
         elif asset_class in {"equity", "stock", "us_equity", "etf"}:
             lane = "SWING"
+            management_policy = "LEGACY_EQUITY_RECOVERY"
+        derived_lane = bool(lane) and historical_lane == "UNKNOWN"
     if not lane and not recovery_present:
         horizon = _text(
             pos.get("paper_entry_horizon_style")
@@ -280,6 +285,9 @@ def _resolve_position_inputs(
     explicit_lane = _text(pos.get("lane_id")).upper()
     if not lane and explicit_lane:
         lane = explicit_lane
+        historical_lane = lane
+    if lane and not derived_lane and historical_lane == "UNKNOWN":
+        historical_lane = lane
 
     quantity = abs(
         _num(broker.get("qty")) or _num(broker.get("qty_available"))
@@ -349,6 +357,10 @@ def _resolve_position_inputs(
         "position_id": position_id,
         "symbol": symbol,
         "lane": lane,
+        "historical_lane": historical_lane,
+        "effective_lane": lane,
+        "management_policy": management_policy,
+        "lane_derived_from_asset_class": derived_lane,
         "quantity": quantity,
         "entry_price": entry_price,
         "current_price": current_price,
@@ -818,6 +830,9 @@ def evaluate_position_profit_protection_v1(
         "position_id": inputs.get("position_id"),
         "symbol": inputs.get("symbol"),
         "lane": lane or "UNAVAILABLE",
+        "historical_lane": inputs.get("historical_lane") or "UNKNOWN",
+        "management_policy": inputs.get("management_policy") or "NONE",
+        "lane_derived_from_asset_class": bool(inputs.get("lane_derived_from_asset_class")),
         "horizon": inputs.get("horizon") or "UNAVAILABLE",
         "lane_recovery_status": inputs.get("lane_recovery_status") or "UNAVAILABLE",
         "horizon_recovery_status": inputs.get("horizon_recovery_status") or "UNAVAILABLE",
