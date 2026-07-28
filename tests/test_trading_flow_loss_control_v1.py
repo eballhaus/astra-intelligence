@@ -256,6 +256,23 @@ class ServerQuoteAdapterTests(unittest.TestCase):
         self.assertEqual(quote["price"], 101.0)
         self.assertEqual(quote["quote_timestamp"], provider_timestamp)
 
+    def test_stale_or_future_cached_provider_time_routes_to_fresh_worker_quote(self):
+        provider_timestamp = _iso()
+        for cached_timestamp in (_iso(-60), _iso(30)):
+            with self.subTest(cached_timestamp=cached_timestamp), patch.object(
+                server_extend,
+                "LAST_RANKINGS",
+                {"stocks": [{"symbol": "AAPL", "price": 99.0, "provider_quote_timestamp": cached_timestamp}], "crypto": {}},
+            ), patch.object(
+                server_extend.PAPER_AUTOPILOT._legacy_swing_fmp_router,
+                "get_quote",
+                return_value={"symbol": "AAPL", "price": 101.0, "provider_used": "ALPACA", "quote_timestamp": provider_timestamp},
+            ) as router, patch.object(server_extend, "_ensure_latest_rankings"), patch.object(server_extend, "_snapshot_age_seconds", return_value=0.0):
+                quote = server_extend._paper_latest_symbol_snapshot("AAPL", "stock")
+            router.assert_called_once()
+            self.assertEqual(quote["price"], 101.0)
+            self.assertEqual(quote["quote_timestamp"], provider_timestamp)
+
 
 class LossControlProductionContractTests(unittest.TestCase):
     def test_existing_hard_loss_policy_never_returns_healthy_hold(self):

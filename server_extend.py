@@ -24,6 +24,10 @@ from engine.astra_evidence_accumulation_capacity_v1 import (
     build_capacity_snapshot,
     canonical_candidate_capacity_fact,
 )
+from engine.astra_canonical_market_timestamp_v1 import (
+    SOURCE_QUOTE,
+    canonical_market_timestamp_v1,
+)
 from engine.astra_portfolio_capacity_release_review_v1 import (
     build_portfolio_release_review,
     fallback_concentration_audit,
@@ -17293,7 +17297,12 @@ def _paper_latest_symbol_snapshot(symbol, asset_type):
             # explicitly provider-native observation timestamp. A bare
             # ``quote_timestamp`` in a ranking row has no adapter provenance
             # and must not become executable market evidence.
-            if out.get("quote_timestamp"):
+            evidence = canonical_market_timestamp_v1(
+                out,
+                source_type=SOURCE_QUOTE,
+                max_age_seconds=20.0,
+            )
+            if bool(evidence.get("executable_freshness")):
                 return out
             break
     return _paper_single_symbol_quote(sym, kind)
