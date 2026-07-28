@@ -5892,14 +5892,42 @@ class PaperAutopilotEngine:
         adaptive_total_capacity: int | None = None,
     ) -> dict[str, Any]:
         by_symbol = self._position_horizon_by_symbol(open_rows)
-        if broker_reconciliation_active and broker_positions_fetch_ok:
-            missing = [s for s in broker_open_syms if by_symbol.get(s) not in {"scalp", "day_trade", "swing_trade"}]
-            if missing:
-                by_symbol.update(self._historical_horizon_by_symbol(missing))
-        if broker_reconciliation_active and broker_positions_fetch_ok:
-            symbols = sorted(s for s in broker_open_syms if s)
+        broker_symbols = {str(symbol or "").upper().strip() for symbol in broker_open_syms if str(symbol or "").strip()}
+        prior_capacity = dict(self._runtime_state.get("last_evidence_capacity_snapshot") or {})
+        capacity_rows = {
+            str(row.get("symbol") or "").upper().strip()
+            for row in (prior_capacity.get("position_rows_for_read_only_consumers") or [])
+            if isinstance(row, Mapping) and str(row.get("symbol") or "").strip()
+        }
+        legacy_exclusions = {
+            str(symbol or "").upper().strip()
+            for symbol in (prior_capacity.get("approved_legacy_slot_exclusion_symbols") or [])
+            if str(symbol or "").strip()
+        }
+        dust_exclusions = {
+            str(row.get("symbol") or "").upper().strip()
+            for row in (prior_capacity.get("dust_positions") or [])
+            if isinstance(row, Mapping) and str(row.get("symbol") or "").strip()
+        }
+        canonical_capacity_current = (
+            str(prior_capacity.get("capacity_authority_state") or "").upper() == "CURRENT"
+            and broker_symbols.issubset(capacity_rows)
+        )
+        if broker_reconciliation_active and broker_positions_fetch_ok and canonical_capacity_current:
+            symbols = sorted(broker_symbols - legacy_exclusions - dust_exclusions)
+            strategy_capacity_source = "CANONICAL_EVIDENCE_CAPACITY_SNAPSHOT"
+        elif broker_reconciliation_active and broker_positions_fetch_ok and broker_symbols:
+            # The horizon gate cannot safely recreate a weaker capacity view
+            # from every broker row.  Wait for canonical capacity instead.
+            symbols = []
+            strategy_capacity_source = "CANONICAL_CAPACITY_UNAVAILABLE"
         else:
             symbols = sorted(s for s in by_symbol if s)
+            strategy_capacity_source = "LOCAL_POSITION_ROWS_FALLBACK"
+        if broker_reconciliation_active and broker_positions_fetch_ok and canonical_capacity_current:
+            missing = [s for s in symbols if by_symbol.get(s) not in {"scalp", "day_trade", "swing_trade"}]
+            if missing:
+                by_symbol.update(self._historical_horizon_by_symbol(missing))
         usage = {"scalp": 0, "day_trade": 0, "swing_trade": 0, "unknown": 0}
         unknown_symbols: list[str] = []
         for symbol in symbols:
@@ -5914,7 +5942,7 @@ class PaperAutopilotEngine:
             int(self.horizon_total_capacity),
             _to_int(adaptive_total_capacity, int(self.horizon_total_capacity)),
         )
-        total_available = max(0, total_limit - total_used)
+        total_available = max(0, total_limit - total_used) if strategy_capacity_source != "CANONICAL_CAPACITY_UNAVAILABLE" else 0
         swing_used = usage["swing_trade"] + usage["unknown"]
         swing_pool_used = min(int(self.horizon_swing_capacity), swing_used)
         swing_available = max(0, total_available)
@@ -5923,7 +5951,11 @@ class PaperAutopilotEngine:
         blockers = []
         advisory_pressure = []
         if total_available <= 0:
-            blockers.append("total_horizon_capacity_reached")
+            blockers.append(
+                "canonical_strategy_capacity_unavailable"
+                if strategy_capacity_source == "CANONICAL_CAPACITY_UNAVAILABLE"
+                else "total_horizon_capacity_reached"
+            )
         if swing_used >= int(self.horizon_swing_capacity):
             advisory_pressure.append("swing_trade_learning_concentration")
         if usage["day_trade"] >= int(self.horizon_day_capacity):
@@ -5952,6 +5984,9 @@ class PaperAutopilotEngine:
             "scalp_available": int(scalp_available),
             "unknown_horizon_positions": int(usage["unknown"]),
             "unknown_horizon_symbols": unknown_symbols[:20],
+            "strategy_capacity_source": strategy_capacity_source,
+            "strategy_capacity_excluded_legacy_count": len(legacy_exclusions & broker_symbols),
+            "strategy_capacity_excluded_dust_count": len(dust_exclusions & broker_symbols),
             "horizon_distribution_pct": distribution,
             "horizon_capacity_blockers": blockers,
             "horizon_learning_advisories": advisory_pressure,

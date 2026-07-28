@@ -323,6 +323,35 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
         legacy = next(row for row in result["position_rows_for_read_only_consumers"] if row["symbol"] == "LEGACY")
         self.assertEqual(legacy["recovered_lane"], "UNAVAILABLE")
 
+    def test_horizon_capacity_uses_canonical_strategy_slots_not_legacy_or_dust(self):
+        """Legacy and dust exposure cannot re-saturate the worker horizon gate."""
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = PaperAutopilotEngine(
+                db_path=str(pathlib.Path(tmp) / "paper.db"),
+                state_path=str(pathlib.Path(tmp) / "state.json"),
+            )
+            engine.horizon_total_capacity = 2
+            engine._runtime_state["last_evidence_capacity_snapshot"] = {
+                "capacity_authority_state": "CURRENT",
+                "position_rows_for_read_only_consumers": [
+                    {"symbol": "MANAGED"}, {"symbol": "LEGACY"}, {"symbol": "DUST"},
+                ],
+                "approved_legacy_slot_exclusion_symbols": ["LEGACY"],
+                "dust_positions": [{"symbol": "DUST", "dust_state": "BROKER_DUST_MONITORED"}],
+            }
+            result = engine._horizon_capacity_snapshot(
+                open_rows=[{"symbol": "MANAGED", "paper_entry_horizon_style": "swing_trade"}],
+                broker_open_syms={"MANAGED", "LEGACY", "DUST"},
+                broker_reconciliation_active=True,
+                broker_positions_fetch_ok=True,
+                adaptive_total_capacity=2,
+            )
+
+        self.assertEqual(result["total_used"], 1)
+        self.assertEqual(result["total_available"], 1)
+        self.assertEqual(result["strategy_capacity_excluded_legacy_count"], 1)
+        self.assertEqual(result["strategy_capacity_excluded_dust_count"], 1)
+
     def test_portfolio_review_is_advisory_and_complete(self):
         result = build_portfolio_release_review([
             {"symbol": "KEEP", "entry_price": 10, "current_price": 10.1},
