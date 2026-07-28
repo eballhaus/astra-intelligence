@@ -611,6 +611,11 @@ class RuntimeReportTests(unittest.TestCase):
         self.assertEqual(report["lane_capacity"]["DAY"]["current_valid_occupancy"], 1)
         self.assertEqual(report["lane_capacity"]["DAY"]["legacy_excluded"], 1)
         self.assertTrue(report["migration"]["idempotency_verified"])
+        self.assertEqual(
+            report["migration"]["first_pass"]["totals"],
+            report["migration"]["second_pass"]["totals"],
+        )
+        self.assertTrue(report["migration"]["second_pass"]["classification_scopes_identical"])
         self.assertEqual(report["broker_actions_used"], 0)
 
 

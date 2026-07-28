@@ -1140,6 +1140,14 @@ def build_reset_boundary_runtime_report_v1(
         "migration": {
             "dry_run_completed": True,
             "first_pass": migration_one,
+            # Keep the second dry-run compact: the first pass already carries
+            # the full per-record audit trail, while this exposes the exact
+            # comparison facts without doubling a dashboard payload.
+            "second_pass": {
+                "totals": dict(migration_two.get("totals") or {}),
+                "classification_count": len(migration_two.get("classifications") or []),
+                "classification_scopes_identical": migration_idempotent,
+            },
             "idempotency_verified": migration_idempotent,
             "broker_facts_changed": False,
             "records_changed": 0,
