@@ -28,6 +28,10 @@ from engine.astra_canonical_market_timestamp_v1 import (
     SOURCE_QUOTE,
     canonical_market_timestamp_v1,
 )
+from engine.astra_trading_reset_boundary_v1 import (
+    build_reset_boundary_runtime_report_v1,
+    load_reset_boundary_v1,
+)
 from engine.astra_portfolio_capacity_release_review_v1 import (
     build_portfolio_release_review,
     fallback_concentration_audit,
@@ -88379,6 +88383,104 @@ def learning_snapshot_fast_v1():
         }
 
 
+def _astra_post_reset_truth_payload_v1(*, force_broker_snapshot: bool = False) -> dict:
+    """Build the reset report from cached facts, with an explicit read-only probe.
+
+    Ordinary dashboard and unified-diagnostics reads use only cached broker
+    state.  ``force_broker_snapshot`` is reserved for a deliberate production
+    certification request and can only call the existing paper-status reader.
+    """
+    cache_key = "astra_post_reset_truth_v1"
+    cached = _CACHE.get(cache_key) if isinstance(_CACHE.get(cache_key), dict) else {}
+    age = time.time() - _to_float(cached.get("ts"), 0.0) if cached else 9999.0
+    if not force_broker_snapshot and isinstance(cached.get("data"), dict) and age <= 90.0:
+        payload = dict(cached["data"])
+        payload.update({
+            "cache_hit": True,
+            "cache_age_seconds": round(max(0.0, age), 3),
+            "provider_calls_used": 0,
+            "broker_read_calls_used": 0,
+            "broker_actions_used": 0,
+            "llm_calls_used": 0,
+        })
+        return payload
+
+    if force_broker_snapshot:
+        broker = dict(alpaca_paper_status_v1(force=True) or {})
+    else:
+        broker = dict(_cached_alpaca_paper_status_payload({}) or {})
+    positions = _wave3_position_rows_v1(broker)
+    registry = _astra_evidence_state_json("broker_truth_records_v1.json")
+    records = [dict(row) for row in (registry.get("records") or []) if isinstance(row, dict)][:500]
+    completed_lifecycles = [
+        row for row in records
+        if row.get("entry_timestamp") and row.get("exit_timestamp")
+    ]
+    historical_position_related_records = sum(
+        1 for row in records
+        if str(row.get("truth_quality") or "") == "broker_order_seen_not_closed"
+    )
+    lane_limits = {
+        "DAY": DAY_LEARNING_MAX_OPEN_DAY_LEARNING_POSITIONS,
+        "SWING": MAX_TOTAL_OPEN_PAPER_POSITIONS,
+        "CRYPTO": _to_float(os.getenv("ASTRA_PAPER_AUTOPILOT_MAX_CRYPTO"), 0.0) or None,
+    }
+    boundary = load_reset_boundary_v1(STATE)
+    payload = build_reset_boundary_runtime_report_v1(
+        live_positions=positions,
+        completed_lifecycles=completed_lifecycles,
+        historical_position_related_records=historical_position_related_records,
+        lane_limits=lane_limits,
+        boundary=boundary,
+    )
+    details = []
+    classifications = list(payload.get("live_position_classifications") or [])
+    for row, classification in zip(positions, classifications):
+        details.append({
+            "symbol": str(row.get("symbol") or "").upper(),
+            "quantity": row.get("qty") if row.get("qty") is not None else row.get("quantity"),
+            "average_entry_price": row.get("avg_entry_price") or row.get("average_entry_price"),
+            "market_value": row.get("market_value"),
+            "unrealized_pl": row.get("unrealized_pl"),
+            "entry_fill_timestamp": row.get("entry_filled_at") or row.get("entry_timestamp") or row.get("position_opened_at"),
+            "ownership_evidence": classification.get("ownership_state") or "UNAVAILABLE",
+            "lane": classification.get("lane") or row.get("lane_id") or "UNAVAILABLE",
+            "horizon": row.get("paper_entry_horizon_style") or row.get("trade_horizon_style") or "UNAVAILABLE",
+            "classification": classification.get("reset_scope"),
+            "dust_status": bool(classification.get("dust")),
+            "strategy_slot_status": "ELIGIBLE" if classification.get("strategy_slot_eligible") else "EXCLUDED",
+            "retirement_eligibility": classification.get("reset_scope") in {"LEGACY_PRE_RESET_POSITION", "DUST"},
+            "human_approval_required": classification.get("reset_scope") in {"LEGACY_PRE_RESET_POSITION", "DUST"},
+        })
+    payload["live_position_details"] = details
+    payload["historical_record_interpretation"] = {
+        "historical_position_related_records": historical_position_related_records,
+        "meaning": "historical unclosed broker buy-fill records; not current live broker positions",
+        "broker_confirmed_complete_records": int(_to_float(registry.get("broker_confirmed_complete_records"), 0.0)),
+        "registry_total_records": len(records),
+    }
+    payload.update({
+        "endpoint": "/api/astra_post_reset_truth_v1",
+        "broker_snapshot_source": (
+            "explicit_read_only_alpaca_paper_status_v1" if force_broker_snapshot
+            else "cached_alpaca_paper_status_v1"
+        ),
+        "broker_read_calls_used": 1 if force_broker_snapshot else 0,
+        "broker_actions_used": 0,
+        "provider_calls_used": 0,
+        "llm_calls_used": 0,
+        "cache_hit": False,
+        "cache_age_seconds": 0.0,
+    })
+    _CACHE[cache_key] = {"data": dict(payload), "ts": time.time()}
+    return payload
+
+
+@router.get("/api/astra_post_reset_truth_v1")
+def astra_post_reset_truth_v1(force: bool = False):
+    return _astra_post_reset_truth_payload_v1(force_broker_snapshot=bool(force))
+
+
 @router.get("/api/unified_learning_diagnostics_v1")
 def unified_learning_diagnostics_v1(force: bool = False):
     def _first_mapping(*values):
@@ -88476,6 +88578,9 @@ def unified_learning_diagnostics_v1(force: bool = False):
                     **_safety_flags_v1(),
                 }
             _attach_shadow_exit_summaries(force_cached)
+            force_cached["astra_post_reset_truth_v1"] = _astra_post_reset_truth_payload_v1(
+                force_broker_snapshot=False
+            )
             _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(force_cached), "ts": time.time()}
             return force_cached
 
@@ -88513,6 +88618,9 @@ def unified_learning_diagnostics_v1(force: bool = False):
             fast["astra_runtime_resource_governance_v1"] = _astra_runtime_resource_governance_payload_v1()
             fast["astra_operational_preflight_v1"] = astra_operational_preflight_v1()
             _attach_shadow_exit_summaries(fast)
+            fast["astra_post_reset_truth_v1"] = _astra_post_reset_truth_payload_v1(
+                force_broker_snapshot=False
+            )
             return fast
             if "astra_autonomous_improvement_performance_attribution_completion_v1" not in fast:
                 try:
@@ -89315,6 +89423,9 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["forced_trades_enabled"] = False
             out["forced_exits_enabled"] = False
             _attach_shadow_exit_summaries(out)
+            out["astra_post_reset_truth_v1"] = _astra_post_reset_truth_payload_v1(
+                force_broker_snapshot=False
+            )
             out["cache_hit"] = False
             out["cache_age_seconds"] = 0.0
             _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(out), "ts": time.time()}

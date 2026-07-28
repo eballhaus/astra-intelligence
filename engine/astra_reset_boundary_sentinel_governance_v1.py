@@ -41,6 +41,11 @@ def build_sentinel_reset_boundary_report_v1(
 
     unclassified = any(s == RESET_BOUNDARY_REVIEW_REQUIRED for s in scopes)
     legacy_positions = any(s == LEGACY_PRE_RESET_POSITION for s in scopes)
+    legacy_position_slot_leak = any(
+        _classify_scope(c) == LEGACY_PRE_RESET_POSITION
+        and bool(c.get("strategy_slot_eligible") or c.get("strategy_slot_consumed"))
+        for c in classifications
+    )
     legacy_dust = any(s == DUST for s in scopes)
     mixed_lifecycle_current = any(
         _classify_scope(c) == MIXED_BOUNDARY_LIFECYCLE
@@ -80,7 +85,7 @@ def build_sentinel_reset_boundary_report_v1(
     flags = {
         "reset_boundary_active": boundary.get("status") == "ACTIVE",
         "unclassified_pre_reset_evidence": unclassified,
-        "legacy_position_consuming_strategy_slot": legacy_positions,
+        "legacy_position_consuming_strategy_slot": legacy_position_slot_leak,
         "legacy_truth_leaking_into_current_metrics": metric_leakage,
         "mixed_lifecycle_marked_current": mixed_lifecycle_current,
         "legacy_retirement_awaiting_approval": legacy_positions or legacy_dust,

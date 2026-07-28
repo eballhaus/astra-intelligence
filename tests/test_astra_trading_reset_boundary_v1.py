@@ -21,6 +21,9 @@ from engine.astra_trading_reset_boundary_v1 import (
     classify_lifecycle_reset_scope_v1,
     classify_position_reset_scope_v1,
     classify_record_reset_scope_v1,
+    build_verified_production_activation_boundary_v1,
+    boundary_is_production_active_v1,
+    build_reset_boundary_runtime_report_v1,
     compute_reset_aware_metrics_v1,
     detect_reset_scope_leakage_v1,
     determine_reset_boundary_v1,
@@ -58,6 +61,20 @@ import engine.astra_reset_boundary_sentinel_governance_v1 as astra_reset_boundar
 PRE_RESET_TS = "2026-07-27T12:00:00Z"
 POST_RESET_TS = "2026-07-28T18:00:00Z"
 LATER_POST_RESET_TS = "2026-07-29T10:00:00Z"
+
+ACTIVE_BOUNDARY = build_verified_production_activation_boundary_v1(
+    activation_timestamp_utc="2026-07-28T17:20:15Z",
+    activation_evidence={
+        "source_integrated_into_main": True,
+        "backend_healthy": True,
+        "single_canonical_worker_running": True,
+        "corrected_quote_path_active": True,
+        "fmp_persistence_active": True,
+        "loss_controls_active": True,
+        "broker_truth_safeguards_active": True,
+        "paper_only_safety_confirmed": True,
+    },
+)
 
 
 def _lifecycle(
@@ -161,7 +178,8 @@ class ResetBoundaryTests(unittest.TestCase):
         self.assertEqual(boundary["reset_date"], "2026-07-28")
         self.assertEqual(boundary["reset_timestamp_utc"], "2026-07-28T17:20:15Z")
         self.assertEqual(boundary["production_commit"], "ada1c8d201adc1137a2316d5e57ede174d41d253")
-        self.assertEqual(boundary["status"], "ACTIVE")
+        self.assertEqual(boundary["status"], RESET_BOUNDARY_REVIEW_REQUIRED)
+        self.assertFalse(boundary_is_production_active_v1(boundary))
 
     def test_boundary_override_from_config(self):
         boundary = determine_reset_boundary_v1({"reset_timestamp_utc": "2026-08-01T00:00:00Z"})
@@ -180,45 +198,59 @@ class ResetBoundaryTests(unittest.TestCase):
         result = classify_record_reset_scope_v1(record)
         self.assertEqual(result["reset_scope"], RESET_BOUNDARY_REVIEW_REQUIRED)
 
+    def test_verified_activation_requires_all_runtime_evidence(self):
+        boundary = build_verified_production_activation_boundary_v1(
+            activation_timestamp_utc=POST_RESET_TS,
+            activation_evidence={"backend_healthy": True},
+        )
+        self.assertEqual(boundary["status"], RESET_BOUNDARY_REVIEW_REQUIRED)
+
+    def test_workflow_created_at_cannot_be_entry_provenance(self):
+        result = classify_position_reset_scope_v1(
+            {"symbol": "AAPL", "created_at": POST_RESET_TS, "quantity": 10},
+            ACTIVE_BOUNDARY,
+        )
+        self.assertEqual(result["reset_scope"], "OWNERSHIP_UNKNOWN")
+
 
 class PositionClassificationTests(unittest.TestCase):
     def test_position_open_before_reset_is_legacy(self):
         pos = _position(timestamp=PRE_RESET_TS, qty=10.0)
-        result = classify_position_reset_scope_v1(pos)
+        result = classify_position_reset_scope_v1(pos, ACTIVE_BOUNDARY)
         self.assertEqual(result["reset_scope"], LEGACY_PRE_RESET_POSITION)
 
     def test_legacy_position_does_not_consume_day_slot(self):
         pos = _position(timestamp=PRE_RESET_TS, lane="DAY", qty=10.0)
-        result = classify_position_reset_scope_v1(pos)
+        result = classify_position_reset_scope_v1(pos, ACTIVE_BOUNDARY)
         self.assertEqual(result["reset_scope"], LEGACY_PRE_RESET_POSITION)
         self.assertNotEqual(result.get("is_post_reset_candidate"), True)
 
     def test_legacy_position_does_not_consume_swing_slot(self):
         pos = _position(timestamp=PRE_RESET_TS, lane="SWING", qty=10.0)
-        result = classify_position_reset_scope_v1(pos)
+        result = classify_position_reset_scope_v1(pos, ACTIVE_BOUNDARY)
         self.assertEqual(result["reset_scope"], LEGACY_PRE_RESET_POSITION)
 
     def test_legacy_position_does_not_consume_crypto_slot(self):
         pos = _position(timestamp=PRE_RESET_TS, lane="CRYPTO", qty=0.1)
-        result = classify_position_reset_scope_v1(pos)
+        result = classify_position_reset_scope_v1(pos, ACTIVE_BOUNDARY)
         self.assertEqual(result["reset_scope"], LEGACY_PRE_RESET_POSITION)
 
     def test_dust_excluded_from_normal_slots(self):
         pos = _position(timestamp=POST_RESET_TS, qty=0.0005)
-        result = classify_position_reset_scope_v1(pos)
+        result = classify_position_reset_scope_v1(pos, ACTIVE_BOUNDARY)
         self.assertEqual(result["reset_scope"], DUST)
         self.assertFalse(result["is_post_reset_candidate"])
 
     def test_dust_visible_to_reconciliation(self):
         pos = _position(timestamp=PRE_RESET_TS, qty=0.0005)
-        result = classify_position_reset_scope_v1(pos)
+        result = classify_position_reset_scope_v1(pos, ACTIVE_BOUNDARY)
         self.assertEqual(result["reset_scope"], DUST)
         self.assertTrue(result["dust_classification"]["counts_toward_reconciliation"])
 
     def test_post_reset_position_requires_current_ownership(self):
         pos = _position(timestamp=POST_RESET_TS, qty=10.0)
-        result = classify_position_reset_scope_v1(pos)
-        self.assertEqual(result["reset_scope"], RESET_BOUNDARY_REVIEW_REQUIRED)
+        result = classify_position_reset_scope_v1(pos, ACTIVE_BOUNDARY)
+        self.assertEqual(result["reset_scope"], "OWNERSHIP_UNKNOWN")
 
     def test_post_reset_position_with_current_ownership_is_current(self):
         pos = _position(
@@ -229,72 +261,72 @@ class PositionClassificationTests(unittest.TestCase):
             contract_id="c1",
             lifecycle_id="l1",
         )
-        result = classify_position_reset_scope_v1(pos)
+        result = classify_position_reset_scope_v1(pos, ACTIVE_BOUNDARY)
         self.assertEqual(result["reset_scope"], POST_RESET_CURRENT)
 
 
 class LifecycleClassificationTests(unittest.TestCase):
     def test_completed_trade_before_reset_is_pre_reset_legacy(self):
         lc = _lifecycle(entry=PRE_RESET_TS, exit_=PRE_RESET_TS)
-        result = classify_lifecycle_reset_scope_v1(lc)
+        result = classify_lifecycle_reset_scope_v1(lc, ACTIVE_BOUNDARY)
         self.assertEqual(result["reset_scope"], PRE_RESET_LEGACY)
 
     def test_pre_reset_trade_preserved(self):
         lc = _lifecycle(entry=PRE_RESET_TS, exit_=PRE_RESET_TS)
-        result = classify_lifecycle_reset_scope_v1(lc)
+        result = classify_lifecycle_reset_scope_v1(lc, ACTIVE_BOUNDARY)
         self.assertIn("entry_timestamp_utc", result)
         self.assertIn("exit_timestamp_utc", result)
 
     def test_position_opened_before_reset_and_sold_after_is_retirement(self):
         lc = _lifecycle(entry=PRE_RESET_TS, exit_=POST_RESET_TS)
-        result = classify_lifecycle_reset_scope_v1(lc)
+        result = classify_lifecycle_reset_scope_v1(lc, ACTIVE_BOUNDARY)
         self.assertEqual(result["reset_scope"], LEGACY_RETIREMENT)
 
     def test_retirement_not_current_strict_truth(self):
         lc = _lifecycle(entry=PRE_RESET_TS, exit_=POST_RESET_TS)
-        result = build_post_reset_strict_truth_v1(lc)
+        result = build_post_reset_strict_truth_v1(lc, ACTIVE_BOUNDARY)
         self.assertIn("error", result)
 
     def test_post_reset_complete_lifecycle_is_current_strict_truth(self):
         lc = _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS)
-        result = build_post_reset_strict_truth_v1(lc)
+        result = build_post_reset_strict_truth_v1(lc, ACTIVE_BOUNDARY)
         self.assertEqual(result["truth_scope"], POST_RESET_CURRENT)
         self.assertTrue(result["post_reset_day_strict_truth"])
 
     def test_post_reset_incomplete_lifecycle_is_not_strict_truth(self):
         lc = _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS, exit_fill_id="")
-        result = build_post_reset_strict_truth_v1(lc)
+        result = build_post_reset_strict_truth_v1(lc, ACTIVE_BOUNDARY)
         self.assertIn("error", result)
 
     def test_mixed_boundary_lifecycle_rejected_from_current_truth(self):
         lc = _lifecycle(entry=PRE_RESET_TS, exit_=POST_RESET_TS)
-        result = classify_lifecycle_reset_scope_v1(lc)
+        result = classify_lifecycle_reset_scope_v1(lc, ACTIVE_BOUNDARY)
         self.assertEqual(result["reset_scope"], LEGACY_RETIREMENT)
-        eligible = is_strict_truth_eligible_v1(lc)
+        eligible = is_strict_truth_eligible_v1(lc, ACTIVE_BOUNDARY)
         self.assertFalse(eligible["eligible"])
 
     def test_unknown_provenance_fails_closed(self):
         lc = {"lifecycle_id": "l-unknown"}
-        result = classify_lifecycle_reset_scope_v1(lc)
+        result = classify_lifecycle_reset_scope_v1(lc, ACTIVE_BOUNDARY)
         self.assertEqual(result["reset_scope"], RESET_BOUNDARY_REVIEW_REQUIRED)
 
 
 class StrictTruthEligibilityTests(unittest.TestCase):
     def test_required_fields_checked(self):
         lc = _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS)
-        result = is_strict_truth_eligible_v1(lc)
+        result = is_strict_truth_eligible_v1(lc, ACTIVE_BOUNDARY)
         self.assertTrue(result["eligible"])
         self.assertEqual(result["blockers"], [])
 
     def test_missing_exit_fill_blocks_eligibility(self):
         lc = _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS, exit_fill_id="")
-        result = is_strict_truth_eligible_v1(lc)
+        result = is_strict_truth_eligible_v1(lc, ACTIVE_BOUNDARY)
         self.assertFalse(result["eligible"])
         self.assertIn("BROKER_EXIT_FILL_NOT_CONFIRMED", result["blockers"])
 
     def test_broker_zero_confirmed_required(self):
         lc = _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS, broker_zero=False)
-        result = is_strict_truth_eligible_v1(lc)
+        result = is_strict_truth_eligible_v1(lc, ACTIVE_BOUNDARY)
         self.assertFalse(result["eligible"])
         self.assertIn("BROKER_RESIDUAL_ZERO_NOT_CONFIRMED", result["blockers"])
 
@@ -306,20 +338,20 @@ class LaneStrictTruthCountTests(unittest.TestCase):
             _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS, lane="SWING"),
             _lifecycle(entry=PRE_RESET_TS, exit_=PRE_RESET_TS, lane="DAY"),
         ]
-        counts = build_lane_strict_truth_counts_v1(lifecycles)
+        counts = build_lane_strict_truth_counts_v1(lifecycles, ACTIVE_BOUNDARY)
         self.assertEqual(counts["POST_RESET_DAY_STRICT_TRUTH"], 1)
         self.assertEqual(counts["POST_RESET_SWING_STRICT_TRUTH"], 1)
         self.assertEqual(counts["POST_RESET_CRYPTO_STRICT_TRUTH"], 0)
 
     def test_swing_truth_increments_only_for_swing(self):
         lc = _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS, lane="SWING", horizon="swing_trade")
-        counts = build_lane_strict_truth_counts_v1([lc])
+        counts = build_lane_strict_truth_counts_v1([lc], ACTIVE_BOUNDARY)
         self.assertEqual(counts["POST_RESET_SWING_STRICT_TRUTH"], 1)
         self.assertEqual(counts["POST_RESET_DAY_STRICT_TRUTH"], 0)
 
     def test_crypto_truth_increments_only_for_crypto(self):
         lc = _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS, lane="CRYPTO", horizon="swing_trade")
-        counts = build_lane_strict_truth_counts_v1([lc])
+        counts = build_lane_strict_truth_counts_v1([lc], ACTIVE_BOUNDARY)
         self.assertEqual(counts["POST_RESET_CRYPTO_STRICT_TRUTH"], 1)
         self.assertEqual(counts["POST_RESET_DAY_STRICT_TRUTH"], 0)
 
@@ -338,7 +370,7 @@ class MetricsTests(unittest.TestCase):
             _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS, realized_return_pct=3.0),
             _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS, realized_return_pct=2.0),
         ]
-        result = compute_reset_aware_metrics_v1(lifecycles, scope="CURRENT_POST_RESET")
+        result = compute_reset_aware_metrics_v1(lifecycles, ACTIVE_BOUNDARY, scope="CURRENT_POST_RESET")
         self.assertEqual(result["eligible_sample_count"], 2)
         self.assertEqual(result["excluded_sample_count"], 1)
         self.assertEqual(result["completed_trades"], 2)
@@ -348,7 +380,7 @@ class MetricsTests(unittest.TestCase):
             _lifecycle(entry=PRE_RESET_TS, exit_=PRE_RESET_TS, realized_return_pct=50.0),
             _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS, realized_return_pct=-1.0),
         ]
-        result = compute_reset_aware_metrics_v1(lifecycles, scope="CURRENT_POST_RESET")
+        result = compute_reset_aware_metrics_v1(lifecycles, ACTIVE_BOUNDARY, scope="CURRENT_POST_RESET")
         self.assertEqual(result["eligible_sample_count"], 1)
         self.assertEqual(result["win_rate"], 0.0)
 
@@ -357,7 +389,7 @@ class MetricsTests(unittest.TestCase):
             _lifecycle(entry=PRE_RESET_TS, exit_=PRE_RESET_TS, realized_return_pct=100.0),
             _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS, realized_return_pct=-2.0),
         ]
-        result = compute_reset_aware_metrics_v1(lifecycles, scope="CURRENT_POST_RESET")
+        result = compute_reset_aware_metrics_v1(lifecycles, ACTIVE_BOUNDARY, scope="CURRENT_POST_RESET")
         self.assertIsNotNone(result["profit_factor"])
         self.assertNotEqual(result["profit_factor"], 100.0)
 
@@ -366,7 +398,7 @@ class MetricsTests(unittest.TestCase):
             _lifecycle(entry=PRE_RESET_TS, exit_=PRE_RESET_TS, realized_return_pct=5.0),
             _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS, realized_return_pct=3.0),
         ]
-        result = compute_reset_aware_metrics_v1(lifecycles, scope="LEGACY_PRE_RESET")
+        result = compute_reset_aware_metrics_v1(lifecycles, ACTIVE_BOUNDARY, scope="LEGACY_PRE_RESET")
         self.assertEqual(result["eligible_sample_count"], 1)
         self.assertEqual(result["completed_trades"], 1)
 
@@ -375,26 +407,26 @@ class MetricsTests(unittest.TestCase):
             _lifecycle(entry=PRE_RESET_TS, exit_=PRE_RESET_TS),
             _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS),
         ]
-        result = compute_reset_aware_metrics_v1(lifecycles, scope="LIFETIME_ALL_BROKER_FACTS")
+        result = compute_reset_aware_metrics_v1(lifecycles, ACTIVE_BOUNDARY, scope="LIFETIME_ALL_BROKER_FACTS")
         self.assertEqual(result["eligible_sample_count"], 2)
 
 
 class LearningEligibilityTests(unittest.TestCase):
     def test_pre_reset_trade_excluded_from_current_learning(self):
         lc = _lifecycle(entry=PRE_RESET_TS, exit_=PRE_RESET_TS)
-        result = classify_learning_eligibility_v1(lc)
+        result = classify_learning_eligibility_v1(lc, ACTIVE_BOUNDARY)
         self.assertFalse(result["learning_eligible"])
         self.assertIn("scope_is_", result["learning_exclusion_reason"])
 
     def test_learning_consumes_only_current_eligible_truths(self):
         current = _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS)
         legacy = _lifecycle(entry=PRE_RESET_TS, exit_=PRE_RESET_TS)
-        self.assertTrue(classify_learning_eligibility_v1(current)["learning_eligible"])
-        self.assertFalse(classify_learning_eligibility_v1(legacy)["learning_eligible"])
+        self.assertTrue(classify_learning_eligibility_v1(current, ACTIVE_BOUNDARY)["learning_eligible"])
+        self.assertFalse(classify_learning_eligibility_v1(legacy, ACTIVE_BOUNDARY)["learning_eligible"])
 
     def test_broker_zero_closure_mandatory_for_learning(self):
         lc = _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS, broker_zero=False)
-        result = classify_learning_eligibility_v1(lc)
+        result = classify_learning_eligibility_v1(lc, ACTIVE_BOUNDARY)
         self.assertFalse(result["learning_eligible"])
         self.assertFalse(result["broker_zero_confirmed"])
 
@@ -514,7 +546,7 @@ class MigrationTests(unittest.TestCase):
             _lifecycle(entry=PRE_RESET_TS, exit_=PRE_RESET_TS),
             _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS),
         ]
-        result = migrate_records_to_reset_scope_v1(records)
+        result = migrate_records_to_reset_scope_v1(records, ACTIVE_BOUNDARY)
         totals = result["totals"]
         self.assertEqual(totals["positions_scanned"], 2)
         self.assertEqual(totals["legacy_positions"], 1)
@@ -528,7 +560,7 @@ class MigrationTests(unittest.TestCase):
             _lifecycle(entry=PRE_RESET_TS, exit_=PRE_RESET_TS),
             _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS),
         ]
-        result = migrate_records_to_reset_scope_v1(records)
+        result = migrate_records_to_reset_scope_v1(records, ACTIVE_BOUNDARY)
         self.assertEqual(result["totals"]["records_excluded_from_current_learning"], 1)
 
     def test_migration_idempotent(self):
@@ -536,14 +568,14 @@ class MigrationTests(unittest.TestCase):
             _lifecycle(entry=PRE_RESET_TS, exit_=PRE_RESET_TS),
             _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS),
         ]
-        r1 = migrate_records_to_reset_scope_v1(records)
-        r2 = migrate_records_to_reset_scope_v1(records)
+        r1 = migrate_records_to_reset_scope_v1(records, ACTIVE_BOUNDARY)
+        r2 = migrate_records_to_reset_scope_v1(records, ACTIVE_BOUNDARY)
         self.assertEqual(r1["totals"], r2["totals"])
 
     def test_migration_does_not_mutate_broker_facts(self):
         pos = _position(timestamp=PRE_RESET_TS, qty=10.0)
         original_qty = pos["quantity"]
-        migrate_records_to_reset_scope_v1([pos])
+        migrate_records_to_reset_scope_v1([pos], ACTIVE_BOUNDARY)
         self.assertEqual(pos["quantity"], original_qty)
 
     def test_duplicate_classification_does_not_create_duplicates(self):
@@ -551,16 +583,42 @@ class MigrationTests(unittest.TestCase):
             _position(timestamp=PRE_RESET_TS, qty=10.0),
             _position(timestamp=PRE_RESET_TS, qty=10.0),
         ]
-        result = migrate_records_to_reset_scope_v1(records)
+        result = migrate_records_to_reset_scope_v1(records, ACTIVE_BOUNDARY)
         self.assertEqual(len(result["classifications"]), 2)
         self.assertEqual(result["totals"]["legacy_positions"], 2)
+
+
+class RuntimeReportTests(unittest.TestCase):
+    def test_runtime_report_excludes_legacy_from_slots_and_actions(self):
+        legacy = _position(timestamp=PRE_RESET_TS, qty=10.0, lane="DAY")
+        current = _position(
+            timestamp=POST_RESET_TS,
+            qty=10.0,
+            lane="DAY",
+            candidate_id="c1",
+            contract_id="c1",
+            lifecycle_id="l1",
+        )
+        report = build_reset_boundary_runtime_report_v1(
+            live_positions=[legacy, current],
+            completed_lifecycles=[],
+            historical_position_related_records=92,
+            lane_limits={"DAY": 3, "SWING": 12, "CRYPTO": 4},
+            boundary=ACTIVE_BOUNDARY,
+        )
+        self.assertEqual(report["live_classification_counts"][LEGACY_PRE_RESET_POSITION], 1)
+        self.assertEqual(report["live_classification_counts"][POST_RESET_CURRENT], 1)
+        self.assertEqual(report["lane_capacity"]["DAY"]["current_valid_occupancy"], 1)
+        self.assertEqual(report["lane_capacity"]["DAY"]["legacy_excluded"], 1)
+        self.assertTrue(report["migration"]["idempotency_verified"])
+        self.assertEqual(report["broker_actions_used"], 0)
 
 
 class DashboardPayloadTests(unittest.TestCase):
     def test_dashboard_states_metric_scope_and_reset_id(self):
         pos = _position(timestamp=POST_RESET_TS, qty=10.0, lane="DAY", candidate_id="c1", contract_id="c1", lifecycle_id="l1")
         lc = _lifecycle(entry=POST_RESET_TS, exit_=LATER_POST_RESET_TS)
-        current_metrics = compute_reset_aware_metrics_v1([lc], scope="CURRENT_POST_RESET")
+        current_metrics = compute_reset_aware_metrics_v1([lc], ACTIVE_BOUNDARY, scope="CURRENT_POST_RESET")
         shadow = build_legacy_shadow_analysis_v1([])
         sentinel = build_sentinel_reset_boundary_report_v1([], current_metrics, [])
         governance = build_governance_reset_boundary_report_v1([], current_metrics, [])

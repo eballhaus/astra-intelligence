@@ -28,7 +28,7 @@ DEFAULT_RESET_ID = "ASTRA_CORRECTED_TRADING_RESET_2026_07_28"
 DEFAULT_RESET_DATE = "2026-07-28"
 DEFAULT_RESET_TIMESTAMP_UTC = "2026-07-28T17:20:15Z"
 DEFAULT_RESET_SOURCE_COMMIT = "ada1c8d201adc1137a2316d5e57ede174d41d253"
-DEFAULT_RESET_TIMESTAMP_SOURCE = "git_commit_timestamp_of_earliest_corrected_trading_commit"
+DEFAULT_RESET_TIMESTAMP_SOURCE = "unverified_git_commit_timestamp_proposal"
 
 # Reset scope classifications
 PRE_RESET_LEGACY = "PRE_RESET_LEGACY"
@@ -41,6 +41,20 @@ OWNERSHIP_UNKNOWN = "OWNERSHIP_UNKNOWN"
 RESET_BOUNDARY_REVIEW_REQUIRED = "RESET_BOUNDARY_REVIEW_REQUIRED"
 
 VALID_POST_RESET_LANES = frozenset({"DAY", "SWING", "CRYPTO"})
+
+# A source commit proves that code existed, not that the corrected process was
+# running.  Current truth must therefore stay closed until the controlled
+# production activation evidence is persisted.
+REQUIRED_ACTIVATION_EVIDENCE = frozenset({
+    "source_integrated_into_main",
+    "backend_healthy",
+    "single_canonical_worker_running",
+    "corrected_quote_path_active",
+    "fmp_persistence_active",
+    "loss_controls_active",
+    "broker_truth_safeguards_active",
+    "paper_only_safety_confirmed",
+})
 
 
 def _text(value: Any, default: str = "") -> str:
@@ -88,19 +102,18 @@ def _iso(now: datetime | None = None) -> str:
 
 
 def _record_timestamp(record: Mapping[str, Any]) -> datetime | None:
-    """Return the best available timestamp for a generic record."""
+    """Return a provenance-safe entry timestamp for a position-like record.
+
+    Database ``created_at``/``updated_at`` values describe local workflow
+    activity and must never be promoted to broker entry evidence.
+    """
     row = dict(record or {})
     for key in (
         "entry_timestamp",
         "entry_filled_at",
+        "broker_entry_fill_timestamp",
+        "position_opened_at",
         "opened_at",
-        "created_at",
-        "timestamp",
-        "generated_at",
-        "updated_at",
-        "exit_timestamp",
-        "closed_at",
-        "broker_fill_timestamp",
     ):
         value = row.get(key)
         if value not in (None, ""):
@@ -112,7 +125,13 @@ def _record_timestamp(record: Mapping[str, Any]) -> datetime | None:
 
 def _entry_timestamp(lifecycle: Mapping[str, Any]) -> datetime | None:
     row = dict(lifecycle or {})
-    for key in ("entry_timestamp", "entry_filled_at", "opened_at", "created_at", "timestamp"):
+    for key in (
+        "entry_timestamp",
+        "entry_filled_at",
+        "broker_entry_fill_timestamp",
+        "position_opened_at",
+        "opened_at",
+    ):
         value = row.get(key)
         if value not in (None, ""):
             parsed = _parse_iso(value)
@@ -123,7 +142,7 @@ def _entry_timestamp(lifecycle: Mapping[str, Any]) -> datetime | None:
 
 def _exit_timestamp(lifecycle: Mapping[str, Any]) -> datetime | None:
     row = dict(lifecycle or {})
-    for key in ("exit_timestamp", "exit_filled_at", "closed_at", "updated_at"):
+    for key in ("exit_timestamp", "exit_filled_at", "broker_exit_fill_timestamp", "closed_at"):
         value = row.get(key)
         if value not in (None, ""):
             parsed = _parse_iso(value)
@@ -199,9 +218,9 @@ def determine_reset_boundary_v1(config: dict[str, Any] | None = None) -> dict[st
     reset_date = _text(cfg.get("reset_date") or DEFAULT_RESET_DATE)
     reason = _text(
         cfg.get("reason")
-        or "Astra corrected trading baseline established from earliest corrected trading commit timestamp."
+        or "Reset date is human-declared; commit time remains a proposal until production activation is verified."
     )
-    status = _text(cfg.get("status") or "ACTIVE")
+    status = _text(cfg.get("status") or RESET_BOUNDARY_REVIEW_REQUIRED)
     human_declared = bool(
         cfg.get("human_declared") if "human_declared" in cfg else True
     )
@@ -218,9 +237,69 @@ def determine_reset_boundary_v1(config: dict[str, Any] | None = None) -> dict[st
         "reason": reason,
         "status": status,
         "human_declared": human_declared,
+        "activation_evidence": dict(cfg.get("activation_evidence") or {}),
+        "boundary_confidence": _text(cfg.get("boundary_confidence") or "UNVERIFIED"),
+        "ambiguous_record_count": int(_num(cfg.get("ambiguous_record_count")) or 0),
+        "proposed_timestamp_utc": DEFAULT_RESET_TIMESTAMP_UTC,
         "machine_derived_activation_timestamp_utc": machine_derived,
         "generated_at": _iso(),
     }
+
+
+def boundary_is_production_active_v1(boundary: Mapping[str, Any] | None = None) -> bool:
+    """Return true only for an evidence-backed production activation boundary."""
+    current = dict(boundary or determine_reset_boundary_v1())
+    evidence = dict(current.get("activation_evidence") or {})
+    return bool(
+        _text(current.get("status")).upper() == "ACTIVE"
+        and _text(current.get("boundary_confidence")).upper() == "VERIFIED"
+        and all(bool(evidence.get(key)) for key in REQUIRED_ACTIVATION_EVIDENCE)
+        and _parse_iso(current.get("reset_timestamp_utc")) is not None
+    )
+
+
+def build_verified_production_activation_boundary_v1(
+    *,
+    activation_timestamp_utc: str,
+    activation_evidence: Mapping[str, Any],
+    production_commit: str | None = None,
+    reset_id: str = DEFAULT_RESET_ID,
+    reset_date: str = DEFAULT_RESET_DATE,
+    ambiguous_record_count: int = 0,
+) -> dict[str, Any]:
+    """Create a restart-safe activation contract only when all proof exists.
+
+    The caller owns collection of runtime proof.  This pure helper neither
+    starts a process nor contacts a provider or broker.
+    """
+    timestamp = _parse_iso(activation_timestamp_utc)
+    evidence = {key: bool(dict(activation_evidence or {}).get(key)) for key in REQUIRED_ACTIVATION_EVIDENCE}
+    missing = sorted(key for key, value in evidence.items() if not value)
+    if timestamp is None or missing:
+        return determine_reset_boundary_v1({
+            "reset_id": reset_id,
+            "reset_date": reset_date,
+            "reset_timestamp_utc": activation_timestamp_utc or DEFAULT_RESET_TIMESTAMP_UTC,
+            "source_commit": production_commit or DEFAULT_RESET_SOURCE_COMMIT,
+            "timestamp_source": "production_activation_evidence_incomplete",
+            "status": RESET_BOUNDARY_REVIEW_REQUIRED,
+            "activation_evidence": evidence,
+            "boundary_confidence": "UNVERIFIED",
+            "ambiguous_record_count": max(0, int(ambiguous_record_count or 0)),
+            "reason": "Production activation evidence is incomplete; post-reset classification remains fail-closed.",
+        })
+    return determine_reset_boundary_v1({
+        "reset_id": reset_id,
+        "reset_date": reset_date,
+        "reset_timestamp_utc": _iso(timestamp),
+        "source_commit": production_commit or DEFAULT_RESET_SOURCE_COMMIT,
+        "timestamp_source": "verified_controlled_production_activation",
+        "status": "ACTIVE",
+        "activation_evidence": evidence,
+        "boundary_confidence": "VERIFIED",
+        "ambiguous_record_count": max(0, int(ambiguous_record_count or 0)),
+        "reason": "Boundary begins at the latest verified corrected-system production activation checkpoint.",
+    })
 
 
 def load_reset_boundary_v1(state_dir: str | Path) -> dict[str, Any]:
@@ -299,6 +378,7 @@ def classify_record_reset_scope_v1(
     dust = _dust_info(record)
     is_dust = bool(dust.get("is_dust"))
 
+    boundary_active = boundary_is_production_active_v1(boundary)
     if ts is None:
         scope = RESET_BOUNDARY_REVIEW_REQUIRED
         reason = "missing_or_invalid_record_timestamp"
@@ -307,6 +387,10 @@ def classify_record_reset_scope_v1(
         scope = PRE_RESET_LEGACY
         reason = "pre_reset_timestamp_before_boundary"
         origin = "pre"
+    elif not boundary_active:
+        scope = RESET_BOUNDARY_REVIEW_REQUIRED
+        reason = "production_activation_boundary_not_verified"
+        origin = "ambiguous"
     else:
         scope = POST_RESET_CURRENT
         reason = "post_reset_timestamp_on_or_after_boundary"
@@ -324,6 +408,7 @@ def classify_record_reset_scope_v1(
         "dust": is_dust,
         "dust_classification": dust,
         "is_post_reset_candidate": scope == POST_RESET_CURRENT,
+        "strategy_slot_eligible": False,
         "reset_origin": origin,
         "reset_id": boundary.get("reset_id"),
     }
@@ -353,24 +438,34 @@ def classify_position_reset_scope_v1(
             "dust": True,
             "dust_classification": dust,
             "is_post_reset_candidate": False,
+            "strategy_slot_eligible": False,
             "reset_origin": origin,
             "reset_id": boundary.get("reset_id"),
         }
 
+    boundary_active = boundary_is_production_active_v1(boundary)
     if ts is None:
-        scope = RESET_BOUNDARY_REVIEW_REQUIRED
-        reason = "missing_or_invalid_position_timestamp"
+        scope = RESET_BOUNDARY_REVIEW_REQUIRED if not boundary_active else OWNERSHIP_UNKNOWN
+        reason = (
+            "production_activation_boundary_not_verified"
+            if not boundary_active
+            else "missing_or_invalid_position_entry_provenance"
+        )
         origin = "unknown"
     elif ts < boundary_dt:
         scope = LEGACY_PRE_RESET_POSITION
         reason = "position_opened_before_reset_boundary"
         origin = "pre"
+    elif not boundary_active:
+        scope = RESET_BOUNDARY_REVIEW_REQUIRED
+        reason = "production_activation_boundary_not_verified"
+        origin = "ambiguous"
     elif _is_current_astra_owned(position) and _is_lane_known(position):
         scope = POST_RESET_CURRENT
         reason = "post_reset_position_with_current_ownership_and_lane"
         origin = "post"
     else:
-        scope = RESET_BOUNDARY_REVIEW_REQUIRED
+        scope = OWNERSHIP_UNKNOWN
         reason = "post_reset_position_lacks_current_ownership_or_lane"
         origin = "post"
 
@@ -388,6 +483,7 @@ def classify_position_reset_scope_v1(
         "dust": False,
         "dust_classification": dust,
         "is_post_reset_candidate": scope == POST_RESET_CURRENT,
+        "strategy_slot_eligible": scope == POST_RESET_CURRENT,
         "ownership_state": ownership.get("ownership_state"),
         "lane": ownership.get("lane"),
         "reset_origin": origin,
@@ -404,6 +500,7 @@ def classify_lifecycle_reset_scope_v1(
     entry_ts = _entry_timestamp(lifecycle)
     exit_ts = _exit_timestamp(lifecycle)
 
+    boundary_active = boundary_is_production_active_v1(boundary)
     if entry_ts is None or exit_ts is None:
         return {
             "lifecycle_id": _text(lifecycle.get("lifecycle_id")),
@@ -427,6 +524,9 @@ def classify_lifecycle_reset_scope_v1(
     elif entry_before and not exit_before:
         scope = LEGACY_RETIREMENT
         reason = "lifecycle_entered_before_reset_and_exited_after"
+    elif not entry_before and not exit_before and not boundary_active:
+        scope = RESET_BOUNDARY_REVIEW_REQUIRED
+        reason = "production_activation_boundary_not_verified"
     elif not entry_before and not exit_before:
         eligibility = is_strict_truth_eligible_v1(lifecycle, boundary)
         if eligibility.get("eligible"):
@@ -468,6 +568,9 @@ def is_strict_truth_eligible_v1(
     boundary_dt = _boundary_datetime(boundary)
     row = dict(lifecycle or {})
     blockers: list[str] = []
+
+    if not boundary_is_production_active_v1(boundary):
+        blockers.append("RESET_BOUNDARY_NOT_PRODUCTION_VERIFIED")
 
     if not _text(row.get("candidate_id")):
         blockers.append("MISSING_CANDIDATE_ID")
@@ -924,6 +1027,146 @@ def classify_learning_eligibility_v1(
         "broker_zero_confirmed": broker_zero,
         "strict_truth_eligible": True,
         "blockers": [],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Runtime report composition (pure, cache-first caller)
+# ---------------------------------------------------------------------------
+
+
+def build_reset_boundary_runtime_report_v1(
+    *,
+    live_positions: list[Mapping[str, Any]],
+    completed_lifecycles: list[Mapping[str, Any]],
+    historical_position_related_records: int = 0,
+    lane_limits: Mapping[str, Any] | None = None,
+    boundary: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a reset report from already-fetched, bounded facts only."""
+    from engine.astra_reset_boundary_migration_v1 import migrate_records_to_reset_scope_v1
+    from engine.astra_reset_boundary_sentinel_governance_v1 import (
+        build_governance_reset_boundary_report_v1,
+        build_sentinel_reset_boundary_report_v1,
+    )
+
+    current_boundary = dict(boundary or determine_reset_boundary_v1())
+    positions = [dict(row) for row in live_positions if isinstance(row, Mapping)]
+    lifecycles = [dict(row) for row in completed_lifecycles if isinstance(row, Mapping)]
+    position_classifications = [
+        {**classify_position_reset_scope_v1(row, current_boundary), "record_type": "live_broker_position"}
+        for row in positions
+    ]
+    lifecycle_classifications = [
+        {**classify_lifecycle_reset_scope_v1(row, current_boundary), "record_type": "completed_lifecycle"}
+        for row in lifecycles
+    ]
+    all_classifications = [*position_classifications, *lifecycle_classifications]
+    learning_reports = [classify_learning_eligibility_v1(row, current_boundary) for row in lifecycles]
+    current_metrics = compute_reset_aware_metrics_v1(lifecycles, current_boundary, scope="CURRENT_POST_RESET")
+    legacy_metrics = compute_reset_aware_metrics_v1(lifecycles, current_boundary, scope="LEGACY_PRE_RESET")
+    lifetime_metrics = compute_reset_aware_metrics_v1(lifecycles, current_boundary, scope="LIFETIME_ALL_BROKER_FACTS")
+    lane_truths = build_lane_strict_truth_counts_v1(lifecycles, current_boundary)
+    migration_records = [*positions, *lifecycles]
+    migration_one = migrate_records_to_reset_scope_v1(migration_records, current_boundary, apply=False)
+    migration_two = migrate_records_to_reset_scope_v1(migration_records, current_boundary, apply=False)
+    migration_idempotent = (
+        migration_one.get("totals") == migration_two.get("totals")
+        and [
+            (row.get("record_type"), row.get("record_id"), row.get("reset_scope"))
+            for row in migration_one.get("classifications", [])
+        ]
+        == [
+            (row.get("record_type"), row.get("record_id"), row.get("reset_scope"))
+            for row in migration_two.get("classifications", [])
+        ]
+    )
+    sentinel = build_sentinel_reset_boundary_report_v1(
+        all_classifications, current_metrics, learning_reports, current_boundary
+    )
+    governance = build_governance_reset_boundary_report_v1(
+        all_classifications, current_metrics, learning_reports, current_boundary
+    )
+    limits = {str(key).upper(): value for key, value in dict(lane_limits or {}).items()}
+    lanes: dict[str, dict[str, Any]] = {}
+    for lane in sorted(VALID_POST_RESET_LANES):
+        relevant = [
+            classification
+            for position, classification in zip(positions, position_classifications)
+            if _lane(position) == lane or _text(classification.get("lane")).upper() == lane
+        ]
+        occupancy = sum(1 for classification in relevant if classification.get("reset_scope") == POST_RESET_CURRENT)
+        legacy_excluded = sum(1 for classification in relevant if classification.get("reset_scope") == LEGACY_PRE_RESET_POSITION)
+        dust_excluded = sum(1 for classification in relevant if classification.get("reset_scope") == DUST)
+        unknown_excluded = sum(
+            1 for classification in relevant
+            if classification.get("reset_scope") in {OWNERSHIP_UNKNOWN, RESET_BOUNDARY_REVIEW_REQUIRED}
+        )
+        limit = _num(limits.get(lane))
+        lanes[lane] = {
+            "configured_limit": int(limit) if limit is not None else None,
+            "current_valid_occupancy": occupancy,
+            "available_slots": max(0, int(limit) - occupancy) if limit is not None else None,
+            "legacy_excluded": legacy_excluded,
+            "dust_excluded": dust_excluded,
+            "unknown_excluded": unknown_excluded,
+        }
+
+    live_scope_counts: dict[str, int] = {}
+    for classification in position_classifications:
+        scope = _text(classification.get("reset_scope")) or RESET_BOUNDARY_REVIEW_REQUIRED
+        live_scope_counts[scope] = live_scope_counts.get(scope, 0) + 1
+    legacy_lifecycles = [
+        row
+        for row, classification in zip(lifecycles, lifecycle_classifications)
+        if classification.get("reset_scope") in {PRE_RESET_LEGACY, LEGACY_RETIREMENT, MIXED_BOUNDARY_LIFECYCLE}
+    ]
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "reset_boundary": current_boundary,
+        "reset_boundary_production_active": boundary_is_production_active_v1(current_boundary),
+        "live_broker_rows": len(positions),
+        "historical_position_related_records": max(0, int(historical_position_related_records or 0)),
+        "live_position_classifications": position_classifications,
+        "live_classification_counts": live_scope_counts,
+        "completed_lifecycle_classifications": lifecycle_classifications,
+        "current_metrics": current_metrics,
+        "legacy_metrics": legacy_metrics,
+        "lifetime_metrics": lifetime_metrics,
+        "lane_strict_truth_counts": lane_truths,
+        "lane_capacity": lanes,
+        "learning_reports": learning_reports,
+        "legacy_shadow_analysis": build_legacy_shadow_analysis_v1(legacy_lifecycles),
+        "migration": {
+            "dry_run_completed": True,
+            "first_pass": migration_one,
+            "idempotency_verified": migration_idempotent,
+            "broker_facts_changed": False,
+            "records_changed": 0,
+        },
+        "sentinel": sentinel,
+        "governance": governance,
+        "advisory_only": True,
+        "execution_authority": "DISABLED",
+        "behavior_safe_to_apply": False,
+        "paper_only_preserved": True,
+        "alpaca_paper_only_preserved": True,
+        "live_trading_changed": False,
+        "broker_behavior_changed": False,
+        "ranking_behavior_changed": False,
+        "entry_behavior_changed": False,
+        "exit_behavior_changed": False,
+        "position_sizing_changed": False,
+        "portfolio_allocation_changed": False,
+        "thresholds_changed": False,
+        "forced_trades_enabled": False,
+        "forced_exits_enabled": False,
+        "learned_exits_enabled": False,
+        "automatic_promotions_enabled": False,
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+        "generated_at": _iso(),
     }
 
 
