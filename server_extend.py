@@ -17286,12 +17286,13 @@ def _paper_latest_symbol_snapshot(symbol, asset_type):
             out["quote_timestamp"] = (
                 out.get("provider_quote_timestamp")
                 or out.get("market_observation_timestamp")
-                or out.get("quote_timestamp")
             )
             out["market_source_type"] = "QUOTE"
             # A ranking refresh time is not quote evidence. Fall through to
-            # the bounded worker quote router when the cache lacks a native
-            # observation timestamp rather than relabelling the cache time.
+            # the bounded worker quote router when the cache lacks an
+            # explicitly provider-native observation timestamp. A bare
+            # ``quote_timestamp`` in a ranking row has no adapter provenance
+            # and must not become executable market evidence.
             if out.get("quote_timestamp"):
                 return out
             break
