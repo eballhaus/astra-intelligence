@@ -35,6 +35,7 @@ from engine.astra_trading_reset_boundary_v1 import (
     save_reset_boundary_v1,
 )
 from engine.alpaca_paper_broker import AlpacaPaperBroker
+from engine.paper_autopilot import PaperAutopilotEngine
 from engine.astra_legacy_retirement_workflow_v1 import (
     LEGACY_DUST_RECONCILIATION,
     LEGACY_EXIT_BLOCKED,
@@ -234,6 +235,21 @@ class ResetBoundaryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             save_reset_boundary_v1(forward, tmp)
             self.assertEqual(load_reset_boundary_v1(tmp)["forward_activation_timestamp_utc"], LATER_POST_RESET_TS)
+
+    def test_isolated_worker_reloads_guarded_enable_control_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = os.path.join(tmp, "paper_autopilot_state.json")
+            api_owner = PaperAutopilotEngine(state_path=state_path, enabled=False)
+            worker_owner = PaperAutopilotEngine(state_path=state_path, enabled=False)
+            api_owner.enable()
+            sync = worker_owner.refresh_control_state_from_disk()
+            self.assertTrue(sync["ok"])
+            self.assertTrue(sync["autopilot_enabled"])
+            self.assertTrue(worker_owner.enabled())
+            Path(state_path).write_text("{}", encoding="utf-8")
+            failed = worker_owner.refresh_control_state_from_disk()
+            self.assertFalse(failed["ok"])
+            self.assertFalse(worker_owner.enabled())
 
 
 class PositionClassificationTests(unittest.TestCase):

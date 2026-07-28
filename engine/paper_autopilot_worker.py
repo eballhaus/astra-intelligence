@@ -600,6 +600,30 @@ class PaperAutopilotWorker:
     def _bounded_cycle(self) -> None:
         started = time.monotonic()
         cycle_id = f"cycle-{self.cycle_count + 1}-{int(time.time())}"
+        # The API process only writes the guarded enable decision.  The
+        # isolated worker consumes that durable switch before each cycle so an
+        # API-local instance cannot claim activation the execution owner did
+        # not receive.  This performs no broker/provider action and fails
+        # closed if the control record is unreadable.
+        control_sync = {
+            "ok": False,
+            "autopilot_enabled": False,
+            "control_state_sync": "UNSUPPORTED_FAIL_CLOSED",
+        }
+        refresh_control = getattr(self.autopilot, "refresh_control_state_from_disk", None)
+        if callable(refresh_control):
+            try:
+                control_sync = dict(refresh_control() or control_sync)
+            except Exception as exc:
+                if hasattr(self.autopilot, "_enabled"):
+                    self.autopilot._enabled = False
+                control_sync = {
+                    "ok": False,
+                    "autopilot_enabled": False,
+                    "control_state_sync": "FAILED_CLOSED",
+                    "control_state_error": str(exc)[:160],
+                }
+        self._publish(paper_autopilot_control_sync=control_sync)
         before, policy = self._sample_resource()
         resource_state = str(before.get("resource_state") or "RESOURCE_NORMAL")
         if resource_state in {"RESOURCE_HIGH_PAUSE", "RESOURCE_MEMORY_PAUSE", "RESOURCE_API_LATENCY_PAUSE", "RESOURCE_UNKNOWN_FAIL_CLOSED"}:

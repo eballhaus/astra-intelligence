@@ -7815,8 +7815,40 @@ class PaperAutopilotEngine:
         return self.toggle(False)
 
     def refresh_enabled_from_state(self):
-        self._load_state_file()
-        return {"ok": True, "autopilot_enabled": self._enabled}
+        return self.refresh_control_state_from_disk()
+
+    def refresh_control_state_from_disk(self):
+        """Reload only the durable enable switch for the isolated worker.
+
+        API handlers and the worker run in separate processes.  Reloading the
+        complete runtime payload here could overwrite worker-owned evidence,
+        while retaining the constructor value can leave the worker disabled
+        after a guarded API enable.  The state file is atomically replaced by
+        ``_save_state_file``; an unavailable or malformed switch fails closed.
+        """
+        result = {
+            "ok": False,
+            "control_state_source": "paper_autopilot_state_file",
+            "autopilot_enabled": False,
+            "control_state_sync": "FAILED_CLOSED",
+        }
+        try:
+            with open(self.state_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            enabled = payload.get("autopilot_enabled") if isinstance(payload, dict) else None
+            if not isinstance(enabled, bool):
+                raise ValueError("autopilot_enabled_missing_or_invalid")
+            self._enabled = enabled
+            result.update({
+                "ok": True,
+                "autopilot_enabled": bool(self._enabled),
+                "control_state_sync": "SYNCHRONIZED",
+            })
+        except Exception as exc:
+            self._enabled = False
+            result["control_state_error"] = str(exc)[:160]
+        self._runtime_state["control_state_sync_v1"] = dict(result)
+        return result
 
     def _recover_broker_position_lane_horizon_v1(
         self,
