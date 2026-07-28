@@ -66,6 +66,12 @@ from engine.astra_canonical_position_snapshot_v1 import (
     snapshot_to_loss_containment_rows,
     snapshot_to_broker_position_by_symbol,
 )
+from engine.astra_canonical_ownership_contract_v1 import (
+    broker_residual_lookup,
+)
+from engine.astra_off_hours_completed_bar_v1 import (
+    attach_completed_bar_downside_to_status,
+)
 from engine.astra_position_lane_horizon_recovery_v1 import (
     AstraPositionLaneHorizonRecoveryV1,
     build_position_lane_horizon_recovery_v1,
@@ -2186,13 +2192,9 @@ class PaperAutopilotEngine:
         """Canonical gate — every paper sell must pass this human-approval check.
 
         Returns {"valid": True} or {"valid": False, "reason": ..., "blocker": ...}.
-
-        Only bypassed when approval_enforcement is explicitly False during
-        controlled testing of lower-level logic.  Production always True.
+        There is no production bypass; enforcement cannot be disabled through
+        environment, configuration, constructor arguments, or runtime state.
         """
-        if not getattr(self, "approval_enforcement", True):
-            return {"valid": True, "reason": "APPROVAL_ENFORCEMENT_BYPASSED_TEST_ONLY"}
-
         # The approval is stored in runtime state under a per-symbol key.
         approvals = dict(self._runtime_state.get("paper_sell_approvals") or {})
         symbol = str(open_row.get("symbol") or "").upper().strip()
@@ -2501,6 +2503,12 @@ class PaperAutopilotEngine:
             "submitted_at": _now_iso(), "contract": contract, "legacy_swing_canary_adapter_v1": bool(open_row.get("legacy_swing_canary_adapter_v1")), **normalized,
         }
         self._runtime_state["authorized_lane_exit_pending"] = pending_map
+        # Consume the canonical human approval atomically with durable order-intent creation.
+        approvals = dict(self._runtime_state.get("paper_sell_approvals") or {})
+        approval = dict(approvals.get(symbol) or {}) if symbol else None
+        if approval and approval.get("approval_id"):
+            approvals[symbol] = consume_paper_sell_approval_v1(approval, order_intent_id=client_order_id)
+            self._runtime_state["paper_sell_approvals"] = approvals
         return {"ok": True, "submitted": True, "pending_order_id": pending_id, "contract": contract, **normalized}
 
     def _record_legacy_swing_exit_broker_update(self, item: dict[str, Any], order: dict[str, Any], broker_position: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -4148,6 +4156,12 @@ class PaperAutopilotEngine:
             "retry_status": retry_status,
         }
         self._set_learned_exit_pending_map(pending)
+        # Consume the canonical human approval atomically with durable order-intent creation.
+        approvals = dict(self._runtime_state.get("paper_sell_approvals") or {})
+        approval = dict(approvals.get(symbol) or {}) if symbol else None
+        if approval and approval.get("approval_id"):
+            approvals[symbol] = consume_paper_sell_approval_v1(approval, order_intent_id=client_order_id)
+            self._runtime_state["paper_sell_approvals"] = approvals
         self._append_learned_exit_event({
             "event": "sell_submitted_pending_fill",
             **candidate,
@@ -6191,7 +6205,14 @@ class PaperAutopilotEngine:
             blocker = "session_order_submission_blocked"
             if bool(session_diag.get("execution_confirmation_required", True)):
                 blocker = "open_confirmation_required"
-            return {
+            # Produce the most recent completed bar's downside before the early
+            # return so the status/equity risk envelope remains useful off-hours.
+            completed_bar = (
+                dict(r.get("completed_bar") or {})
+                or dict(r.get("latest_completed_bar") or {})
+                or dict(r.get("bar") or {})
+            )
+            return attach_completed_bar_downside_to_status({
                 "ok": False,
                 "paper_order_submitted": False,
                 "error": blocker,
@@ -6217,7 +6238,7 @@ class PaperAutopilotEngine:
                 "portfolio_risk_label_used": risk_label_raw,
                 "portfolio_risk_preflight_reason": preflight_reason,
                 "natural_exit_logic_preserved": True,
-            }
+            }, completed_bar)
         if str(session_diag.get("open_confirmation_label") or "") != "confirmed_execute":
             return {
                 "ok": False,
@@ -6861,9 +6882,17 @@ class PaperAutopilotEngine:
                 return {"ok": False, "error": str(contract.get("reason") or "lane_exit_not_authorized"), "contract": contract}
             if not isinstance(broker_fill, dict) or not str(broker_fill.get("exit_order_id") or "").strip() or not str(broker_fill.get("exit_fill_id") or "").strip():
                 return {"ok": False, "error": "broker_exit_fill_required_before_lane_lifecycle_close", "contract": contract}
-            # Verify broker residual quantity is zero after fill.
+            # Real broker residual lookup before exit closure.
+            residual = broker_residual_lookup(open_row, broker_fill)
+            if not residual.get("exit_allowed"):
+                return {
+                    "ok": False,
+                    "error": "broker_residual_quantity_nonzero",
+                    "broker_residual_lookup": residual,
+                    "remaining_qty": residual.get("broker_residual_quantity"),
+                }
             filled_qty = _to_float(broker_fill.get("filled_qty") or broker_fill.get("quantity"), 0.0)
-            remaining_qty = _to_float(broker_fill.get("remaining_qty") or broker_fill.get("qty") or broker_fill.get("qty_after_fill"), None)
+            remaining_qty = residual.get("broker_residual_quantity")
             if remaining_qty is not None and remaining_qty > 0.0:
                 return {"ok": False, "error": "broker_residual_quantity_nonzero", "remaining_qty": remaining_qty, "filled_qty": filled_qty}
 

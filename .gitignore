@@ -64,6 +64,9 @@ state/*.sqlite3
 state/*.pid
 state/*heartbeat*
 state/*.log
+state/*.lock
+state/dashboard_cache/
+state/long_term_memory/
 
 # Keep placeholders/docs only
 !state/.gitkeep

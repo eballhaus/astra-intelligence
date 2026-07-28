@@ -1,11 +1,18 @@
 """Canonical ownership contract — one state per broker position."""
 from __future__ import annotations
 
+import json
+import os
+import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping
 
 
 SCHEMA_VERSION = "astra_canonical_ownership_contract_v1"
+
+DEFAULT_STATE_DIR = "state"
+DUST_REGISTRY_FILE = "broker_dust_positions_v1.json"
 
 OWNERSHIP_STATES = frozenset({
     "MANAGED",
@@ -171,6 +178,18 @@ def build_ownership_integrity_report_v1(
             is_broker_position=symbol in broker_set,
             has_db_record=has_db,
         )
+
+        # Dust positions override the canonical ownership state: they are real
+        # broker exposure and must be monitored/reconciled even when they lack
+        # a full lifecycle contract.
+        dust = classify_dust_position_v1(row, is_broker_position=symbol in broker_set)
+        if dust.get("is_dust"):
+            result = {
+                **result,
+                "ownership_state": "BROKER_DUST_MONITORED",
+                "dust_classification": dust,
+            }
+
         state = result["ownership_state"]
         state_counts[state] = state_counts.get(state, 0) + 1
 
@@ -193,13 +212,15 @@ def build_ownership_integrity_report_v1(
     duplicate_count = len(set(s for s in duplicate_symbols if duplicate_symbols.count(s) > 1))
     dust_count = state_counts.get("BROKER_DUST_MONITORED", 0)
 
-    # Ownership score: positions with accurate DB representation (MANAGED or
-    # LEGACY_MANAGED) divided by all broker positions requiring representation.
-    # Legacy positions count as reconciled when their current broker state is
-    # mirrored, even if historical lane is UNKNOWN.  Dust is in denominator.
-    represented = managed_count + legacy_managed_count
-    ownership_score = 100.0 if total_broker == 0 else round(
-        (represented / total_broker) * 100.0, 2
+    # Ownership score: positions with accurate DB representation (MANAGED,
+    # LEGACY_MANAGED, or BROKER_DUST_MONITORED) divided by all broker positions
+    # requiring representation. Legacy positions count as reconciled when their
+    # current broker state is mirrored, even if historical lane is UNKNOWN.
+    # Dust positions are real broker exposure and count toward reconciliation.
+    represented = managed_count + legacy_managed_count + dust_count
+    denominator = total_broker if total_broker > 0 else (managed_count + legacy_managed_count + legacy_unlinked_count + broker_only_count + dust_count)
+    ownership_score = 100.0 if denominator == 0 else round(
+        (represented / denominator) * 100.0, 2
     )
 
     first_blocker = ""
@@ -248,6 +269,8 @@ def is_broker_linked_active_position(
 
     Returns False for: SIMULATED, SHADOW, STALE, FAILED, CLOSED, and
     other non-active statuses.  Returns False for zero-quantity positions.
+    Returns False when the record explicitly declares it is not broker-linked
+    (e.g. reconciliation_reason contains NO_BROKER_LINKAGE).
 
     Dust positions (qty < 0.001) are included by default because they
     represent real broker exposure and must not disappear from monitoring
@@ -258,7 +281,29 @@ def is_broker_linked_active_position(
     status = _text(row.get("status") or "").upper()
     if status in NON_ACTIVE_STATUSES:
         return False
-    qty = _num(row.get("quantity") or row.get("qty") or 0.0) or 0.0
+
+    reconciliation_reason = _text(row.get("reconciliation_reason")).upper()
+    broker_linked_flag = _text(row.get("broker_linked")).upper()
+    has_broker_linkage_evidence = bool(
+        _text(row.get("entry_fill_id"))
+        or _text(row.get("exit_fill_id"))
+        or bool(row.get("entry_price_verified"))
+        or bool(row.get("exit_price_verified"))
+        or broker_linked_flag in {"TRUE", "YES", "1"}
+    )
+
+    # If the record explicitly declares no broker linkage AND lacks any
+    # counter-evidence (fill ids, verified prices), it is not a real position.
+    if ("NO_BROKER_LINKAGE" in reconciliation_reason) and not has_broker_linkage_evidence:
+        return False
+    if broker_linked_flag in {"FALSE", "0", "NO"} and not has_broker_linkage_evidence:
+        return False
+
+    qty_field = row.get("quantity")
+    if qty_field is None:
+        qty_field = row.get("qty")
+    qty = _num(qty_field) if qty_field is not None else 0.0
+    qty = qty or 0.0
     if min_qty is not None and abs(qty) < min_qty:
         return False
     if abs(qty) < 0.0000001:
@@ -307,5 +352,172 @@ def classify_dust_position_v1(
         "eligible_for_exit": False,
         "counts_toward_exposure": True,
         "counts_toward_reconciliation": True,
+        "as_of": _iso(),
+    }
+
+
+def _dust_registry_path(state_dir: str | Path | None = None) -> Path:
+    directory = Path(state_dir or os.environ.get("ASTRA_STATE_DIR", DEFAULT_STATE_DIR))
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / DUST_REGISTRY_FILE
+
+
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    """Write JSON atomically using a temporary file and os.replace."""
+    directory = path.parent
+    directory.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(directory), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, separators=(",", ":"), ensure_ascii=True)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except Exception:
+            pass
+        raise
+
+
+def _load_json(path: Path, default: dict[str, Any] | None = None) -> dict[str, Any]:
+    default = dict(default or {})
+    if not path.exists():
+        return default
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        pass
+    return default
+
+
+def dust_position_key(symbol: str, position_id: str | None = None) -> str:
+    """Deterministic key for a dust position entry."""
+    symbol = _text(symbol).upper()
+    pid = _text(position_id or symbol).upper()
+    return f"{pid}:{symbol}"
+
+
+def persist_dust_position_v1(
+    position: Mapping[str, Any],
+    state_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Persist a dust position to the durable JSON registry.
+
+    Dust positions are real broker exposure that must survive runtime restarts
+    and be consumable by downstream reconciliation and risk processes.
+    """
+    classification = classify_dust_position_v1(position)
+    if not classification.get("is_dust"):
+        return {
+            "persisted": False,
+            "reason": "position_not_classified_as_dust",
+            "classification": classification,
+        }
+
+    path = _dust_registry_path(state_dir)
+    registry = _load_json(path, {"schema_version": "broker_dust_positions_v1", "positions": {}})
+    registry.setdefault("schema_version", "broker_dust_positions_v1")
+    registry.setdefault("positions", {})
+
+    symbol = classification["symbol"]
+    position_id = _text(position.get("position_id") or position.get("asset_id") or symbol)
+    key = dust_position_key(symbol, position_id)
+    entry = {
+        **classification,
+        "position_id": position_id,
+        "persisted_at": _iso(),
+        "registry_key": key,
+    }
+    registry["positions"][key] = entry
+    registry["last_updated"] = _iso()
+    _atomic_write_json(path, registry)
+    return {
+        "persisted": True,
+        "registry_path": str(path),
+        "registry_key": key,
+        "entry": entry,
+    }
+
+
+def load_dust_positions_v1(
+    state_dir: str | Path | None = None,
+    symbol: str | None = None,
+) -> list[dict[str, Any]]:
+    """Load durable dust positions from the JSON registry.
+
+    Consumers can call this to retrieve all dust positions, or filter by symbol.
+    """
+    path = _dust_registry_path(state_dir)
+    registry = _load_json(path, {"schema_version": "broker_dust_positions_v1", "positions": {}})
+    positions = list((registry.get("positions") or {}).values())
+    if symbol:
+        target = _text(symbol).upper()
+        positions = [p for p in positions if _text(p.get("symbol")).upper() == target]
+    return positions
+
+
+def clear_dust_positions_v1(state_dir: str | Path | None = None) -> dict[str, Any]:
+    """Clear the durable dust registry.  Useful for deterministic tests."""
+    path = _dust_registry_path(state_dir)
+    registry = {"schema_version": "broker_dust_positions_v1", "positions": {}, "cleared_at": _iso()}
+    _atomic_write_json(path, registry)
+    return {"cleared": True, "registry_path": str(path)}
+
+
+def broker_residual_lookup(
+    position: Mapping[str, Any],
+    broker_position: Mapping[str, Any] | None = None,
+    *,
+    broker_lookup: Any | None = None,
+) -> dict[str, Any]:
+    """Return the real broker residual quantity for a position before exit closure.
+
+    Prefers an explicit broker_position dict, then a callable broker_lookup,
+    then falls back to the position row itself.  A residual greater than zero
+    means the broker still holds the position and local lifecycle closure must
+    not proceed.
+    """
+    row = dict(position or {})
+    symbol = _text(row.get("symbol")).upper()
+    position_id = _text(row.get("position_id") or row.get("asset_id") or symbol)
+
+    def _first_qty(mapping: Mapping[str, Any]) -> float | None:
+        for key in ("qty", "quantity", "qty_available", "residual_qty", "remaining_qty"):
+            if key in mapping and mapping[key] not in (None, ""):
+                return _num(mapping[key])
+        return None
+
+    residual = None
+    source = "unknown"
+
+    broker = dict(broker_position or {})
+    if broker:
+        residual = _first_qty(broker)
+        source = "broker_position"
+
+    if residual is None and callable(broker_lookup):
+        try:
+            looked = broker_lookup(symbol, position_id)
+            if isinstance(looked, dict):
+                residual = _first_qty(looked)
+                source = "broker_lookup"
+        except Exception:
+            pass
+
+    if residual is None:
+        residual = _first_qty(row) if "qty" in row or "quantity" in row or "broker_qty" in row or "broker_quantity" in row else None
+        source = "position_row" if residual is not None else "unknown"
+
+    residual = residual if residual is not None else 0.0
+    return {
+        "position_id": position_id,
+        "symbol": symbol,
+        "broker_residual_quantity": round(residual, 8),
+        "residual_zero": abs(residual) < 0.0000001,
+        "exit_allowed": abs(residual) < 0.0000001,
+        "source": source,
         "as_of": _iso(),
     }

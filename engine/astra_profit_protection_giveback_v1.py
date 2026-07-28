@@ -16,6 +16,8 @@ import tempfile
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
+from engine.astra_canonical_market_timestamp_v1 import canonical_market_timestamp_v1
+
 
 POLICY_SCHEMA_VERSION = "astra_profit_protection_giveback_policy_v1"
 ENGINE_SCHEMA_VERSION = "astra_profit_protection_giveback_v1"
@@ -346,6 +348,24 @@ def _resolve_position_inputs(
         or pos.get("updated_at")
     )
 
+    # Canonical provider-native timestamp: prefers fields such as
+    # observation_timestamp / market_timestamp over synthetic cycle time.
+    provider_native_ts = canonical_market_timestamp_v1(
+        {
+            **pos,
+            **broker,
+            "observation_timestamp": broker.get("observation_timestamp")
+            or pos.get("observation_timestamp"),
+            "market_timestamp": broker.get("market_timestamp")
+            or pos.get("market_timestamp"),
+        }
+    )
+    provider_native_timestamp = provider_native_ts["provider_native_timestamp"]
+    provider_native_timestamp_provenance = provider_native_ts["provenance"]
+    provider_native_timestamp_source = provider_native_ts["source_field"]
+    if not price_timestamp:
+        price_timestamp = provider_native_ts["canonical_timestamp"]
+
     holding_minutes = _age_minutes(
         pos.get("entry_timestamp") or pos.get("entry_filled_at") or pos.get("created_at")
     )
@@ -373,6 +393,9 @@ def _resolve_position_inputs(
         "peak_price": peak_price,
         "mae_pct": mae_pct,
         "price_timestamp": price_timestamp,
+        "provider_native_timestamp": provider_native_timestamp,
+        "provider_native_timestamp_provenance": provider_native_timestamp_provenance,
+        "provider_native_timestamp_source": provider_native_timestamp_source,
         "holding_minutes": holding_minutes,
         "time_since_peak_minutes": time_since_peak_minutes,
         "horizon": _text(pos.get("paper_entry_horizon_style") or pos.get("horizon")),
@@ -870,6 +893,9 @@ def evaluate_position_profit_protection_v1(
         "confidence": round(confidence, 4),
         "data_completeness": "complete" if not blockers else "incomplete",
         "exact_blockers": list(blockers),
+        "provider_native_timestamp": inputs.get("provider_native_timestamp"),
+        "provider_native_timestamp_provenance": inputs.get("provider_native_timestamp_provenance"),
+        "provider_native_timestamp_source": inputs.get("provider_native_timestamp_source"),
         "evidence_provenance": {
             "entry_price_source": "broker_position_avg_entry_price" if broker_position and _num(broker_position.get("avg_entry_price")) else "position_entry_price",
             "current_price_source": "broker_position_current_price" if broker_position and _num(broker_position.get("current_price")) else "position_current_price",
@@ -878,6 +904,9 @@ def evaluate_position_profit_protection_v1(
             "loss_containment_source": "provided_loss_containment_decision" if loss_containment_decision else "not_provided",
             "lane_recovery_source": inputs.get("lane_source") or "UNAVAILABLE",
             "horizon_recovery_source": inputs.get("horizon_source") or "UNAVAILABLE",
+            "provider_native_timestamp": inputs.get("provider_native_timestamp") or "UNAVAILABLE",
+            "provider_native_timestamp_provenance": inputs.get("provider_native_timestamp_provenance") or "UNAVAILABLE",
+            "provider_native_timestamp_source": inputs.get("provider_native_timestamp_source") or "UNAVAILABLE",
         },
         "advisory_only": True,
         "execution_authorized": False,

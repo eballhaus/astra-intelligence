@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch
 
+from engine.astra_paper_exit_approval_contract_v1 import build_paper_sell_approval_v1
 from engine.astra_unified_position_lifecycle_v1 import (
     build_legacy_swing_canary_pre_submit_v1,
     evaluate_legacy_swing_canary_eligibility_v1,
@@ -51,9 +52,17 @@ class LegacySwingCanaryWriterAdapterTests(unittest.TestCase):
         self.engine = object.__new__(PaperAutopilotEngine)
         self.broker = _CountingBroker()
         self.engine.alpaca_paper_broker = self.broker
-        self.engine._runtime_state = {}
-        self.engine.approval_enforcement = False  # Tests bypass approval gate to test lower logic
-        self.engine.learned_exit_validation_kill_switch = True
+        self.engine._runtime_state = {
+            "paper_sell_approvals": {
+                "AAA": build_paper_sell_approval_v1(
+                    approved_by="human",
+                    approved_symbol="AAA",
+                    approved_quantity=20,
+                    approved_decision_id="asset-a",
+                ),
+            },
+        }
+        self.engine.learned_exit_validation_kill_switch = False
         self.engine._alpaca_safety_snapshot = lambda: {"paper_mode_verified": True, "live_endpoint_detected": False}  # type: ignore[method-assign]
         self._disabled_config = patch("engine.paper_autopilot.legacy_swing_canary_configuration_v1", return_value=legacy_swing_canary_configuration_v1({}))
         self._disabled_config.start()

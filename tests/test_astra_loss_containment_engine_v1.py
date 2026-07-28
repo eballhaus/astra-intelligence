@@ -820,5 +820,22 @@ class IntegrationTests(unittest.TestCase):
         self.assertIsNone(loaded.get("first_phase_blocker"))
 
 
+class ProviderNativeTimestampTests(unittest.TestCase):
+    def test_provider_native_timestamp_present_in_decision(self):
+        pos = _position(current_price=98.0, last_update_ts="2025-12-18T20:00:00Z")
+        d = evaluate_position_loss_containment_v1(pos)
+        self.assertIn("provider_native_timestamp", d)
+        self.assertEqual(d["provider_native_timestamp"], "2025-12-18T20:00:00Z")
+        self.assertEqual(d["provider_native_timestamp_provenance"], "provider_native")
+
+    def test_provider_native_timestamp_fallback_when_absent(self):
+        pos = _position(current_price=98.0)
+        pos.pop("last_update_ts", None)
+        d = evaluate_position_loss_containment_v1(pos)
+        self.assertIn("provider_native_timestamp", d)
+        self.assertIsNone(d["provider_native_timestamp"])
+        self.assertEqual(d["provider_native_timestamp_provenance"], "python_fallback")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -181,7 +181,7 @@ class MultiHorizonPaperCapacityExitValidationV1:
             "baseline_exits_today": _to_int(paper_status.get("baseline_exits_today"), 0),
             "learned_corrected_exits_today": _to_int(paper_status.get("learned_corrected_exits_today"), 0),
             "capacity_freed_by_learned_exits": _to_int(paper_status.get("capacity_freed_by_learned_exits"), 0),
-            "max_learning_corrected_exits_per_day": _to_int(paper_status.get("learned_exit_validation_max_exits_per_day"), 5),
+            "max_learning_corrected_exits_per_day": _to_int(paper_status.get("learned_exit_validation_max_exits_per_day"), 0),
             "max_learning_corrected_exit_pct": _to_float(paper_status.get("learned_exit_validation_max_exit_pct"), 25.0),
             "best_learned_exit_policy": _text(throughput_exit.get("best_shadow_exit_policy") or peak.get("best_exit_policy"), "insufficient_data"),
             "baseline_profit_factor": baseline_pf,

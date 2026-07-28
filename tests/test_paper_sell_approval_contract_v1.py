@@ -9,6 +9,7 @@ from engine.astra_paper_exit_approval_contract_v1 import (
     validate_paper_sell_approval_v1,
     consume_paper_sell_approval_v1,
 )
+from engine.paper_autopilot import PaperAutopilotEngine
 
 
 def _now():
@@ -164,3 +165,105 @@ class PaperSellApprovalContractTests(unittest.TestCase):
         a1 = build_paper_sell_approval_v1(approved_by="h", approved_symbol="AAPL", approved_quantity=10)
         a2 = build_paper_sell_approval_v1(approved_by="h", approved_symbol="AAPL", approved_quantity=10)
         self.assertNotEqual(a1["approval_id"], a2["approval_id"])
+
+
+class _FakeBroker:
+    def __init__(self):
+        self.submit_calls = 0
+
+    def submit_paper_order(self, order):
+        self.submit_calls += 1
+        return {"ok": True, "order": {"id": "order-1", "status": "submitted", "client_order_id": order.get("client_order_id")}}
+
+
+class ProductionApprovalEnforcementTests(unittest.TestCase):
+    def _engine(self):
+        engine = object.__new__(PaperAutopilotEngine)
+        engine.alpaca_paper_broker = _FakeBroker()
+        engine._runtime_state = {}
+        engine.learned_exit_validation_kill_switch = False
+        engine._alpaca_safety_snapshot = lambda: {"paper_mode_verified": True, "live_endpoint_detected": False}
+        return engine
+
+    def test_no_production_bypass_exists(self):
+        """Approval enforcement cannot be disabled through a runtime attribute."""
+        engine = self._engine()
+        engine._runtime_state["paper_sell_approvals"] = {}
+        result = engine._validate_sell_approval({"symbol": "AAPL", "quantity": 10})
+        self.assertFalse(result["valid"])
+        # Setting the old bypass attribute must not change the result.
+        engine.approval_enforcement = False
+        result2 = engine._validate_sell_approval({"symbol": "AAPL", "quantity": 10})
+        self.assertFalse(result2["valid"])
+        self.assertNotEqual(result2.get("reason", ""), "APPROVAL_ENFORCEMENT_BYPASSED_TEST_ONLY")
+
+    def test_missing_approval_blocks_authorized_lane_exit(self):
+        engine = self._engine()
+        result = engine._submit_authorized_lane_exit(
+            {"symbol": "AAPL", "position_id": "p1", "quantity": 10, "lane_id": "DAY", "client_order_id": "c1"},
+            {"qty_available": 10, "qty": 10},
+            "fixture",
+        )
+        self.assertFalse(result["ok"])
+        self.assertFalse(result.get("submitted", True))
+        self.assertIn("APPROVAL", result["reason"])
+        self.assertEqual(engine.alpaca_paper_broker.submit_calls, 0)
+
+    def test_missing_approval_blocks_guarded_learned_exit(self):
+        engine = self._engine()
+        result = engine._submit_guarded_learned_exit_sell(
+            {"symbol": "AAPL", "position_id": "p1", "quantity": 10, "lane_id": "DAY", "client_order_id": "c1"},
+            {"symbol": "AAPL", "price": 10.0},
+            {"qty_available": 10, "qty": 10},
+        )
+        self.assertFalse(result["ok"])
+        self.assertFalse(result.get("submitted", True))
+        self.assertIn("APPROVAL", result["reason"])
+        self.assertEqual(engine.alpaca_paper_broker.submit_calls, 0)
+
+    def test_valid_approval_allows_authorized_lane_exit(self):
+        engine = self._engine()
+        engine._runtime_state["paper_sell_approvals"] = {
+            "AAPL": build_paper_sell_approval_v1(
+                approved_by="human", approved_symbol="AAPL", approved_quantity=10, approved_decision_id="p1",
+            ),
+        }
+        from unittest.mock import patch
+        with patch.object(engine, "_authorized_lane_exit_contract", return_value={"authorized": True, "lane_id": "DAY"}):
+            result = engine._submit_authorized_lane_exit(
+                {"symbol": "AAPL", "position_id": "p1", "quantity": 10, "lane_id": "DAY", "client_order_id": "c1"},
+                {"qty_available": 10, "qty": 10},
+                "fixture",
+            )
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["submitted"])
+        self.assertEqual(engine.alpaca_paper_broker.submit_calls, 1)
+
+    def test_consumed_approval_cannot_be_reused(self):
+        engine = self._engine()
+        engine._runtime_state["paper_sell_approvals"] = {
+            "AAPL": build_paper_sell_approval_v1(
+                approved_by="human", approved_symbol="AAPL", approved_quantity=10, approved_decision_id="p1",
+            ),
+        }
+        from unittest.mock import patch
+        with patch.object(engine, "_authorized_lane_exit_contract", return_value={"authorized": True, "lane_id": "DAY"}):
+            result1 = engine._submit_authorized_lane_exit(
+                {"symbol": "AAPL", "position_id": "p1", "quantity": 10, "lane_id": "DAY", "client_order_id": "c1"},
+                {"qty_available": 10, "qty": 10},
+                "fixture",
+            )
+            self.assertTrue(result1["ok"])
+            result2 = engine._submit_authorized_lane_exit(
+                {"symbol": "AAPL", "position_id": "p1", "quantity": 10, "lane_id": "DAY", "client_order_id": "c2"},
+                {"qty_available": 10, "qty": 10},
+                "fixture",
+            )
+        self.assertFalse(result2["ok"])
+        self.assertFalse(result2.get("submitted", True))
+        self.assertEqual(result2["reason"], "APPROVAL_NOT_ACTIVE:CONSUMED")
+        self.assertEqual(engine.alpaca_paper_broker.submit_calls, 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -16,6 +16,8 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Sequence
 
+from engine.astra_canonical_market_timestamp_v1 import canonical_market_timestamp_v1
+
 
 # Policy constants — versioned, central, conservative candidates.
 POLICY_SCHEMA_VERSION = "astra_loss_containment_policy_v1"
@@ -408,6 +410,28 @@ def _resolve_position_inputs(
     )
     price_timestamp = market_observation_timestamp or retrieval_timestamp
 
+    # Canonical provider-native timestamp: prefers fields such as
+    # observation_timestamp / market_timestamp over synthetic cycle time.
+    provider_native_ts = canonical_market_timestamp_v1(
+        {
+            **pos,
+            **broker,
+            **latest,
+            "observation_timestamp": broker.get("observation_timestamp")
+            or latest.get("observation_timestamp")
+            or pos.get("observation_timestamp"),
+            "market_timestamp": broker.get("market_timestamp")
+            or latest.get("market_timestamp")
+            or pos.get("market_timestamp"),
+        }
+    )
+    provider_native_timestamp = provider_native_ts["provider_native_timestamp"]
+    provider_native_timestamp_provenance = provider_native_ts["provenance"]
+    provider_native_timestamp_source = provider_native_ts["source_field"]
+    if not market_observation_timestamp:
+        market_observation_timestamp = provider_native_ts["canonical_timestamp"]
+        price_timestamp = market_observation_timestamp
+
     holding_minutes = _age_minutes(
         pos.get("entry_timestamp")
         or pos.get("entry_filled_at")
@@ -442,6 +466,9 @@ def _resolve_position_inputs(
         "price_timestamp": price_timestamp,
         "market_observation_timestamp": market_observation_timestamp,
         "retrieval_timestamp": retrieval_timestamp,
+        "provider_native_timestamp": provider_native_timestamp,
+        "provider_native_timestamp_provenance": provider_native_timestamp_provenance,
+        "provider_native_timestamp_source": provider_native_timestamp_source,
         "market_observation_unavailable": not bool(market_observation_timestamp),
         "holding_minutes": holding_minutes,
         "peak_unrealized_pct": peak_unrealized_pct,
@@ -1144,6 +1171,9 @@ def evaluate_position_loss_containment_v1(
         "confidence": round(confidence, 4),
         "data_completeness": "complete" if not blockers else "incomplete",
         "exact_blockers": list(blockers),
+        "provider_native_timestamp": inputs.get("provider_native_timestamp"),
+        "provider_native_timestamp_provenance": inputs.get("provider_native_timestamp_provenance"),
+        "provider_native_timestamp_source": inputs.get("provider_native_timestamp_source"),
         "evidence_provenance": {
             "entry_price_source": "broker_position_avg_entry_price" if broker_position and _num(broker_position.get("avg_entry_price")) else "position_entry_price",
             "current_price_source": "broker_position_current_price" if broker_position and _num(broker_position.get("current_price")) else "latest_price_snapshot",
@@ -1152,6 +1182,9 @@ def evaluate_position_loss_containment_v1(
             "horizon_recovery_source": inputs.get("horizon_source") or "UNAVAILABLE",
             "market_observation_timestamp": inputs.get("market_observation_timestamp") or "UNAVAILABLE",
             "retrieval_timestamp": inputs.get("retrieval_timestamp") or "UNAVAILABLE",
+            "provider_native_timestamp": inputs.get("provider_native_timestamp") or "UNAVAILABLE",
+            "provider_native_timestamp_provenance": inputs.get("provider_native_timestamp_provenance") or "UNAVAILABLE",
+            "provider_native_timestamp_source": inputs.get("provider_native_timestamp_source") or "UNAVAILABLE",
             "market_observation_unavailable": bool(inputs.get("market_observation_unavailable")),
         },
         "advisory_only": True,

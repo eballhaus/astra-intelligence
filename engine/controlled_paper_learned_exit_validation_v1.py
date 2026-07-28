@@ -103,7 +103,7 @@ class ControlledPaperLearnedExitValidationV1:
         max_daily = max(0, min(5, _to_int(
             paper_status.get("learned_exit_validation_max_exits_per_day")
             or multi.get("max_learning_corrected_exits_per_day"),
-            5,
+            0,
         )))
         max_pct = max(0.0, min(25.0, _to_float(
             paper_status.get("learned_exit_validation_max_exit_pct")
