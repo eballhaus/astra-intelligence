@@ -16,6 +16,7 @@ from engine.astra_trading_reset_boundary_v1 import (
     POST_RESET_CURRENT,
     PRE_RESET_LEGACY,
     RESET_BOUNDARY_REVIEW_REQUIRED,
+    boundary_is_production_active_v1,
     determine_reset_boundary_v1,
     _iso,
     _text,
@@ -83,7 +84,10 @@ def build_sentinel_reset_boundary_report_v1(
     metric_leakage = bool(leaking_ids)
 
     flags = {
-        "reset_boundary_active": boundary.get("status") == "ACTIVE",
+        # A forward-only certificate is deliberately a different status from
+        # the historic ``ACTIVE`` marker, but it is the same production-safe
+        # boundary for Sentinel/Governance reporting.
+        "reset_boundary_active": boundary_is_production_active_v1(boundary),
         "unclassified_pre_reset_evidence": unclassified,
         "legacy_position_consuming_strategy_slot": legacy_position_slot_leak,
         "legacy_truth_leaking_into_current_metrics": metric_leakage,

@@ -251,6 +251,17 @@ class ResetBoundaryTests(unittest.TestCase):
             self.assertFalse(failed["ok"])
             self.assertFalse(worker_owner.enabled())
 
+    def test_sentinel_recognizes_verified_forward_only_boundary(self):
+        boundary = build_forward_only_activation_boundary_v1(
+            activation_timestamp_utc=LATER_POST_RESET_TS,
+            activation_evidence={key: True for key in astra_trading_reset_boundary_v1.REQUIRED_ACTIVATION_EVIDENCE},
+            production_commit="deadbeef",
+            worker_pid=123,
+            backend_started_at=POST_RESET_TS,
+        )
+        sentinel = build_sentinel_reset_boundary_report_v1([], compute_reset_aware_metrics_v1([]), [], boundary)
+        self.assertTrue(sentinel["flags"]["reset_boundary_active"])
+
 
 class PositionClassificationTests(unittest.TestCase):
     def test_position_open_before_reset_is_legacy(self):
