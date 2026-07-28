@@ -590,7 +590,10 @@ class AlpacaPaperBroker:
         return {"ok": True, "positions": positions, "open_positions_count": len(positions)}
 
     def orders(self, status: str = "open", limit: int = 50) -> dict[str, Any]:
-        query = urllib.parse.urlencode({"status": status, "limit": max(1, min(100, _to_int(limit, 50)))})
+        # Alpaca allows a bounded historical order page.  Keep the default
+        # small for hot paths while allowing the explicit provenance audit to
+        # inspect a single, read-only 500-row page.
+        query = urllib.parse.urlencode({"status": status, "limit": max(1, min(500, _to_int(limit, 50)))})
         ok, data, err = self._request("GET", f"/orders?{query}")
         if not ok or not isinstance(data, list):
             return {"ok": False, "error": err, "orders": []}
@@ -729,7 +732,24 @@ class AlpacaPaperBroker:
                     "client_order_id": _safe_text(row.get("client_order_id")),
                 }
             )
-        unpaired_buy_count = sum(1 for symbol_lots in lots.values() for lot in symbol_lots if _to_float(lot.get("qty"), 0.0) > 1e-9)
+        open_buy_lots_by_symbol: dict[str, list[dict[str, Any]]] = {}
+        for symbol, symbol_lots in lots.items():
+            remaining_lots = []
+            for lot in symbol_lots:
+                remaining = _to_float(lot.get("qty"), 0.0)
+                if remaining <= 1e-9:
+                    continue
+                remaining_lots.append({
+                    "remaining_qty": round(remaining, 8),
+                    "filled_avg_price": round(_to_float(lot.get("price"), 0.0), 8),
+                    "filled_at": _safe_text(lot.get("filled_at")),
+                    "broker_order_id": _safe_text(lot.get("broker_order_id")),
+                    "client_order_id": _safe_text(lot.get("client_order_id")),
+                    "source": "alpaca_paper_closed_orders_fifo",
+                })
+            if remaining_lots:
+                open_buy_lots_by_symbol[symbol] = remaining_lots
+        unpaired_buy_count = sum(len(symbol_lots) for symbol_lots in open_buy_lots_by_symbol.values())
         unpaired_sell_count = max(0, len(sell_fill_rows) - len(closed_rows))
         trade_count = len(closed_rows)
         winning = len([row for row in closed_rows if _to_float(row.get("realized_pnl"), 0.0) > 0])
@@ -775,10 +795,66 @@ class AlpacaPaperBroker:
             "paired_round_trip_count": trade_count,
             "unpaired_buy_count": unpaired_buy_count,
             "unpaired_sell_count": unpaired_sell_count,
+            # These lots are a read-only provenance aid.  They are not a
+            # position source of truth and can never authorize an order.
+            "open_buy_lots_by_symbol": open_buy_lots_by_symbol,
             "fill_rows": fill_rows[-100:],
             "buy_fill_rows": buy_fill_rows[-50:],
             "sell_fill_rows": sell_fill_rows[-50:],
             "closed_trade_rows": closed_rows[-25:],
+        }
+
+    def reconstruct_open_position_provenance(
+        self,
+        positions: list[dict[str, Any]] | None,
+        *,
+        limit: int = 500,
+    ) -> dict[str, Any]:
+        """Join current broker positions to surviving FIFO buy lots.
+
+        The method deliberately performs one existing read-only order-history
+        request and never treats an average entry price as entry provenance.
+        A partial exit consumes oldest lots first, leaving only the surviving
+        quantities as evidence for an open broker position.
+        """
+        facts = self.broker_truth_metrics(limit=limit)
+        raw_lots = dict(facts.get("open_buy_lots_by_symbol") or {}) if isinstance(facts, dict) else {}
+        rows: list[dict[str, Any]] = []
+        for position in positions or []:
+            row = dict(position or {})
+            symbol = _safe_text(row.get("symbol")).upper()
+            qty = abs(_to_float(row.get("qty"), 0.0))
+            lots = [dict(item) for item in (raw_lots.get(symbol) or []) if isinstance(item, dict)]
+            covered_qty = round(sum(_to_float(item.get("remaining_qty"), 0.0) for item in lots), 8)
+            timestamps = sorted({_safe_text(item.get("filled_at")) for item in lots if _safe_text(item.get("filled_at"))})
+            order_ids = sorted({_safe_text(item.get("broker_order_id")) for item in lots if _safe_text(item.get("broker_order_id"))})
+            client_order_ids = sorted({_safe_text(item.get("client_order_id")) for item in lots if _safe_text(item.get("client_order_id"))})
+            coverage_complete = bool(qty > 0 and covered_qty + 1e-8 >= qty)
+            rows.append({
+                "symbol": symbol,
+                "current_quantity": round(qty, 8),
+                "matching_entry_fills": lots,
+                "earliest_still_open_fill_timestamp": timestamps[0] if timestamps else None,
+                "latest_still_open_fill_timestamp": timestamps[-1] if timestamps else None,
+                "broker_order_ids": order_ids,
+                "client_order_ids": client_order_ids,
+                "surviving_fill_quantity": covered_qty,
+                "quantity_coverage_complete": coverage_complete,
+                "entry_provenance_status": "BROKER_FIFO_FILL_MATCHED" if coverage_complete else (
+                    "BROKER_FIFO_FILL_PARTIAL" if lots else "BROKER_FILL_HISTORY_UNAVAILABLE"
+                ),
+                "entry_provenance_source": "alpaca_paper_closed_orders_fifo",
+                "broker_actions_used": 0,
+            })
+        return {
+            "ok": bool(facts.get("ok")) if isinstance(facts, dict) else False,
+            "positions": rows,
+            "closed_orders_reviewed": int(_to_float((facts or {}).get("closed_orders_reviewed"), 0.0)),
+            "filled_orders_reviewed": int(_to_float((facts or {}).get("filled_orders_reviewed"), 0.0)),
+            "broker_read_calls_used": 1,
+            "broker_actions_used": 0,
+            "source": "alpaca_paper_closed_orders_fifo",
+            "error": _safe_text((facts or {}).get("error")),
         }
 
     def order(self, order_id: str) -> dict[str, Any]:

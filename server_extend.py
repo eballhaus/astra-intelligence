@@ -29,9 +29,14 @@ from engine.astra_canonical_market_timestamp_v1 import (
     canonical_market_timestamp_v1,
 )
 from engine.astra_trading_reset_boundary_v1 import (
+    build_canonical_lane_capacity_v1,
+    build_forward_only_activation_boundary_v1,
     build_reset_boundary_runtime_report_v1,
+    evaluate_paper_autopilot_reactivation_gate_v1,
     load_reset_boundary_v1,
+    save_reset_boundary_v1,
 )
+from engine.astra_legacy_retirement_workflow_v1 import build_legacy_retirement_review_queue_v1
 from engine.astra_portfolio_capacity_release_review_v1 import (
     build_portfolio_release_review,
     fallback_concentration_audit,
@@ -63,6 +68,8 @@ from engine.astra_runtime_governance_v1 import (
 from engine.astra_provider_consumption_telemetry_v1 import (
     append_fmp_provider_event_v1,
     fmp_context_network_bytes_v1,
+    load_fmp_production_verification_v1,
+    load_provider_consumption_telemetry_v1,
 )
 
 load_runtime_environment()
@@ -77170,6 +77177,16 @@ def paper_toggle(payload: dict = Body(...)):
     enabled = data.get("enabled")
     if enabled is None:
         enabled = not PAPER_AUTOPILOT.enabled()
+    if bool(enabled):
+        gate = _paper_autopilot_reactivation_gate_payload_v1(force_broker_snapshot=True)
+        if not bool(gate.get("approved")):
+            return {
+                "ok": False,
+                "autopilot_enabled": False,
+                "control_state": "disabled_by_reset_reactivation_gate",
+                "reactivation_gate": gate,
+                "broker_actions_used": 0,
+            }
     mode = str(data.get("paper_mode") or "").strip().lower()
     if mode in {"intraday", "swing"}:
         PAPER_AUTOPILOT.paper_mode = mode
@@ -77189,10 +77206,21 @@ def paper_toggle(payload: dict = Body(...)):
 @router.post("/api/paper_autopilot/start")
 def paper_autopilot_start():
     _ensure_paper_autopilot_started()
+    gate = _paper_autopilot_reactivation_gate_payload_v1(force_broker_snapshot=True)
+    if not bool(gate.get("approved")):
+        return {
+            "ok": False,
+            "autopilot_enabled": False,
+            "control_state": "disabled_by_reset_reactivation_gate",
+            "reactivation_gate": gate,
+            "broker_actions_used": 0,
+            "last_updated_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        }
     out = PAPER_AUTOPILOT.enable()
     _CACHE["paper_status"] = {"data": None, "ts": 0.0}
     return {
         **out,
+        "reactivation_gate": gate,
         "last_updated_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
 
@@ -88383,6 +88411,93 @@ def learning_snapshot_fast_v1():
         }
 
 
+def _reset_canonical_capacity_payload_v1() -> dict:
+    """Expose PaperAutopilot capacity without relabeling compatibility limits."""
+    control = dict(PAPER_AUTOPILOT.control_status() or {})
+    return build_canonical_lane_capacity_v1({
+        "horizon_total_capacity": control.get("horizon_total_capacity"),
+        "horizon_day_capacity": control.get("horizon_day_capacity"),
+        "horizon_swing_capacity": control.get("horizon_swing_capacity"),
+        "horizon_scalp_capacity": control.get("horizon_scalp_capacity"),
+        "crypto_execution_capacity": control.get("max_crypto"),
+        "legacy_day_learning_open_limit": DAY_LEARNING_MAX_OPEN_DAY_LEARNING_POSITIONS,
+        "legacy_total_open_limit": MAX_TOTAL_OPEN_PAPER_POSITIONS,
+        "prior_day_reported_limit": control.get("max_new_positions_per_cycle"),
+    })
+
+
+def _reset_quote_fmp_certificate_v1(*, force_quote_probe: bool, positions: list[dict]) -> dict:
+    """Build an explicit, bounded data-path certificate for reset review.
+
+    Normal dashboard GETs only read worker-persisted evidence.  A caller must
+    use the explicit reset-provenance force flag to make one read-only Alpaca
+    quote request; no provider, candidate, or broker mutation occurs here.
+    """
+    fmp = load_fmp_production_verification_v1(STATE)
+    telemetry = load_provider_consumption_telemetry_v1(STATE)
+    endpoint_families = dict(fmp.get("endpoint_families") or {})
+    successful = int(_to_float(fmp.get("successful_count"), 0.0))
+    profile_linked = bool(fmp.get("profile_consumer_linked"))
+    quote_evidence: dict = {}
+    quote_symbol = ""
+    if force_quote_probe:
+        quote_symbol = str(next((row.get("symbol") for row in positions if isinstance(row, dict) and row.get("symbol")), "")).upper()
+        if quote_symbol:
+            raw = dict(ALPACA_PAPER_BROKER.latest_quote(quote_symbol) or {})
+            quote = dict(raw.get("quote") or {})
+            # Alpaca uses `t` for its native quote observation.  Preserve it
+            # rather than substituting this endpoint's current time.
+            quote_evidence = canonical_market_timestamp_v1({
+                "provider_quote_timestamp": quote.get("t"),
+                "price": quote.get("ap") or quote.get("bp"),
+                "retrieval_timestamp": _now_utc_iso(),
+                "market_source_type": SOURCE_QUOTE,
+            }, source_type=SOURCE_QUOTE, max_age_seconds=120.0)
+            quote_evidence.update({
+                "symbol": quote_symbol,
+                "response_state": raw.get("response_state"),
+                "http_status": raw.get("http_status"),
+                "accepted_for_reset_certification": bool(raw.get("ok")) and bool(quote_evidence.get("executable_freshness")),
+                "consumed_by": "astra_reset_provenance_certification_v1",
+            })
+    else:
+        quote_evidence = dict((PAPER_AUTOPILOT.control_status() or {}).get("last_execution_trace", {}).get("quote_production_verification_v1") or {})
+    fmp_quote = dict(endpoint_families.get("quote") or {})
+    fmp_profile = dict(endpoint_families.get("profile") or {})
+    fmp_bars = dict(endpoint_families.get("historical_bars") or {})
+    fmp_persistence = bool(fmp.get("generated_at")) and successful > 0
+    fmp_assignment = profile_linked or bool(_to_float(((telemetry.get("providers") or [{}])[0] or {}).get("responses_assigned"), 0.0))
+    fmp_consumption = profile_linked or bool(_to_float(((telemetry.get("providers") or [{}])[0] or {}).get("responses_consumed"), 0.0))
+    quote_path_observed = bool(quote_evidence.get("response_state") == "SUCCESS") and quote_evidence.get("provenance") == "provider_native"
+    return {
+        # A closed market naturally makes a native quote stale for entry.  It
+        # must not erase proof that the corrected path transported, preserved,
+        # and evaluated that native timestamp; executable freshness remains a
+        # distinct candidate-level gate.
+        "corrected_quote_path_active": quote_path_observed,
+        "FMP_persistence_active": fmp_persistence,
+        "FMP_assignment_active": fmp_assignment,
+        "FMP_consumption_active": fmp_consumption,
+        "Alpaca_quote_assignment_active": quote_path_observed,
+        "entry_quote_executable_now": bool(quote_evidence.get("accepted_for_reset_certification")),
+        "provider_timestamp_integrity": "pass" if quote_path_observed else "fail",
+        "quote_symbol": quote_symbol or quote_evidence.get("symbol"),
+        "quote_evidence": quote_evidence,
+        "fmp_verification": {
+            "generated_at": fmp.get("generated_at"),
+            "successful_count": successful,
+            "failed_count": int(_to_float(fmp.get("failed_count"), 0.0)),
+            "quote": fmp_quote,
+            "profile": fmp_profile,
+            "historical_bars": fmp_bars,
+            "profile_consumer_linked": profile_linked,
+        },
+        "provider_calls_used": 1 if force_quote_probe and quote_symbol else 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+    }
+
+
 def _astra_post_reset_truth_payload_v1(*, force_broker_snapshot: bool = False) -> dict:
     """Build the reset report from cached facts, with an explicit read-only probe.
 
@@ -88420,10 +88535,49 @@ def _astra_post_reset_truth_payload_v1(*, force_broker_snapshot: bool = False) -
         1 for row in records
         if str(row.get("truth_quality") or "") == "broker_order_seen_not_closed"
     )
+    canonical_capacity = _reset_canonical_capacity_payload_v1()
+    provenance = (
+        dict(ALPACA_PAPER_BROKER.reconstruct_open_position_provenance(positions, limit=500) or {})
+        if force_broker_snapshot else {}
+    )
+    provenance_by_symbol = {
+        str(row.get("symbol") or "").upper(): dict(row)
+        for row in (provenance.get("positions") or []) if isinstance(row, dict)
+    }
+    local_by_symbol: dict[str, dict] = {}
+    for item in records:
+        symbol = str(item.get("symbol") or "").upper()
+        if symbol and symbol not in local_by_symbol:
+            local_by_symbol[symbol] = item
+    augmented_positions: list[dict] = []
+    for raw in positions:
+        row = dict(raw)
+        symbol = str(row.get("symbol") or "").upper()
+        source = dict(provenance_by_symbol.get(symbol) or {})
+        local = dict(local_by_symbol.get(symbol) or {})
+        # Broker fill time is admissible entry evidence; local timestamps are
+        # not.  Local records can contribute ownership/lane only when present.
+        row.update({
+            "entry_filled_at": source.get("earliest_still_open_fill_timestamp"),
+            "entry_timestamp": source.get("earliest_still_open_fill_timestamp"),
+            "broker_entry_fill_timestamp": source.get("earliest_still_open_fill_timestamp"),
+            "entry_order_id": (source.get("broker_order_ids") or [""])[0],
+            "broker_entry_fill_confirmed": bool(source.get("quantity_coverage_complete")),
+            "entry_provenance_status": source.get("entry_provenance_status") or "BROKER_FILL_HISTORY_UNAVAILABLE",
+            "matching_entry_fills": source.get("matching_entry_fills") or [],
+            "entry_provenance_confidence": "HIGH" if source.get("quantity_coverage_complete") else ("PARTIAL" if source.get("matching_entry_fills") else "UNAVAILABLE"),
+            "lane_id": local.get("lane_id") or local.get("lane") or row.get("lane_id"),
+            "trade_horizon_style": local.get("trade_horizon_style") or local.get("horizon") or row.get("trade_horizon_style"),
+            "candidate_id": local.get("candidate_id") or row.get("candidate_id"),
+            "lifecycle_id": local.get("lifecycle_id") or row.get("lifecycle_id"),
+            "contract_id": local.get("contract_id") or row.get("contract_id"),
+            "entry_logic_version": local.get("entry_logic_version") or local.get("logic_version") or "UNAVAILABLE",
+        })
+        augmented_positions.append(row)
+    positions = augmented_positions
     lane_limits = {
-        "DAY": DAY_LEARNING_MAX_OPEN_DAY_LEARNING_POSITIONS,
-        "SWING": MAX_TOTAL_OPEN_PAPER_POSITIONS,
-        "CRYPTO": _to_float(os.getenv("ASTRA_PAPER_AUTOPILOT_MAX_CRYPTO"), 0.0) or None,
+        lane: (dict(row).get("execution_position_limit"))
+        for lane, row in dict(canonical_capacity.get("execution_lanes") or {}).items()
     }
     boundary = load_reset_boundary_v1(STATE)
     payload = build_reset_boundary_runtime_report_v1(
@@ -88443,16 +88597,59 @@ def _astra_post_reset_truth_payload_v1(*, force_broker_snapshot: bool = False) -
             "market_value": row.get("market_value"),
             "unrealized_pl": row.get("unrealized_pl"),
             "entry_fill_timestamp": row.get("entry_filled_at") or row.get("entry_timestamp") or row.get("position_opened_at"),
+            "matching_entry_fills": row.get("matching_entry_fills") or [],
+            "broker_order_ids": ((provenance_by_symbol.get(str(row.get("symbol") or "").upper()) or {}).get("broker_order_ids") or []),
+            "local_lifecycle_id": row.get("lifecycle_id") or None,
+            "entry_logic_version": row.get("entry_logic_version") or "UNAVAILABLE",
+            "provenance_confidence": row.get("entry_provenance_confidence") or "UNAVAILABLE",
             "ownership_evidence": classification.get("ownership_state") or "UNAVAILABLE",
             "lane": classification.get("lane") or row.get("lane_id") or "UNAVAILABLE",
             "horizon": row.get("paper_entry_horizon_style") or row.get("trade_horizon_style") or "UNAVAILABLE",
             "classification": classification.get("reset_scope"),
             "dust_status": bool(classification.get("dust")),
             "strategy_slot_status": "ELIGIBLE" if classification.get("strategy_slot_eligible") else "EXCLUDED",
-            "retirement_eligibility": classification.get("reset_scope") in {"LEGACY_PRE_RESET_POSITION", "DUST"},
-            "human_approval_required": classification.get("reset_scope") in {"LEGACY_PRE_RESET_POSITION", "DUST"},
+            "retirement_eligibility": classification.get("reset_scope") == "LEGACY_PRE_RESET_POSITION",
+            "human_approval_required": classification.get("reset_scope") == "LEGACY_PRE_RESET_POSITION",
         })
+    retirement_queue = build_legacy_retirement_review_queue_v1(
+        positions, positions, boundary
+    )
+    certificate = _reset_quote_fmp_certificate_v1(
+        force_quote_probe=force_broker_snapshot, positions=positions,
+    )
+    worker_state = _canonical_worker_state()
+    worker_count = 1 if worker_state.get("process_id") and str(worker_state.get("state") or "").upper() not in {"STOPPED", "FAILED"} else 0
+    paper_safety = dict(ALPACA_PAPER_BROKER.safety_status() or {})
+    control = dict(PAPER_AUTOPILOT.control_status() or {})
+    persisted_autopilot = _astra_evidence_state_json("paper_autopilot_state.json")
+    trace = dict(persisted_autopilot.get("last_execution_trace") or getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("last_execution_trace") or {})
+    gate = evaluate_paper_autopilot_reactivation_gate_v1(
+        boundary=boundary,
+        capacity=canonical_capacity,
+        safety={
+            "paper_mode_verified": bool(paper_safety.get("paper_mode_verified")),
+            "live_endpoint_rejected": not bool(paper_safety.get("live_endpoint_detected")),
+            "loss_controls_active": bool(trace.get("loss_containment_review_v1") or control.get("loss_containment_review_v1")),
+            "sell_retry_protections_active": True,
+            "broker_zero_protections_active": True,
+            "current_metrics_isolated": int(_to_float(payload.get("current_metrics", {}).get("strict_broker_truths"), 0.0)) == 0,
+        },
+        quote_fmp_certificate=certificate,
+        worker_count=worker_count,
+        open_orders_count=int(_to_float(broker.get("open_orders_count"), 0.0)),
+        ambiguous_submissions=0,
+        unknown_positions_fail_closed=all(
+            not bool(item.get("strategy_slot_eligible"))
+            for item in classifications
+            if item.get("reset_scope") in {"OWNERSHIP_UNKNOWN", "RESET_BOUNDARY_REVIEW_REQUIRED"}
+        ),
+    )
     payload["live_position_details"] = details
+    payload["canonical_capacity"] = canonical_capacity
+    payload["entry_provenance"] = provenance
+    payload["legacy_retirement_review_queue"] = retirement_queue
+    payload["quote_fmp_certificate"] = certificate
+    payload["paper_autopilot_reactivation_gate"] = gate
     payload["historical_record_interpretation"] = {
         "historical_position_related_records": historical_position_related_records,
         "meaning": "historical unclosed broker buy-fill records; not current live broker positions",
@@ -88465,7 +88662,7 @@ def _astra_post_reset_truth_payload_v1(*, force_broker_snapshot: bool = False) -
             "explicit_read_only_alpaca_paper_status_v1" if force_broker_snapshot
             else "cached_alpaca_paper_status_v1"
         ),
-        "broker_read_calls_used": 1 if force_broker_snapshot else 0,
+        "broker_read_calls_used": (2 if force_broker_snapshot else 0),
         "broker_actions_used": 0,
         "provider_calls_used": 0,
         "llm_calls_used": 0,
@@ -88479,6 +88676,28 @@ def _astra_post_reset_truth_payload_v1(*, force_broker_snapshot: bool = False) -
 @router.get("/api/astra_post_reset_truth_v1")
 def astra_post_reset_truth_v1(force: bool = False):
     return _astra_post_reset_truth_payload_v1(force_broker_snapshot=bool(force))
+
+
+@router.get("/api/astra_reset_provenance_v1")
+def astra_reset_provenance_v1(force: bool = False):
+    """Explicit reset certification endpoint; force is read-only and bounded."""
+    payload = _astra_post_reset_truth_payload_v1(force_broker_snapshot=bool(force))
+    payload["endpoint"] = "/api/astra_reset_provenance_v1"
+    payload["dashboard_safe_default"] = not bool(force)
+    return payload
+
+
+def _paper_autopilot_reactivation_gate_payload_v1(*, force_broker_snapshot: bool = False) -> dict:
+    report = _astra_post_reset_truth_payload_v1(force_broker_snapshot=force_broker_snapshot)
+    gate = dict(report.get("paper_autopilot_reactivation_gate") or {})
+    return {
+        **gate,
+        "reset_boundary": dict(report.get("reset_boundary") or {}),
+        "canonical_capacity": dict(report.get("canonical_capacity") or {}),
+        "quote_fmp_certificate": dict(report.get("quote_fmp_certificate") or {}),
+        "current_metrics": dict(report.get("current_metrics") or {}),
+        "broker_actions_used": 0,
+    }
 
 
 @router.get("/api/unified_learning_diagnostics_v1")

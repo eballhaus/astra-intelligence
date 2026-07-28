@@ -22,15 +22,19 @@ from engine.astra_trading_reset_boundary_v1 import (
     classify_position_reset_scope_v1,
     classify_record_reset_scope_v1,
     build_verified_production_activation_boundary_v1,
+    build_forward_only_activation_boundary_v1,
+    build_canonical_lane_capacity_v1,
     boundary_is_production_active_v1,
     build_reset_boundary_runtime_report_v1,
     compute_reset_aware_metrics_v1,
     detect_reset_scope_leakage_v1,
     determine_reset_boundary_v1,
     is_strict_truth_eligible_v1,
+    evaluate_paper_autopilot_reactivation_gate_v1,
     load_reset_boundary_v1,
     save_reset_boundary_v1,
 )
+from engine.alpaca_paper_broker import AlpacaPaperBroker
 from engine.astra_legacy_retirement_workflow_v1 import (
     LEGACY_DUST_RECONCILIATION,
     LEGACY_EXIT_BLOCKED,
@@ -212,6 +216,25 @@ class ResetBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(result["reset_scope"], "OWNERSHIP_UNKNOWN")
 
+    def test_forward_boundary_requires_all_evidence_and_is_restart_safe(self):
+        missing = build_forward_only_activation_boundary_v1(
+            activation_timestamp_utc=LATER_POST_RESET_TS,
+            activation_evidence={"backend_healthy": True},
+            production_commit="deadbeef", worker_pid=1, backend_started_at=POST_RESET_TS,
+        )
+        self.assertEqual(missing["status"], RESET_BOUNDARY_REVIEW_REQUIRED)
+        forward = build_forward_only_activation_boundary_v1(
+            activation_timestamp_utc=LATER_POST_RESET_TS,
+            activation_evidence={key: True for key in astra_trading_reset_boundary_v1.REQUIRED_ACTIVATION_EVIDENCE},
+            production_commit="deadbeef", worker_pid=123, backend_started_at=POST_RESET_TS,
+        )
+        self.assertTrue(boundary_is_production_active_v1(forward))
+        self.assertTrue(forward["forward_only"])
+        self.assertTrue(forward["production_activation_certificate"]["certificate_hash"])
+        with tempfile.TemporaryDirectory() as tmp:
+            save_reset_boundary_v1(forward, tmp)
+            self.assertEqual(load_reset_boundary_v1(tmp)["forward_activation_timestamp_utc"], LATER_POST_RESET_TS)
+
 
 class PositionClassificationTests(unittest.TestCase):
     def test_position_open_before_reset_is_legacy(self):
@@ -263,6 +286,88 @@ class PositionClassificationTests(unittest.TestCase):
         )
         result = classify_position_reset_scope_v1(pos, ACTIVE_BOUNDARY)
         self.assertEqual(result["reset_scope"], POST_RESET_CURRENT)
+
+    def test_forward_boundary_does_not_reclassify_existing_position_as_current(self):
+        forward = build_forward_only_activation_boundary_v1(
+            activation_timestamp_utc=LATER_POST_RESET_TS,
+            activation_evidence={key: True for key in astra_trading_reset_boundary_v1.REQUIRED_ACTIVATION_EVIDENCE},
+            production_commit="deadbeef", worker_pid=123, backend_started_at=POST_RESET_TS,
+        )
+        legacy = _position(timestamp=POST_RESET_TS, lane="DAY", candidate_id="c1", lifecycle_id="l1", contract_id="c1")
+        self.assertEqual(classify_position_reset_scope_v1(legacy, forward)["reset_scope"], LEGACY_PRE_RESET_POSITION)
+        future = _position(timestamp="2026-07-29T10:01:00Z", lane="DAY", candidate_id="c1", lifecycle_id="l1", contract_id="c1")
+        self.assertEqual(classify_position_reset_scope_v1(future, forward)["reset_scope"], POST_RESET_CURRENT)
+
+
+class BrokerProvenanceTests(unittest.TestCase):
+    def _broker(self, rows):
+        broker = AlpacaPaperBroker()
+        broker.orders = lambda status="closed", limit=500: {"ok": True, "orders": rows, "open_orders_count": 0}  # type: ignore[method-assign]
+        return broker
+
+    def test_multiple_fills_reconstruct_surviving_open_position(self):
+        rows = [
+            {"id": "b1", "symbol": "AAPL", "side": "buy", "status": "filled", "filled_qty": "2", "filled_avg_price": "10", "filled_at": "2026-07-27T10:00:00Z"},
+            {"id": "b2", "symbol": "AAPL", "side": "buy", "status": "filled", "filled_qty": "3", "filled_avg_price": "12", "filled_at": "2026-07-27T11:00:00Z"},
+        ]
+        result = self._broker(rows).reconstruct_open_position_provenance([{"symbol": "AAPL", "qty": "5"}])
+        item = result["positions"][0]
+        self.assertTrue(item["quantity_coverage_complete"])
+        self.assertEqual(item["earliest_still_open_fill_timestamp"], "2026-07-27T10:00:00Z")
+        self.assertEqual(len(item["matching_entry_fills"]), 2)
+
+    def test_partial_exit_preserves_surviving_fill_provenance(self):
+        rows = [
+            {"id": "b1", "symbol": "AAPL", "side": "buy", "status": "filled", "filled_qty": "5", "filled_avg_price": "10", "filled_at": "2026-07-27T10:00:00Z"},
+            {"id": "s1", "symbol": "AAPL", "side": "sell", "status": "filled", "filled_qty": "2", "filled_avg_price": "11", "filled_at": "2026-07-27T12:00:00Z"},
+        ]
+        item = self._broker(rows).reconstruct_open_position_provenance([{"symbol": "AAPL", "qty": "3"}])["positions"][0]
+        self.assertEqual(item["surviving_fill_quantity"], 3.0)
+        self.assertTrue(item["quantity_coverage_complete"])
+        self.assertEqual(item["matching_entry_fills"][0]["remaining_qty"], 3.0)
+
+    def test_average_entry_alone_is_not_provenance(self):
+        item = self._broker([]).reconstruct_open_position_provenance([{"symbol": "AAPL", "qty": "3", "avg_entry_price": "99"}])["positions"][0]
+        self.assertFalse(item["quantity_coverage_complete"])
+        self.assertEqual(item["entry_provenance_status"], "BROKER_FILL_HISTORY_UNAVAILABLE")
+
+
+class CapacityAndActivationGateTests(unittest.TestCase):
+    def test_canonical_capacity_does_not_label_legacy_twelve_as_execution(self):
+        capacity = build_canonical_lane_capacity_v1({
+            "horizon_total_capacity": 20, "horizon_day_capacity": 8,
+            "horizon_swing_capacity": 8, "horizon_scalp_capacity": 4,
+            "crypto_execution_capacity": 8, "legacy_day_learning_open_limit": 12,
+            "legacy_total_open_limit": 12, "prior_day_reported_limit": 2,
+        })
+        self.assertEqual(capacity["execution_lanes"]["DAY"]["execution_position_limit"], 8)
+        self.assertFalse(capacity["legacy_compatibility_limits"]["DAY_REPORTED_12"]["execution_authoritative"])
+        self.assertEqual(capacity["execution_lanes"]["CRYPTO"]["execution_position_limit"], 8)
+
+    def test_reactivation_fails_closed_without_boundary(self):
+        gate = evaluate_paper_autopilot_reactivation_gate_v1(
+            boundary=determine_reset_boundary_v1(), capacity={"capacity_conflict": False},
+            safety={"paper_mode_verified": True, "live_endpoint_rejected": True, "loss_controls_active": True, "sell_retry_protections_active": True, "broker_zero_protections_active": True, "current_metrics_isolated": True},
+            quote_fmp_certificate={"corrected_quote_path_active": True, "FMP_persistence_active": True, "FMP_assignment_active": True, "FMP_consumption_active": True, "Alpaca_quote_assignment_active": True, "provider_timestamp_integrity": "pass"},
+            worker_count=1, open_orders_count=0, ambiguous_submissions=0, unknown_positions_fail_closed=True,
+        )
+        self.assertFalse(gate["approved"])
+        self.assertEqual(gate["first_blocker"], "reset_boundary_or_forward_certificate_not_verified")
+
+    def test_reactivation_can_pass_only_with_all_explicit_safety_proofs(self):
+        boundary = build_forward_only_activation_boundary_v1(
+            activation_timestamp_utc=LATER_POST_RESET_TS,
+            activation_evidence={key: True for key in astra_trading_reset_boundary_v1.REQUIRED_ACTIVATION_EVIDENCE},
+            production_commit="deadbeef", worker_pid=123, backend_started_at=POST_RESET_TS,
+        )
+        gate = evaluate_paper_autopilot_reactivation_gate_v1(
+            boundary=boundary, capacity={"capacity_conflict": False},
+            safety={"paper_mode_verified": True, "live_endpoint_rejected": True, "loss_controls_active": True, "sell_retry_protections_active": True, "broker_zero_protections_active": True, "current_metrics_isolated": True},
+            quote_fmp_certificate={"corrected_quote_path_active": True, "FMP_persistence_active": True, "FMP_assignment_active": True, "FMP_consumption_active": True, "Alpaca_quote_assignment_active": True, "provider_timestamp_integrity": "pass"},
+            worker_count=1, open_orders_count=0, ambiguous_submissions=0, unknown_positions_fail_closed=True,
+        )
+        self.assertTrue(gate["approved"])
+        self.assertTrue(gate["human_sell_approval_required"])
 
 
 class LifecycleClassificationTests(unittest.TestCase):

@@ -7,6 +7,7 @@ changes central execution, or deletes records.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -251,11 +252,215 @@ def boundary_is_production_active_v1(boundary: Mapping[str, Any] | None = None) 
     current = dict(boundary or determine_reset_boundary_v1())
     evidence = dict(current.get("activation_evidence") or {})
     return bool(
-        _text(current.get("status")).upper() == "ACTIVE"
-        and _text(current.get("boundary_confidence")).upper() == "VERIFIED"
+        _text(current.get("status")).upper() in {"ACTIVE", "VERIFIED_CONSERVATIVE_PRODUCTION_BOUNDARY"}
+        and _text(current.get("boundary_confidence")).upper() in {"VERIFIED", "VERIFIED_FORWARD_ONLY"}
         and all(bool(evidence.get(key)) for key in REQUIRED_ACTIVATION_EVIDENCE)
         and _parse_iso(current.get("reset_timestamp_utc")) is not None
     )
+
+
+def build_forward_only_activation_boundary_v1(
+    *,
+    activation_timestamp_utc: str,
+    activation_evidence: Mapping[str, Any],
+    production_commit: str,
+    worker_pid: int | str | None,
+    backend_started_at: str | None,
+    capacity_evidence: Mapping[str, Any] | None = None,
+    historical_boundary_status: str = RESET_BOUNDARY_REVIEW_REQUIRED,
+    reset_id: str = DEFAULT_RESET_ID,
+    reset_date: str = DEFAULT_RESET_DATE,
+) -> dict[str, Any]:
+    """Create a conservative forward-only boundary after all safety proofs.
+
+    This is intentionally separate from historical reconstruction: it never
+    upgrades an existing position just because the certificate was written.
+    Only a trusted post-certificate broker fill plus normal ownership proof can
+    later satisfy current-position classification.
+    """
+    timestamp = _parse_iso(activation_timestamp_utc)
+    evidence = {key: bool(dict(activation_evidence or {}).get(key)) for key in REQUIRED_ACTIVATION_EVIDENCE}
+    missing = sorted(key for key, value in evidence.items() if not value)
+    if timestamp is None or missing:
+        return determine_reset_boundary_v1({
+            "reset_id": reset_id,
+            "reset_date": reset_date,
+            "reset_timestamp_utc": activation_timestamp_utc or DEFAULT_RESET_TIMESTAMP_UTC,
+            "source_commit": production_commit or DEFAULT_RESET_SOURCE_COMMIT,
+            "timestamp_source": "forward_activation_evidence_incomplete",
+            "status": RESET_BOUNDARY_REVIEW_REQUIRED,
+            "activation_evidence": evidence,
+            "boundary_confidence": "UNVERIFIED",
+            "reason": "Forward-only activation evidence is incomplete; existing positions remain fail-closed.",
+        })
+    certificate_basis = {
+        "reset_id": reset_id,
+        "reset_date": reset_date,
+        "activation_timestamp_utc": _iso(timestamp),
+        "production_commit": _text(production_commit),
+        "worker_pid": _text(worker_pid),
+        "backend_started_at": _text(backend_started_at),
+        "activation_evidence": evidence,
+        "capacity_evidence": dict(capacity_evidence or {}),
+    }
+    certificate_hash = hashlib.sha256(
+        json.dumps(certificate_basis, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:24]
+    boundary = determine_reset_boundary_v1({
+        "reset_id": reset_id,
+        "reset_date": reset_date,
+        "reset_timestamp_utc": _iso(timestamp),
+        "source_commit": production_commit,
+        "timestamp_source": "verified_forward_only_controlled_activation",
+        "status": "VERIFIED_CONSERVATIVE_PRODUCTION_BOUNDARY",
+        "activation_evidence": evidence,
+        "boundary_confidence": "VERIFIED_FORWARD_ONLY",
+        "reason": "Historical intraday activation remains unverified; only broker-proven entries after this controlled forward boundary can be current.",
+    })
+    # ``determine_reset_boundary_v1`` intentionally normalizes the common
+    # schema only.  Preserve the forward certificate explicitly so restart
+    # reload retains the distinction from an inferred historical boundary.
+    boundary.update({
+        "forward_only": True,
+        "forward_activation_timestamp_utc": _iso(timestamp),
+        "historical_boundary_status": _text(historical_boundary_status, RESET_BOUNDARY_REVIEW_REQUIRED),
+        "production_activation_certificate": {
+            **certificate_basis,
+            "certificate_hash": certificate_hash,
+        },
+    })
+    return boundary
+
+
+def build_canonical_lane_capacity_v1(config: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Name execution capacity separately from legacy learning compatibility.
+
+    The reset report is a consumer and must not reinterpret candidate or
+    historical-learning limits as current PaperAutopilot execution capacity.
+    """
+    cfg = dict(config or {})
+    horizon_total = max(0, int(_num(cfg.get("horizon_total_capacity")) or 0))
+    day_limit = max(0, int(_num(cfg.get("horizon_day_capacity")) or 0))
+    swing_limit = max(0, int(_num(cfg.get("horizon_swing_capacity")) or 0))
+    scalp_limit = max(0, int(_num(cfg.get("horizon_scalp_capacity")) or 0))
+    crypto_limit = _num(cfg.get("crypto_execution_capacity"))
+    legacy_day = _num(cfg.get("legacy_day_learning_open_limit"))
+    legacy_swing = _num(cfg.get("legacy_total_open_limit"))
+    prior_day = _num(cfg.get("prior_day_reported_limit"))
+    return {
+        "owner": "PaperAutopilot.horizon_capacity_snapshot",
+        "horizon_capacity_total": horizon_total,
+        "execution_lanes": {
+            "DAY": {
+                "execution_position_limit": day_limit,
+                "source_owner": "PaperAutopilot.horizon_day_capacity",
+                "actual_meaning": "reserved concurrent day_trade horizon pool within the 20-position paper horizon capacity",
+                "execution_authoritative": True,
+            },
+            "SWING": {
+                "execution_position_limit": swing_limit,
+                "source_owner": "PaperAutopilot.horizon_swing_capacity",
+                "actual_meaning": "reserved concurrent swing_trade horizon pool within the 20-position paper horizon capacity",
+                "execution_authoritative": True,
+            },
+            "SCALP": {
+                "execution_position_limit": scalp_limit,
+                "source_owner": "PaperAutopilot.horizon_scalp_capacity",
+                "actual_meaning": "reserved concurrent scalp horizon pool within the 20-position paper horizon capacity",
+                "execution_authoritative": True,
+            },
+            "CRYPTO": {
+                "execution_position_limit": int(crypto_limit) if crypto_limit is not None else None,
+                "source_owner": "PaperAutopilot.max_crypto",
+                "actual_meaning": "separate bounded crypto asset-class ceiling; not a DAY/SWING horizon pool",
+                "execution_authoritative": crypto_limit is not None,
+            },
+        },
+        "legacy_compatibility_limits": {
+            "DAY_REPORTED_12": {
+                "value": int(legacy_day) if legacy_day is not None else None,
+                "source_owner": "DAY_LEARNING_MAX_OPEN_DAY_LEARNING_POSITIONS",
+                "actual_meaning": "legacy day-learning compatibility/open-learning setting; not PaperAutopilot horizon execution capacity",
+                "execution_authoritative": False,
+            },
+            "SWING_REPORTED_12": {
+                "value": int(legacy_swing) if legacy_swing is not None else None,
+                "source_owner": "MAX_TOTAL_OPEN_PAPER_POSITIONS",
+                "actual_meaning": "legacy total-open compatibility setting; not PaperAutopilot swing horizon execution capacity",
+                "execution_authoritative": False,
+            },
+            "PRIOR_DAY_REPORTED": {
+                "value": int(prior_day) if prior_day is not None else None,
+                "source_owner": "PaperAutopilot.max_new_positions_per_cycle",
+                "actual_meaning": "per-cycle entry throttle when supplied; not concurrent position capacity",
+                "execution_authoritative": False,
+            },
+        },
+        "capacity_conflict": bool(
+            horizon_total and (day_limit + swing_limit + scalp_limit) > horizon_total
+        ),
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+    }
+
+
+def evaluate_paper_autopilot_reactivation_gate_v1(
+    *,
+    boundary: Mapping[str, Any] | None,
+    capacity: Mapping[str, Any] | None,
+    safety: Mapping[str, Any] | None,
+    quote_fmp_certificate: Mapping[str, Any] | None,
+    worker_count: int,
+    open_orders_count: int,
+    ambiguous_submissions: int,
+    unknown_positions_fail_closed: bool,
+) -> dict[str, Any]:
+    """Return an advisory, fail-closed control gate for enabling autopilot."""
+    boundary_row = dict(boundary or {})
+    capacity_row = dict(capacity or {})
+    safety_row = dict(safety or {})
+    data = dict(quote_fmp_certificate or {})
+    blockers: list[str] = []
+    if not boundary_is_production_active_v1(boundary_row):
+        blockers.append("reset_boundary_or_forward_certificate_not_verified")
+    if bool(capacity_row.get("capacity_conflict")):
+        blockers.append("canonical_capacity_conflict")
+    if int(worker_count or 0) != 1:
+        blockers.append("single_canonical_worker_not_verified")
+    if int(open_orders_count or 0) != 0:
+        blockers.append("unexpected_open_broker_orders")
+    if int(ambiguous_submissions or 0) != 0:
+        blockers.append("ambiguous_broker_submissions_present")
+    if not bool(unknown_positions_fail_closed):
+        blockers.append("unknown_positions_not_fail_closed")
+    for key in (
+        "paper_mode_verified", "live_endpoint_rejected", "loss_controls_active",
+        "sell_retry_protections_active", "broker_zero_protections_active",
+        "current_metrics_isolated",
+    ):
+        if not bool(safety_row.get(key)):
+            blockers.append(key)
+    for key in (
+        "corrected_quote_path_active", "FMP_persistence_active",
+        "FMP_assignment_active", "FMP_consumption_active",
+        "Alpaca_quote_assignment_active",
+    ):
+        if not bool(data.get(key)):
+            blockers.append(key)
+    if str(data.get("provider_timestamp_integrity") or "").lower() != "pass":
+        blockers.append("provider_timestamp_integrity")
+    return {
+        "approved": not blockers,
+        "first_blocker": blockers[0] if blockers else "",
+        "blockers": blockers,
+        "paper_only_preserved": True,
+        "forced_entries_enabled": False,
+        "forced_exits_enabled": False,
+        "learned_exits_enabled": False,
+        "automatic_promotions_enabled": False,
+        "human_sell_approval_required": True,
+        "broker_actions_used": 0,
+    }
 
 
 def build_verified_production_activation_boundary_v1(
