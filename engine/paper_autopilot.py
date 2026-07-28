@@ -8200,7 +8200,7 @@ class PaperAutopilotEngine:
                 "assigned_at": record.get("assigned_at") or record.get("response_at"), "consumed": bool(record.get("consumer_acknowledged")),
                 "consumed_at": record.get("consumed_at"), "consumer": record.get("consumer") or "",
                 "consumer_record_id": record.get("consumer_record_id") or record.get("record_id"),
-                "evidence_at": record.get("response_at"),
+                "evidence_at": record.get("response_at"), "producer_event_at": record.get("response_at"),
             })
             for event in dict(record.get("auxiliary_context") or {}).values():
                 if not isinstance(event, Mapping) or not event.get("record_id"):
@@ -8211,7 +8211,7 @@ class PaperAutopilotEngine:
                     "assigned_at": event.get("assigned_at"), "consumed": bool(event.get("consumer_acknowledged")),
                     "consumed_at": event.get("consumed_at"), "consumer": event.get("consumer") or "",
                     "consumer_record_id": event.get("consumer_record_id") or event.get("record_id"),
-                    "evidence_at": event.get("response_at"),
+                    "evidence_at": event.get("response_at"), "producer_event_at": event.get("response_at"),
                     "rejected": bool(event.get("rejected_at") or str(event.get("assignment_state") or "").upper().startswith("REJECTED")),
                     "rejected_at": event.get("rejected_at"),
                     "rejection_reason": event.get("rejection_reason") or "",
@@ -8229,6 +8229,7 @@ class PaperAutopilotEngine:
                 "consumer": "legacy_swing_bar_routing_v1" if routing.get("record_id") else "",
                 "consumer_record_id": routing.get("record_id") or fmp_bar.get("record_id"),
                 "evidence_at": fmp_bar.get("last_bar_at") or fmp_bar.get("received_at"),
+                "producer_event_at": fmp_bar.get("received_at") or fmp_bar.get("response_at"),
             })
         telemetry = build_provider_consumption_telemetry_v1(
             state_dir=state_dir,

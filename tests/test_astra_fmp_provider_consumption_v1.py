@@ -148,6 +148,7 @@ class FmpProviderConsumptionTests(unittest.TestCase):
                     "endpoint_family": "news_catalyst",
                     "symbol": "AAA",
                     "rejected": True,
+                    "producer_event_at": "2026-07-24T01:00:00Z",
                     "rejected_at": "2026-07-24T01:00:01Z",
                     "consumer": "position_evidence_completeness_v1",
                     "consumer_record_id": "position-evidence:AAA",
@@ -158,6 +159,41 @@ class FmpProviderConsumptionTests(unittest.TestCase):
             self.assertEqual(family["responses_accepted"], 1)
             self.assertEqual(family["responses_rejected"], 1)
             self.assertTrue(telemetry["telemetry_complete"])
+
+    def test_http_success_with_unusable_payload_is_rejected_not_network_failed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "fmp_efficiency_ledger_v1.jsonl")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({"timestamp": "2026-07-24T01:00:00Z", "endpoint_family": "quote", "ok": False, "useful_fields_count": 0, "bytes_actual_if_available": 13, "status_code": 200}) + "\n")
+            telemetry = build_provider_consumption_telemetry_v1(
+                state_dir=directory, configured=True, key_fingerprint="deadbeef",
+                window_start="2026-07-24T00:30:00Z",
+            )
+            provider = telemetry["providers"][0]
+            family = provider["endpoint_families"][0]
+            self.assertEqual(provider["successful_calls"], 1)
+            self.assertEqual(provider["failed_calls"], 0)
+            self.assertEqual(family["responses_accepted"], 0)
+            self.assertEqual(family["responses_rejected"], 1)
+            self.assertTrue(telemetry["telemetry_complete"])
+
+    def test_persisted_consumer_ack_is_not_current_window_assignment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "fmp_efficiency_ledger_v1.jsonl")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({"timestamp": "2026-07-24T01:00:00Z", "endpoint_family": "quote", "ok": True, "useful_fields_count": 2, "bytes_actual_if_available": 13, "status_code": 200}) + "\n")
+            telemetry = build_provider_consumption_telemetry_v1(
+                state_dir=directory, configured=True, key_fingerprint="deadbeef",
+                window_start="2026-07-24T01:30:00Z",
+                consumer_events=[{
+                    "endpoint_family": "quote", "assigned": True, "consumed": True,
+                    "consumer": "legacy_position_risk_triage_v1",
+                    "assigned_at": "2026-07-24T02:00:00Z", "consumed_at": "2026-07-24T02:00:00Z",
+                    "producer_event_at": "2026-07-24T01:00:00Z",
+                }],
+            )
+            self.assertEqual(telemetry["providers"][0]["responses_assigned"], 0)
+            self.assertEqual(telemetry["providers"][0]["responses_consumed"], 0)
 
     def test_candidate_consumption_acknowledgement_is_not_counted_as_network(self):
         with tempfile.TemporaryDirectory() as directory:

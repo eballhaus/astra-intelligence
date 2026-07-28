@@ -174,7 +174,11 @@ def _within_window(row: Mapping[str, Any], window_start: str) -> bool:
 def _consumer_event_within_window(row: Mapping[str, Any], window_start: str) -> bool:
     if not window_start:
         return True
-    return _within_window({"timestamp": row.get("assigned_at") or row.get("consumed_at") or row.get("rejected_at") or row.get("evidence_at")}, window_start)
+    # Current-window consumption must be traceable to a response generated in
+    # this worker generation.  Re-triaging persisted evidence after restart is
+    # useful, but it must not make an older provider response look newly
+    # assigned in the active-window accounting.
+    return _within_window({"timestamp": row.get("producer_event_at") or row.get("evidence_at")}, window_start)
 
 
 def _family(value: Mapping[str, Any]) -> str:
@@ -190,6 +194,12 @@ def _family(value: Mapping[str, Any]) -> str:
     return raw.replace(" ", "_") or "unknown"
 
 
+def _transport_succeeded(row: Mapping[str, Any]) -> bool:
+    """Return HTTP transport success without confusing it with payload utility."""
+    status = _number(row.get("status_code"))
+    return 200 <= status < 400 or (status == 0 and bool(row.get("ok")))
+
+
 def _event_counts(events: list[dict[str, Any]], consumer_events: list[dict[str, Any]], family: str) -> dict[str, Any]:
     scoped = [row for row in events if _family(row) == family]
     assigned = [row for row in consumer_events if str(row.get("endpoint_family") or "unknown") == family and bool(row.get("assigned"))]
@@ -199,8 +209,8 @@ def _event_counts(events: list[dict[str, Any]], consumer_events: list[dict[str, 
     deduplicated = [row for row in scoped if bool(row.get("deduplicated"))]
     blocked = [row for row in scoped if str(row.get("blocked_reason") or "").lower() in {"call_limit", "bandwidth_budget", "governor_blocked", "provider_cooldown_or_budget"}]
     network = [row for row in scoped if row not in cache_hits and row not in deduplicated and row not in blocked]
-    successful = [row for row in network if bool(row.get("ok"))]
-    failures = [row for row in network if not bool(row.get("ok"))]
+    successful = [row for row in network if _transport_succeeded(row)]
+    failures = [row for row in network if row not in successful]
     accepted = [row for row in successful if _number(row.get("useful_fields_count")) > 0]
     byte_missing = [row for row in successful if _number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta")) <= 0]
     last = dict(scoped[-1]) if scoped else {}
@@ -265,8 +275,10 @@ def build_provider_consumption_telemetry_v1(
     governor_blocked = [row for row in events if str(row.get("blocked_reason") or "").lower() in {"call_limit", "bandwidth_budget", "governor_blocked", "provider_cooldown_or_budget"}]
     deduplicated = [row for row in events if bool(row.get("deduplicated"))]
     network_sent = [row for row in events if row not in cache_hits and row not in governor_blocked and row not in deduplicated]
-    successes = [row for row in network_sent if bool(row.get("ok"))]
-    failures = [row for row in network_sent if not bool(row.get("ok"))]
+    # HTTP success is transport success.  ``ok`` additionally represents a
+    # usable normalized payload, which is accounted for by acceptance below.
+    successes = [row for row in network_sent if _transport_succeeded(row)]
+    failures = [row for row in network_sent if row not in successes]
     accepted = [row for row in successes if _number(row.get("useful_fields_count")) > 0]
     byte_missing = [row for row in successes if _number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta")) <= 0]
     bytes_received = int(sum(max(0.0, _number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta"))) for row in events))
