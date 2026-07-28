@@ -48,6 +48,7 @@ class LegacySwingExitTruthClosureTests(unittest.TestCase):
     def test_authoritative_full_fill_creates_truth_capacity_and_pending_effectiveness(self):
         engine = object.__new__(PaperAutopilotEngine)
         engine._runtime_state = {}
+        engine._independent_broker_residual_lookup = lambda symbol, position_id: {"lookup_status": "AUTHORITATIVE_NOT_FOUND", "authoritative_not_found": True, "paper_account_validated": True, "symbol": symbol}
         item = {"action_id": "action-1", "order_id": "order-1", "client_order_id": "client-1", "position_id": "position-1", "symbol": "FIXTURE", "quantity": 2, "normalized_sell_qty": 2, "entry_order_id": "entry-1", "entry_fill_id": "entry-fill-1", "legacy_swing_canary_pre_submit": {"activation_id": "activation-1"}}
         result = engine._record_legacy_swing_exit_broker_update(item, {"id": "order-1", "status": "filled", "filled_qty": 2, "filled_avg_price": 10, "fill_id": "exit-fill-1"})
         lifecycle = engine._runtime_state["legacy_swing_exit_lifecycle"]

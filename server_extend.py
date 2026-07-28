@@ -21720,18 +21720,11 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
     now_et = now_utc.astimezone(_ET_TZ)
     session = _market_session_type_et(now_utc)
     previous = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("equity_risk_envelopes_snapshot_v1") or {})
-    if now_et.weekday() >= 5 or session != "regular_hours":
-        snapshot = dict(previous)
-        snapshot.update({
-            "status": "WAITING_FOR_MARKET_OPEN", "market_session": session,
-            "generated_at": _now_utc_iso(), "generated_at_epoch": now_epoch,
-            "provider_owner": "worker_only_pending_regular_session",
-        })
-        PAPER_AUTOPILOT._runtime_state["equity_risk_envelopes_snapshot_v1"] = snapshot
-        PAPER_AUTOPILOT._save_state_file()
-        return {"status": "WAITING_FOR_MARKET_OPEN", "market_session": session, "rows": len(snapshot.get("rows") or []), "provider_calls_used": 0, "broker_actions_used": 0}
+    # Historical completed-bar risk production is safe and useful while the
+    # market is closed.  Only executable quote/order eligibility is deferred.
+    closed_session = now_et.weekday() >= 5 or session != "regular_hours"
     refresh_seconds = max(60.0, min(900.0, float(os.getenv("ASTRA_EQUITY_RISK_ENVELOPE_REFRESH_SECONDS", "300") or 300)))
-    if previous.get("status") == "CURRENT" and previous.get("rows") and now_epoch - float(previous.get("generated_at_epoch") or 0.0) < refresh_seconds:
+    if previous.get("status") in {"CURRENT", "OFF_HOURS_HISTORICAL_CURRENT"} and previous.get("rows") and now_epoch - float(previous.get("generated_at_epoch") or 0.0) < refresh_seconds:
         return {"status": "CURRENT_CACHE_REUSED", "rows": len(previous.get("rows") or []), "provider_calls_used": 0, "broker_actions_used": 0}
     candidates = _bounded_current_equity_candidate_rows_v1()
     if not candidates:
@@ -21750,46 +21743,62 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
     start = end - timedelta(hours=6)
     for candidate in candidates:
         symbol = str(candidate.get("symbol") or candidate.get("ticker") or "").upper().strip()
-        quote_payload = dict(ALPACA_PAPER_BROKER.latest_quote(symbol) or {})
-        quote = dict(quote_payload.get("quote") or {})
-        price = _to_float(quote.get("ap"), _to_float(quote.get("bp"), 0.0))
-        if not quote_payload.get("ok") or price <= 0:
-            failures.append({"symbol": symbol, "blocker": str(quote_payload.get("response_state") or "FRESH_QUOTE_UNAVAILABLE")})
-            continue
+        quote_payload, quote, price = {}, {}, 0.0
+        if not closed_session:
+            quote_payload = dict(ALPACA_PAPER_BROKER.latest_quote(symbol) or {})
+            quote = dict(quote_payload.get("quote") or {})
+            price = _to_float(quote.get("ap"), _to_float(quote.get("bp"), 0.0))
+            if not quote_payload.get("ok") or price <= 0:
+                failures.append({"symbol": symbol, "blocker": str(quote_payload.get("response_state") or "FRESH_QUOTE_UNAVAILABLE")})
+                continue
         bars_payload = dict(ALPACA_PAPER_BROKER.historical_bars(
             symbol, asset_class="stock", timeframe="15Min", limit=24,
             start=start.isoformat().replace("+00:00", "Z"), end=end.isoformat().replace("+00:00", "Z"),
         ) or {})
         bars = [dict(row) for row in (bars_payload.get("bars") or []) if isinstance(row, dict)]
         ranges = []
+        completed_bars = []
         for bar in bars:
+            raw_time = str(bar.get("t") or bar.get("timestamp") or bar.get("bar_timestamp") or "").strip()
+            parsed_epoch = _parse_iso_or_epoch(raw_time) if raw_time else 0.0
+            if parsed_epoch <= 0.0 or parsed_epoch > now_epoch:
+                continue
             high, low, close = _to_float(bar.get("h"), 0.0), _to_float(bar.get("l"), 0.0), _to_float(bar.get("c"), 0.0)
             if close > 0 and high >= low:
                 ranges.append(((high - low) / close) * 100.0)
+                completed_bars.append((bar, raw_time, close))
         if len(ranges) < 2:
             failures.append({"symbol": symbol, "blocker": str(bars_payload.get("response_state") or "FRESH_BARS_UNAVAILABLE")})
             continue
-        quote_time = str(quote.get("t") or _now_utc_iso())
+        latest_bar, latest_bar_time, latest_bar_close = completed_bars[-1]
+        if closed_session:
+            price = latest_bar_close
+        quote_time = str(quote.get("t") or latest_bar_time)
         observations.append({
             "symbol": symbol, "candidate_id": candidate.get("candidate_id") or candidate.get("ledger_id"),
             "asset_class": "equity", "current_price": round(price, 6), "price": round(price, 6),
             "bid": _to_float(quote.get("bp"), 0.0), "ask": _to_float(quote.get("ap"), 0.0),
-            "quote_timestamp": quote_time, "atr_pct": round(sum(ranges) / len(ranges), 4),
+            "quote_timestamp": quote_time if not closed_session else None,
+            "completed_bar_timestamp": latest_bar_time,
+            "atr_pct": round(sum(ranges) / len(ranges), 4),
+            "downside_range_pct": round(max(ranges), 4),
+            "quote_execution_eligible": not closed_session,
+            "order_session_eligible": not closed_session,
             "risk_evidence_generated_at": _now_utc_iso(),
             "risk_evidence_valid_until": (now_utc + timedelta(seconds=refresh_seconds)).isoformat().replace("+00:00", "Z"),
-            "bar_evidence": {"source": "AlpacaPaperBroker.historical_bars", "resolution": "15Min", "count": len(bars)},
-            "risk_evidence_source": "AlpacaPaperBroker.latest_quote+hbars",
-            "freshness_state": "CURRENT",
+            "bar_evidence": {"source": "AlpacaPaperBroker.historical_bars", "resolution": "15Min", "count": len(completed_bars), "provider_native_timestamp": latest_bar_time},
+            "risk_evidence_source": "AlpacaPaperBroker.historical_bars" if closed_session else "AlpacaPaperBroker.latest_quote+historical_bars",
+            "freshness_state": "HISTORICAL_CURRENT" if closed_session else "CURRENT",
         })
     snapshot = {
-        "rows": observations, "status": "CURRENT" if observations and not failures else "PARTIAL_FAIL_CLOSED" if observations else "FAILED_FAIL_CLOSED",
+        "rows": observations, "status": ("OFF_HOURS_HISTORICAL_CURRENT" if closed_session else "CURRENT") if observations and not failures else "PARTIAL_FAIL_CLOSED" if observations else "FAILED_FAIL_CLOSED",
         "market_session": session, "generated_at": _now_utc_iso(), "generated_at_epoch": now_epoch,
         "valid_until_epoch": now_epoch + refresh_seconds, "failures": failures[:8],
         "provider_owner": "AlpacaPaperBroker worker-only equity risk observer",
     }
     PAPER_AUTOPILOT._runtime_state["equity_risk_envelopes_snapshot_v1"] = snapshot
     PAPER_AUTOPILOT._save_state_file()
-    return {"status": snapshot["status"], "rows": len(observations), "failed_symbols": len(failures), "provider_calls_used": len(candidates) * 2, "broker_actions_used": 0}
+    return {"status": snapshot["status"], "rows": len(observations), "failed_symbols": len(failures), "provider_calls_used": len(candidates) * (1 if closed_session else 2), "broker_actions_used": 0, "order_session_eligible": not closed_session}
 
 
 def _provider_role_policy_v1(provider_name):
@@ -70121,7 +70130,8 @@ def _paper_autopilot_crypto_open_rows_v1() -> list[dict]:
             rows = conn.execute("SELECT * FROM paper_positions WHERE status='OPEN' AND asset_type='crypto' LIMIT 200").fetchall()
         finally:
             conn.close()
-        return [dict(row) for row in rows if row]
+        from engine.astra_canonical_ownership_contract_v1 import is_broker_linked_active_position
+        return [row for row in (dict(item) for item in rows if item) if is_broker_linked_active_position(row, allow_dust=True)]
     except Exception:
         return []
 

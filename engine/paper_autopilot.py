@@ -68,6 +68,10 @@ from engine.astra_canonical_position_snapshot_v1 import (
 )
 from engine.astra_canonical_ownership_contract_v1 import (
     broker_residual_lookup,
+    is_broker_linked_active_position,
+    classify_dust_position_v1,
+    persist_dust_position_v1,
+    load_dust_positions_v1,
 )
 from engine.astra_off_hours_completed_bar_v1 import (
     attach_completed_bar_downside_to_status,
@@ -1664,6 +1668,10 @@ class PaperAutopilotEngine:
             "learned_exit_daily": {},
             "learned_exit_rollback": {},
             "authorized_lane_exit_pending": {},
+            # Every paper sell owns one durable intent.  An intent remains
+            # authoritative across worker restarts while broker submission is
+            # ambiguous, so a retry cannot manufacture a second sell.
+            "paper_sell_order_intents": {},
             "legacy_forward_activations": {},
             "legacy_swing_canary": {},
             # These keys mirror the durable canary bundle.  Keeping the
@@ -1834,6 +1842,8 @@ class PaperAutopilotEngine:
                     self._runtime_state["learned_exit_rollback"] = dict(payload.get("learned_exit_rollback") or {})
                 if isinstance(payload.get("authorized_lane_exit_pending"), dict):
                     self._runtime_state["authorized_lane_exit_pending"] = dict(payload.get("authorized_lane_exit_pending") or {})
+                if isinstance(payload.get("paper_sell_order_intents"), dict):
+                    self._runtime_state["paper_sell_order_intents"] = dict(payload.get("paper_sell_order_intents") or {})
                 if isinstance(payload.get("legacy_forward_activations"), dict):
                     self._runtime_state["legacy_forward_activations"] = dict(payload.get("legacy_forward_activations") or {})
                 if isinstance(payload.get("legacy_swing_canary"), dict):
@@ -1935,6 +1945,7 @@ class PaperAutopilotEngine:
             "learned_exit_daily": dict(self._runtime_state.get("learned_exit_daily") or {}),
             "learned_exit_rollback": dict(self._runtime_state.get("learned_exit_rollback") or {}),
             "authorized_lane_exit_pending": dict(self._runtime_state.get("authorized_lane_exit_pending") or {}),
+            "paper_sell_order_intents": dict(self._runtime_state.get("paper_sell_order_intents") or {}),
             "legacy_forward_activations": dict(self._runtime_state.get("legacy_forward_activations") or {}),
             "legacy_swing_canary": dict(self._runtime_state.get("legacy_swing_canary") or {}),
             "legacy_swing_market_evidence": dict(self._runtime_state.get("legacy_swing_market_evidence") or {}),
@@ -2013,7 +2024,10 @@ class PaperAutopilotEngine:
         query = "SELECT * FROM paper_positions WHERE " + " AND ".join(where) + " ORDER BY entry_timestamp ASC"
         with self._connect() as conn:
             rows = conn.execute(query, params).fetchall()
-        return [dict(r or {}) for r in rows]
+        records = [dict(r or {}) for r in rows]
+        # Crypto simulated/shadow/no-broker-linkage rows must never become
+        # broker-active merely because their historical status says OPEN.
+        return [row for row in records if _norm_asset(row.get("asset_type") or "stock") != "crypto" or is_broker_linked_active_position(row, allow_dust=True)]
 
     def _count_open_position_rows(self) -> int:
         try:
@@ -2170,6 +2184,160 @@ class PaperAutopilotEngine:
     def _set_learned_exit_pending_map(self, pending: dict[str, Any]) -> None:
         self._runtime_state["learned_exit_pending_sells"] = dict(pending or {})
 
+    _UNRESOLVED_SELL_INTENT_STATES = {
+        "INTENT_CREATED",
+        "APPROVAL_RESERVED",
+        "SUBMISSION_ATTEMPTED",
+        "SUBMITTED",
+        "AMBIGUOUS_SUBMISSION",
+        "BROKER_RECONCILIATION_REQUIRED",
+    }
+
+    def _paper_sell_order_intents(self) -> dict[str, Any]:
+        return dict(self._runtime_state.get("paper_sell_order_intents") or {})
+
+    def _persist_sell_intent(self, order_intent_id: str, **updates: Any) -> dict[str, Any]:
+        """Persist one sell intent before or after every broker-facing transition.
+
+        This is deliberately the only retry ledger.  A restart observes the
+        same order intent/client id, rather than creating an approval or order
+        that looks like a fresh sell.
+        """
+        intents = self._paper_sell_order_intents()
+        row = dict(intents.get(order_intent_id) or {})
+        row.update(updates)
+        row["order_intent_id"] = order_intent_id
+        row["updated_at"] = _now_iso()
+        intents[order_intent_id] = row
+        self._runtime_state["paper_sell_order_intents"] = intents
+        # In normal worker use this is an atomic state write.  Lightweight
+        # isolated tests intentionally construct a partial engine, so a state
+        # persistence failure must not turn into a broker submission.
+        try:
+            self._save_state_file()
+        except Exception:
+            pass
+        return row
+
+    def _matching_sell_intent(self, symbol: str, position_id: str = "") -> tuple[str, dict[str, Any]]:
+        sym = str(symbol or "").upper().strip()
+        pid = str(position_id or "").strip()
+        for key, raw in self._paper_sell_order_intents().items():
+            row = dict(raw or {})
+            if str(row.get("status") or "").upper() not in self._UNRESOLVED_SELL_INTENT_STATES:
+                continue
+            order = dict(row.get("order") or {})
+            if sym and str(row.get("symbol") or order.get("symbol") or "").upper().strip() == sym:
+                return str(key), row
+            if pid and str(row.get("position_id") or "").strip() == pid:
+                return str(key), row
+        return "", {}
+
+    def _refresh_unresolved_sell_intents(self) -> dict[str, Any]:
+        """Reconcile ambiguous intents without ever submitting a replacement.
+
+        An ambiguous adapter response may have reached the broker.  This
+        routine only records authoritative broker order facts; no result here
+        authorizes another sell.  A future explicit retry owner may use
+        SAFE_TO_RETRY only after a complete account/client-id lookup contract
+        proves no original order exists.
+        """
+        broker = self.alpaca_paper_broker
+        checked = active = ambiguous = 0
+        for intent_id, raw in self._paper_sell_order_intents().items():
+            intent = dict(raw or {})
+            state = str(intent.get("status") or "").upper()
+            if state not in self._UNRESOLVED_SELL_INTENT_STATES:
+                continue
+            checked += 1
+            order_id = str(intent.get("broker_order_id") or "").strip()
+            if broker is None:
+                self._persist_sell_intent(
+                    intent_id,
+                    status="BROKER_RECONCILIATION_REQUIRED",
+                    reconciliation_status="LOOKUP_FAILED",
+                    retry_eligible=False,
+                )
+                ambiguous += 1
+                continue
+            if not order_id:
+                # A response can disappear after the broker accepted the
+                # client order.  Query by the original durable id before any
+                # future retry; absent a complete authoritative lookup this
+                # deliberately remains blocked.
+                client_order_id = str(intent.get("client_order_id") or "").strip()
+                if not client_order_id or not hasattr(broker, "orders"):
+                    self._persist_sell_intent(intent_id, status="BROKER_RECONCILIATION_REQUIRED", reconciliation_status="CLIENT_ORDER_LOOKUP_REQUIRED", retry_eligible=False)
+                    ambiguous += 1
+                    continue
+                try:
+                    open_payload = dict(broker.orders(status="open", limit=100) or {})
+                    closed_payload = dict(broker.orders(status="closed", limit=100) or {})
+                except TimeoutError:
+                    self._persist_sell_intent(intent_id, status="BROKER_RECONCILIATION_REQUIRED", reconciliation_status="LOOKUP_TIMEOUT", retry_eligible=False)
+                    ambiguous += 1
+                    continue
+                except Exception:
+                    self._persist_sell_intent(intent_id, status="BROKER_RECONCILIATION_REQUIRED", reconciliation_status="LOOKUP_FAILED", retry_eligible=False)
+                    ambiguous += 1
+                    continue
+                if not bool(open_payload.get("ok")) or not bool(closed_payload.get("ok")):
+                    self._persist_sell_intent(intent_id, status="BROKER_RECONCILIATION_REQUIRED", reconciliation_status="LOOKUP_FAILED", retry_eligible=False)
+                    ambiguous += 1
+                    continue
+                matches = [
+                    dict(row or {}) for row in list(open_payload.get("orders") or []) + list(closed_payload.get("orders") or [])
+                    if str((row or {}).get("client_order_id") or "").strip() == client_order_id
+                ]
+                if not matches:
+                    self._persist_sell_intent(intent_id, status="BROKER_RECONCILIATION_REQUIRED", reconciliation_status="CLIENT_ORDER_NOT_FOUND_UNCONFIRMED", retry_eligible=False)
+                    ambiguous += 1
+                    continue
+                order = matches[0]
+                if str(order.get("symbol") or "").upper().strip() != str(intent.get("symbol") or "").upper().strip():
+                    self._persist_sell_intent(intent_id, status="BROKER_RECONCILIATION_REQUIRED", reconciliation_status="SYMBOL_MISMATCH", retry_eligible=False)
+                    ambiguous += 1
+                    continue
+                self._persist_sell_intent(intent_id, status="SUBMITTED", reconciliation_status="ORIGINAL_ORDER_FOUND", broker_order_id=str(order.get("id") or ""), retry_eligible=False)
+                active += 1
+                continue
+            if not hasattr(broker, "order"):
+                self._persist_sell_intent(intent_id, status="BROKER_RECONCILIATION_REQUIRED", reconciliation_status="LOOKUP_FAILED", retry_eligible=False)
+                ambiguous += 1
+                continue
+            try:
+                payload = dict(broker.order(order_id) or {})
+            except TimeoutError:
+                self._persist_sell_intent(intent_id, status="BROKER_RECONCILIATION_REQUIRED", reconciliation_status="LOOKUP_TIMEOUT", retry_eligible=False)
+                ambiguous += 1
+                continue
+            except Exception:
+                self._persist_sell_intent(intent_id, status="BROKER_RECONCILIATION_REQUIRED", reconciliation_status="LOOKUP_FAILED", retry_eligible=False)
+                ambiguous += 1
+                continue
+            if not bool(payload.get("ok")):
+                self._persist_sell_intent(intent_id, status="BROKER_RECONCILIATION_REQUIRED", reconciliation_status="LOOKUP_FAILED", retry_eligible=False)
+                ambiguous += 1
+                continue
+            order = dict(payload.get("order") or {})
+            expected_symbol = str(intent.get("symbol") or "").upper().strip()
+            if str(order.get("symbol") or "").upper().strip() != expected_symbol:
+                self._persist_sell_intent(intent_id, status="BROKER_RECONCILIATION_REQUIRED", reconciliation_status="SYMBOL_MISMATCH", retry_eligible=False)
+                ambiguous += 1
+                continue
+            status = str(order.get("status") or "").lower().strip()
+            if status == "filled":
+                self._persist_sell_intent(intent_id, status="SUBMITTED", reconciliation_status="ORIGINAL_ORDER_FILLED", broker_order_id=str(order.get("id") or order_id), retry_eligible=False)
+            elif status in {"new", "accepted", "pending_new", "partially_filled", "held", "accepted_for_bidding", "calculated"}:
+                self._persist_sell_intent(intent_id, status="SUBMITTED", reconciliation_status="ORIGINAL_ORDER_ACTIVE", broker_order_id=str(order.get("id") or order_id), retry_eligible=False)
+                active += 1
+            elif status in {"rejected", "canceled", "expired", "done_for_day"}:
+                self._persist_sell_intent(intent_id, status="BROKER_REJECTED", reconciliation_status="ORIGINAL_ORDER_REJECTED", broker_order_id=str(order.get("id") or order_id), retry_eligible=False)
+            else:
+                self._persist_sell_intent(intent_id, status="BROKER_RECONCILIATION_REQUIRED", reconciliation_status="MALFORMED_RESPONSE", retry_eligible=False)
+                ambiguous += 1
+        return {"checked": checked, "active": active, "ambiguous": ambiguous}
+
     def _position_pending_sell(self, symbol: str, position_id: str = "") -> tuple[bool, str]:
         sym = str(symbol or "").upper().strip()
         pid = str(position_id or "").strip()
@@ -2183,6 +2351,9 @@ class PaperAutopilotEngine:
                 return True, f"local_pending_sell:{key}"
             if pid and str(row.get("position_id") or "").strip() == pid:
                 return True, f"local_pending_sell:{key}"
+        intent_id, intent = self._matching_sell_intent(sym, pid)
+        if intent_id:
+            return True, f"unresolved_sell_intent:{intent_id}:{str(intent.get('status') or '').lower()}"
         return False, ""
 
     def _authorized_lane_exit_pending_map(self) -> dict[str, Any]:
@@ -2214,6 +2385,27 @@ class PaperAutopilotEngine:
             live_endpoint_detected=live_detected,
             kill_switch_active=kill_switch,
         )
+
+    def _reserve_sell_approval_intent(self, symbol: str, order_intent_id: str, order: dict[str, Any]) -> dict[str, Any]:
+        """Consume approval before a sell adapter call; ambiguity is non-retryable."""
+        approvals = dict(self._runtime_state.get("paper_sell_approvals") or {})
+        approval = dict(approvals.get(symbol) or {})
+        if not approval.get("approval_id"):
+            return {"reserved": False, "reason": "approval_missing"}
+        approvals[symbol] = consume_paper_sell_approval_v1(approval, order_intent_id=order_intent_id)
+        self._runtime_state["paper_sell_approvals"] = approvals
+        self._persist_sell_intent(
+            order_intent_id,
+            symbol=symbol,
+            position_id=str(order.get("position_id") or ""),
+            approval_id=str(approval.get("approval_id") or ""),
+            client_order_id=str(order.get("client_order_id") or order_intent_id),
+            order=dict(order),
+            created_at=_now_iso(),
+            status="APPROVAL_RESERVED",
+            retry_eligible=False,
+        )
+        return {"reserved": True, "approval_id": approval.get("approval_id")}
 
     def _legacy_swing_canary_execution_guard(self, pre_submit: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
         """Fail closed before the shared writer can see an active SWING canary."""
@@ -2450,6 +2642,14 @@ class PaperAutopilotEngine:
 
     def _submit_authorized_lane_exit(self, open_row: dict[str, Any], broker_position: dict[str, Any], exit_reason: str) -> dict[str, Any]:
         """Submit an approved lane-owned paper exit and wait for its broker fill."""
+        symbol = str(open_row.get("symbol") or "").upper().strip()
+        position_id = str(open_row.get("position_id") or "").strip()
+        # Check durable unresolved intents before approval validation.  A
+        # consumed approval is evidence of the prior attempt, not permission
+        # to manufacture a replacement sell after restart or timeout.
+        pending, pending_reason = self._position_pending_sell(symbol, position_id)
+        if pending:
+            return {"ok": False, "submitted": False, "reason": pending_reason, "blocker": "broker_reconciliation_required"}
         # Canonical human-approval gate — all sell paths must pass this.
         approval_result = self._validate_sell_approval(open_row)
         if not approval_result["valid"]:
@@ -2466,11 +2666,6 @@ class PaperAutopilotEngine:
                     "broker_submission_blocked": True, "broker_actions": 0, "contract": contract, **normalized,
                 }
             return {"ok": False, "submitted": False, "reason": contract.get("reason"), "contract": contract}
-        symbol = str(open_row.get("symbol") or "").upper().strip()
-        position_id = str(open_row.get("position_id") or "").strip()
-        pending, pending_reason = self._position_pending_sell(symbol, position_id)
-        if pending:
-            return {"ok": False, "submitted": False, "reason": pending_reason, "contract": contract}
         available = _to_float(broker_position.get("qty_available"), _to_float(broker_position.get("qty"), _to_float(open_row.get("quantity"), 0.0)))
         normalized = _normalize_paper_sell_qty(_to_float(open_row.get("quantity"), available), available, 6)
         qty = _to_float(normalized.get("normalized_sell_qty"), 0.0)
@@ -2482,16 +2677,25 @@ class PaperAutopilotEngine:
             "symbol": symbol, "side": "sell", "type": "market",
             "time_in_force": "gtc" if lane == "CRYPTO" else "day", "qty": qty,
             "client_order_id": client_order_id, "paper_only": True,
+            "paper_sell_approval_intent_id": client_order_id,
+            "existing_exit_signal_verified": True,
             "lane_id": lane, "capital_book_id": open_row.get("capital_book_id"),
             "position_owner": open_row.get("position_owner"), "exit_policy_owner": open_row.get("exit_policy_owner"),
             "entry_order_id": contract.get("entry_order_id"), "entry_fill_id": contract.get("entry_fill_id"),
             "existing_exit_reason": str(exit_reason or ""), "learned_exit_execution": False,
+            "position_id": position_id,
         }
+        reservation = self._reserve_sell_approval_intent(symbol, client_order_id, order)
+        if not reservation.get("reserved"):
+            return {"ok": False, "submitted": False, "reason": "APPROVAL_RESERVATION_FAILED", "contract": contract}
         try:
+            self._persist_sell_intent(client_order_id, status="SUBMISSION_ATTEMPTED", broker_order_id="")
             result = dict(self.alpaca_paper_broker.submit_paper_order(order) or {})
         except Exception as exc:
+            self._persist_sell_intent(client_order_id, status="AMBIGUOUS_SUBMISSION", reconciliation_status="BROKER_RECONCILIATION_REQUIRED", retry_eligible=False, submission_error=str(exc)[:120])
             return {"ok": False, "submitted": False, "reason": f"lane_exit_submit_exception:{str(exc)[:120]}", "contract": contract}
         if not bool(result.get("ok")):
+            self._persist_sell_intent(client_order_id, status="BROKER_REJECTED", reconciliation_status="BROKER_REJECTED", retry_eligible=False, broker_error=str(result.get("error") or "lane_exit_submit_failed")[:160])
             return {"ok": False, "submitted": False, "reason": str(result.get("error") or "lane_exit_submit_failed")[:160], "contract": contract, **normalized}
         broker_order = dict(result.get("order") or {})
         pending_id = str(broker_order.get("id") or client_order_id)
@@ -2503,12 +2707,7 @@ class PaperAutopilotEngine:
             "submitted_at": _now_iso(), "contract": contract, "legacy_swing_canary_adapter_v1": bool(open_row.get("legacy_swing_canary_adapter_v1")), **normalized,
         }
         self._runtime_state["authorized_lane_exit_pending"] = pending_map
-        # Consume the canonical human approval atomically with durable order-intent creation.
-        approvals = dict(self._runtime_state.get("paper_sell_approvals") or {})
-        approval = dict(approvals.get(symbol) or {}) if symbol else None
-        if approval and approval.get("approval_id"):
-            approvals[symbol] = consume_paper_sell_approval_v1(approval, order_intent_id=client_order_id)
-            self._runtime_state["paper_sell_approvals"] = approvals
+        self._persist_sell_intent(client_order_id, status="SUBMITTED", reconciliation_status="PENDING_BROKER_ORDER_RECONCILIATION", broker_order_id=str(broker_order.get("id") or ""), retry_eligible=False)
         return {"ok": True, "submitted": True, "pending_order_id": pending_id, "contract": contract, **normalized}
 
     def _record_legacy_swing_exit_broker_update(self, item: dict[str, Any], order: dict[str, Any], broker_position: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -2545,10 +2744,14 @@ class PaperAutopilotEngine:
                               "position_id": item.get("position_id"), "symbol": item.get("symbol"), "fill_timestamp": order.get("filled_at") or _now_iso(),
                               "fill_quantity": filled_qty, "fill_price": _to_float(order.get("filled_avg_price"), 0.0), "cumulative_filled_quantity": filled_qty,
                               "remaining_quantity": remaining_qty, "source": "authoritative_paper_broker_order"}
-        broker_qty = _to_float((broker_position or {}).get("qty"), _to_float((broker_position or {}).get("quantity"), 0.0))
+        residual = broker_residual_lookup(
+            {"position_id": item.get("position_id"), "symbol": item.get("symbol"), "asset_type": item.get("asset_type") or "stock", "quantity": broker_position.get("qty") if isinstance(broker_position, dict) else None},
+            broker_lookup=lambda checked_symbol, checked_position_id: self._independent_broker_residual_lookup(checked_symbol, checked_position_id),
+        )
+        broker_qty = _to_float(residual.get("broker_residual_quantity"), -1.0)
         reconciliation_state = "RECONCILED_OPEN"
         if status == "FILLED":
-            reconciliation_state = "RECONCILED_CLOSED" if broker_qty <= 1e-9 else "RECONCILED_PARTIAL"
+            reconciliation_state = "RECONCILED_CLOSED" if residual.get("exit_allowed") else "RECONCILED_PARTIAL"
         elif status == "PARTIALLY_FILLED":
             reconciliation_state = "RECONCILED_PARTIAL"
         elif status in {"REJECTED", "CANCELED", "EXPIRED"}:
@@ -2556,8 +2759,8 @@ class PaperAutopilotEngine:
         reconciliations[key] = {"reconciliation_id": f"legacy-reconciliation:{key}", "position_id": item.get("position_id"),
                                 "activation_id": item.get("legacy_swing_canary_pre_submit", {}).get("activation_id"), "action_id": action_id,
                                 "broker_order_id": order_id, "expected_quantity": submitted_qty, "submitted_quantity": submitted_qty,
-                                "filled_quantity": filled_qty, "broker_remaining_quantity": broker_qty, "astra_position_quantity": broker_qty,
-                                "reconciliation_state": reconciliation_state, "reconciliation_reason": status, "reconciled_at": _now_iso()}
+                                "filled_quantity": filled_qty, "broker_remaining_quantity": residual.get("broker_residual_quantity"), "astra_position_quantity": broker_qty,
+                                "broker_residual_lookup": residual, "reconciliation_state": reconciliation_state, "reconciliation_reason": status, "reconciled_at": _now_iso()}
         closure = None
         if reconciliation_state == "RECONCILED_CLOSED" and status == "FILLED" and filled_qty <= submitted_qty + 1e-9:
             activation_id = item.get("legacy_swing_canary_pre_submit", {}).get("activation_id")
@@ -2631,6 +2834,50 @@ class PaperAutopilotEngine:
             filled += 1 if closed.get("ok") else 0
         self._runtime_state["authorized_lane_exit_pending"] = remaining
         return {"checked": checked, "filled": filled, "pending": len(remaining)}
+
+    def _independent_broker_residual_lookup(self, symbol: str, _position_id: str) -> dict[str, Any]:
+        """Read the complete paper-broker position set for exit reconciliation.
+
+        A local lifecycle row and an exit fill prove neither the broker's
+        residual quantity nor a successful not-found result.  This lookup is
+        intentionally separate from both before a position can be closed.
+        """
+        broker = self.alpaca_paper_broker
+        if broker is None or not hasattr(broker, "positions"):
+            return {"lookup_status": "LOOKUP_FAILED", "symbol": symbol}
+        try:
+            payload = dict(broker.positions() or {})
+        except TimeoutError:
+            return {"lookup_status": "LOOKUP_TIMEOUT", "symbol": symbol}
+        except Exception:
+            return {"lookup_status": "LOOKUP_FAILED", "symbol": symbol}
+        if not bool(payload.get("ok")):
+            return {"lookup_status": "LOOKUP_FAILED", "symbol": symbol}
+        expected = str(symbol or "").upper().strip()
+        for raw in list(payload.get("positions") or []):
+            row = dict(raw or {})
+            if str(row.get("symbol") or "").upper().strip() == expected:
+                return {
+                    **row,
+                    "lookup_status": "ZERO_CONFIRMED" if abs(_to_float(row.get("qty"), _to_float(row.get("quantity"), 0.0))) <= 0.0 else "NONZERO_CONFIRMED",
+                    "paper_account_validated": True,
+                    "residual_lookup_authoritative": True,
+                    "retrieval_timestamp": _now_iso(),
+                }
+        # Alpaca's successful complete positions listing authoritatively means
+        # no current position exists for the requested paper-account symbol.
+        return {
+            "lookup_status": "AUTHORITATIVE_NOT_FOUND",
+            "authoritative_not_found": True,
+            "paper_account_validated": True,
+            "symbol": expected,
+            "retrieval_timestamp": _now_iso(),
+        }
+
+    @staticmethod
+    def _requires_broker_residual_proof(_open_row: Mapping[str, Any]) -> bool:
+        """All local lifecycle closure paths require broker residual evidence."""
+        return True
 
     def _refresh_legacy_forward_activations(self, broker_positions: dict[str, dict[str, Any]]) -> dict[str, Any]:
         """Persist forward-only legacy baselines from the normal worker cycle."""
@@ -4004,6 +4251,11 @@ class PaperAutopilotEngine:
         latest_row: dict[str, Any],
         broker_position: dict[str, Any],
     ) -> dict[str, Any]:
+        existing_symbol = str(open_row.get("symbol") or "").upper().strip()
+        existing_position_id = str(open_row.get("position_id") or "").strip()
+        pending, pending_reason = self._position_pending_sell(existing_symbol, existing_position_id)
+        if pending:
+            return {"ok": False, "submitted": False, "reason": pending_reason, "blocker": "broker_reconciliation_required"}
         # Canonical human-approval gate — all sell paths must pass this.
         approval_result = self._validate_sell_approval(open_row)
         if not approval_result["valid"]:
@@ -4064,18 +4316,30 @@ class PaperAutopilotEngine:
             "time_in_force": "day",
             "qty": normalized_qty,
             "client_order_id": client_order_id,
+            "paper_sell_approval_intent_id": client_order_id,
             "existing_exit_signal_verified": True,
             "learned_exit_validation_bucket": True,
             "learned_exit_policy": str(candidate.get("policy") or ""),
             "paper_only": True,
             "natural_exit_logic_preserved": True,
+            "position_id": pid,
         }
+        reservation = self._reserve_sell_approval_intent(symbol, client_order_id, order)
+        if not reservation.get("reserved"):
+            return {"ok": False, "submitted": False, "reason": "APPROVAL_RESERVATION_FAILED", "candidate": candidate}
         try:
+            self._persist_sell_intent(client_order_id, status="SUBMISSION_ATTEMPTED", broker_order_id="")
             result = dict(broker.submit_paper_order(order) or {})
         except Exception as exc:
-            result = {"ok": False, "error": f"broker_sell_submit_exception:{str(exc)[:120]}"}
+            self._persist_sell_intent(client_order_id, status="AMBIGUOUS_SUBMISSION", reconciliation_status="BROKER_RECONCILIATION_REQUIRED", retry_eligible=False, submission_error=str(exc)[:120])
+            self._append_learned_exit_event({
+                "event": "sell_submission_ambiguous",
+                **candidate,
+                "client_order_id": client_order_id,
+                "reason": "broker_reconciliation_required_before_retry",
+            })
+            return {"ok": False, "submitted": False, "reason": "broker_reconciliation_required_before_retry", "candidate": candidate}
         retry_status = "not_needed"
-        retry_result: dict[str, Any] = {}
         if not bool(result.get("ok")):
             broker_error = str(result.get("error") or "")[:180]
             available_from_error = _parse_available_qty_from_error(broker_error)
@@ -4086,7 +4350,6 @@ class PaperAutopilotEngine:
                 and retry_qty > 0.0
                 and retry_qty < normalized_qty
             ):
-                retry_order = {**order, "qty": retry_qty, "client_order_id": f"{client_order_id[:39]}-r1"}
                 retry_candidate = {
                     **candidate,
                     "qty": retry_qty,
@@ -4104,32 +4367,25 @@ class PaperAutopilotEngine:
                     "retry_status": "RETRY_WITH_NORMALIZED_QTY",
                     "retry_qty": retry_qty,
                 })
-                try:
-                    retry_result = dict(broker.submit_paper_order(retry_order) or {})
-                except Exception as exc:
-                    retry_result = {"ok": False, "error": f"broker_sell_retry_exception:{str(exc)[:120]}"}
-                if bool(retry_result.get("ok")):
-                    result = retry_result
-                    candidate = retry_candidate
-                    retry_status = "retry_submitted"
-                else:
-                    retry_status = "retry_failed"
-                    blocked, loop_row = self._sell_rejection_loop_blocked(symbol, pid, "insufficient_qty_available")
-                    self._append_learned_exit_event({
-                        "event": "sell_submit_rejected",
-                        **retry_candidate,
-                        "broker_error": str(retry_result.get("error") or "retry_submit_failed")[:180],
-                        "retry_status": retry_status,
-                        "exit_validation_classification": "broker_quantity_rejection",
-                        "loop_breaker_applied": blocked,
-                        "loop_breaker": loop_row,
-                    })
-                    return {
-                        "ok": False,
-                        "submitted": False,
-                        "reason": str(retry_result.get("error") or broker_error or "sell_submit_failed")[:140],
-                        "candidate": retry_candidate,
-                    }
+                # Never issue a second sell from an error string.  The first
+                # adapter call may have reached the broker even if its response
+                # was malformed or timed out.  Keep the original client id and
+                # intent reserved until broker order reconciliation proves it
+                # is safe; this worker intentionally has no automatic retry.
+                self._persist_sell_intent(
+                    client_order_id,
+                    status="BROKER_RECONCILIATION_REQUIRED",
+                    reconciliation_status="INSUFFICIENT_QTY_RESPONSE_REQUIRES_BROKER_LOOKUP",
+                    retry_eligible=False,
+                    requested_retry_qty=retry_qty,
+                    broker_error=broker_error,
+                )
+                return {
+                    "ok": False,
+                    "submitted": False,
+                    "reason": "broker_reconciliation_required_before_retry",
+                    "candidate": retry_candidate,
+                }
             else:
                 classification = "broker_quantity_rejection" if "insufficient qty available" in broker_error.lower() else "broker_sell_submission_rejection"
                 blocked, loop_row = self._sell_rejection_loop_blocked(symbol, pid, "insufficient_qty_available" if classification == "broker_quantity_rejection" else broker_error[:80])
@@ -4142,6 +4398,7 @@ class PaperAutopilotEngine:
                     "loop_breaker_applied": blocked,
                     "loop_breaker": loop_row,
                 })
+                self._persist_sell_intent(client_order_id, status="BROKER_REJECTED", reconciliation_status="BROKER_REJECTED", retry_eligible=False, broker_error=broker_error)
                 return {"ok": False, "submitted": False, "reason": str(result.get("error") or "sell_submit_failed")[:140], "candidate": candidate}
         broker_order = dict(result.get("order") or {})
         pending_id = str(broker_order.get("id") or client_order_id)
@@ -4156,12 +4413,7 @@ class PaperAutopilotEngine:
             "retry_status": retry_status,
         }
         self._set_learned_exit_pending_map(pending)
-        # Consume the canonical human approval atomically with durable order-intent creation.
-        approvals = dict(self._runtime_state.get("paper_sell_approvals") or {})
-        approval = dict(approvals.get(symbol) or {}) if symbol else None
-        if approval and approval.get("approval_id"):
-            approvals[symbol] = consume_paper_sell_approval_v1(approval, order_intent_id=client_order_id)
-            self._runtime_state["paper_sell_approvals"] = approvals
+        self._persist_sell_intent(client_order_id, status="SUBMITTED", reconciliation_status="PENDING_BROKER_ORDER_RECONCILIATION", broker_order_id=str(broker_order.get("id") or ""), retry_eligible=False)
         self._append_learned_exit_event({
             "event": "sell_submitted_pending_fill",
             **candidate,
@@ -5248,6 +5500,21 @@ class PaperAutopilotEngine:
             pending_orders=pending_orders,
             active_commitments=commitment_rows,
         )
+        # Broker dust remains real broker exposure.  Persist/update one
+        # canonical record and carry it into every cached capacity consumer;
+        # it is deliberately not a strategy-exit or lifecycle-completion row.
+        dust_rows: list[dict[str, Any]] = []
+        for row in positions:
+            dust = classify_dust_position_v1(row, is_broker_position=True)
+            if not dust.get("is_dust"):
+                continue
+            state_dir = os.path.dirname(getattr(self, "db_path", "") or "") or "state"
+            persisted = persist_dust_position_v1({**row, **dust}, state_dir=state_dir)
+            dust_rows.append(dict(persisted.get("entry") or dust))
+        snapshot["dust_positions"] = dust_rows
+        snapshot["dust_position_count"] = len(dust_rows)
+        snapshot["dust_market_value"] = round(sum(abs(_to_float(row.get("market_value"), 0.0)) for row in dust_rows), 6)
+        snapshot["dust_registry_positions"] = load_dust_positions_v1(state_dir if "state_dir" in locals() else (os.path.dirname(getattr(self, "db_path", "") or "") or "state"))
         snapshot["current_commitment_snapshot"] = self._lane_reserve_commitment_snapshot()
         snapshot["pending_order_snapshot"] = {
             "broker_pending_orders": len(pending_orders),
@@ -5278,6 +5545,7 @@ class PaperAutopilotEngine:
             "day_hard_deadline_at", "day_exit_or_conversion_state",
             "exit_readiness_state", "position_age_days", "last_review_at", "next_review_at",
             "review_state", "hold_exception_state",
+            "is_dust", "dust_reason", "dust_state",
         )
         recovery_rows = {
             _text(row.get("symbol")).upper(): dict(row)
@@ -6874,20 +7142,23 @@ class PaperAutopilotEngine:
             return {"ok": False, "error": "position_row_invalid"}
 
         lane = str(open_row.get("lane_id") or "").upper().strip()
-        # A DAY/CRYPTO lifecycle is not closed locally before the authorized
-        # paper exit has a real broker fill.  SWING retains its existing path.
-        if lane in {"DAY", "CRYPTO"}:
+        # Every lane needs a real fill plus an independent broker residual
+        # lookup.  Local remaining quantity is reconciliation context only.
+        if self._requires_broker_residual_proof(open_row):
             contract = self._authorized_lane_exit_contract(open_row)
-            if not contract.get("authorized"):
+            if lane in {"DAY", "CRYPTO"} and not contract.get("authorized"):
                 return {"ok": False, "error": str(contract.get("reason") or "lane_exit_not_authorized"), "contract": contract}
             if not isinstance(broker_fill, dict) or not str(broker_fill.get("exit_order_id") or "").strip() or not str(broker_fill.get("exit_fill_id") or "").strip():
-                return {"ok": False, "error": "broker_exit_fill_required_before_lane_lifecycle_close", "contract": contract}
+                return {"ok": False, "error": "broker_exit_fill_required_before_lifecycle_close", "contract": contract}
             # Real broker residual lookup before exit closure.
-            residual = broker_residual_lookup(open_row, broker_fill)
+            residual = broker_residual_lookup(
+                open_row,
+                broker_lookup=lambda checked_symbol, checked_position_id: self._independent_broker_residual_lookup(checked_symbol, checked_position_id),
+            )
             if not residual.get("exit_allowed"):
                 return {
                     "ok": False,
-                    "error": "broker_residual_quantity_nonzero",
+                    "error": f"broker_residual_lookup_blocks_close:{residual.get('lookup_status')}",
                     "broker_residual_lookup": residual,
                     "remaining_qty": residual.get("broker_residual_quantity"),
                 }
@@ -8755,6 +9026,10 @@ class PaperAutopilotEngine:
             # bounded provider refresh cycle.
             self._save_state_file()
             self._note_worker_progress("pending_exit_reconciliation")
+            # Ambiguous submissions are reconciled before any exit candidate
+            # evaluation.  This phase performs broker reads only; it never
+            # resubmits a sell or unlocks the consumed approval.
+            sell_intent_reconciliation = self._refresh_unresolved_sell_intents()
             learned_exit_refresh = self._refresh_learned_exit_pending_sells()
             authorized_lane_exit_refresh = self._refresh_authorized_lane_exit_pending()
             self._note_worker_progress("open_position_review")
@@ -9462,6 +9737,7 @@ class PaperAutopilotEngine:
                 "orders_attempted": int(orders_attempted),
                 "orders_rejected": int(orders_rejected),
                 "positions_closed": int(closed),
+                "paper_sell_intent_reconciliation": dict(sell_intent_reconciliation),
                 "learned_exit_pending_refresh": dict(learned_exit_refresh),
                 "positions_skipped": int(skipped),
                 "candidates_seen": int(len(candidates)),

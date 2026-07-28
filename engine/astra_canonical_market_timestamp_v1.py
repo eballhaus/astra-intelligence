@@ -1,11 +1,9 @@
-"""Canonical market timestamp helper.
+"""Strict provider-native market-observation timestamp contract.
 
-Prefers provider-native timestamps embedded in market data (observation_timestamp,
-market_timestamp, quote_timestamp, etc.) over Python `now()` so that every
-risk decision is anchored to the actual moment the provider observed the market.
-
-Falls back to the current UTC time only when no provider-native timestamp is
-available, and flags the fallback so consumers know provenance is approximate.
+Retrieval and record timestamps document when Astra received or persisted a
+payload.  They are never evidence that the market was observed at that time.
+Risk engines consume this contract so missing market time fails closed instead
+of becoming artificially fresh at the next worker cycle.
 """
 from __future__ import annotations
 
@@ -15,97 +13,138 @@ from typing import Any, Mapping
 
 SCHEMA_VERSION = "astra_canonical_market_timestamp_v1"
 
+SOURCE_QUOTE = "QUOTE"
+SOURCE_TRADE = "TRADE"
+SOURCE_COMPLETED_BAR = "COMPLETED_BAR"
+SOURCE_BROKER_POSITION_SNAPSHOT = "BROKER_POSITION_SNAPSHOT"
+SOURCE_CACHE = "CACHE"
 
-# Ordered list of provider-native timestamp fields to inspect.  Earlier entries
-# are stronger provenance for the market observation itself.
-_PROVIDER_NATIVE_FIELDS = (
-    "observation_timestamp",
-    "market_timestamp",
-    "quote_timestamp",
-    "trade_timestamp",
-    "last_trade_timestamp",
-    "bar_timestamp",
-    "timestamp",
-    "updated_at",
-    "last_update_ts",
-    "created_at",
-)
-
-
-def _iso(now: datetime | None = None) -> str:
-    value = now or datetime.now(timezone.utc)
-    value = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
-    return value.isoformat().replace("+00:00", "Z")
+_SOURCE_FIELDS = {
+    SOURCE_QUOTE: ("provider_quote_timestamp", "quote_timestamp", "observation_timestamp", "market_timestamp"),
+    SOURCE_TRADE: ("provider_trade_timestamp", "trade_timestamp", "last_trade_timestamp", "observation_timestamp", "market_timestamp"),
+    SOURCE_COMPLETED_BAR: ("provider_bar_timestamp", "bar_timestamp", "completed_bar_timestamp", "observation_timestamp"),
+    # A cache may retain an already-validated observation, but must never turn
+    # its own refresh time into a market timestamp.
+    SOURCE_CACHE: ("market_observation_timestamp", "provider_native_timestamp", "original_observation_timestamp"),
+    SOURCE_BROKER_POSITION_SNAPSHOT: (),
+}
 
 
-def _text(value: Any, default: str = "") -> str:
-    return str(value or default).strip()
+def _iso(value: datetime | None = None) -> str:
+    current = value or datetime.now(timezone.utc)
+    current = current.replace(tzinfo=timezone.utc) if current.tzinfo is None else current.astimezone(timezone.utc)
+    return current.isoformat().replace("+00:00", "Z")
 
 
-def _parse_iso(value: str) -> datetime | None:
-    text = _text(value)
-    if not text:
+def _text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    raw = _text(value)
+    if not raw:
         return None
     try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
-    except Exception:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
         return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _infer_source_type(row: Mapping[str, Any]) -> str:
+    explicit = _text(row.get("market_source_type") or row.get("source_type")).upper()
+    if explicit in _SOURCE_FIELDS:
+        return explicit
+    if any(_text(row.get(field)) for field in _SOURCE_FIELDS[SOURCE_QUOTE]):
+        return SOURCE_QUOTE
+    if any(_text(row.get(field)) for field in _SOURCE_FIELDS[SOURCE_TRADE]):
+        return SOURCE_TRADE
+    if any(_text(row.get(field)) for field in _SOURCE_FIELDS[SOURCE_COMPLETED_BAR]):
+        return SOURCE_COMPLETED_BAR
+    return SOURCE_BROKER_POSITION_SNAPSHOT
 
 
 def canonical_market_timestamp_v1(
     record: Mapping[str, Any] | None,
     now: datetime | None = None,
+    *,
+    source_type: str | None = None,
+    max_age_seconds: float | None = None,
 ) -> dict[str, Any]:
-    """Resolve a canonical market timestamp from provider-native fields.
+    """Return strict observation provenance for a market-evidence record.
 
-    Returns a dict with:
-      - provider_native_timestamp: the provider-supplied ISO timestamp, or None
-      - canonical_timestamp: the resolved timestamp (provider-native or fallback)
-      - provenance: "provider_native" or "python_fallback"
-      - source_field: which field supplied the provider-native timestamp
-      - fallback_reason: present when falling back to now()
+    ``now`` is intentionally used only for retrieval/generated fields and
+    validity checks.  It can never populate ``market_observation_timestamp``.
+    Generic record fields (``timestamp``, ``updated_at``, ``created_at``) are
+    deliberately absent from the accepted field map.
     """
     row = dict(record or {})
-    native: str | None = None
-    source_field: str | None = None
+    kind = _text(source_type or row.get("market_source_type") or row.get("source_type")).upper() or _infer_source_type(row)
+    current = now or datetime.now(timezone.utc)
+    current = current.replace(tzinfo=timezone.utc) if current.tzinfo is None else current.astimezone(timezone.utc)
+    retrieval = _text(row.get("retrieval_timestamp") or row.get("retrieved_at") or row.get("fetched_at")) or _iso(current)
+    generated = _text(row.get("generated_at")) or _iso(current)
+    created = _text(row.get("record_created_at") or row.get("created_at"))
 
-    for field in _PROVIDER_NATIVE_FIELDS:
-        value = row.get(field)
-        if value in (None, "", "None", "null"):
+    observation: str | None = None
+    field: str | None = None
+    parsed: datetime | None = None
+    for candidate in _SOURCE_FIELDS.get(kind, ()):
+        value = _text(row.get(candidate))
+        if not value:
             continue
-        text = _text(value)
-        if _parse_iso(text) is not None:
-            native = text
-            source_field = field
-            break
+        parsed_value = _parse_iso(value)
+        if parsed_value is None:
+            # An explicitly supplied native field with invalid content must not
+            # silently fall through to another generic timestamp.
+            return _result(kind, None, candidate, retrieval, generated, created, "INVALID", False, "INVALID_PROVIDER_NATIVE_TIMESTAMP")
+        observation, field, parsed = value, candidate, parsed_value
+        break
 
-    if native:
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "provider_native_timestamp": native,
-            "canonical_timestamp": native,
-            "provenance": "provider_native",
-            "source_field": source_field,
-            "fallback_reason": None,
-        }
+    if observation is None:
+        return _result(kind, None, None, retrieval, generated, created, "UNAVAILABLE", False, "PROVIDER_NATIVE_MARKET_OBSERVATION_UNAVAILABLE")
+    if parsed and parsed > current:
+        return _result(kind, observation, field, retrieval, generated, created, "INVALID", False, "FUTURE_PROVIDER_NATIVE_TIMESTAMP")
+    age_seconds = max(0.0, (current - parsed).total_seconds()) if parsed else None
+    if max_age_seconds is not None and age_seconds is not None and age_seconds > float(max_age_seconds):
+        return _result(kind, observation, field, retrieval, generated, created, "STALE", False, "STALE_PROVIDER_NATIVE_TIMESTAMP", age_seconds)
+    executable = kind in {SOURCE_QUOTE, SOURCE_TRADE}
+    return _result(kind, observation, field, retrieval, generated, created, "FRESH", executable, None, age_seconds)
 
-    fallback = _iso(now)
+
+def _result(
+    source_type: str,
+    observation: str | None,
+    field: str | None,
+    retrieval: str,
+    generated: str,
+    created: str,
+    freshness: str,
+    executable: bool,
+    blocker: str | None,
+    age_seconds: float | None = None,
+) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
-        "provider_native_timestamp": None,
-        "canonical_timestamp": fallback,
-        "provenance": "python_fallback",
-        "source_field": None,
-        "fallback_reason": "no_provider_native_timestamp_field_available",
+        "source_type": source_type,
+        "market_observation_timestamp": observation,
+        "provider_native_timestamp": observation,
+        "canonical_timestamp": observation,
+        "retrieval_timestamp": retrieval,
+        "generated_at": generated,
+        "record_created_at": created or None,
+        "provenance": "provider_native" if observation else "unavailable",
+        "source_field": field,
+        "freshness_status": freshness,
+        "executable_freshness": bool(executable and freshness == "FRESH"),
+        "market_observation_unavailable": observation is None,
+        "first_causal_blocker": blocker,
+        "age_seconds": age_seconds,
     }
 
 
-def canonical_market_timestamp_iso_v1(
-    record: Mapping[str, Any] | None,
-    now: datetime | None = None,
-) -> str:
-    """Convenience wrapper returning only the canonical ISO timestamp."""
-    return canonical_market_timestamp_v1(record, now)["canonical_timestamp"]
+def canonical_market_timestamp_iso_v1(record: Mapping[str, Any] | None, now: datetime | None = None, **kwargs: Any) -> str:
+    """Compatibility helper; unavailable observation time is represented by ''."""
+    return str(canonical_market_timestamp_v1(record, now, **kwargs).get("market_observation_timestamp") or "")

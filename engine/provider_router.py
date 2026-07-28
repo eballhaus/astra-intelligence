@@ -201,7 +201,13 @@ def _fmp_efficiency_record(row: dict[str, Any]) -> None:
     rec.setdefault("caller_context", "")
     rec.setdefault("ttl_seconds", 0)
     with _FMP_EFFICIENCY_LOCK:
-        append_fmp_provider_event_v1(rec)
+        # Telemetry must never turn an otherwise valid isolated/provider
+        # response into an exception when its optional state directory is not
+        # writable.  The request outcome remains authoritative.
+        try:
+            append_fmp_provider_event_v1(rec)
+        except OSError:
+            rec["telemetry_persistence_blocked"] = True
         manifest = _fmp_efficiency_manifest_load()
         manifest["enabled"] = True
         manifest["total_fmp_calls_tracked"] = int(_to_float(manifest.get("total_fmp_calls_tracked"), 0.0)) + 1
@@ -244,7 +250,11 @@ def _fmp_efficiency_record(row: dict[str, Any]) -> None:
         manifest["worst_value_endpoints"] = list(reversed(ranked[-5:])) if ranked else []
         manifest["last_updated_at"] = _now_iso()
         manifest["_endpoint_value_rollup"] = roll
-        _fmp_efficiency_manifest_write(manifest)
+        try:
+            _fmp_efficiency_manifest_write(manifest)
+        except OSError:
+            # Optional telemetry storage must not break a provider consumer.
+            pass
 
 
 def _fmp_endpoint_policy(path_template: str) -> tuple[str, str, bool]:

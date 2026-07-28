@@ -83,6 +83,9 @@ class OwnershipScoreTests(unittest.TestCase):
             "candidate_id": "c1",
             "contract_id": "c1",
             "lifecycle_id": "l1",
+            "status": "OPEN",
+            "quantity": 1.0,
+            "broker_linked": "TRUE",
         }
         base.update(kwargs)
         return base
@@ -101,7 +104,7 @@ class OwnershipScoreTests(unittest.TestCase):
         self.assertEqual(report["ownership_integrity"]["first_blocker"], "BROKER_ONLY_POSITIONS_WITHOUT_ASTRA_RECORD")
 
     def test_dust_counts_toward_reconciliation(self):
-        positions = [{"symbol": "PEPE", "quantity": 0.0001, "market_value": 0.005, "position_id": "dust-1"}]
+        positions = [{"symbol": "PEPE", "quantity": 0.0001, "market_value": 0.005, "position_id": "dust-1", "status": "OPEN", "broker_linked": "TRUE"}]
         report = build_ownership_integrity_report_v1(positions, broker_symbols={"PEPE"}, db_open_symbols={"PEPE"})
         self.assertEqual(report["ownership_integrity"]["dust_positions_monitored"], 1)
         self.assertEqual(report["ownership_integrity"]["ownership_score"], 100.0)
@@ -111,7 +114,7 @@ class BrokerResidualLookupTests(unittest.TestCase):
     def test_residual_zero_allows_exit(self):
         result = broker_residual_lookup(
             {"symbol": "AAPL", "position_id": "p1"},
-            {"qty": 0.0, "remaining_qty": 0.0},
+            {"qty": 0.0, "remaining_qty": 0.0, "residual_lookup_authoritative": True, "lookup_status": "ZERO_CONFIRMED", "symbol": "AAPL"},
         )
         self.assertTrue(result["residual_zero"])
         self.assertTrue(result["exit_allowed"])
@@ -120,7 +123,7 @@ class BrokerResidualLookupTests(unittest.TestCase):
     def test_residual_positive_blocks_exit(self):
         result = broker_residual_lookup(
             {"symbol": "AAPL", "position_id": "p1"},
-            {"qty": 5.0, "remaining_qty": 5.0},
+            {"qty": 5.0, "remaining_qty": 5.0, "residual_lookup_authoritative": True, "lookup_status": "NONZERO_CONFIRMED", "symbol": "AAPL"},
         )
         self.assertFalse(result["residual_zero"])
         self.assertFalse(result["exit_allowed"])
@@ -128,21 +131,21 @@ class BrokerResidualLookupTests(unittest.TestCase):
 
     def test_lookup_callable_used(self):
         def lookup(symbol, position_id):
-            return {"quantity": 0.00000001}
+            return {"quantity": 0.00000001, "lookup_status": "ZERO_CONFIRMED", "symbol": "AAPL"}
         result = broker_residual_lookup(
             {"symbol": "AAPL", "position_id": "p1", "quantity": 100.0},
             None,
             broker_lookup=lookup,
         )
         self.assertTrue(result["exit_allowed"])
-        self.assertEqual(result["source"], "broker_lookup")
+        self.assertEqual(result["source"], "independent_broker_lookup")
 
-    def test_position_row_fallback(self):
+    def test_position_row_never_proves_residual(self):
         result = broker_residual_lookup(
             {"symbol": "AAPL", "position_id": "p1", "quantity": 0.0},
         )
-        self.assertTrue(result["exit_allowed"])
-        self.assertEqual(result["source"], "position_row")
+        self.assertFalse(result["exit_allowed"])
+        self.assertEqual(result["lookup_status"], "UNKNOWN")
 
 
 class ActivePositionPredicateTests(unittest.TestCase):

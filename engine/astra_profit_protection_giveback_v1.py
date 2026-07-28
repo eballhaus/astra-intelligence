@@ -341,15 +341,7 @@ def _resolve_position_inputs(
 
     mae_pct = _num(pos.get("max_adverse_excursion_pct") or pos.get("mae_pct"))
 
-    price_timestamp = _text(
-        broker.get("quote_timestamp")
-        or broker.get("timestamp")
-        or pos.get("last_update_ts")
-        or pos.get("updated_at")
-    )
-
-    # Canonical provider-native timestamp: prefers fields such as
-    # observation_timestamp / market_timestamp over synthetic cycle time.
+    retrieval_timestamp = _text(broker.get("retrieval_timestamp") or broker.get("retrieved_at") or broker.get("fetched_at"))
     provider_native_ts = canonical_market_timestamp_v1(
         {
             **pos,
@@ -358,13 +350,16 @@ def _resolve_position_inputs(
             or pos.get("observation_timestamp"),
             "market_timestamp": broker.get("market_timestamp")
             or pos.get("market_timestamp"),
-        }
+            "quote_timestamp": broker.get("quote_timestamp") or pos.get("quote_timestamp"),
+            "trade_timestamp": broker.get("trade_timestamp") or pos.get("trade_timestamp"),
+            "retrieval_timestamp": retrieval_timestamp,
+        },
+        source_type="QUOTE" if (broker.get("quote_timestamp") or pos.get("quote_timestamp")) else None,
     )
     provider_native_timestamp = provider_native_ts["provider_native_timestamp"]
     provider_native_timestamp_provenance = provider_native_ts["provenance"]
     provider_native_timestamp_source = provider_native_ts["source_field"]
-    if not price_timestamp:
-        price_timestamp = provider_native_ts["canonical_timestamp"]
+    price_timestamp = provider_native_ts["market_observation_timestamp"]
 
     holding_minutes = _age_minutes(
         pos.get("entry_timestamp") or pos.get("entry_filled_at") or pos.get("created_at")
@@ -393,6 +388,10 @@ def _resolve_position_inputs(
         "peak_price": peak_price,
         "mae_pct": mae_pct,
         "price_timestamp": price_timestamp,
+        "market_observation_timestamp": provider_native_ts["market_observation_timestamp"],
+        "retrieval_timestamp": retrieval_timestamp,
+        "market_observation_unavailable": bool(provider_native_ts["market_observation_unavailable"]),
+        "market_timestamp_contract": provider_native_ts,
         "provider_native_timestamp": provider_native_timestamp,
         "provider_native_timestamp_provenance": provider_native_timestamp_provenance,
         "provider_native_timestamp_source": provider_native_timestamp_source,
@@ -442,8 +441,10 @@ def _validate_inputs(
     if inputs.get("quantity", 0.0) <= 0.0:
         blockers.append("MISSING_OR_INVALID_QUANTITY")
 
-    price_ts = inputs.get("price_timestamp")
-    if price_ts:
+    price_ts = inputs.get("market_observation_timestamp") or inputs.get("price_timestamp")
+    if inputs.get("market_observation_unavailable"):
+        blockers.append("MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE")
+    elif price_ts:
         age = _age_minutes(price_ts, now)
         if age is None:
             blockers.append("PRICE_TIMESTAMP_UNPARSEABLE")

@@ -391,27 +391,9 @@ def _resolve_position_inputs(
         or (market_value - cost_basis if market_value > 0 and cost_basis > 0 else 0.0)
     )
 
-    # Market observation timestamp: when the provider reported the price.
-    # This is distinct from retrieval timestamp (_now_iso()).
-    # Falls back to retrieval timestamp when provider observation time is not
-    # carried by the data, but provenance flags the approximation.
-    retrieval_timestamp = _text(
-        latest.get("timestamp")           # Cycle snapshot time (_now_iso())
-        or latest.get("quote_timestamp")  # Quote timestamp if available
-    )
-    market_observation_timestamp = _text(
-        broker.get("quote_timestamp")     # Broker quote timestamp
-        or broker.get("timestamp")        # Broker position last update
-        or latest.get("quote_timestamp")  # Actual quote timestamp
-        or broker.get("timestamp")        # Broker timestamp (from position)
-        or pos.get("last_update_ts")      # DB position timestamp
-        or pos.get("updated_at")          # DB position timestamp
-        or ""  # Truly unavailable
-    )
-    price_timestamp = market_observation_timestamp or retrieval_timestamp
-
-    # Canonical provider-native timestamp: prefers fields such as
-    # observation_timestamp / market_timestamp over synthetic cycle time.
+    # Retrieval timestamps document cycle/fetch time only.  The canonical
+    # contract decides whether a provider-native market observation exists.
+    retrieval_timestamp = _text(latest.get("retrieval_timestamp") or latest.get("retrieved_at") or latest.get("fetched_at"))
     provider_native_ts = canonical_market_timestamp_v1(
         {
             **pos,
@@ -423,14 +405,17 @@ def _resolve_position_inputs(
             "market_timestamp": broker.get("market_timestamp")
             or latest.get("market_timestamp")
             or pos.get("market_timestamp"),
-        }
+            "quote_timestamp": broker.get("quote_timestamp") or latest.get("quote_timestamp") or pos.get("quote_timestamp"),
+            "trade_timestamp": broker.get("trade_timestamp") or latest.get("trade_timestamp") or pos.get("trade_timestamp"),
+            "retrieval_timestamp": retrieval_timestamp,
+        },
+        source_type="QUOTE" if (broker.get("quote_timestamp") or latest.get("quote_timestamp") or pos.get("quote_timestamp")) else None,
     )
     provider_native_timestamp = provider_native_ts["provider_native_timestamp"]
     provider_native_timestamp_provenance = provider_native_ts["provenance"]
     provider_native_timestamp_source = provider_native_ts["source_field"]
-    if not market_observation_timestamp:
-        market_observation_timestamp = provider_native_ts["canonical_timestamp"]
-        price_timestamp = market_observation_timestamp
+    market_observation_timestamp = provider_native_ts["market_observation_timestamp"]
+    price_timestamp = market_observation_timestamp
 
     holding_minutes = _age_minutes(
         pos.get("entry_timestamp")
@@ -469,7 +454,8 @@ def _resolve_position_inputs(
         "provider_native_timestamp": provider_native_timestamp,
         "provider_native_timestamp_provenance": provider_native_timestamp_provenance,
         "provider_native_timestamp_source": provider_native_timestamp_source,
-        "market_observation_unavailable": not bool(market_observation_timestamp),
+        "market_observation_unavailable": bool(provider_native_ts["market_observation_unavailable"]),
+        "market_timestamp_contract": provider_native_ts,
         "holding_minutes": holding_minutes,
         "peak_unrealized_pct": peak_unrealized_pct,
         "max_adverse_pct": max_adverse_pct,

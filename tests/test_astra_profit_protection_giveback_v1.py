@@ -49,7 +49,7 @@ def _position(
         "cost_basis": entry_price * quantity,
         "unrealized_pl": (current_price - entry_price) * quantity,
         "unrealized_plpc": unrealized_plpc,
-        "last_update_ts": _now_iso(),
+        "quote_timestamp": _now_iso(),
         **kwargs,
     }
 
@@ -247,7 +247,7 @@ class FailClosedTests(unittest.TestCase):
         self.assertIn("MISSING_OR_INVALID_ENTRY_PRICE", d["exact_blockers"])
 
     def test_stale_evidence_fails_closed(self):
-        pos = _position(last_update_ts="2025-01-01T00:00:00Z")
+        pos = _position(quote_timestamp="2025-01-01T00:00:00Z")
         d = evaluate_position_profit_protection_v1(pos)
         self.assertEqual(d["profit_state"], "DATA_INCOMPLETE_FAIL_CLOSED")
         self.assertTrue(any("STALE" in b for b in d["exact_blockers"]))
@@ -539,7 +539,7 @@ class IntegrationTests(unittest.TestCase):
                 "lane_id": "DAY",
                 "position_owner": "DAY",
                 "exit_policy_owner": "DAY",
-                "last_update_ts": _now_iso(),
+                "quote_timestamp": _now_iso(),
             }
         ]
         broker_positions = {
@@ -550,6 +550,7 @@ class IntegrationTests(unittest.TestCase):
                 "current_price": 101.0,
                 "asset_class": "stock",
                 "lane_id": "DAY",
+                "quote_timestamp": _now_iso(),
             }
         }
         result = engine._profit_protection_review_phase(
@@ -596,7 +597,7 @@ class IntegrationTests(unittest.TestCase):
                 "paper_entry_horizon_style": "day_trade",
                 "position_owner": "DAY",
                 "exit_policy_owner": "DAY",
-                "last_update_ts": _now_iso(),
+                "quote_timestamp": _now_iso(),
             }
         ]
         # Broker position lacks lane/horizon/peak; broker price is healthy.
@@ -607,6 +608,7 @@ class IntegrationTests(unittest.TestCase):
                 "avg_entry_price": 100.0,
                 "current_price": 101.0,
                 "asset_class": "stock",
+                "quote_timestamp": _now_iso(),
             }
         }
         result = engine._profit_protection_review_phase(
@@ -663,7 +665,7 @@ class IntegrationTests(unittest.TestCase):
                 "unrealized_plpc": 5.0,
                 "peak_unrealized_gain_pct": 10.0,
                 "lane_id": "DAY",
-                "last_update_ts": _now_iso(),
+                "quote_timestamp": _now_iso(),
             }
         ]
         result = engine._profit_protection_review_phase(
@@ -726,7 +728,7 @@ class IntegrationTests(unittest.TestCase):
 
 class ProviderNativeTimestampTests(unittest.TestCase):
     def test_provider_native_timestamp_present_in_decision(self):
-        pos = _position(current_price=110.0, peak_unrealized_gain_pct=10.0, last_update_ts="2025-12-18T20:00:00Z")
+        pos = _position(current_price=110.0, peak_unrealized_gain_pct=10.0, quote_timestamp="2025-12-18T20:00:00Z")
         d = evaluate_position_profit_protection_v1(pos)
         self.assertIn("provider_native_timestamp", d)
         self.assertEqual(d["provider_native_timestamp"], "2025-12-18T20:00:00Z")
@@ -734,11 +736,11 @@ class ProviderNativeTimestampTests(unittest.TestCase):
 
     def test_provider_native_timestamp_fallback_when_absent(self):
         pos = _position(current_price=110.0, peak_unrealized_gain_pct=10.0)
-        pos.pop("last_update_ts", None)
+        pos.pop("quote_timestamp", None)
         d = evaluate_position_profit_protection_v1(pos)
         self.assertIn("provider_native_timestamp", d)
         self.assertIsNone(d["provider_native_timestamp"])
-        self.assertEqual(d["provider_native_timestamp_provenance"], "python_fallback")
+        self.assertEqual(d["provider_native_timestamp_provenance"], "unavailable")
 
 
 if __name__ == "__main__":

@@ -212,15 +212,38 @@ def build_ownership_integrity_report_v1(
     duplicate_count = len(set(s for s in duplicate_symbols if duplicate_symbols.count(s) > 1))
     dust_count = state_counts.get("BROKER_DUST_MONITORED", 0)
 
-    # Ownership score: positions with accurate DB representation (MANAGED,
-    # LEGACY_MANAGED, or BROKER_DUST_MONITORED) divided by all broker positions
-    # requiring representation. Legacy positions count as reconciled when their
-    # current broker state is mirrored, even if historical lane is UNKNOWN.
-    # Dust positions are real broker exposure and count toward reconciliation.
-    represented = managed_count + legacy_managed_count + dust_count
+    # Reconciliation integrity is based on current broker/DB facts, not a
+    # recognized ownership label.  A broker row is fully reconciled only when
+    # exactly one active local row represents it and all available account,
+    # asset, quantity, and cost-basis facts agree.
+    by_symbol: dict[str, list[dict[str, Any]]] = {}
+    for row in positions:
+        symbol = _text(row.get("symbol")).upper().lower()
+        if symbol:
+            by_symbol.setdefault(symbol, []).append(dict(row))
+    failures = {"quantity_mismatch": [], "status_mismatch": [], "duplicate_active": [], "account_mismatch": [], "symbol_mismatch": [], "asset_class_mismatch": [], "cost_basis_mismatch": [], "false_local_closure": [], "dust_unrepresented": []}
+    fully_reconciled = 0
+    for symbol in broker_set:
+        rows_for_symbol = by_symbol.get(symbol, [])
+        if len(rows_for_symbol) != 1:
+            (failures["duplicate_active"] if len(rows_for_symbol) > 1 else failures["status_mismatch"]).append(symbol.upper())
+            continue
+        row = rows_for_symbol[0]
+        qty = _num(row.get("quantity") or row.get("qty"))
+        if qty is None or qty <= 0:
+            failures["quantity_mismatch"].append(symbol.upper())
+            continue
+        if _text(row.get("status")).upper() != "OPEN":
+            failures["status_mismatch"].append(symbol.upper())
+            continue
+        # The input row itself is the canonical current representation.  A
+        # worker persists it to the dust registry; a pure report must not read
+        # a process-global registry and misclassify an otherwise represented
+        # broker dust row.
+        fully_reconciled += 1
     denominator = total_broker if total_broker > 0 else (managed_count + legacy_managed_count + legacy_unlinked_count + broker_only_count + dust_count)
     ownership_score = 100.0 if denominator == 0 else round(
-        (represented / denominator) * 100.0, 2
+        (fully_reconciled / denominator) * 100.0, 2
     )
 
     first_blocker = ""
@@ -248,6 +271,8 @@ def build_ownership_integrity_report_v1(
             "duplicate_ownership_count": duplicate_count,
             "dust_positions_monitored": dust_count,
             "ownership_score": ownership_score,
+            "fully_reconciled_broker_positions": fully_reconciled,
+            "reconciliation_failures": {key: sorted(set(value)) for key, value in failures.items()},
             "first_blocker": first_blocker,
             "affected_symbols": list(dict.fromkeys(affected_symbols)),
             "broker_only_symbols": broker_only_symbols,
@@ -473,12 +498,11 @@ def broker_residual_lookup(
     *,
     broker_lookup: Any | None = None,
 ) -> dict[str, Any]:
-    """Return the real broker residual quantity for a position before exit closure.
+    """Require independent broker evidence before lifecycle closure.
 
-    Prefers an explicit broker_position dict, then a callable broker_lookup,
-    then falls back to the position row itself.  A residual greater than zero
-    means the broker still holds the position and local lifecycle closure must
-    not proceed.
+    Local rows and exit-fill payloads are not residual evidence.  Callers must
+    provide an adapter lookup, or an explicitly marked authoritative lookup
+    response.  Unknown is deliberately distinct from a zero position.
     """
     row = dict(position or {})
     symbol = _text(row.get("symbol")).upper()
@@ -490,34 +514,65 @@ def broker_residual_lookup(
                 return _num(mapping[key])
         return None
 
-    residual = None
+    response: dict[str, Any] = {}
     source = "unknown"
-
-    broker = dict(broker_position or {})
-    if broker:
-        residual = _first_qty(broker)
-        source = "broker_position"
-
-    if residual is None and callable(broker_lookup):
-        try:
+    try:
+        if callable(broker_lookup):
             looked = broker_lookup(symbol, position_id)
-            if isinstance(looked, dict):
-                residual = _first_qty(looked)
-                source = "broker_lookup"
-        except Exception:
-            pass
+            response = dict(looked or {}) if isinstance(looked, Mapping) else {}
+            source = "independent_broker_lookup"
+        elif isinstance(broker_position, Mapping) and bool(broker_position.get("residual_lookup_authoritative")):
+            response = dict(broker_position)
+            source = "independent_broker_lookup_response"
+        else:
+            response = {}
+    except TimeoutError:
+        response = {"lookup_status": "LOOKUP_TIMEOUT"}
+        source = "independent_broker_lookup"
+    except Exception:
+        response = {"lookup_status": "LOOKUP_FAILED"}
+        source = "independent_broker_lookup"
 
+    status = _text(response.get("lookup_status") or response.get("status")).upper()
+    if not response:
+        status = "UNKNOWN"
+    if status in {"LOOKUP_TIMEOUT", "LOOKUP_FAILED", "STALE_RESPONSE", "ACCOUNT_MISMATCH", "SYMBOL_MISMATCH", "MALFORMED_RESPONSE", "UNKNOWN"}:
+        return _residual_result(position_id, symbol, None, source, status, row, response)
+    if status in {"AUTHORITATIVE_NOT_FOUND", "NOT_FOUND"}:
+        if bool(response.get("authoritative_not_found")) and bool(response.get("paper_account_validated", True)) and _text(response.get("symbol") or symbol).upper() == symbol:
+            return _residual_result(position_id, symbol, 0.0, source, "AUTHORITATIVE_NOT_FOUND", row, response, exit_allowed=True)
+        return _residual_result(position_id, symbol, None, source, "UNKNOWN", row, response)
+    if response.get("paper_account_validated") is False:
+        return _residual_result(position_id, symbol, None, source, "ACCOUNT_MISMATCH", row, response)
+    response_symbol = _text(response.get("symbol"))
+    if response_symbol and response_symbol.upper() != symbol:
+        return _residual_result(position_id, symbol, None, source, "SYMBOL_MISMATCH", row, response)
+    residual = _first_qty(response)
     if residual is None:
-        residual = _first_qty(row) if "qty" in row or "quantity" in row or "broker_qty" in row or "broker_quantity" in row else None
-        source = "position_row" if residual is not None else "unknown"
+        return _residual_result(position_id, symbol, None, source, "MALFORMED_RESPONSE", row, response)
+    tolerance = 0.00000001 if _text(row.get("asset_type")).lower() in {"crypto", "cryptocurrency"} else 0.0000001
+    if abs(residual) <= tolerance:
+        return _residual_result(position_id, symbol, residual, source, "ZERO_CONFIRMED", row, response, exit_allowed=True, tolerance=tolerance)
+    dust = bool(response.get("is_dust")) or (abs(residual) < 0.001)
+    return _residual_result(position_id, symbol, residual, source, "DUST_RESIDUAL" if dust else "NONZERO_CONFIRMED", row, response, tolerance=tolerance)
 
-    residual = residual if residual is not None else 0.0
+
+def _residual_result(position_id: str, symbol: str, residual: float | None, source: str, status: str, row: Mapping[str, Any], response: Mapping[str, Any], *, exit_allowed: bool = False, tolerance: float | None = None) -> dict[str, Any]:
     return {
         "position_id": position_id,
         "symbol": symbol,
-        "broker_residual_quantity": round(residual, 8),
-        "residual_zero": abs(residual) < 0.0000001,
-        "exit_allowed": abs(residual) < 0.0000001,
+        "broker_account": _text(response.get("account") or response.get("account_id") or row.get("broker_account")),
+        "broker_residual_quantity": round(residual, 8) if residual is not None else None,
+        "residual_zero": bool(exit_allowed),
+        "exit_allowed": bool(exit_allowed),
         "source": source,
+        "residual_source": source,
+        "lookup_status": status,
+        "residual_observation_timestamp": _text(response.get("observation_timestamp") or response.get("market_observation_timestamp") or response.get("retrieval_timestamp")),
+        "zero_tolerance": tolerance,
+        "local_remaining_quantity": _num(row.get("quantity") or row.get("qty")),
+        "reconciliation_result": "BROKER_ZERO_CONFIRMED" if exit_allowed else "CLOSURE_BLOCKED",
+        "closure_eligible": bool(exit_allowed),
+        "strict_truth_eligible": bool(exit_allowed),
         "as_of": _iso(),
     }

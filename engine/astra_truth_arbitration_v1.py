@@ -7,6 +7,7 @@ import os
 import sqlite3
 from datetime import UTC, datetime
 from typing import Any
+from engine.astra_canonical_ownership_contract_v1 import is_broker_linked_active_position
 
 
 def _now() -> str:
@@ -28,7 +29,7 @@ def read_canonical_open_crypto_positions(db_path: str, limit: int = 200) -> list
             rows = conn.execute("SELECT * FROM paper_positions WHERE status='OPEN' AND asset_type='crypto' LIMIT ?", (max(1, min(500, int(limit))),)).fetchall()
         finally:
             conn.close()
-        return [dict(row) for row in rows]
+        return [row for row in (dict(item) for item in rows) if is_broker_linked_active_position(row, allow_dust=True)]
     except Exception:
         return []
 

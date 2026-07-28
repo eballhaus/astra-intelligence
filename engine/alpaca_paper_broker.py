@@ -812,6 +812,11 @@ class AlpacaPaperBroker:
             return {"ok": False, "error": "invalid_side"}
         if side == "sell" and not bool(order.get("existing_exit_signal_verified", False)):
             return {"ok": False, "error": "sell_requires_existing_exit_signal"}
+        if side == "sell" and not str(order.get("paper_sell_approval_intent_id") or "").strip():
+            # The worker creates and durably reserves this intent before its
+            # first adapter call.  Requiring it at the broker boundary keeps
+            # future sell writers from bypassing approval/idempotency safety.
+            return {"ok": False, "error": "sell_requires_durable_approval_intent"}
         if side == "buy":
             paper_logic_proof = bool(
                 order.get("astra_paper_logic_passed")

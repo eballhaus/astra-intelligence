@@ -14,10 +14,10 @@ class CanonicalTruthGovernanceCortexTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
         path = os.path.join(temp.name, "paper.db")
         conn = sqlite3.connect(path)
-        conn.execute("CREATE TABLE paper_positions (position_id TEXT, symbol TEXT, asset_type TEXT, status TEXT)")
-        conn.executemany("INSERT INTO paper_positions VALUES (?,?,?,?)", [
-            ("closed-crypto", "BTC/USD", "crypto", "CLOSED"), ("open-equity", "AAPL", "stock", "OPEN"),
-            ("reconstructed", "ETH/USD", "crypto", "REJECTED"),
+        conn.execute("CREATE TABLE paper_positions (position_id TEXT, symbol TEXT, asset_type TEXT, status TEXT, quantity REAL, broker_linked TEXT)")
+        conn.executemany("INSERT INTO paper_positions VALUES (?,?,?,?,?,?)", [
+            ("closed-crypto", "BTC/USD", "crypto", "CLOSED", 0, "FALSE"), ("open-equity", "AAPL", "stock", "OPEN", 1, "TRUE"),
+            ("reconstructed", "ETH/USD", "crypto", "REJECTED", 0, "FALSE"),
         ])
         conn.commit(); conn.close()
         return temp, path
@@ -47,7 +47,7 @@ class CanonicalTruthGovernanceCortexTests(unittest.TestCase):
     def test_canonical_reader_counts_only_open_crypto_rows(self):
         _, path = self._db()
         conn = sqlite3.connect(path)
-        conn.execute("INSERT INTO paper_positions VALUES (?,?,?,?)", ("open-crypto", "BTC/USD", "crypto", "OPEN"))
+        conn.execute("INSERT INTO paper_positions VALUES (?,?,?,?,?,?)", ("open-crypto", "BTC/USD", "crypto", "OPEN", 1, "TRUE"))
         conn.commit(); conn.close()
         rows = read_canonical_open_crypto_positions(path)
         self.assertEqual([row["position_id"] for row in rows], ["open-crypto"])
