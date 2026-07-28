@@ -271,6 +271,51 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
         self.assertEqual(result["position_rows_for_read_only_consumers"][0]["symbol"], "DAYTEST")
         self.assertNotIn("asset_id", result["position_rows_for_read_only_consumers"][0])
 
+    def test_worker_capacity_snapshot_does_not_count_lane_unavailable_legacy_as_day(self):
+        """The worker must not let a stale local DAY label consume DAY reserve."""
+        class _Broker:
+            def account(self):
+                return {"buying_power": 100000}
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            **BASE_ENV,
+            "ASTRA_DAY_EVIDENCE_POSITION_LIMIT": "2",
+        }, clear=False):
+            engine = PaperAutopilotEngine(
+                db_path=str(pathlib.Path(tmp) / "paper.db"),
+                state_path=str(pathlib.Path(tmp) / "state.json"),
+                alpaca_paper_broker=_Broker(),
+            )
+            engine._runtime_state["position_lane_horizon_recovery_v1"] = {
+                "positions": [
+                    {
+                        "symbol": "LEGACY", "lane": "UNAVAILABLE", "horizon": "UNAVAILABLE",
+                        "lane_status": "UNAVAILABLE", "horizon_status": "UNAVAILABLE",
+                    },
+                    {
+                        "symbol": "VALIDDAY", "lane": "DAY", "horizon": "day_trade",
+                        "lane_status": "RESOLVED", "horizon_status": "RESOLVED",
+                    },
+                ],
+            }
+            result = engine._evidence_capacity_snapshot_v1(
+                {
+                    "broker_reconciliation_active": True,
+                    "broker_positions_fetch_ok": True,
+                    "broker_position_by_symbol": {
+                        "LEGACY": {"symbol": "LEGACY", "qty": "1", "market_value": "100", "lane_id": "DAY"},
+                        "VALIDDAY": {"symbol": "VALIDDAY", "qty": "1", "market_value": "100", "lane_id": "DAY"},
+                    },
+                },
+                [],
+                {"broker_execution_enabled": True},
+            )
+
+        self.assertEqual(result["lanes"]["day"]["open_position_count"], 1)
+        self.assertEqual(result["lanes"]["day"]["positions_remaining"], 1)
+        legacy = next(row for row in result["position_rows_for_read_only_consumers"] if row["symbol"] == "LEGACY")
+        self.assertEqual(legacy["recovered_lane"], "UNAVAILABLE")
+
     def test_portfolio_review_is_advisory_and_complete(self):
         result = build_portfolio_release_review([
             {"symbol": "KEEP", "entry_price": 10, "current_price": 10.1},

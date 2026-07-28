@@ -5488,6 +5488,31 @@ class PaperAutopilotEngine:
             )
             self._runtime_state["position_resolution_reviews"] = refreshed_reviews
         positions = resolution_rows
+        # Capacity must use the canonical lane recovery result, not a stale
+        # historical local label.  A legacy row with lane UNAVAILABLE remains
+        # broker exposure but cannot consume a DAY/CRYPTO strategy reserve.
+        recovery_rows_for_capacity = {
+            _text(row.get("symbol")).upper(): dict(row)
+            for row in (self._runtime_state.get("position_lane_horizon_recovery_v1") or {}).get("positions", [])
+            if isinstance(row, dict) and _text(row.get("symbol"))
+        }
+        normalized_positions: list[dict[str, Any]] = []
+        for position in positions:
+            normalized = dict(position)
+            recovery = recovery_rows_for_capacity.get(_text(normalized.get("symbol")).upper())
+            recovered_lane = _text((recovery or {}).get("lane")).upper()
+            recovered_status = _text((recovery or {}).get("lane_status")).upper()
+            if recovered_lane in {"DAY", "SWING", "CRYPTO"} and recovered_status == "RESOLVED":
+                normalized["lane_id"] = recovered_lane
+            elif recovered_lane == "UNAVAILABLE" or recovered_status == "UNAVAILABLE":
+                # Do not infer a replacement lane.  Clearing the stale local
+                # owner lets the capacity contract apply its conservative
+                # generic-equity treatment while preserving full exposure.
+                normalized.pop("lane_id", None)
+                normalized.pop("position_owner", None)
+                normalized["capacity_lane_recovery_state"] = "UNAVAILABLE"
+            normalized_positions.append(normalized)
+        positions = normalized_positions
         internal_by_symbol = {
             str(row.get("symbol") or "").upper().strip(): dict(row)
             for row in open_rows
