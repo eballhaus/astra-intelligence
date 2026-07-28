@@ -66,6 +66,10 @@ from engine.astra_canonical_position_snapshot_v1 import (
     snapshot_to_loss_containment_rows,
     snapshot_to_broker_position_by_symbol,
 )
+from engine.astra_canonical_market_timestamp_v1 import (
+    SOURCE_QUOTE,
+    canonical_market_timestamp_v1,
+)
 from engine.astra_canonical_ownership_contract_v1 import (
     broker_residual_lookup,
     is_broker_linked_active_position,
@@ -4647,6 +4651,90 @@ class PaperAutopilotEngine:
                 return dedup
         return dedup
 
+    def _assign_trusted_quote_to_candidate(self, row: Mapping[str, Any] | None) -> dict[str, Any]:
+        """Attach worker-owned quote evidence before candidate qualification.
+
+        Candidate snapshots are intentionally cache-only API products.  The
+        worker is therefore the only owner allowed to refresh or assign a
+        latest quote for entry preflight.  A retrieval/generated timestamp
+        can document the assignment, but never make a price executable.
+        """
+        candidate = dict(row or {})
+        symbol = str(candidate.get("symbol") or "").upper().strip()
+        asset_type = _norm_asset(candidate.get("asset_type") or candidate.get("asset_class") or "stock")
+        prior_assignment_state = str(candidate.get("quote_assignment_state") or "")
+        candidate["quote_assignment_consumer"] = "PaperAutopilot.candidate_preflight"
+        candidate["quote_assignment_state"] = "NOT_ASSIGNED"
+        if not symbol:
+            candidate["valid_quote"] = False
+            candidate["trusted_quote_for_buys"] = False
+            candidate["quote_assignment_blocker"] = "MISSING_SYMBOL"
+            return candidate
+
+        latest: dict[str, Any] = {}
+        # The full worker loop assigns once before it hands the row to trace
+        # and submission.  Re-validate that same evidence rather than issuing
+        # a second provider request from a downstream consumer.
+        if prior_assignment_state == "ASSIGNED_AND_CONSUMED":
+            latest = dict(candidate)
+        elif callable(self.get_latest_row_fn):
+            try:
+                latest = dict(self.get_latest_row_fn(symbol, asset_type) or {})
+            except Exception as exc:
+                candidate["valid_quote"] = False
+                candidate["trusted_quote_for_buys"] = False
+                candidate["quote_assignment_blocker"] = f"LATEST_QUOTE_LOOKUP_FAILED:{type(exc).__name__}"
+                return candidate
+
+        quoted_symbol = str(latest.get("symbol") or symbol).upper().strip()
+        if quoted_symbol != symbol:
+            candidate["valid_quote"] = False
+            candidate["trusted_quote_for_buys"] = False
+            candidate["quote_assignment_blocker"] = "QUOTE_SYMBOL_MISMATCH"
+            return candidate
+
+        evidence = canonical_market_timestamp_v1(
+            latest,
+            source_type=SOURCE_QUOTE,
+            max_age_seconds=20.0,
+        )
+        price = _to_float(latest.get("price"), _to_float(latest.get("current_price"), 0.0))
+        if price <= 0.0:
+            candidate["valid_quote"] = False
+            candidate["trusted_quote_for_buys"] = False
+            candidate["quote_assignment_blocker"] = "QUOTE_PRICE_UNAVAILABLE"
+            return candidate
+        if not bool(evidence.get("executable_freshness")):
+            candidate["valid_quote"] = False
+            candidate["trusted_quote_for_buys"] = False
+            candidate["quote_assignment_blocker"] = str(
+                evidence.get("first_causal_blocker") or "TRUSTED_EXECUTABLE_QUOTE_UNAVAILABLE"
+            )
+            candidate["quote_freshness_status"] = str(evidence.get("freshness_status") or "UNAVAILABLE")
+            return candidate
+
+        candidate.update({
+            "price": price,
+            "current_price": price,
+            "last_price_seen": price,
+            "valid_quote": True,
+            "trusted_quote_for_buys": True,
+            "quote_timestamp": evidence.get("market_observation_timestamp"),
+            "provider_quote_timestamp": evidence.get("market_observation_timestamp"),
+            "market_observation_timestamp": evidence.get("market_observation_timestamp"),
+            "retrieval_timestamp": evidence.get("retrieval_timestamp"),
+            "quote_age_seconds": evidence.get("age_seconds"),
+            "freshness_seconds": evidence.get("age_seconds"),
+            "quote_freshness_status": evidence.get("freshness_status"),
+            "provider_used": latest.get("provider_used") or latest.get("provider_name") or latest.get("source") or "",
+            "quote_source": latest.get("quote_source") or latest.get("source") or latest.get("provider_used") or "",
+            "quote_record_id": latest.get("quote_record_id") or latest.get("record_id") or "",
+            "quote_assignment_state": "ASSIGNED_AND_CONSUMED",
+            "quote_assignment_at": _now_iso(),
+            "quote_assignment_blocker": "",
+        })
+        return candidate
+
     def _crypto_paper_activation_status(self) -> dict[str, Any]:
         requested = str(os.getenv("ASTRA_ENABLE_ALPACA_CRYPTO_PAPER", "0")).strip().lower() in {"1", "true", "yes", "on"}
         kill_switch = str(os.getenv("ASTRA_ALPACA_CRYPTO_PAPER_KILL_SWITCH", "0")).strip().lower() in {"1", "true", "yes", "on"}
@@ -4765,6 +4853,14 @@ class PaperAutopilotEngine:
 
     def _entry_commitment_gate_v1(self, row: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
         row = _normalize_paper_entry_bridge(row)
+        # Candidate rankings are advisory until the worker consumes fresh,
+        # provider-native executable quote evidence. This is deliberately the
+        # first entry gate so no score can turn retrieval time into tradeable
+        # market evidence.
+        if not bool(row.get("valid_quote")) or not bool(row.get("trusted_quote_for_buys")):
+            return False, str(
+                row.get("quote_assignment_blocker") or "TRUSTED_EXECUTABLE_QUOTE_UNAVAILABLE"
+            ), {"commitment_score": 0.0, "quote_assignment_required": True}
         eligibility = str(row.get("buy_eligibility") or "").strip().lower()
         tier = str(row.get("buy_quality_tier") or "").strip().lower()
         uncertainty_tier = str(row.get("uncertainty_tier") or "").strip().lower()
@@ -5152,27 +5248,28 @@ class PaperAutopilotEngine:
             if q.get(key) not in (None, ""):
                 submit_row[key] = q.get(key)
 
-        quote_ts = (
-            submit_row.get("quote_timestamp")
-            or submit_row.get("timestamp")
-            or submit_row.get("last_snapshot_timestamp")
-            or submit_row.get("last_updated_utc")
+        evidence = canonical_market_timestamp_v1(
+            q,
+            source_type=SOURCE_QUOTE,
+            max_age_seconds=20.0,
         )
-        age = _age_seconds_from_iso(quote_ts)
-        if age is not None:
-            submit_row["quote_age_seconds"] = round(age, 3)
-            submit_row["freshness_seconds"] = round(age, 3)
-        elif str(submit_row.get("quote_quality") or "").lower() == "live":
-            submit_row.setdefault("quote_age_seconds", 0.0)
-            submit_row.setdefault("freshness_seconds", 0.0)
-        elif q and entry_price > 0.0:
-            # get_latest_row_fn is invoked immediately before broker preflight. Some
-            # runtime/promoted snapshots carry a valid price but no timestamp; mark
-            # freshness for this just-fetched local snapshot without relaxing any
-            # downstream broker, session, portfolio, or limit gates.
-            submit_row.setdefault("quote_quality", "runtime_snapshot")
-            submit_row["quote_age_seconds"] = 0.0
-            submit_row["freshness_seconds"] = 0.0
+        if bool(evidence.get("executable_freshness")):
+            submit_row["quote_timestamp"] = evidence.get("market_observation_timestamp")
+            submit_row["market_observation_timestamp"] = evidence.get("market_observation_timestamp")
+            submit_row["quote_age_seconds"] = round(_to_float(evidence.get("age_seconds"), 0.0), 3)
+            submit_row["freshness_seconds"] = submit_row["quote_age_seconds"]
+            submit_row["valid_quote"] = True
+            submit_row["trusted_quote_for_buys"] = True
+        else:
+            # A current local retrieval does not make a quote current market
+            # evidence. Preserve the explicit blocker for broker preflight.
+            submit_row["valid_quote"] = False
+            submit_row["trusted_quote_for_buys"] = False
+            submit_row["quote_age_seconds"] = None
+            submit_row["freshness_seconds"] = None
+            submit_row["quote_assignment_blocker"] = str(
+                evidence.get("first_causal_blocker") or "TRUSTED_EXECUTABLE_QUOTE_UNAVAILABLE"
+            )
 
         submit_row["latest_quote_preflight_used"] = bool(q)
         submit_row["latest_quote_preflight_at"] = _now_iso()
@@ -6075,7 +6172,7 @@ class PaperAutopilotEngine:
         capacity_snapshot: Mapping[str, Any] | None = None,
         current_candidates: list[dict[str, Any]] | None = None,
     ) -> tuple[dict[str, Any], bool, str, dict[str, Any]]:
-        r = _normalize_paper_entry_bridge(row)
+        r = self._assign_trusted_quote_to_candidate(_normalize_paper_entry_bridge(row))
         r = enrich_candidate_for_pretrade_contract(r, current_candidates=current_candidates)
         certification = dict(self._runtime_state.get("pre_market_certification_v1") or {})
         r["pretrade_decision_contract_v1"] = build_pretrade_decision_contract(
@@ -6219,6 +6316,14 @@ class PaperAutopilotEngine:
             gate_meta["crypto_market_data_gate_reason"] = crypto_data_reason
         trace = {
             "symbol": symbol,
+            "valid_quote": bool(r.get("valid_quote")),
+            "trusted_quote_for_buys": bool(r.get("trusted_quote_for_buys")),
+            "quote_assignment_state": str(r.get("quote_assignment_state") or "NOT_ASSIGNED"),
+            "quote_assignment_consumer": str(r.get("quote_assignment_consumer") or ""),
+            "quote_assignment_blocker": str(r.get("quote_assignment_blocker") or ""),
+            "market_observation_timestamp": str(r.get("market_observation_timestamp") or ""),
+            "provider_quote_timestamp": str(r.get("provider_quote_timestamp") or ""),
+            "provider_used": str(r.get("provider_used") or ""),
             "canonical_symbol": str(r.get("canonical_symbol") or symbol).upper(),
             "asset_type": asset,
             "candidate_id": str(r.get("candidate_id") or ""),
@@ -7461,6 +7566,15 @@ class PaperAutopilotEngine:
         current = _to_float(latest_row.get("price"), 0.0)
         if entry <= 0.0 or current <= 0.0:
             return False, "no_valid_quote"
+        quote_evidence = canonical_market_timestamp_v1(
+            latest_row,
+            source_type=SOURCE_QUOTE,
+            max_age_seconds=20.0,
+        )
+        if not bool(quote_evidence.get("executable_freshness")):
+            return False, str(
+                quote_evidence.get("first_causal_blocker") or "TRUSTED_EXECUTABLE_QUOTE_UNAVAILABLE"
+            )
 
         ret = ((current - entry) / entry) * 100.0
         notes = _safe_json_load(open_row.get("lifecycle_notes"))
@@ -9206,18 +9320,19 @@ class PaperAutopilotEngine:
                             "symbol": symbol,
                             "asset_type": asset,
                             "price": broker_price,
-                            "quote_quality": "alpaca_broker_position",
-                            "quote_timestamp": _now_iso(),
-                            "timestamp": _now_iso(),
+                            "quote_quality": "broker_position_snapshot",
+                            "market_source_type": "BROKER_POSITION_SNAPSHOT",
+                            "retrieval_timestamp": _now_iso(),
                             "source": "alpaca_broker_positions",
                             "provider_used": "alpaca_paper",
                         }
                 if callable(self.get_latest_row_fn):
-                    if not latest:
-                        try:
-                            latest = dict(self.get_latest_row_fn(symbol, asset) or {})
-                        except Exception:
-                            latest = {}
+                    try:
+                        provider_quote = dict(self.get_latest_row_fn(symbol, asset) or {})
+                    except Exception:
+                        provider_quote = {}
+                    if provider_quote:
+                        latest = provider_quote
                 if not latest:
                     skipped += 1
                     continue
@@ -9611,6 +9726,10 @@ class PaperAutopilotEngine:
                         ))
                         continue
 
+                # Quote assignment belongs to the worker, before both
+                # qualification and broker preflight.  The trace re-validates
+                # this evidence without a second provider lookup.
+                row = self._assign_trusted_quote_to_candidate(row)
                 row_trace, allowed, reason, gate_meta = self._candidate_trace_row(
                     row,
                     open_syms=open_syms,

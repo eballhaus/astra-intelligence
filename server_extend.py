@@ -17206,8 +17206,15 @@ def _find_latest_row(symbol, asset_type=None):
                             else ("warm_live" if ws_quote_age <= 30 else "stale_live")
                         )
                         out["cache_hit"] = False
-                        out["timestamp"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-                        out["last_snapshot_timestamp"] = out["timestamp"]
+                        try:
+                            provider_time = datetime.fromtimestamp(float(ws_quote_ts), UTC).isoformat().replace("+00:00", "Z")
+                        except (TypeError, ValueError, OSError, OverflowError):
+                            provider_time = ""
+                        # The websocket's provider time, not the overlay
+                        # retrieval time, is the only eligible market fact.
+                        out["provider_quote_timestamp"] = provider_time or None
+                        out["market_observation_timestamp"] = provider_time or None
+                        out["market_source_type"] = "QUOTE"
                         out["data_unavailable_reason"] = out.get("data_unavailable_reason")
                 return out
     return None
@@ -17235,24 +17242,31 @@ def _paper_rankings_snapshot():
 
 
 def _paper_single_symbol_quote(symbol, asset_type):
+    """Return one bounded, provider-native quote for the worker only.
+
+    ``PaperAutopilot`` is the sole caller of this adapter.  API handlers use
+    their cached ranking snapshots and never call this function.  In
+    particular, do not turn local retrieval time into quote observation time.
+    """
     sym = str(symbol or "").upper().strip()
     if not sym:
         return {}
-    quote = GUARDIAN_API.fetch_stock(sym)
-    now_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-    return {
-        "symbol": sym,
-        "asset_type": _normalize_asset_type(asset_type),
-        "price": _to_float(quote.get("price"), 0.0),
-        "prev_close": quote.get("prev_close"),
-        "provider_used": quote.get("provider_used") or quote.get("source") or "none",
-        "source": quote.get("source") or quote.get("provider_used") or "none",
-        "quote_quality": quote.get("quote_quality", "live"),
-        "cache_hit": bool(quote.get("cache_hit", False)),
-        "data_unavailable_reason": quote.get("data_unavailable_reason") or quote.get("feed_degraded_reason"),
-        "quote_timestamp": now_iso,
-        "timestamp": now_iso,
-    }
+    kind = _normalize_asset_type(asset_type)
+    # The router normalizes documented provider quote fields and preserves
+    # their observation timestamp. Guardian's generic payload deliberately
+    # remains unsuitable for executable quote evidence.
+    quote = PAPER_AUTOPILOT._legacy_swing_fmp_router.get_quote(
+        sym,
+        asset_type="crypto" if kind == "crypto" else "stock",
+        preferred_providers=["ALPACA", "FMP"],
+        cache_max_age_seconds=20,
+        protected_tier1=True,
+    )
+    out = dict(quote or {})
+    out["symbol"] = sym
+    out["asset_type"] = kind
+    out["market_source_type"] = "QUOTE"
+    return out
 
 
 def _paper_latest_symbol_snapshot(symbol, asset_type):
@@ -17270,11 +17284,17 @@ def _paper_latest_symbol_snapshot(symbol, asset_type):
         if isinstance(row, dict) and str(row.get("symbol") or "").upper() == sym:
             out = dict(row)
             out["quote_timestamp"] = (
-                out.get("timestamp")
-                or out.get("last_snapshot_timestamp")
-                or out.get("last_updated_utc")
+                out.get("provider_quote_timestamp")
+                or out.get("market_observation_timestamp")
+                or out.get("quote_timestamp")
             )
-            return out
+            out["market_source_type"] = "QUOTE"
+            # A ranking refresh time is not quote evidence. Fall through to
+            # the bounded worker quote router when the cache lacks a native
+            # observation timestamp rather than relabelling the cache time.
+            if out.get("quote_timestamp"):
+                return out
+            break
     return _paper_single_symbol_quote(sym, kind)
 
 
