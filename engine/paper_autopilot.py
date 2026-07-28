@@ -8086,10 +8086,43 @@ class PaperAutopilotEngine:
             evidence_row = next((dict(row) for row in evidence.get("positions") or [] if isinstance(row, Mapping) and str(row.get("symbol") or "").upper() == symbol), {})
             for family, status_key in (("earnings", "earnings_status"), ("news_catalyst", "catalyst_status"), ("quote", "quote_status")):
                 event = dict(auxiliary.get(family) or {})
-                quote_consumed = family != "quote" or str(evidence_row.get("quote_source") or "").upper() == "FMP"
-                if event.get("normalized_fields") and evidence_row.get(status_key) in {"FRESH", "AGING"} and triage_row and quote_consumed:
-                    event.update({"consumer_acknowledged": True, "consumer": "legacy_position_risk_triage_v1", "consumer_record_id": f"legacy-triage:{symbol}", "consumed_at": _now_iso(), "acknowledgement_state": "CONSUMED_BY_LEGACY_POSITION_RISK_TRIAGE_V1"})
-                    auxiliary[family] = event
+                if not event.get("normalized_fields") or not triage_row:
+                    continue
+                status = str(evidence_row.get(status_key) or "").upper()
+                if status in {"FRESH", "AGING"}:
+                    event.update({
+                        "assigned_at": event.get("assigned_at") or _now_iso(),
+                        "assignment_state": "ASSIGNED_TO_POSITION_EVIDENCE_V1",
+                    })
+                    if family == "quote" and str(evidence_row.get("quote_source") or "").upper() != "FMP":
+                        # The authoritative quote remains selected, while the
+                        # fresh FMP value is retained as complementary evidence.
+                        event.update({
+                            "consumer_acknowledged": True,
+                            "consumer": "position_evidence_completeness_v1",
+                            "consumer_record_id": f"position-evidence:{symbol}",
+                            "consumed_at": _now_iso(),
+                            "acknowledgement_state": "CONSUMED_AS_COMPLEMENTARY_FMP_EVIDENCE",
+                        })
+                    else:
+                        event.update({
+                            "consumer_acknowledged": True,
+                            "consumer": "legacy_position_risk_triage_v1",
+                            "consumer_record_id": f"legacy-triage:{symbol}",
+                            "consumed_at": _now_iso(),
+                            "acknowledgement_state": "CONSUMED_BY_LEGACY_POSITION_RISK_TRIAGE_V1",
+                        })
+                else:
+                    # A parsed but stale auxiliary event is a real consumer
+                    # rejection, never a silently unassigned success.
+                    event.update({
+                        "assignment_state": "REJECTED_BY_POSITION_EVIDENCE_FRESHNESS",
+                        "rejected_at": _now_iso(),
+                        "rejection_reason": f"{family.upper()}_{status or 'MISSING'}_NOT_CURRENT",
+                        "consumer": "position_evidence_completeness_v1",
+                        "consumer_record_id": f"position-evidence:{symbol}",
+                    })
+                auxiliary[family] = event
             if auxiliary:
                 record["auxiliary_context"] = auxiliary
             fmp_records[key] = record
@@ -8164,7 +8197,7 @@ class PaperAutopilotEngine:
             consumer_events.append({
                 "endpoint_family": str(record.get("endpoint_family") or "unknown"),
                 "symbol": record.get("symbol"), "assigned": bool(record.get("normalized_fields")),
-                "assigned_at": record.get("response_at"), "consumed": bool(record.get("consumer_acknowledged")),
+                "assigned_at": record.get("assigned_at") or record.get("response_at"), "consumed": bool(record.get("consumer_acknowledged")),
                 "consumed_at": record.get("consumed_at"), "consumer": record.get("consumer") or "",
                 "consumer_record_id": record.get("consumer_record_id") or record.get("record_id"),
                 "evidence_at": record.get("response_at"),
@@ -8174,11 +8207,14 @@ class PaperAutopilotEngine:
                     continue
                 consumer_events.append({
                     "endpoint_family": str(event.get("endpoint_family") or "unknown"),
-                    "symbol": event.get("symbol"), "assigned": bool(event.get("normalized_fields")),
-                    "assigned_at": event.get("response_at"), "consumed": bool(event.get("consumer_acknowledged")),
+                    "symbol": event.get("symbol"), "assigned": bool(event.get("assigned_at") or event.get("assignment_state")),
+                    "assigned_at": event.get("assigned_at"), "consumed": bool(event.get("consumer_acknowledged")),
                     "consumed_at": event.get("consumed_at"), "consumer": event.get("consumer") or "",
                     "consumer_record_id": event.get("consumer_record_id") or event.get("record_id"),
                     "evidence_at": event.get("response_at"),
+                    "rejected": bool(event.get("rejected_at") or str(event.get("assignment_state") or "").upper().startswith("REJECTED")),
+                    "rejected_at": event.get("rejected_at"),
+                    "rejection_reason": event.get("rejection_reason") or "",
                 })
         market_records = dict(self._runtime_state.get("legacy_swing_market_evidence") or {})
         for activation_id, bundle in market_records.items():

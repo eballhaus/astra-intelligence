@@ -134,6 +134,31 @@ class FmpProviderConsumptionTests(unittest.TestCase):
             self.assertFalse(provider["telemetry_complete"])
             self.assertEqual(provider["endpoint_families"][0]["responses_assigned"], 0)
 
+    def test_freshness_rejected_consumer_event_resolves_accepted_response(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "fmp_efficiency_ledger_v1.jsonl")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({"timestamp": "2026-07-24T01:00:00Z", "endpoint_family": "news_catalyst", "ok": True, "useful_fields_count": 2, "bytes_actual_if_available": 31, "status_code": 200}) + "\n")
+            telemetry = build_provider_consumption_telemetry_v1(
+                state_dir=directory,
+                configured=True,
+                key_fingerprint="deadbeef",
+                window_start="2026-07-24T00:30:00Z",
+                consumer_events=[{
+                    "endpoint_family": "news_catalyst",
+                    "symbol": "AAA",
+                    "rejected": True,
+                    "rejected_at": "2026-07-24T01:00:01Z",
+                    "consumer": "position_evidence_completeness_v1",
+                    "consumer_record_id": "position-evidence:AAA",
+                    "rejection_reason": "STALE_CATALYST_EVIDENCE",
+                }],
+            )
+            family = telemetry["providers"][0]["endpoint_families"][0]
+            self.assertEqual(family["responses_accepted"], 1)
+            self.assertEqual(family["responses_rejected"], 1)
+            self.assertTrue(telemetry["telemetry_complete"])
+
     def test_candidate_consumption_acknowledgement_is_not_counted_as_network(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "fmp_efficiency_ledger_v1.jsonl")

@@ -174,7 +174,7 @@ def _within_window(row: Mapping[str, Any], window_start: str) -> bool:
 def _consumer_event_within_window(row: Mapping[str, Any], window_start: str) -> bool:
     if not window_start:
         return True
-    return _within_window({"timestamp": row.get("assigned_at") or row.get("consumed_at") or row.get("evidence_at")}, window_start)
+    return _within_window({"timestamp": row.get("assigned_at") or row.get("consumed_at") or row.get("rejected_at") or row.get("evidence_at")}, window_start)
 
 
 def _family(value: Mapping[str, Any]) -> str:
@@ -194,6 +194,7 @@ def _event_counts(events: list[dict[str, Any]], consumer_events: list[dict[str, 
     scoped = [row for row in events if _family(row) == family]
     assigned = [row for row in consumer_events if str(row.get("endpoint_family") or "unknown") == family and bool(row.get("assigned"))]
     consumed = [row for row in consumer_events if str(row.get("endpoint_family") or "unknown") == family and bool(row.get("consumed"))]
+    rejected_by_consumer = [row for row in consumer_events if str(row.get("endpoint_family") or "unknown") == family and bool(row.get("rejected"))]
     cache_hits = [row for row in scoped if bool(row.get("cache_hit"))]
     deduplicated = [row for row in scoped if bool(row.get("deduplicated"))]
     blocked = [row for row in scoped if str(row.get("blocked_reason") or "").lower() in {"call_limit", "bandwidth_budget", "governor_blocked", "provider_cooldown_or_budget"}]
@@ -213,7 +214,7 @@ def _event_counts(events: list[dict[str, Any]], consumer_events: list[dict[str, 
         "governor_blocked": len(blocked), "cache_hits": len(cache_hits),
         "cache_misses": max(0, len(scoped) - len(cache_hits)), "deduplicated": len(deduplicated),
         "not_eligible": 0, "responses_parsed": len(successful),
-        "responses_accepted": len(accepted), "responses_rejected": max(0, len(successful) - len(accepted)),
+        "responses_accepted": len(accepted), "responses_rejected": max(0, len(successful) - len(accepted)) + len(rejected_by_consumer),
         "responses_assigned": len(assigned), "responses_consumed": len(consumed),
         "byte_telemetry_missing": len(byte_missing),
         "bytes_received": int(sum(max(0.0, _number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta"))) for row in scoped)),
@@ -228,7 +229,7 @@ def _event_counts(events: list[dict[str, Any]], consumer_events: list[dict[str, 
         "last_symbol": str((consumed or assigned or [{}])[-1].get("symbol") or last.get("symbol") or ""),
         "last_consumer": str(consumed[-1].get("consumer") or "") if consumed else "",
         "consumer_record_id": str(consumed[-1].get("consumer_record_id") or "") if consumed else "",
-        "first_causal_blocker": str(last.get("blocked_reason") or ""),
+        "first_causal_blocker": str((rejected_by_consumer[-1].get("rejection_reason") if rejected_by_consumer else "") or last.get("blocked_reason") or ""),
         "budget_limit": 750, "budget_used": len(network), "budget_remaining": max(0, 750 - len(network)),
     }
 
@@ -251,6 +252,8 @@ def build_provider_consumption_telemetry_v1(
             "endpoint_family": _family(row), "symbol": row.get("symbol"),
             "assigned": bool(row.get("assigned")), "assigned_at": row.get("assigned_at") or row.get("timestamp"),
             "consumed": bool(row.get("consumed")), "consumed_at": row.get("consumed_at") or row.get("timestamp"),
+            "rejected": bool(row.get("rejected")), "rejected_at": row.get("rejected_at") or row.get("timestamp"),
+            "rejection_reason": row.get("rejection_reason") or "",
             "consumer": row.get("consumer") or "", "consumer_record_id": row.get("consumer_record_id") or "",
             "evidence_at": row.get("evidence_at") or row.get("timestamp"),
         }
@@ -269,9 +272,10 @@ def build_provider_consumption_telemetry_v1(
     bytes_received = int(sum(max(0.0, _number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta"))) for row in events))
     consumer_rows = ledger_consumers + [
         dict(row) for row in consumer_events
-        if isinstance(row, Mapping) and row.get("consumer") and _consumer_event_within_window(row, window_start)
+        if isinstance(row, Mapping) and (row.get("consumer") or row.get("rejected")) and _consumer_event_within_window(row, window_start)
     ]
     consumed = [row for row in consumer_rows if bool(row.get("consumed"))]
+    rejected = [row for row in consumer_rows if bool(row.get("rejected"))]
     last_event = dict(events[-1]) if events else {}
     last_consumer = str(consumed[-1].get("consumer") or "") if consumed else ""
     assigned_count = sum(bool(row.get("assigned")) for row in consumer_rows)
@@ -295,7 +299,7 @@ def build_provider_consumption_telemetry_v1(
         "deduplicated": len(deduplicated),
         "responses_parsed": len(successes),
         "responses_accepted": len(accepted),
-        "responses_rejected": max(0, len(successes) - len(accepted)),
+        "responses_rejected": max(0, len(successes) - len(accepted)) + len(rejected),
         "responses_assigned": assigned_count,
         "responses_consumed": consumed_count,
         "byte_telemetry_missing": len(byte_missing),
@@ -307,20 +311,20 @@ def build_provider_consumption_telemetry_v1(
         "last_latency_ms": _number(last_event.get("latency_ms")),
         "last_consumer": last_consumer,
         "last_accepted_symbol": str(consumed[-1].get("symbol") or "") if consumed else "",
-        "first_causal_blocker": str(last_event.get("blocked_reason") or ""),
+        "first_causal_blocker": str((rejected[-1].get("rejection_reason") if rejected else "") or last_event.get("blocked_reason") or ""),
         "budget_limit_per_minute": 750,
         "budget_used": len(network_sent),
         "budget_remaining": max(0, 750 - len(network_sent)),
         "bounded_usage_status": (
             "CONFIGURED_UNUSED" if configured and not attempts else
-            "SUCCESS_NOT_CONSUMED" if accepted and not consumed else
+            "SUCCESS_NOT_CONSUMED" if accepted and not consumed and not rejected else
             "ACTIVE" if consumed else "FAIL_CLOSED"
         ),
     }
     families = sorted({_family(row) for row in events} | {str(row.get("endpoint_family") or "unknown") for row in consumer_rows})
     family_rows = [_event_counts(events, consumer_rows, family) for family in families]
     complete = bool(family_rows) and not any(
-        row["responses_accepted"] > row["responses_assigned"] or row["responses_assigned"] > row["responses_consumed"] or row["byte_telemetry_missing"] > 0
+        row["responses_accepted"] > row["responses_assigned"] + row["responses_rejected"] or row["responses_assigned"] > row["responses_consumed"] or row["byte_telemetry_missing"] > 0
         for row in family_rows
     )
     return {
@@ -332,12 +336,12 @@ def build_provider_consumption_telemetry_v1(
         "endpoint_families": family_rows,
         "telemetry_complete": complete,
         "configured_but_unused_count": int(bool(configured and not attempts)),
-        "successful_but_unconsumed_count": int(bool(accepted and not consumed)),
+        "successful_but_unconsumed_count": int(bool(accepted and not consumed and not rejected)),
         "provider_starvation_count": int(bool(configured and not attempts)),
         "budget_warning_count": int(any(str(row.get("blocked_reason") or "") in {"call_limit", "bandwidth_budget"} for row in events)),
         "governor_blocked_count": len(governor_blocked),
         "expected_traffic_missing_count": int(bool(configured and not attempts)),
-        "success_not_consumed_count": int(bool(accepted and not consumed)),
+        "success_not_consumed_count": int(bool(accepted and not consumed and not rejected)),
         "stale_evidence_count": 0,
         "byte_telemetry_mismatch_count": len(byte_missing),
         "provider_calls_used": 0,
