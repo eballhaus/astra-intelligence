@@ -164,6 +164,57 @@ class TrustedQuoteCandidateFlowTests(unittest.TestCase):
                 self.assertFalse(allowed)
                 self.assertEqual(trace["quote_assignment_blocker"], expected)
 
+    def test_partial_cycle_uses_canonical_quote_preflight_without_submission(self):
+        """The bounded legacy path must not infer quote freshness from a row timestamp."""
+        directory = tempfile.TemporaryDirectory(prefix="astra_partial_quote_")
+        self.addCleanup(directory.cleanup)
+        engine = PaperAutopilotEngine(
+            db_path=os.path.join(directory.name, "paper.db"),
+            state_path=os.path.join(directory.name, "state.json"),
+            enabled=True,
+            get_latest_row_fn=lambda _symbol, _asset: {
+                "symbol": "AAPL",
+                "price": 101.25,
+                "provider_used": "FMP",
+                "provider_quote_timestamp": _iso(),
+                "market_source_type": "QUOTE",
+            },
+        )
+        engine._refresh_legacy_swing_canary_pre_submit = lambda _positions: {
+            "market_activity": {"cycle_state": "CYCLE_PARTIAL_BUDGET"}
+        }
+        engine._alpaca_safety_snapshot = lambda: {
+            "paper_mode_verified": True,
+            "broker_execution_enabled": True,
+            "live_endpoint_rejected": True,
+        }
+        engine._broker_open_symbols_snapshot = lambda: {
+            "broker_open_symbols": set(),
+            "broker_position_by_symbol": {},
+            "broker_reconciliation_active": True,
+            "broker_positions_fetch_ok": True,
+            "broker_open_positions_count": 0,
+        }
+        engine._fetch_open_positions = lambda: []
+        engine._evidence_capacity_snapshot_v1 = lambda *_args: {"capacity_authority_state": "CURRENT"}
+        engine._collect_candidate_rows = lambda: [_candidate()]
+        engine.refresh_crypto_rankings_fn = lambda: {"status": "CURRENT"}
+        activation = {"execution_enabled": True, "exact_blockers": [], "lane_enabled": True}
+        contract = {"order_ready_allowed": True, "contract_state": "CONTRACT_COMPLETE", "consumer_acknowledgements": {}}
+
+        with patch("engine.paper_autopilot.canonical_lane_activation_contract", return_value=activation), patch(
+            "engine.paper_autopilot.build_pretrade_decision_contract", return_value=contract
+        ):
+            result = engine.run_cycle()
+
+        trace = engine._runtime_state["last_execution_trace"]
+        candidate_trace = trace["per_candidate_decision_trace"][0]
+        self.assertEqual(result["orders_submitted"], 0)
+        self.assertTrue(candidate_trace["valid_quote"])
+        self.assertEqual(candidate_trace["quote_assignment_state"], "ASSIGNED_AND_CONSUMED")
+        self.assertTrue(candidate_trace["partial_cycle_observation_only"])
+        self.assertFalse(candidate_trace["submit_order"])
+
 
 class ServerQuoteAdapterTests(unittest.TestCase):
     def test_worker_adapter_preserves_router_native_timestamp_without_utc_fallback(self):

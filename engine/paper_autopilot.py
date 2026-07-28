@@ -9015,48 +9015,50 @@ class PaperAutopilotEngine:
                     order_ready_count = 0
                     first_blocker = "no_canonical_prospective_candidates"
                     blocker_reason = ""
+                    partial_candidate_traces: list[dict[str, Any]] = []
 
                     broker_positions = dict(broker_snapshot.get("broker_position_by_symbol") or {})
 
-                    for row in candidate_rows:
+                    # A partial cycle is a bounded observation path, not a
+                    # weaker order-ready path.  It uses the same provider
+                    # native quote assignment and qualification contract as a
+                    # full cycle, but never submits an order here.
+                    for row in candidate_rows[:1]:
                         evaluated_count += 1
-                        row_blocker = ""
-
-                        # Freshness gate - inline timestamp age check
-                        ts = _text(row.get("quote_timestamp") or row.get("generated_at"))
-                        age = None
-                        if ts:
-                            try:
-                                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                                if dt.tzinfo is None:
-                                    dt = dt.replace(tzinfo=UTC)
-                                age = max(0.0, (datetime.now(UTC).astimezone(UTC) - dt).total_seconds() / 60.0)
-                            except Exception:
-                                age = None
-                        if age is None or age > 15.0:
-                            row_blocker = row_blocker or "CANDIDATE_TIMESTAMP_STALE"
-                        else:
+                        hydrated = self._assign_trusted_quote_to_candidate(row)
+                        if bool(hydrated.get("trusted_quote_for_buys")):
                             fresh_count += 1
-
-                        # Lane assignment validation
-                        row_lane = _text(row.get("lane_id") or row.get("lane")).upper()
-                        if row_lane not in ("DAY", "SWING", "CRYPTO"):
-                            row_blocker = row_blocker or "LANE_MISSING"
-
-                        # Symbol validation
-                        sym = _text(row.get("symbol")).upper()
-                        if not sym:
-                            row_blocker = row_blocker or "SYMBOL_MISSING"
-
-                        # Basic eligibility
-                        if not row_blocker:
+                        sym = _text(hydrated.get("symbol")).upper()
+                        lane = _text(hydrated.get("lane_id") or target_lane).upper() or target_lane
+                        capacity_decision = candidate_capacity_decision(
+                            evidence_capacity_snapshot,
+                            lane_id=lane,
+                            symbol=sym,
+                            open_symbols=set(broker_positions),
+                        )
+                        trace, allowed, reason, _meta = self._candidate_trace_row(
+                            hydrated,
+                            open_syms=set(broker_positions),
+                            stock_capacity=max(1, _to_int(capacity_decision.get("positions_remaining"), 0)),
+                            crypto_capacity=max(1, _to_int(capacity_decision.get("positions_remaining"), 0)),
+                            total_capacity=max(1, _to_int(capacity_decision.get("positions_remaining"), 0)),
+                            broker_open_syms=set(broker_positions),
+                            broker_reconciliation_active=bool(broker_snapshot.get("broker_reconciliation_active")),
+                            capacity_decision=capacity_decision,
+                            capacity_snapshot=evidence_capacity_snapshot,
+                            current_candidates=candidate_rows,
+                        )
+                        trace["partial_cycle_observation_only"] = True
+                        trace["submit_order"] = False
+                        partial_candidate_traces.append(trace)
+                        if allowed:
                             eligible_count += 1
-                        first_blocker = row_blocker or first_blocker
-                        blocker_reason = blocker_reason or _text(row.get("exact_blocker") or row.get("reason"))
-                        if not row_blocker:
-                            order_ready_count = eligible_count  # bounded: if eligible, considered ORDER_READY candidate
+                            order_ready_count += 1
+                        else:
+                            first_blocker = str(reason or trace.get("quote_assignment_blocker") or first_blocker)
+                            blocker_reason = blocker_reason or str(reason or trace.get("quote_assignment_blocker") or "")
 
-                    if blocker_reason == "no_canonical_prospective_candidates" and candidate_input_count > 0:
+                    if not blocker_reason and candidate_input_count > 0 and not order_ready_count:
                         blocker_reason = f"{target_lane}_candidates_evaluated_but_all_blocked"
                     if not candidate_rows and target_lane != "CRYPTO":
                         first_blocker = "EQUITY_CANDIDATE_SOURCE_NOT_IN_PARTIAL_CYCLE"
@@ -9090,6 +9092,7 @@ class PaperAutopilotEngine:
                         "broker_positions_consulted": True,
                         "broker_positions_used_as_candidate_input": False,
                         "same_cycle_duplicate_prevented": True,
+                        "per_candidate_decision_trace": partial_candidate_traces,
                         "elapsed_ms": elapsed_ms,
                     }
                 except Exception as exc:
@@ -9119,10 +9122,12 @@ class PaperAutopilotEngine:
                 }
                 self._runtime_state["last_execution_trace"] = {
                     "paper_worker_running": bool(self._thread and self._thread.is_alive()),
-                    "candidates_seen": 0, "eligible_candidates": 0, "selected_candidates": 0,
+                    "candidates_seen": int(partial_candidate_results.get("candidates_evaluated", 0)),
+                    "eligible_candidates": int(partial_candidate_results.get("eligible", 0)),
+                    "selected_candidates": int(partial_candidate_results.get("selected", 0)),
                     "orders_attempted": 0, "orders_submitted": 0, "orders_rejected": 0,
-                    "final_blocker_reason": "legacy_market_evidence_bounded",
-                    "per_candidate_decision_trace": [], "legacy_swing_observation": legacy_canary_refresh,
+                    "final_blocker_reason": str(partial_candidate_results.get("first_causal_blocker") or "legacy_market_evidence_bounded"),
+                    "per_candidate_decision_trace": list(partial_candidate_results.get("per_candidate_decision_trace") or []), "legacy_swing_observation": legacy_canary_refresh,
                     "broker_reconciliation_active": bool(broker_snapshot.get("broker_reconciliation_active")),
                     "broker_positions_fetch_ok": bool(broker_snapshot.get("broker_positions_fetch_ok")),
                     "broker_open_positions_count": int(_to_int(broker_snapshot.get("broker_open_positions_count"), 0)),
