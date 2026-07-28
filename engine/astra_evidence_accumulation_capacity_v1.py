@@ -98,6 +98,20 @@ def _approved_legacy_slot_exclusion(row: Mapping[str, Any]) -> bool:
     )
 
 
+def _strategy_capacity_excluded(row: Mapping[str, Any]) -> bool:
+    """Return whether broker exposure must not occupy a strategy admission slot.
+
+    Dust remains in the broker/global exposure denominator and reconciliation.
+    This narrow exclusion only prevents an untradable residual from consuming a
+    DAY or CRYPTO strategy reserve.
+    """
+    return bool(
+        row.get("strategy_capacity_excluded")
+        or row.get("is_dust")
+        or _text(row.get("dust_state")).upper() == "BROKER_DUST_MONITORED"
+    )
+
+
 def _is_active_pending_order(row: Mapping[str, Any]) -> bool:
     """Return whether a broker order still occupies a reserve slot."""
     status = _text(row.get("status") or row.get("order_status")).lower()
@@ -250,11 +264,15 @@ def build_capacity_snapshot(
         _text(row.get("symbol")).upper() for row in positions
         if _text(row.get("symbol")) and _approved_legacy_slot_exclusion(row)
     }
+    excluded_dust_symbols = {
+        _text(row.get("symbol")).upper() for row in positions
+        if _text(row.get("symbol")) and _strategy_capacity_excluded(row)
+    }
     legacy_exposure_symbols = {
         _text(row.get("symbol")).upper() for row in positions
         if _text(row.get("symbol")) and _text(row.get("management_cohort")).upper() == "LEGACY_POSITION_RESOLUTION"
     }
-    active_strategy_open = len(distinct_symbols - excluded_legacy_symbols) if position_details_available else None
+    active_strategy_open = len(distinct_symbols - excluded_legacy_symbols - excluded_dust_symbols) if position_details_available else None
     active_strategy_occupancy = (
         active_strategy_open + len(pending_symbols) + len(commitment_symbols)
         if active_strategy_open is not None else None
@@ -287,15 +305,20 @@ def build_capacity_snapshot(
     for lane in LANES:
         config = _reserve_config(lane, values)
         raw_lane_rows = lane_rows[lane]
-        active_lane_rows = [row for row in raw_lane_rows if not _approved_legacy_slot_exclusion(row)]
+        active_lane_rows = [
+            row for row in raw_lane_rows
+            if not _approved_legacy_slot_exclusion(row) and not _strategy_capacity_excluded(row)
+        ]
         legacy_excluded_rows = [row for row in raw_lane_rows if _approved_legacy_slot_exclusion(row)]
+        dust_excluded_rows = [row for row in raw_lane_rows if _strategy_capacity_excluded(row)]
         open_position_count = len(active_lane_rows)
         pending_order_count = len(lane_pending[lane])
         active_commitment_count = len(lane_commitments[lane])
         used = open_position_count + pending_order_count + active_commitment_count
         used_capital = round(sum(_position_value(row) for row in active_lane_rows + lane_pending[lane]), 4)
         legacy_excluded_capital = round(sum(_position_value(row) for row in legacy_excluded_rows), 4)
-        raw_lane_capital = round(used_capital + legacy_excluded_capital, 4)
+        dust_excluded_capital = round(sum(_position_value(row) for row in dust_excluded_rows), 4)
+        raw_lane_capital = round(used_capital + legacy_excluded_capital + dust_excluded_capital, 4)
         configured_limit = config.get("configured_capital_limit")
         capital_remaining = round(max(0.0, configured_limit - used_capital), 4) if configured_limit is not None else None
         position_limit = config.get("configured_position_limit")
@@ -377,6 +400,8 @@ def build_capacity_snapshot(
             "positions_used": used,
             "raw_broker_position_count": len(raw_lane_rows),
             "legacy_excluded_position_count": len(legacy_excluded_rows),
+            "dust_strategy_slot_exclusion_count": len(dust_excluded_rows),
+            "dust_strategy_slot_exclusion_capital": dust_excluded_capital,
             "positions_remaining": positions_remaining,
             "open_position_count": open_position_count,
             "pending_order_count": pending_order_count,

@@ -5511,6 +5511,13 @@ class PaperAutopilotEngine:
                 normalized.pop("lane_id", None)
                 normalized.pop("position_owner", None)
                 normalized["capacity_lane_recovery_state"] = "UNAVAILABLE"
+            dust = classify_dust_position_v1(normalized, is_broker_position=True)
+            if dust.get("is_dust"):
+                # Dust is still broker-held exposure and is persisted below,
+                # but an untradable residual cannot occupy a strategy slot.
+                normalized.update(dust)
+                normalized["strategy_capacity_excluded"] = True
+                normalized["strategy_capacity_exclusion_reason"] = "BROKER_DUST_MONITORED"
             normalized_positions.append(normalized)
         positions = normalized_positions
         internal_by_symbol = {

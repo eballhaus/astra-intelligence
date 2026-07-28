@@ -296,6 +296,10 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
                         "symbol": "VALIDDAY", "lane": "DAY", "horizon": "day_trade",
                         "lane_status": "RESOLVED", "horizon_status": "RESOLVED",
                     },
+                    {
+                        "symbol": "DUSTDAY", "lane": "DAY", "horizon": "day_trade",
+                        "lane_status": "RESOLVED", "horizon_status": "RESOLVED",
+                    },
                 ],
             }
             result = engine._evidence_capacity_snapshot_v1(
@@ -305,6 +309,7 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
                     "broker_position_by_symbol": {
                         "LEGACY": {"symbol": "LEGACY", "qty": "1", "market_value": "100", "lane_id": "DAY"},
                         "VALIDDAY": {"symbol": "VALIDDAY", "qty": "1", "market_value": "100", "lane_id": "DAY"},
+                        "DUSTDAY": {"symbol": "DUSTDAY", "qty": "0.000001", "market_value": "0.0001", "lane_id": "DAY"},
                     },
                 },
                 [],
@@ -313,6 +318,8 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
 
         self.assertEqual(result["lanes"]["day"]["open_position_count"], 1)
         self.assertEqual(result["lanes"]["day"]["positions_remaining"], 1)
+        self.assertEqual(result["lanes"]["day"]["dust_strategy_slot_exclusion_count"], 1)
+        self.assertEqual(result["broker_total_exposure_position_count"], 3)
         legacy = next(row for row in result["position_rows_for_read_only_consumers"] if row["symbol"] == "LEGACY")
         self.assertEqual(legacy["recovered_lane"], "UNAVAILABLE")
 
