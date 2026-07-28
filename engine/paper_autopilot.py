@@ -8205,14 +8205,15 @@ class PaperAutopilotEngine:
             for event in dict(record.get("auxiliary_context") or {}).values():
                 if not isinstance(event, Mapping) or not event.get("record_id"):
                     continue
+                rejected = bool(event.get("rejected_at") or str(event.get("assignment_state") or "").upper().startswith("REJECTED"))
                 consumer_events.append({
                     "endpoint_family": str(event.get("endpoint_family") or "unknown"),
-                    "symbol": event.get("symbol"), "assigned": bool(event.get("assigned_at") or event.get("assignment_state")),
+                    "symbol": event.get("symbol"), "assigned": bool(event.get("assigned_at")) and not rejected,
                     "assigned_at": event.get("assigned_at"), "consumed": bool(event.get("consumer_acknowledged")),
                     "consumed_at": event.get("consumed_at"), "consumer": event.get("consumer") or "",
                     "consumer_record_id": event.get("consumer_record_id") or event.get("record_id"),
                     "evidence_at": event.get("response_at"), "producer_event_at": event.get("response_at"),
-                    "rejected": bool(event.get("rejected_at") or str(event.get("assignment_state") or "").upper().startswith("REJECTED")),
+                    "rejected": rejected,
                     "rejected_at": event.get("rejected_at"),
                     "rejection_reason": event.get("rejection_reason") or "",
                 })

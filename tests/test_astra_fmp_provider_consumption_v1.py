@@ -195,6 +195,41 @@ class FmpProviderConsumptionTests(unittest.TestCase):
             self.assertEqual(telemetry["providers"][0]["responses_assigned"], 0)
             self.assertEqual(telemetry["providers"][0]["responses_consumed"], 0)
 
+    def test_worker_telemetry_producer_does_not_assign_freshness_rejection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with open(os.path.join(directory, "astra_worker_runtime_state_v1.json"), "w", encoding="utf-8") as handle:
+                json.dump({"started_at": "2026-07-24T00:30:00Z"}, handle)
+            append_fmp_provider_event_v1(
+                {"timestamp": "2026-07-24T01:00:00Z", "endpoint_family": "news_catalyst", "ok": True,
+                 "useful_fields_count": 2, "bytes_actual_if_available": 31, "status_code": 200},
+                state_dir=directory,
+            )
+            engine = object.__new__(PaperAutopilotEngine)
+            engine.state_path = os.path.join(directory, "paper_autopilot_state.json")
+            engine._runtime_state = {
+                "legacy_swing_fmp_evidence": {
+                    "fmp-news:AAA": {
+                        "record_id": "fmp-news:AAA", "symbol": "AAA", "endpoint_family": "news_catalyst",
+                        "response_at": "2026-07-24T01:00:00Z",
+                        "auxiliary_context": {
+                            "news_catalyst": {
+                                "record_id": "fmp-news:AAA:news", "symbol": "AAA", "endpoint_family": "news_catalyst",
+                                "response_at": "2026-07-24T01:00:00Z",
+                                "assignment_state": "REJECTED_BY_POSITION_EVIDENCE_FRESHNESS",
+                                "rejected_at": "2026-07-24T01:00:01Z",
+                                "rejection_reason": "NEWS_CATALYST_STALE_NOT_CURRENT",
+                            },
+                        },
+                    },
+                },
+            }
+            with patch("engine.paper_autopilot.resolve_fmp_key", return_value=("test-key", "test")):
+                telemetry = engine._refresh_provider_consumption_telemetry_v1()
+            family = next(row for row in telemetry["endpoint_families"] if row["endpoint_family"] == "news_catalyst")
+            self.assertEqual(family["responses_assigned"], 0)
+            self.assertEqual(family["responses_consumed"], 0)
+            self.assertEqual(family["responses_rejected"], 1)
+
     def test_candidate_consumption_acknowledgement_is_not_counted_as_network(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "fmp_efficiency_ledger_v1.jsonl")
