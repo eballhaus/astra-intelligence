@@ -1672,6 +1672,11 @@ class PaperAutopilotEngine:
             # authoritative across worker restarts while broker submission is
             # ambiguous, so a retry cannot manufacture a second sell.
             "paper_sell_order_intents": {},
+            # FMP evidence is a canonical worker product.  Retaining it over
+            # restart preserves the accepted -> assigned -> consumed lineage
+            # rather than leaving rolling telemetry orphaned.
+            "legacy_swing_fmp_evidence": {},
+            "legacy_swing_fmp_activity": {},
             "legacy_forward_activations": {},
             "legacy_swing_canary": {},
             # These keys mirror the durable canary bundle.  Keeping the
@@ -1844,6 +1849,10 @@ class PaperAutopilotEngine:
                     self._runtime_state["authorized_lane_exit_pending"] = dict(payload.get("authorized_lane_exit_pending") or {})
                 if isinstance(payload.get("paper_sell_order_intents"), dict):
                     self._runtime_state["paper_sell_order_intents"] = dict(payload.get("paper_sell_order_intents") or {})
+                if isinstance(payload.get("legacy_swing_fmp_evidence"), dict):
+                    self._runtime_state["legacy_swing_fmp_evidence"] = dict(payload.get("legacy_swing_fmp_evidence") or {})
+                if isinstance(payload.get("legacy_swing_fmp_activity"), dict):
+                    self._runtime_state["legacy_swing_fmp_activity"] = dict(payload.get("legacy_swing_fmp_activity") or {})
                 if isinstance(payload.get("legacy_forward_activations"), dict):
                     self._runtime_state["legacy_forward_activations"] = dict(payload.get("legacy_forward_activations") or {})
                 if isinstance(payload.get("legacy_swing_canary"), dict):
@@ -1946,6 +1955,8 @@ class PaperAutopilotEngine:
             "learned_exit_rollback": dict(self._runtime_state.get("learned_exit_rollback") or {}),
             "authorized_lane_exit_pending": dict(self._runtime_state.get("authorized_lane_exit_pending") or {}),
             "paper_sell_order_intents": dict(self._runtime_state.get("paper_sell_order_intents") or {}),
+            "legacy_swing_fmp_evidence": dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {}),
+            "legacy_swing_fmp_activity": dict(self._runtime_state.get("legacy_swing_fmp_activity") or {}),
             "legacy_forward_activations": dict(self._runtime_state.get("legacy_forward_activations") or {}),
             "legacy_swing_canary": dict(self._runtime_state.get("legacy_swing_canary") or {}),
             "legacy_swing_market_evidence": dict(self._runtime_state.get("legacy_swing_market_evidence") or {}),

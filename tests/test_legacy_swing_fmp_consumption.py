@@ -1,3 +1,6 @@
+import json
+import os
+import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
 
@@ -47,6 +50,38 @@ def _registry():
 
 
 class LegacySwingFmpConsumptionTests(unittest.TestCase):
+    def test_restart_load_restores_fmp_evidence_and_activity_for_consumer_handoff(self):
+        """A worker restart must not orphan accepted quote evidence from telemetry."""
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = os.path.join(directory, "paper_autopilot_state.json")
+            payload = {
+                "legacy_swing_fmp_evidence": {
+                    "activation-a": {
+                        "record_id": "legacy-fmp:company-profile:activation-a",
+                        "symbol": "AAA",
+                        "auxiliary_context": {
+                            "quote": {
+                                "record_id": "legacy-fmp:quote:activation-a",
+                                "normalized_fields": {"price": 10.0, "quote_timestamp": "2026-07-28T10:00:00Z"},
+                            },
+                        },
+                    },
+                },
+                "legacy_swing_fmp_activity": {"event_rotation_cursor": 2, "worker_invoked": True},
+            }
+            with open(state_path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle)
+            engine = object.__new__(PaperAutopilotEngine)
+            engine.state_path = state_path
+            engine._runtime_state = {}
+            engine._enabled = False
+            engine._load_state_file()
+            self.assertEqual(
+                engine._runtime_state["legacy_swing_fmp_evidence"]["activation-a"]["auxiliary_context"]["quote"]["record_id"],
+                "legacy-fmp:quote:activation-a",
+            )
+            self.assertEqual(engine._runtime_state["legacy_swing_fmp_activity"]["event_rotation_cursor"], 2)
+
     def test_existing_router_normalizes_a_valid_profile_response(self):
         router = ProviderRouter()
         router._key_for = lambda *_args: "test-key"  # type: ignore[method-assign]
