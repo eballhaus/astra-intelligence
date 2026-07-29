@@ -1693,6 +1693,7 @@ class PaperAutopilotEngine:
             "legacy_swing_market_evidence": {},
             "legacy_swing_market_activity": {},
             "legacy_swing_exit_lifecycle": {},
+            "legacy_retirement_entry_provenance_v1": {},
             # The unified lifecycle owner persists a conservative management
             # overlay here; this is not a second position store.
             "position_resolution_reviews": {},
@@ -1876,6 +1877,8 @@ class PaperAutopilotEngine:
                     self._runtime_state["legacy_swing_market_activity"] = dict(nested_canary.get("market_activity") or {})
                 if isinstance(payload.get("legacy_swing_exit_lifecycle"), dict):
                     self._runtime_state["legacy_swing_exit_lifecycle"] = dict(payload.get("legacy_swing_exit_lifecycle") or {})
+                if isinstance(payload.get("legacy_retirement_entry_provenance_v1"), dict):
+                    self._runtime_state["legacy_retirement_entry_provenance_v1"] = dict(payload.get("legacy_retirement_entry_provenance_v1") or {})
                 if isinstance(payload.get("position_resolution_reviews"), dict):
                     self._runtime_state["position_resolution_reviews"] = dict(payload.get("position_resolution_reviews") or {})
                 if isinstance(payload.get("loss_containment_state_v1"), dict):
@@ -1970,6 +1973,7 @@ class PaperAutopilotEngine:
             "legacy_swing_market_evidence": dict(self._runtime_state.get("legacy_swing_market_evidence") or {}),
             "legacy_swing_market_activity": dict(self._runtime_state.get("legacy_swing_market_activity") or {}),
             "legacy_swing_exit_lifecycle": dict(self._runtime_state.get("legacy_swing_exit_lifecycle") or {}),
+            "legacy_retirement_entry_provenance_v1": dict(self._runtime_state.get("legacy_retirement_entry_provenance_v1") or {}),
             "position_resolution_reviews": dict(self._runtime_state.get("position_resolution_reviews") or {}),
             "loss_containment_state_v1": dict(self._runtime_state.get("loss_containment_state_v1") or {}),
             "profit_protection_state_v1": dict(self._runtime_state.get("profit_protection_state_v1") or {}),
@@ -8341,21 +8345,101 @@ class PaperAutopilotEngine:
             for symbol, row in broker_map.items()
             if symbol
         ]
-        queue = build_legacy_retirement_review_queue_v1(positions, broker_map)
+        provenance = dict(self._runtime_state.get("legacy_retirement_entry_provenance_v1") or {})
+        provenance_rows = dict(provenance.get("rows") or {})
+        provenance_status = str(provenance.get("status") or "UNAVAILABLE")
+        cache_valid = False
+        try:
+            generated_at = datetime.fromisoformat(
+                str(provenance.get("generated_at") or "").replace("Z", "+00:00")
+            )
+            cache_valid = (
+                generated_at.tzinfo is not None
+                and 0.0 <= (datetime.now(UTC) - generated_at.astimezone(UTC)).total_seconds() <= 900.0
+            )
+        except Exception:
+            cache_valid = False
+        broker = self.alpaca_paper_broker
+        if not cache_valid and broker is not None and hasattr(broker, "reconstruct_open_position_provenance"):
+            try:
+                rebuilt = dict(broker.reconstruct_open_position_provenance(positions, limit=500) or {})
+                provenance_rows = {
+                    str(item.get("symbol") or "").upper(): dict(item)
+                    for item in list(rebuilt.get("positions") or [])
+                    if isinstance(item, Mapping) and str(item.get("symbol") or "").strip()
+                }
+                provenance_status = "BROKER_FILL_PROVENANCE_CURRENT"
+                provenance = {
+                    "generated_at": _now_iso(),
+                    "rows": provenance_rows,
+                    "status": provenance_status,
+                    "broker_calls_used": 1,
+                }
+            except Exception:
+                # Missing broker provenance must not be substituted with a
+                # local timestamp. Keep every position visible below.
+                provenance_status = "BROKER_FILL_PROVENANCE_UNAVAILABLE"
+                provenance = {
+                    "generated_at": _now_iso(),
+                    "rows": {},
+                    "status": provenance_status,
+                    "broker_calls_used": 1,
+                }
+        elif cache_valid:
+            provenance_status = str(provenance.get("status") or "BROKER_FILL_PROVENANCE_CACHED")
+            provenance["broker_calls_used"] = 0
+
+        enriched_positions: list[dict[str, Any]] = []
+        for row in positions:
+            symbol = str(row.get("symbol") or "").upper()
+            source = dict(provenance_rows.get(symbol) or {})
+            enriched_positions.append({
+                **row,
+                # Only broker fill history is admissible for a legacy entry
+                # timestamp. A current broker position snapshot is not one.
+                "entry_timestamp": source.get("earliest_still_open_fill_timestamp"),
+                "entry_filled_at": source.get("earliest_still_open_fill_timestamp"),
+                "entry_provenance_status": source.get("entry_provenance_status") or provenance_status,
+                "broker_entry_fill_confirmed": bool(source.get("quantity_coverage_complete")),
+                "broker_order_ids": list(source.get("broker_order_ids") or []),
+            })
+        queue = build_legacy_retirement_review_queue_v1(enriched_positions, broker_map)
+        queued_symbols = {str(row.get("symbol") or "").upper() for row in queue}
+        unclassified = [
+            {
+                "symbol": str(row.get("symbol") or "").upper(),
+                "position_id": str(row.get("position_id") or row.get("asset_id") or ""),
+                "broker_quantity": _to_float(row.get("qty"), _to_float(row.get("quantity"), 0.0)),
+                "classification": "UNCLASSIFIED_BROKER_POSITION",
+                "first_causal_blocker": "BROKER_ENTRY_PROVENANCE_UNAVAILABLE",
+                "execution_authority": "DISABLED",
+                "advisory_only": True,
+            }
+            for row in enriched_positions
+            if str(row.get("symbol") or "").upper() not in queued_symbols
+        ]
         persistence = save_legacy_retirement_queue_v1(
-            queue, os.path.dirname(self.state_path) or "state"
+            queue,
+            os.path.dirname(self.state_path) or "state",
+            unclassified_positions=unclassified,
+            provenance_status=provenance_status,
         )
         payload = {
             "schema_version": "astra_legacy_retirement_workflow_v1",
             "queue": queue,
             "queue_length": len(queue),
+            "unclassified_positions": unclassified,
+            "positions_considered": len(enriched_positions),
+            "entry_provenance_status": provenance_status,
             "producer": "PaperAutopilot._legacy_retirement_review_phase",
             "execution_authority": "DISABLED",
             "advisory_only": True,
             "broker_actions_used": 0,
             "provider_calls_used": 0,
+            "broker_read_calls_used": int(provenance.get("broker_calls_used") or 0),
             "persistence": persistence,
         }
+        self._runtime_state["legacy_retirement_entry_provenance_v1"] = provenance
         self._runtime_state["legacy_retirement_review_queue_v1"] = payload
         return payload
 

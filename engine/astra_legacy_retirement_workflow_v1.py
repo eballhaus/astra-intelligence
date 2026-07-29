@@ -299,13 +299,18 @@ def build_legacy_retirement_review_queue_v1(
 
 
 def save_legacy_retirement_queue_v1(
-    queue: list[Mapping[str, Any]], state_dir: str | Path
+    queue: list[Mapping[str, Any]], state_dir: str | Path,
+    *,
+    unclassified_positions: list[Mapping[str, Any]] | None = None,
+    provenance_status: str = "",
 ) -> dict[str, Any]:
     """Persist the retirement review queue atomically."""
     path = Path(state_dir) / RETIREMENT_QUEUE_FILE
     payload = {
         "schema_version": SCHEMA_VERSION,
         "queue": [dict(item) for item in queue],
+        "unclassified_positions": [dict(item) for item in (unclassified_positions or [])],
+        "provenance_status": _text(provenance_status),
         "saved_at": _iso(),
         "queue_length": len(queue),
     }
