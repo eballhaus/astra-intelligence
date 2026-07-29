@@ -130,6 +130,33 @@ class CryptoCapabilityReportingTests(unittest.TestCase):
         self.assertFalse(result["broker_capability_available"])
         self.assertIn("alpaca_crypto_execution_support_unverified_or_deferred", result["activation_blockers"])
 
+    def test_cache_only_funnel_consumes_current_worker_reconciliation_fact(self):
+        """A current canonical fact clears only the reconciliation gate."""
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        lane = {
+            "supported_pairs": ["BTC/USD"], "tradable_pairs": ["BTC/USD"],
+            "lane_state": "LANE_PAPER_ACTIVE_BOUNDED", "paper_mode_verified": True,
+            "kill_switch_enabled": False, "broker_reconciliation_ok": True,
+            "day_trade_capacity_available": 1, "short_swing_capacity_available": 1,
+            "canonical_capacity_fact": {"allowed": True, "authority_current": True},
+            "paper_crypto_enabled": True,
+        }
+        candidate = {
+            "symbol": "BTC/USD", "asset_class": "crypto", "candidate_id": "btc-current",
+            "provider_quote_timestamp": now, "bid": 100.0, "ask": 100.1,
+            "volume_24h": 1000.0, "data_quality_score": 90.0, "confidence": 90.0,
+            "score": 90.0, "notional": 25.0, "assigned_horizon": "day_trade",
+            "paper_entry_horizon_style": "day_trade", "horizon_evidence_status": "PERSISTED_CANONICAL",
+            "horizon_provenance": "crypto_ranking_worker", "horizon_scores": {"day_trade": 1.0},
+        }
+        with patch.object(server_extend, "_crypto_paper_lane_validation_v1_payload", return_value=lane), patch.object(
+            server_extend, "_crypto_ranking_rows_cached_v1", return_value=[candidate]
+        ), patch.object(server_extend, "_known_equity_symbols_v1", return_value=set()):
+            result = server_extend._crypto_candidate_funnel_v1_payload({})
+        row = result["candidate_rows"][0]
+        self.assertEqual(row["execution_gate_status"]["broker_reconciliation"], "PASS")
+        self.assertNotEqual(row["final_reason"], "broker_reconciliation")
+
 
 if __name__ == "__main__":
     unittest.main()

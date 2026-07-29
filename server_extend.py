@@ -70296,6 +70296,14 @@ def _crypto_paper_lane_validation_v1_payload(statuses: dict | None = None) -> di
     if not capacity_snapshot:
         capacity_snapshot = dict(_astra_evidence_state_json("paper_autopilot_state.json").get("last_evidence_capacity_snapshot") or {})
     canonical_capacity_fact = canonical_candidate_capacity_fact(capacity_snapshot, lane_id="CRYPTO")
+    broker_crypto_open_count = int(_to_float(capacity_snapshot.get("crypto_open_positions"), -1.0))
+    pending_crypto_order_count = int(_to_float(capacity_snapshot.get("crypto_pending_orders"), 0.0))
+    broker_reconciliation_ok = bool(
+        canonical_capacity_fact.get("authority_current")
+        and broker_crypto_open_count >= 0
+        and broker_crypto_open_count == len(crypto_open_rows)
+        and pending_crypto_order_count == 0
+    )
     activation = canonical_lane_activation_contract(
         "CRYPTO",
         # Capability details supplement safety facts; they cannot override the
@@ -70346,6 +70354,12 @@ def _crypto_paper_lane_validation_v1_payload(statuses: dict | None = None) -> di
         "crypto_scalp_broker_capacity": 0,
         "crypto_scalp_shadow_status": "shadow_practice_only",
         "canonical_capacity_fact": canonical_capacity_fact,
+        "broker_reconciliation_ok": broker_reconciliation_ok,
+        "broker_reconciliation_status": (
+            "CURRENT_MATCHED" if broker_reconciliation_ok
+            else "COUNT_MISMATCH_FAIL_CLOSED" if canonical_capacity_fact.get("authority_current")
+            else "PENDING_OR_UNAVAILABLE"
+        ),
         "capacity_authority_state": "CURRENT" if canonical_capacity_fact.get("authority_current") else "STALE_OR_UNAVAILABLE_FAIL_CLOSED",
         "legacy_capacity_aliases_diagnostic_only": True,
         "day_trade_capacity_used": crypto_day_used,
@@ -70909,8 +70923,9 @@ def _crypto_candidate_funnel_v1_payload(statuses: dict | None = None) -> dict:
             live_endpoint_detected=not bool(lane.get("paper_mode_verified")),
             capacity_fact=dict(lane.get("canonical_capacity_fact") or {}),
             duplicate_pending=False,
-            # This cache-only funnel must not manufacture broker reconciliation.
-            broker_reconciliation_ok=False,
+            # Consume the worker-owned reconciliation fact. The GET route
+            # performs no refresh and cannot manufacture reconciliation.
+            broker_reconciliation_ok=bool(lane.get("broker_reconciliation_ok")),
             kill_switch_enabled=bool(lane.get("kill_switch_enabled")),
         )
         pair = integrity.get("normalized_symbol")
@@ -71016,7 +71031,7 @@ def _crypto_candidate_integrity_v1_payload(statuses: dict | None = None) -> dict
             live_endpoint_detected=not bool(lane.get("paper_mode_verified")),
             capacity_fact=dict(lane.get("canonical_capacity_fact") or {}),
             duplicate_pending=False,
-            broker_reconciliation_ok=False,
+            broker_reconciliation_ok=bool(lane.get("broker_reconciliation_ok")),
             kill_switch_enabled=bool(lane.get("kill_switch_enabled")),
         )
         rows.append({
