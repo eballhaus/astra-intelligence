@@ -50457,7 +50457,7 @@ def _equity_risk_evidence_rows_cached_v1() -> list[dict]:
         snapshot = dict(payload.get("equity_risk_envelopes_snapshot_v1") or {})
     except Exception:
         return []
-    if str(snapshot.get("status") or "") not in {"CURRENT", "PARTIAL_FAIL_CLOSED"}:
+    if str(snapshot.get("status") or "") not in {"CURRENT", "PARTIAL_FAIL_CLOSED", "OFF_HOURS_HISTORICAL_CURRENT"}:
         return []
     if time.time() > float(snapshot.get("valid_until_epoch") or 0.0):
         return []

@@ -261,6 +261,14 @@ def _resolve_position_inputs(
     derived_lane = False
     management_policy = "NONE"
 
+    explicit_lane = _text(pos.get("lane_id")).upper()
+    if not lane and explicit_lane:
+        if explicit_lane == "SCALP":
+            lane = "DAY"
+        else:
+            lane = explicit_lane
+        historical_lane = lane
+
     if not lane and (not recovery_present or lane_recovery_unavailable):
         asset_class = _text(
             pos.get("asset_class") or pos.get("asset_type") or broker.get("asset_class") or broker.get("asset_type")
@@ -284,10 +292,6 @@ def _resolve_position_inputs(
         elif horizon in {"swing_trade", "swing", "position_trade", "position"}:
             lane = "SWING"
 
-    explicit_lane = _text(pos.get("lane_id")).upper()
-    if not lane and explicit_lane:
-        lane = explicit_lane
-        historical_lane = lane
     if lane and not derived_lane and historical_lane == "UNKNOWN":
         historical_lane = lane
 

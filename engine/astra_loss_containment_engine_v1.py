@@ -299,7 +299,11 @@ def _resolve_position_inputs(
     management_policy = "NONE"
 
     if not lane and explicit_lane:
-        lane = explicit_lane
+        # Normalize cohort labels (SCALP) to their canonical risk-policy lane (DAY).
+        if explicit_lane == "SCALP":
+            lane = "DAY"
+        else:
+            lane = explicit_lane
         historical_lane = lane
     if not lane and (not recovery_present or lane_recovery_unavailable):
         asset_class = _text(
