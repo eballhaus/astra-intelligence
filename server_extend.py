@@ -35505,7 +35505,11 @@ def _alpaca_paper_status_fast_fallback_v1(reason: str = "cache_first_status") ->
         "forced_exits_enabled": False,
         "learned_exits_enabled": False,
         "automatic_promotions_enabled": False,
-        "crypto_broker_execution_supported": False,
+        "crypto_broker_execution_supported": bool(safety.get("crypto_broker_execution_supported", False)),
+        "crypto_capability_validation_status": str(safety.get("crypto_capability_status") or "BLOCKED_FAIL_CLOSED"),
+        "crypto_capability_exact_blocker": str(safety.get("crypto_capability_exact_blocker") or ""),
+        "crypto_capability_source": str(safety.get("crypto_capability_source") or "alpaca_crypto_capability_v2_cache"),
+        "crypto_capability_cache_only": True,
         "crypto_note": safety.get("crypto_note") or "Crypto broker execution deferred until exchange/broker coverage is selected.",
         "alpaca_paper_status_v1": True,
         "generated_at": _now_utc_iso(),
@@ -35557,6 +35561,10 @@ def broker_entry_price_lineage_repair_v1(max_rows: int = 250):
 
 @router.get("/api/alpaca_paper_status_v1")
 def alpaca_paper_status_v1(force: bool = False):
+    try:
+        safety = dict(ALPACA_PAPER_BROKER.safety_status() or {})
+    except Exception:
+        safety = {}
     cached = _CACHE.get("alpaca_paper_status_v1") if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}
     cached_data = cached.get("data") if isinstance(cached, dict) else None
     cache_age = max(0.0, time.time() - _to_float(cached.get("ts"), 0.0)) if cached else 9999.0
@@ -35770,7 +35778,13 @@ def alpaca_paper_status_v1(force: bool = False):
             "api_calls_used": 0,
             "live_trading_changed": False,
             "broker_live_endpoint_allowed": False,
-            "crypto_broker_execution_supported": False,
+            "crypto_broker_execution_supported": bool(safety.get("crypto_broker_execution_supported", False)),
+            "crypto_capability_validation_status": str(safety.get("crypto_capability_status") or "BLOCKED_FAIL_CLOSED"),
+            "crypto_capability_exact_blocker": str(safety.get("crypto_capability_exact_blocker") or ""),
+            "crypto_capability_source": str(safety.get("crypto_capability_source") or "alpaca_crypto_capability_v2_cache"),
+            "crypto_capability_cache_only": True,
+            "broker_status_refresh_deferred": True,
+            "broker_status_refresh_deferred_reason": "alpaca_paper_status_exception",
             "crypto_note": "Crypto broker execution deferred until exchange/broker coverage is selected.",
             "alpaca_paper_status_v1": True,
         }
@@ -70236,8 +70250,12 @@ def _crypto_paper_lane_validation_v1_payload(statuses: dict | None = None) -> di
     ranking_rows = _crypto_ranking_rows_cached_v1()
     ranked_pairs = [str(row.get("symbol") or "") for row in ranking_rows]
     monitored = list(dict.fromkeys(list(_ASTRA_CRYPTO_APPROVED_CORE_UNIVERSE_V1) + [p for p in ranked_pairs if p]))[:24]
-    broker_crypto_supported = bool(capability.get("crypto_trading_supported") or alpaca.get("crypto_broker_execution_supported") or safety.get("crypto_broker_execution_supported"))
-    paper_mode_verified = bool(alpaca.get("paper_mode_verified") or safety.get("paper_mode_verified"))
+    # The broker's cache-only safety contract is the single execution-capability
+    # authority.  A raw capability snapshot or deferred status cache must never
+    # revive execution after that contract has rejected stale or contradictory
+    # evidence.
+    broker_crypto_supported = bool(safety.get("crypto_broker_execution_supported", False))
+    paper_mode_verified = bool(safety.get("paper_mode_verified", False))
     supported_pairs = list(capability.get("supported_pairs") or [])
     tradable_pairs = list(capability.get("tradable_pairs") or []) if broker_crypto_supported and paper_mode_verified else []
     selected = [p for p in monitored if p in set(_ASTRA_CRYPTO_APPROVED_CORE_UNIVERSE_V1) and p in set(tradable_pairs)][:6]
@@ -70280,7 +70298,9 @@ def _crypto_paper_lane_validation_v1_payload(statuses: dict | None = None) -> di
     canonical_capacity_fact = canonical_candidate_capacity_fact(capacity_snapshot, lane_id="CRYPTO")
     activation = canonical_lane_activation_contract(
         "CRYPTO",
-        broker_safety={**dict(safety or {}), **dict(capability or {})},
+        # Capability details supplement safety facts; they cannot override the
+        # canonical fail-closed execution decision.
+        broker_safety={**dict(capability or {}), **dict(safety or {})},
         session_state="CRYPTO_24_7_ALLOWED",
         session_allowed=True,
         session_source="crypto_24_7_market_model",

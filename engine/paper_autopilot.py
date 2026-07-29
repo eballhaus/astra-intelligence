@@ -105,6 +105,10 @@ from engine.astra_legacy_position_risk_triage_v1 import (
     build_legacy_position_risk_triage_v1,
     save_legacy_position_risk_triage_v1,
 )
+from engine.astra_legacy_retirement_workflow_v1 import (
+    build_legacy_retirement_review_queue_v1,
+    save_legacy_retirement_queue_v1,
+)
 from engine.astra_position_evidence_completeness_v1 import (
     build_position_evidence_completeness_v1,
     save_position_evidence_completeness_v1,
@@ -8138,6 +8142,7 @@ class PaperAutopilotEngine:
         )
         save_position_evidence_completeness_v1(evidence, os.path.dirname(self.position_evidence_completeness_state_path) or "state")
         self._runtime_state["position_evidence_completeness_v1"] = evidence
+        self._legacy_retirement_review_phase(broker_position_by_symbol)
         triage = self._legacy_position_risk_triage_phase(broker_position_by_symbol, position_evidence=evidence)
         resolution = build_legacy_portfolio_resolution_v1(
             broker_position_by_symbol,
@@ -8316,6 +8321,43 @@ class PaperAutopilotEngine:
             "advisory_only": True,
         }
         return triage
+
+    def _legacy_retirement_review_phase(
+        self, broker_position_by_symbol: Mapping[str, Mapping[str, Any]]
+    ) -> dict[str, Any]:
+        """Refresh the canonical, approval-only legacy retirement queue.
+
+        This worker-owned producer consumes already reconciled broker positions
+        and writes only the durable advisory queue. It cannot create an order,
+        reserve approval, or alter lifecycle truth.
+        """
+        broker_map = {
+            str(symbol or row.get("symbol") or "").upper(): dict(row or {})
+            for symbol, row in dict(broker_position_by_symbol or {}).items()
+            if isinstance(row, Mapping)
+        }
+        positions = [
+            {**row, "symbol": symbol}
+            for symbol, row in broker_map.items()
+            if symbol
+        ]
+        queue = build_legacy_retirement_review_queue_v1(positions, broker_map)
+        persistence = save_legacy_retirement_queue_v1(
+            queue, os.path.dirname(self.state_path) or "state"
+        )
+        payload = {
+            "schema_version": "astra_legacy_retirement_workflow_v1",
+            "queue": queue,
+            "queue_length": len(queue),
+            "producer": "PaperAutopilot._legacy_retirement_review_phase",
+            "execution_authority": "DISABLED",
+            "advisory_only": True,
+            "broker_actions_used": 0,
+            "provider_calls_used": 0,
+            "persistence": persistence,
+        }
+        self._runtime_state["legacy_retirement_review_queue_v1"] = payload
+        return payload
 
     def _refresh_provider_consumption_telemetry_v1(
         self,

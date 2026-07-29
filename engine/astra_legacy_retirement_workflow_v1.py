@@ -41,6 +41,30 @@ LEGACY_DUST_RECONCILIATION = "LEGACY_DUST_RECONCILIATION"
 LEGACY_EXIT_BLOCKED = "LEGACY_EXIT_BLOCKED"
 
 
+def _first_causal_blocker(retirement_state: str, *, thesis_known: bool) -> str:
+    """Return the one actionable reason a legacy row cannot advance.
+
+    The queue is intentionally advisory-only.  It must make an absent human
+    approval or unavailable thesis explicit instead of presenting a generic
+    review state as execution progress.
+    """
+    if retirement_state == LEGACY_RETIREMENT_COMPLETE:
+        return ""
+    if retirement_state == LEGACY_DUST_RECONCILIATION:
+        return "DUST_POSITION_NOT_TRADABLE"
+    if retirement_state in {
+        LEGACY_EXIT_PENDING_BROKER,
+        LEGACY_EXIT_PARTIALLY_FILLED,
+        LEGACY_EXIT_FILLED_AWAITING_ZERO,
+    }:
+        return "BROKER_RECONCILIATION_REQUIRED"
+    if retirement_state == LEGACY_EXIT_BLOCKED and not thesis_known:
+        return "ORIGINAL_THESIS_UNAVAILABLE"
+    if retirement_state == LEGACY_EXIT_APPROVED:
+        return "APPROVED_LEGACY_EXIT_AWAITING_CANONICAL_EXECUTION_HANDOFF"
+    return "HUMAN_SELL_APPROVAL_REQUIRED"
+
+
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     directory = path.parent
     directory.mkdir(parents=True, exist_ok=True)
@@ -232,6 +256,10 @@ def build_legacy_retirement_review_queue_v1(
         )
 
         retirement_state = classify_retirement_state_v1(row, broker_row)
+        first_blocker = _first_causal_blocker(
+            retirement_state, thesis_known=known_thesis == "KNOWN"
+        )
+        sellable_quantity = 0.0 if scope == DUST else max(0.0, qty)
 
         queue.append({
             "symbol": symbol,
@@ -246,6 +274,12 @@ def build_legacy_retirement_review_queue_v1(
             "liquidity_evidence": liquidity,
             "spread_evidence": spread,
             "retirement_state": retirement_state,
+            "final_decision": retirement_state,
+            "exact_sellable_quantity": round(sellable_quantity, 8),
+            "existing_sell_order": bool(row.get("existing_sell_order") or broker_row.get("existing_sell_order")),
+            "execution_authority": "DISABLED",
+            "advisory_only": True,
+            "first_causal_blocker": first_blocker or None,
             "human_approval_required": retirement_state != LEGACY_RETIREMENT_COMPLETE,
             "broker_zero_confirmation_required": retirement_state
             in {

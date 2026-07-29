@@ -135,6 +135,62 @@ class AlpacaPaperBroker:
         except Exception:
             return {}
 
+    @staticmethod
+    def _crypto_capability_execution_fact(cached: dict[str, Any] | None) -> dict[str, Any]:
+        """Validate cache-only crypto capability evidence for execution reporting.
+
+        This is intentionally narrower than order authority.  It establishes
+        whether a current, internally consistent paper-account capability
+        record supports crypto execution; lane, candidate, capital, and order
+        gates remain separate fail-closed owners.
+        """
+        payload = dict(cached or {})
+        max_age_seconds = max(60.0, _to_float(os.getenv("ASTRA_CRYPTO_CAPABILITY_REFRESH_SECONDS"), 21600.0))
+        generated_at = _safe_text(payload.get("generated_at"))
+        age_seconds: float | None = None
+        try:
+            parsed = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                raise ValueError("naive capability timestamp")
+            age_seconds = (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds()
+        except Exception:
+            generated_at = ""
+
+        blocker = ""
+        if not payload:
+            blocker = "runtime_crypto_capability_cache_unavailable"
+        elif not generated_at:
+            blocker = "crypto_capability_timestamp_invalid"
+        elif age_seconds is not None and (age_seconds < 0 or age_seconds > max_age_seconds):
+            blocker = "crypto_capability_cache_stale"
+        elif _safe_text(payload.get("activation_state")).upper() != "VALIDATED_PAPER_READY":
+            blocker = "crypto_capability_not_validated_paper_ready"
+        elif not bool(payload.get("paper_mode_verified")) or not bool(payload.get("paper_endpoint_confirmed")):
+            blocker = "crypto_capability_paper_environment_unverified"
+        elif bool(payload.get("live_endpoint_detected")):
+            blocker = "crypto_capability_live_endpoint_detected"
+        elif _safe_text(payload.get("account_status")).upper() != "ACTIVE":
+            blocker = "crypto_capability_account_not_active"
+        elif not bool(payload.get("crypto_trading_supported")):
+            blocker = "crypto_trading_not_supported"
+        elif not bool(payload.get("market_data_entitlement_confirmed")):
+            blocker = "crypto_market_data_entitlement_unverified"
+        elif not list(payload.get("tradable_pairs") or []):
+            blocker = "crypto_capability_no_tradable_pairs"
+        elif _safe_text(payload.get("exact_blocker")):
+            blocker = _safe_text(payload.get("exact_blocker"))
+
+        return {
+            "crypto_broker_execution_supported": not bool(blocker),
+            "crypto_capability_validation_status": "VALIDATED_CURRENT" if not blocker else "BLOCKED_FAIL_CLOSED",
+            "crypto_capability_exact_blocker": blocker,
+            "crypto_capability_generated_at": generated_at or None,
+            "crypto_capability_age_seconds": round(max(0.0, age_seconds), 3) if age_seconds is not None else None,
+            "crypto_capability_max_age_seconds": max_age_seconds,
+            "crypto_capability_source": "alpaca_crypto_capability_v2_cache",
+            "crypto_capability_cache_only": True,
+        }
+
     def cached_crypto_capability(self) -> dict[str, Any]:
         """Return a sanitized cached crypto capability snapshot without I/O.
 
@@ -143,6 +199,7 @@ class AlpacaPaperBroker:
         cache. Missing or malformed state remains explicitly fail-closed.
         """
         cached = self._load_crypto_capability()
+        capability_fact = self._crypto_capability_execution_fact(cached)
         if not cached:
             return {
                 "generated_at": None, "paper_mode_verified": False,
@@ -154,6 +211,7 @@ class AlpacaPaperBroker:
                 "exact_blocker": "runtime_crypto_capability_cache_unavailable",
                 "source": "alpaca_crypto_capability_v2_cache", "cache_only": True,
                 "broker_actions_used": 0, "secrets_exposed": False,
+                **capability_fact,
             }
         rules: dict[str, dict[str, Any]] = {}
         for pair, raw in dict(cached.get("asset_rules") or {}).items():
@@ -173,7 +231,7 @@ class AlpacaPaperBroker:
             "paper_mode_verified": bool(cached.get("paper_mode_verified")),
             "paper_endpoint_confirmed": bool(cached.get("paper_endpoint_confirmed")),
             "live_endpoint_detected": bool(cached.get("live_endpoint_detected")),
-            "crypto_trading_supported": bool(cached.get("crypto_trading_supported")),
+            "crypto_trading_supported": bool(capability_fact.get("crypto_broker_execution_supported")),
             "supported_pairs": sorted({_safe_text(pair).upper().replace("-", "/") for pair in (cached.get("supported_pairs") or []) if _safe_text(pair)}),
             "tradable_pairs": sorted({_safe_text(pair).upper().replace("-", "/") for pair in (cached.get("tradable_pairs") or []) if _safe_text(pair)}),
             "supported_order_types": list(cached.get("supported_order_types") or []),
@@ -182,9 +240,13 @@ class AlpacaPaperBroker:
             "market_data_entitlement_confirmed": bool(cached.get("market_data_entitlement_confirmed")),
             "market_data_status": _safe_text(cached.get("market_data_status"), "UNKNOWN"),
             "asset_rules": rules,
-            "exact_blocker": _safe_text(cached.get("exact_blocker")),
+            # Report the validator's blocker rather than a stale raw cache field.
+            # Consumers must not mistake unsupported cached capability for a
+            # current broker-execution fact.
+            "exact_blocker": _safe_text(capability_fact.get("crypto_capability_exact_blocker")) or _safe_text(cached.get("exact_blocker")),
             "source": "alpaca_crypto_capability_v2_cache", "cache_only": True,
             "broker_actions_used": 0, "secrets_exposed": False,
+            **capability_fact,
         }
 
     def _save_crypto_capability(self, payload: dict[str, Any]) -> None:
@@ -233,7 +295,7 @@ class AlpacaPaperBroker:
 
     def safety_status(self) -> dict[str, Any]:
         env = self._env()
-        crypto_cached = self._load_crypto_capability()
+        crypto_fact = self._crypto_capability_execution_fact(self._load_crypto_capability())
         enabled = _bool_env("ASTRA_ENABLE_ALPACA_PAPER", False)
         reasons: list[str] = []
         base = env["base_url"].lower().rstrip("/")
@@ -265,8 +327,11 @@ class AlpacaPaperBroker:
             "safety_status": "pass" if verified else "disabled_or_blocked",
             "safety_reasons": reasons or ["paper_mode_verified"],
             "live_trading_changed": False,
-            "crypto_broker_execution_supported": bool(crypto_cached.get("crypto_trading_supported", False)),
-            "crypto_capability_status": str(crypto_cached.get("activation_state") or "not_probed"),
+            "crypto_broker_execution_supported": bool(crypto_fact.get("crypto_broker_execution_supported")),
+            "crypto_capability_status": str(crypto_fact.get("crypto_capability_validation_status") or "not_probed"),
+            "crypto_capability_exact_blocker": str(crypto_fact.get("crypto_capability_exact_blocker") or ""),
+            "crypto_capability_source": str(crypto_fact.get("crypto_capability_source") or ""),
+            "crypto_capability_cache_only": bool(crypto_fact.get("crypto_capability_cache_only")),
             "crypto_note": "Crypto remains fail-closed unless cached runtime capability and all paper activation gates pass.",
         }
 
@@ -1039,7 +1104,11 @@ class AlpacaPaperBroker:
             "api_calls_used": int(self._api_calls_used),
             "live_trading_changed": False,
             "broker_live_endpoint_allowed": False,
-            "crypto_broker_execution_supported": False,
+            "crypto_broker_execution_supported": bool(safety.get("crypto_broker_execution_supported", False)),
+            "crypto_capability_validation_status": safety.get("crypto_capability_status"),
+            "crypto_capability_exact_blocker": safety.get("crypto_capability_exact_blocker"),
+            "crypto_capability_source": safety.get("crypto_capability_source"),
+            "crypto_capability_cache_only": bool(safety.get("crypto_capability_cache_only", True)),
             "crypto_note": safety.get("crypto_note"),
             "generated_at": _now_iso(),
         }
