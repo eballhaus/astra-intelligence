@@ -52,6 +52,7 @@ def build_paper_sell_approval_v1(
     approved_decision_id: str = "",
     expires_in_minutes: float = 120.0,
     approved_max_quantity: float | None = None,
+    approved_account_fingerprint: str = "",
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Build a canonical paper-sell approval. Requires human identity."""
@@ -76,6 +77,7 @@ def build_paper_sell_approval_v1(
         "approved_at": as_of,
         "approval_expires_at": expires,
         "approved_account": _text(approved_account),
+        "approved_account_fingerprint": _text(approved_account_fingerprint),
         "approved_symbol": _text(approved_symbol).upper(),
         "approved_side": "SELL",
         "approved_action": _text(approved_action or "SELL").upper(),
@@ -97,6 +99,7 @@ def validate_paper_sell_approval_v1(
     symbol: str,
     quantity: float,
     account: str = "",
+    account_fingerprint: str = "",
     side: str = "SELL",
     action: str = "SELL",
     decision_id: str = "",
@@ -169,6 +172,10 @@ def validate_paper_sell_approval_v1(
             "reason": f"SYMBOL_MISMATCH:{approved_symbol}v{_text(symbol).upper()}",
             "blocker": "symbol_mismatch",
         }
+    if _text(appr.get("approved_account")) and _text(appr.get("approved_account")) != _text(account):
+        return {"valid": False, "reason": "ACCOUNT_MISMATCH", "blocker": "account_mismatch"}
+    if _text(appr.get("approved_account_fingerprint")) and _text(appr.get("approved_account_fingerprint")) != _text(account_fingerprint):
+        return {"valid": False, "reason": "ACCOUNT_FINGERPRINT_MISMATCH", "blocker": "account_mismatch"}
 
     approved_side = _text(appr.get("approved_side")).upper()
     if approved_side != _text(side).upper():

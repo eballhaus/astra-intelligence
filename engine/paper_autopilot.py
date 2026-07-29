@@ -107,7 +107,10 @@ from engine.astra_legacy_position_risk_triage_v1 import (
 )
 from engine.astra_legacy_retirement_workflow_v1 import (
     build_legacy_retirement_review_queue_v1,
+    load_legacy_retirement_execution_v1,
+    preflight_legacy_retirement_execution_v1,
     save_legacy_retirement_queue_v1,
+    save_legacy_retirement_execution_v1,
 )
 from engine.astra_position_evidence_completeness_v1 import (
     build_position_evidence_completeness_v1,
@@ -8146,7 +8149,9 @@ class PaperAutopilotEngine:
         )
         save_position_evidence_completeness_v1(evidence, os.path.dirname(self.position_evidence_completeness_state_path) or "state")
         self._runtime_state["position_evidence_completeness_v1"] = evidence
-        self._legacy_retirement_review_phase(broker_position_by_symbol)
+        retirement_review = self._legacy_retirement_review_phase(broker_position_by_symbol)
+        self._legacy_retirement_execution_handoff_phase(broker_position_by_symbol, retirement_review)
+        self._arm_legacy_retirement_sell_intents(broker_position_by_symbol)
         triage = self._legacy_position_risk_triage_phase(broker_position_by_symbol, position_evidence=evidence)
         resolution = build_legacy_portfolio_resolution_v1(
             broker_position_by_symbol,
@@ -8442,6 +8447,80 @@ class PaperAutopilotEngine:
         self._runtime_state["legacy_retirement_entry_provenance_v1"] = provenance
         self._runtime_state["legacy_retirement_review_queue_v1"] = payload
         return payload
+
+    def _legacy_retirement_execution_handoff_phase(
+        self, broker_position_by_symbol: Mapping[str, Mapping[str, Any]], review: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Persist approval-scoped, fail-closed retirement intents before any sell.
+
+        This is deliberately separate from submission: a market-closed or stale
+        worker cycle records its exact preflight blocker and cannot reserve an
+        approval or call the paper broker. A later execution owner must consume
+        the same durable intent and pass a fresh preflight again.
+        """
+        state_dir = os.path.dirname(self.state_path) or "state"
+        prior = load_legacy_retirement_execution_v1(state_dir)
+        approval = dict(self._runtime_state.get("legacy_retirement_owner_approval_v1") or prior.get("owner_approval") or {})
+        safety = self._alpaca_safety_snapshot()
+        session_open = bool(self._runtime_state.get("market_session_open", False))
+        intents = dict(prior.get("intents") or {})
+        for item in list(review.get("queue") or []):
+            if not isinstance(item, Mapping):
+                continue
+            symbol = str(item.get("symbol") or "").upper()
+            broker = dict(dict(broker_position_by_symbol or {}).get(symbol) or {})
+            # Broker position snapshots are never executable quotes. The next
+            # execution cycle must supply provider-native quote evidence.
+            quote = {"market_session_open": session_open, "freshness_status": "UNAVAILABLE", "executable_freshness": False}
+            preflight = preflight_legacy_retirement_execution_v1(item, broker, approval, safety, quote)
+            intent_id = str(preflight.get("intent_id") or "")
+            if intent_id:
+                intents[intent_id] = {**dict(intents.get(intent_id) or {}), "intent_id": intent_id,
+                                      "symbol": symbol, "position_id": item.get("position_id"),
+                                      "approval_id": approval.get("approval_id"), "preflight": preflight,
+                                      "status": "PREFLIGHT_READY" if preflight.get("preflight_status") == "PASS" else "PREFLIGHT_BLOCKED",
+                                      "paper_only": True, "execution_authority": "HUMAN_APPROVED_PAPER_ONLY" if approval else "DISABLED"}
+        payload = save_legacy_retirement_execution_v1({"owner_approval": approval, "intents": intents,
+                                                        "producer": "PaperAutopilot._legacy_retirement_execution_handoff_phase",
+                                                        "broker_actions_used": 0}, state_dir)
+        self._runtime_state["legacy_retirement_execution_v1"] = payload
+        return payload
+
+    def _arm_legacy_retirement_sell_intents(self, broker_position_by_symbol: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+        """Bridge imported legacy positions into the shared, durable sell ledger.
+
+        This method intentionally creates no order. Market/session evidence and
+        a fresh account identity are required again by the eventual submitter.
+        """
+        queue = list((self._runtime_state.get("legacy_retirement_review_queue_v1") or {}).get("queue") or [])
+        broker = self.alpaca_paper_broker
+        account = dict(broker.account() or {}) if broker is not None and hasattr(broker, "account") else {}
+        account_row = dict(account.get("account") or {}) if account.get("ok") else {}
+        account_id = str(account_row.get("id") or "")
+        created = waiting = 0
+        for row in queue:
+            symbol = str(row.get("symbol") or "").upper()
+            if not symbol or bool(row.get("dust_status")):
+                continue
+            approval = dict((self._runtime_state.get("paper_sell_approvals") or {}).get(symbol) or {})
+            if not approval or str(approval.get("approved_account") or "") != account_id:
+                continue
+            position = dict(dict(broker_position_by_symbol or {}).get(symbol) or {})
+            qty = _to_float(position.get("qty_available"), _to_float(position.get("qty"), 0.0))
+            if qty <= 0 or self._position_pending_sell(symbol, str(row.get("position_id") or ""))[0]:
+                continue
+            intent_id = f"legacy-retire:{str(approval.get('approval_id') or '')}:{str(row.get('position_id') or symbol)}"[:96]
+            existing = self._paper_sell_order_intents().get(intent_id)
+            if existing:
+                continue
+            self._persist_sell_intent(intent_id, symbol=symbol, position_id=str(row.get("position_id") or ""),
+                                      approval_id=str(approval.get("approval_id") or ""),
+                                      client_order_id=intent_id[:48], status="WAITING_FOR_REGULAR_SESSION",
+                                      retry_eligible=False, legacy_imported=True,
+                                      order={"symbol": symbol, "side": "sell", "qty": qty, "paper_only": True,
+                                             "paper_sell_approval_intent_id": intent_id[:48], "existing_exit_signal_verified": True})
+            created += 1; waiting += 1
+        return {"created": created, "waiting_for_regular_session": waiting, "account_verified": bool(account_id)}
 
     def _refresh_provider_consumption_telemetry_v1(
         self,

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -29,6 +30,7 @@ from engine.astra_trading_reset_boundary_v1 import (
 
 SCHEMA_VERSION = "astra_legacy_retirement_workflow_v1"
 RETIREMENT_QUEUE_FILE = "astra_legacy_retirement_queue_v1.json"
+RETIREMENT_EXECUTION_FILE = "astra_legacy_retirement_execution_v1.json"
 
 LEGACY_EXIT_REVIEW = "LEGACY_EXIT_REVIEW"
 LEGACY_EXIT_READY_FOR_HUMAN_APPROVAL = "LEGACY_EXIT_READY_FOR_HUMAN_APPROVAL"
@@ -39,6 +41,109 @@ LEGACY_EXIT_FILLED_AWAITING_ZERO = "LEGACY_EXIT_FILLED_AWAITING_ZERO"
 LEGACY_RETIREMENT_COMPLETE = "LEGACY_RETIREMENT_COMPLETE"
 LEGACY_DUST_RECONCILIATION = "LEGACY_DUST_RECONCILIATION"
 LEGACY_EXIT_BLOCKED = "LEGACY_EXIT_BLOCKED"
+
+
+def _execution_id(*parts: str) -> str:
+    """Stable idempotency identity for one owner-approved legacy retirement."""
+    return "legacy-retire-" + hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:24]
+
+
+def build_legacy_retirement_owner_approval_v1(
+    *, owner: str, symbols: list[str], approved_at: str, paper_account: str,
+    approval_scope: str = "ALPACA_PAPER_LEGACY_RETIREMENT_ONLY",
+) -> dict[str, Any]:
+    """Create a durable, paper-only approval scope; it never authorizes live trading."""
+    approved = sorted({_text(symbol).upper() for symbol in symbols if _text(symbol)})
+    if not _text(owner) or not approved or not _text(paper_account):
+        raise ValueError("owner, paper account, and approved symbols are required")
+    approval_id = _execution_id(owner, paper_account, approved_at, ",".join(approved))
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "approval_id": approval_id,
+        "approval_status": "APPROVED",
+        "approved_by": _text(owner),
+        "approved_at": _text(approved_at),
+        "approval_scope": _text(approval_scope),
+        "paper_account": _text(paper_account),
+        "approved_symbols": approved,
+        "paper_only": True,
+        "live_trading_authorized": False,
+        "execution_authority": "HUMAN_APPROVED_PAPER_ONLY",
+        "consumed_intent_ids": [],
+    }
+
+
+def evaluate_legacy_current_thesis_v1(
+    position: Mapping[str, Any], evidence: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Require fresh current evidence for a hold; never reconstruct an old thesis."""
+    row, current = dict(position or {}), dict(evidence or {})
+    freshness = _text(current.get("freshness_status") or current.get("evidence_status")).upper()
+    thesis = _text(current.get("current_thesis") or current.get("thesis_state")).upper()
+    if freshness not in {"FRESH", "CURRENT"}:
+        return {"decision": "BLOCKED_WITH_EXACT_CAUSE", "first_causal_blocker": "CURRENT_THESIS_EVIDENCE_NOT_FRESH"}
+    if thesis in {"VALID", "SUPPORTED", "CURRENT_LOGIC_SUPPORTED"}:
+        return {"decision": "CURRENT_LOGIC_HOLD_WITH_VERIFIED_THESIS", "first_causal_blocker": ""}
+    return {"decision": "LEGACY_EXIT_READY", "first_causal_blocker": "NO_CURRENT_VERIFIED_THESIS"}
+
+
+def preflight_legacy_retirement_execution_v1(
+    retirement: Mapping[str, Any], broker_position: Mapping[str, Any] | None,
+    approval: Mapping[str, Any] | None, safety: Mapping[str, Any] | None,
+    market: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Fail-closed canonical preflight used before a legacy paper sell intent.
+
+    This contract only determines eligibility. Submission, broker acknowledgement,
+    and broker-zero closure remain owned by PaperAutopilot's shared sell path.
+    """
+    row, broker, approved, safe, quote = (dict(retirement or {}), dict(broker_position or {}),
+                                           dict(approval or {}), dict(safety or {}), dict(market or {}))
+    symbol = _text(row.get("symbol")).upper()
+    qty = _num(broker.get("qty_available") or broker.get("qty")) or 0.0
+    blockers: list[str] = []
+    if not symbol or _text(broker.get("symbol")).upper() != symbol:
+        blockers.append("BROKER_SYMBOL_MISMATCH")
+    if qty <= 0:
+        blockers.append("BROKER_SELLABLE_QUANTITY_UNAVAILABLE")
+    if bool(row.get("dust_status")):
+        blockers.append("DUST_POSITION_NOT_TRADABLE")
+    if not bool(safe.get("paper_mode_verified")) or bool(safe.get("live_endpoint_detected")) or bool(safe.get("broker_live_endpoint_allowed")):
+        blockers.append("PAPER_ONLY_BROKER_BOUNDARY_REQUIRED")
+    if _text(approved.get("approval_status")).upper() != "APPROVED" or symbol not in set(approved.get("approved_symbols") or []):
+        blockers.append("OWNER_APPROVAL_REQUIRED")
+    if not bool(quote.get("market_session_open")):
+        blockers.append("MARKET_CLOSED")
+    if not bool(quote.get("executable_freshness")) or _text(quote.get("freshness_status")).upper() not in {"FRESH", "CURRENT"}:
+        blockers.append("STALE_OR_MISSING_EXECUTABLE_QUOTE")
+    if not bool(broker.get("tradable", True)):
+        blockers.append("BROKER_SYMBOL_NOT_TRADABLE")
+    if bool(row.get("existing_sell_order")):
+        blockers.append("EXISTING_SELL_ORDER")
+    intent_id = _execution_id(str(approved.get("approval_id") or ""), symbol, str(row.get("position_id") or broker.get("asset_id") or ""))
+    return {
+        "preflight_status": "PASS" if not blockers else "BLOCKED",
+        "first_causal_blocker": blockers[0] if blockers else "",
+        "blockers": blockers,
+        "symbol": symbol,
+        "broker_quantity": round(qty, 8),
+        "intent_id": intent_id,
+        "order_type": "market",
+        "time_in_force": "day",
+        "paper_only": True,
+        "live_trading_authorized": False,
+    }
+
+
+def save_legacy_retirement_execution_v1(payload: Mapping[str, Any], state_dir: str | Path) -> dict[str, Any]:
+    path = Path(state_dir) / RETIREMENT_EXECUTION_FILE
+    value = {"schema_version": SCHEMA_VERSION, "saved_at": _iso(), **dict(payload or {})}
+    _atomic_write_json(path, value)
+    return value
+
+
+def load_legacy_retirement_execution_v1(state_dir: str | Path) -> dict[str, Any]:
+    return _load_json(Path(state_dir) / RETIREMENT_EXECUTION_FILE, {})
 
 
 def _first_causal_blocker(retirement_state: str, *, thesis_known: bool) -> str:
