@@ -637,6 +637,9 @@ class AlpacaPaperBroker:
             return {"ok": False, "error": err}
         return {
             "ok": True,
+            # The account id is required by account-bound legacy retirement
+            # approvals.  This remains a read-only paper-account fact.
+            "account_id": _safe_text(data.get("id")),
             "account_equity": _to_float(data.get("equity"), 0.0),
             "buying_power": _to_float(data.get("buying_power"), 0.0),
             "currency": _safe_text(data.get("currency"), "USD"),

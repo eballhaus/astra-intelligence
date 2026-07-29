@@ -112,6 +112,11 @@ def preflight_legacy_retirement_execution_v1(
         blockers.append("PAPER_ONLY_BROKER_BOUNDARY_REQUIRED")
     if _text(approved.get("approval_status")).upper() != "APPROVED" or symbol not in set(approved.get("approved_symbols") or []):
         blockers.append("OWNER_APPROVAL_REQUIRED")
+    # Phase 2 supplies the freshly read broker paper account.  Keep the
+    # parameter optional so the Phase 1 non-executing preflight stays pure.
+    current_account = _text(quote.get("paper_account") or quote.get("account_id"))
+    if current_account and current_account != _text(approved.get("paper_account")):
+        blockers.append("PAPER_ACCOUNT_MISMATCH")
     if not bool(quote.get("market_session_open")):
         blockers.append("MARKET_CLOSED")
     if not bool(quote.get("executable_freshness")) or _text(quote.get("freshness_status")).upper() not in {"FRESH", "CURRENT"}:

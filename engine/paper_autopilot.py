@@ -1669,6 +1669,9 @@ class PaperAutopilotEngine:
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._cycle_lock = threading.Lock()
+        # A worker cycle already owns _cycle_lock.  This narrower lock protects
+        # the check/reserve/submit transition without self-deadlocking cycles.
+        self._sell_intent_lock = threading.Lock()
         self._runtime_state: dict[str, Any] = {
             "last_cycle_utc": "",
             "last_cycle_summary": {},
@@ -2211,12 +2214,20 @@ class PaperAutopilotEngine:
         self._runtime_state["learned_exit_pending_sells"] = dict(pending or {})
 
     _UNRESOLVED_SELL_INTENT_STATES = {
+        "WAITING_FOR_REGULAR_SESSION",
+        "WAITING_FOR_FRESH_EVIDENCE",
+        "PREFLIGHT_READY",
+        "SUBMISSION_RESERVED",
         "INTENT_CREATED",
         "APPROVAL_RESERVED",
         "SUBMISSION_ATTEMPTED",
         "SUBMITTED",
         "AMBIGUOUS_SUBMISSION",
         "BROKER_RECONCILIATION_REQUIRED",
+        "SELL_SUBMITTED",
+        "BROKER_ACKNOWLEDGED",
+        "PARTIALLY_FILLED",
+        "RETRY_PENDING",
     }
 
     def _paper_sell_order_intents(self) -> dict[str, Any]:
@@ -2384,6 +2395,242 @@ class PaperAutopilotEngine:
 
     def _authorized_lane_exit_pending_map(self) -> dict[str, Any]:
         return dict(self._runtime_state.get("authorized_lane_exit_pending") or {})
+
+    def _legacy_retirement_execution_state(self) -> dict[str, Any]:
+        """Return the Phase 1 lifecycle ledger without manufacturing state."""
+        current = self._runtime_state.get("legacy_retirement_execution_v1")
+        if isinstance(current, Mapping):
+            return dict(current)
+        return load_legacy_retirement_execution_v1(os.path.dirname(self.state_path) or "state")
+
+    def _persist_legacy_retirement_transition(self, lifecycle_id: str, *, status: str, **updates: Any) -> dict[str, Any]:
+        """Mirror a shared sell transition into the durable legacy lifecycle."""
+        state = self._legacy_retirement_execution_state()
+        intents = dict(state.get("intents") or {})
+        row = dict(intents.get(lifecycle_id) or {})
+        row.update(updates)
+        row.update({"intent_id": lifecycle_id, "status": status, "updated_at": _now_iso()})
+        intents[lifecycle_id] = row
+        state["intents"] = intents
+        state["last_updated_at"] = _now_iso()
+        payload = save_legacy_retirement_execution_v1(state, os.path.dirname(self.state_path) or "state")
+        self._runtime_state["legacy_retirement_execution_v1"] = payload
+        return row
+
+    @staticmethod
+    def _legacy_regular_session_open() -> bool:
+        now = datetime.now(ZoneInfo("America/New_York"))
+        if now.weekday() >= 5:
+            return False
+        minutes = now.hour * 60 + now.minute
+        return (9 * 60 + 30) <= minutes < (16 * 60)
+
+    def _legacy_retirement_market_evidence(self, symbol: str) -> dict[str, Any]:
+        """Use only worker-cached quote provenance for an executable legacy sell."""
+        sym = str(symbol or "").upper().strip()
+        explicit = dict((self._runtime_state.get("legacy_retirement_quote_evidence_v1") or {}).get(sym) or {})
+        if not explicit:
+            for raw in dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {}).values():
+                row = dict(raw or {})
+                if str(row.get("symbol") or "").upper() != sym:
+                    continue
+                explicit = dict(dict(row.get("auxiliary_context") or {}).get("quote") or row.get("quote") or {})
+                if explicit:
+                    break
+        # Never turn retrieval time into market time.  Aliases are copied only
+        # from provider-native quote fields before canonical freshness checks.
+        if explicit.get("quote_timestamp") and not explicit.get("provider_quote_timestamp"):
+            explicit["provider_quote_timestamp"] = explicit.get("quote_timestamp")
+        if explicit.get("timestamp") and not explicit.get("provider_quote_timestamp"):
+            # Generic timestamps are intentionally not accepted by canonical
+            # freshness validation; leave the evidence unavailable instead.
+            explicit.pop("timestamp", None)
+        canonical = canonical_market_timestamp_v1(explicit, source_type=SOURCE_QUOTE, max_age_seconds=90)
+        session_open = bool(self._runtime_state.get("market_session_open")) or self._legacy_regular_session_open()
+        return {
+            "market_session_open": session_open,
+            "freshness_status": canonical.get("freshness_status"),
+            "executable_freshness": bool(canonical.get("executable_freshness")),
+            "quote_provenance": canonical,
+        }
+
+    def _legacy_retirement_find_broker_position(self, symbol: str) -> tuple[dict[str, Any], str]:
+        broker = self.alpaca_paper_broker
+        if broker is None or not hasattr(broker, "positions"):
+            return {}, "BROKER_POSITION_LOOKUP_UNAVAILABLE"
+        try:
+            payload = dict(broker.positions() or {})
+        except Exception:
+            return {}, "BROKER_POSITION_LOOKUP_FAILED"
+        if not bool(payload.get("ok")):
+            return {}, "BROKER_POSITION_LOOKUP_FAILED"
+        sym = str(symbol or "").upper().strip()
+        for raw in list(payload.get("positions") or []):
+            row = dict(raw or {})
+            if str(row.get("symbol") or "").upper().strip() == sym:
+                return row, ""
+        return {}, "BROKER_POSITION_NOT_FOUND"
+
+    def _legacy_retirement_open_sell_conflict(self, symbol: str, client_order_id: str) -> str:
+        broker = self.alpaca_paper_broker
+        if broker is None or not hasattr(broker, "orders"):
+            return "BROKER_ORDER_LOOKUP_UNAVAILABLE"
+        try:
+            payload = dict(broker.orders(status="open", limit=100) or {})
+        except Exception:
+            return "BROKER_ORDER_LOOKUP_FAILED"
+        if not bool(payload.get("ok")):
+            return "BROKER_ORDER_LOOKUP_FAILED"
+        for raw in list(payload.get("orders") or []):
+            order = dict(raw or {})
+            if str(order.get("symbol") or "").upper().strip() != str(symbol or "").upper().strip():
+                continue
+            if str(order.get("side") or "").lower() == "sell" and str(order.get("client_order_id") or "") != client_order_id:
+                return "EXISTING_SELL_ORDER"
+        return ""
+
+    def _process_legacy_retirement_sell_intents(self) -> dict[str, Any]:
+        """Worker-only adapter from approved imported intents to the shared sell path."""
+        processed = submitted = waiting = blocked = 0
+        for intent_id, raw in list(self._paper_sell_order_intents().items()):
+            intent = dict(raw or {})
+            if not bool(intent.get("legacy_imported_retirement")):
+                continue
+            if str(intent.get("status") or "").upper() not in {
+                "WAITING_FOR_REGULAR_SESSION", "WAITING_FOR_FRESH_EVIDENCE", "PREFLIGHT_READY", "RETRY_PENDING",
+            }:
+                continue
+            processed += 1
+            result = self._submit_imported_legacy_retirement_intent(intent_id, intent)
+            submitted += int(bool(result.get("submitted")))
+            waiting += int(str(result.get("state") or "").startswith("WAITING_"))
+            blocked += int(bool(result.get("blocked")))
+        return {"processed": processed, "submitted": submitted, "waiting": waiting, "blocked": blocked}
+
+    def _submit_imported_legacy_retirement_intent(self, intent_id: str, intent: Mapping[str, Any]) -> dict[str, Any]:
+        """Atomically submit one already approved imported legacy retirement sell."""
+        with self._sell_intent_lock:
+            current = dict(self._paper_sell_order_intents().get(intent_id) or {})
+            if not current or str(current.get("status") or "").upper() not in {
+                "WAITING_FOR_REGULAR_SESSION", "WAITING_FOR_FRESH_EVIDENCE", "PREFLIGHT_READY", "RETRY_PENDING",
+            }:
+                return {"submitted": False, "blocked": True, "state": "DURABLE_INTENT_NOT_RETRYABLE"}
+            broker = self.alpaca_paper_broker
+            lifecycle_id = str(current.get("legacy_lifecycle_id") or "")
+            lifecycle = self._legacy_retirement_execution_state()
+            approval = dict(lifecycle.get("owner_approval") or self._runtime_state.get("legacy_retirement_owner_approval_v1") or {})
+            if broker is None or not hasattr(broker, "account") or not lifecycle_id:
+                self._persist_sell_intent(intent_id, status="BLOCKED_WITH_EXACT_CAUSE", first_causal_blocker="LEGACY_LIFECYCLE_OR_BROKER_UNAVAILABLE")
+                if lifecycle_id:
+                    self._persist_legacy_retirement_transition(lifecycle_id, status="LEGACY_EXIT_BLOCKED", first_causal_blocker="LEGACY_LIFECYCLE_OR_BROKER_UNAVAILABLE")
+                return {"submitted": False, "blocked": True, "state": "BLOCKED_WITH_EXACT_CAUSE"}
+            try:
+                account = dict(broker.account() or {})
+            except Exception:
+                account = {}
+            account_id = str(account.get("account_id") or dict(account.get("account") or {}).get("id") or "")
+            if not bool(account.get("ok")) or not account_id or account_id != str(approval.get("paper_account") or ""):
+                self._persist_sell_intent(intent_id, status="BLOCKED_WITH_EXACT_CAUSE", first_causal_blocker="PAPER_ACCOUNT_MISMATCH")
+                self._persist_legacy_retirement_transition(lifecycle_id, status="LEGACY_EXIT_BLOCKED", first_causal_blocker="PAPER_ACCOUNT_MISMATCH")
+                return {"submitted": False, "blocked": True, "state": "BLOCKED_WITH_EXACT_CAUSE"}
+            symbol = str(current.get("symbol") or "").upper().strip()
+            broker_position, broker_blocker = self._legacy_retirement_find_broker_position(symbol)
+            if broker_blocker:
+                state = "BROKER_ZERO_CONFIRMED" if broker_blocker == "BROKER_POSITION_NOT_FOUND" else "BLOCKED_WITH_EXACT_CAUSE"
+                self._persist_sell_intent(intent_id, status=state, first_causal_blocker=broker_blocker)
+                self._persist_legacy_retirement_transition(lifecycle_id, status="CLOSED_LEGACY_RETIREMENT" if state == "BROKER_ZERO_CONFIRMED" else "LEGACY_EXIT_BLOCKED", first_causal_blocker=broker_blocker)
+                return {"submitted": False, "blocked": state != "BROKER_ZERO_CONFIRMED", "state": state}
+            market = self._legacy_retirement_market_evidence(symbol)
+            market["paper_account"] = account_id
+            preflight = preflight_legacy_retirement_execution_v1(current, broker_position, approval, self._alpaca_safety_snapshot(), market)
+            blocker = str(preflight.get("first_causal_blocker") or "")
+            if preflight.get("preflight_status") != "PASS":
+                state = "WAITING_FOR_REGULAR_SESSION" if blocker == "MARKET_CLOSED" else "WAITING_FOR_FRESH_EVIDENCE" if blocker == "STALE_OR_MISSING_EXECUTABLE_QUOTE" else "BLOCKED_WITH_EXACT_CAUSE"
+                self._persist_sell_intent(intent_id, status=state, first_causal_blocker=blocker, preflight=preflight)
+                self._persist_legacy_retirement_transition(lifecycle_id, status="LEGACY_EXIT_APPROVED" if state.startswith("WAITING") else "LEGACY_EXIT_BLOCKED", first_causal_blocker=blocker, preflight=preflight)
+                return {"submitted": False, "blocked": state == "BLOCKED_WITH_EXACT_CAUSE", "state": state}
+            conflict = self._legacy_retirement_open_sell_conflict(symbol, str(current.get("client_order_id") or ""))
+            if conflict:
+                self._persist_sell_intent(intent_id, status="BLOCKED_WITH_EXACT_CAUSE", first_causal_blocker=conflict)
+                self._persist_legacy_retirement_transition(lifecycle_id, status="LEGACY_EXIT_BLOCKED", first_causal_blocker=conflict)
+                return {"submitted": False, "blocked": True, "state": "BLOCKED_WITH_EXACT_CAUSE"}
+            available = _to_float(broker_position.get("qty_available"), _to_float(broker_position.get("qty"), 0.0))
+            normalized = _normalize_paper_sell_qty(available, available, 6)
+            if not bool(normalized.get("sell_safe_to_submit")):
+                self._persist_sell_intent(intent_id, status="BLOCKED_WITH_EXACT_CAUSE", first_causal_blocker="DUST_OR_UNAVAILABLE_QUANTITY")
+                self._persist_legacy_retirement_transition(lifecycle_id, status="LEGACY_EXIT_BLOCKED", first_causal_blocker="DUST_OR_UNAVAILABLE_QUANTITY")
+                return {"submitted": False, "blocked": True, "state": "BLOCKED_WITH_EXACT_CAUSE"}
+            order = {**dict(current.get("order") or {}), "symbol": symbol, "side": "sell", "type": "market", "time_in_force": "day", "qty": normalized.get("normalized_sell_qty"), "paper_only": True, "existing_exit_signal_verified": True, "paper_sell_approval_intent_id": intent_id[:48], "client_order_id": str(current.get("client_order_id") or intent_id)[:48], "legacy_imported_retirement": True, "legacy_lifecycle_id": lifecycle_id}
+            self._persist_sell_intent(intent_id, status="SUBMISSION_RESERVED", order=order, preflight=preflight, submitted_quantity=order["qty"], first_causal_blocker="")
+            self._persist_legacy_retirement_transition(lifecycle_id, status="LEGACY_EXIT_PENDING_BROKER", preflight=preflight, submitted_quantity=order["qty"], client_order_id=order["client_order_id"])
+            try:
+                self._persist_sell_intent(intent_id, status="SUBMISSION_ATTEMPTED")
+                result = dict(broker.submit_paper_order(order) or {})
+            except Exception as exc:
+                self._persist_sell_intent(intent_id, status="AMBIGUOUS_SUBMISSION", reconciliation_status="BROKER_RECONCILIATION_REQUIRED", first_causal_blocker="SUBMISSION_EXCEPTION", submission_error=str(exc)[:160])
+                return {"submitted": False, "blocked": True, "state": "AMBIGUOUS_SUBMISSION"}
+            if not bool(result.get("ok")):
+                self._persist_sell_intent(intent_id, status="BROKER_REJECTED", reconciliation_status="BROKER_REJECTED", first_causal_blocker=str(result.get("error") or "BROKER_REJECTED")[:160], retry_eligible=True, retry_count=int(current.get("retry_count") or 0))
+                self._persist_legacy_retirement_transition(lifecycle_id, status="LEGACY_EXIT_BLOCKED", first_causal_blocker=str(result.get("error") or "BROKER_REJECTED")[:160])
+                return {"submitted": False, "blocked": True, "state": "BROKER_REJECTED"}
+            broker_order = dict(result.get("order") or {})
+            order_id = str(broker_order.get("id") or "")
+            pending_key = order_id or intent_id
+            pending = self._authorized_lane_exit_pending_map()
+            pending[pending_key] = {"legacy_imported_retirement": True, "legacy_lifecycle_id": lifecycle_id, "order_intent_id": intent_id, "position_id": current.get("position_id"), "symbol": symbol, "order_id": order_id, "client_order_id": order["client_order_id"], "submitted_quantity": order["qty"], "cumulative_filled_quantity": 0.0, "remaining_quantity": order["qty"], "submitted_at": _now_iso()}
+            self._runtime_state["authorized_lane_exit_pending"] = pending
+            self._persist_sell_intent(intent_id, status="BROKER_ACKNOWLEDGED", reconciliation_status="PENDING_BROKER_ORDER_RECONCILIATION", broker_order_id=order_id, broker_acknowledged=True, submission_timestamp=_now_iso(), retry_eligible=False)
+            self._persist_legacy_retirement_transition(lifecycle_id, status="LEGACY_EXIT_PENDING_BROKER", broker_order_id=order_id, broker_acknowledged=True)
+            return {"submitted": True, "state": "BROKER_ACKNOWLEDGED", "order_id": order_id}
+
+    def _refresh_imported_legacy_retirement_order(self, item: Mapping[str, Any], order: Mapping[str, Any]) -> dict[str, Any]:
+        """Reconcile imported legacy fills without creating a managed-position close."""
+        row, broker_order = dict(item or {}), dict(order or {})
+        intent_id = str(row.get("order_intent_id") or "")
+        lifecycle_id = str(row.get("legacy_lifecycle_id") or "")
+        status = str(broker_order.get("status") or "UNKNOWN").upper()
+        submitted = _to_float(row.get("submitted_quantity"), 0.0)
+        filled = max(_to_float(row.get("cumulative_filled_quantity"), 0.0), _to_float(broker_order.get("filled_qty"), _to_float(broker_order.get("filled_quantity"), 0.0)))
+        remaining = round(max(0.0, submitted - filled), 6)
+        common = {"broker_order_status": status, "cumulative_filled_quantity": filled, "remaining_quantity": remaining, "average_fill_price": _to_float(broker_order.get("filled_avg_price"), 0.0), "last_broker_refresh_at": _now_iso(), "broker_order_id": str(broker_order.get("id") or row.get("order_id") or "")}
+        if status in {"NEW", "ACCEPTED", "PENDING_NEW", "HELD", "CALCULATED", "ACCEPTED_FOR_BIDDING", "REPLACED"}:
+            self._persist_sell_intent(intent_id, status="BROKER_ACKNOWLEDGED", **common)
+            self._persist_legacy_retirement_transition(lifecycle_id, status="LEGACY_EXIT_PENDING_BROKER", **common)
+            return {"keep_pending": True, "filled": False}
+        if status == "PARTIALLY_FILLED":
+            residual = broker_residual_lookup({"symbol": row.get("symbol"), "position_id": row.get("position_id")}, broker_lookup=self._independent_broker_residual_lookup)
+            self._persist_sell_intent(intent_id, status="PARTIALLY_FILLED", broker_residual_lookup=residual, **common)
+            self._persist_legacy_retirement_transition(lifecycle_id, status="LEGACY_EXIT_PARTIALLY_FILLED", broker_residual_lookup=residual, **common)
+            return {"keep_pending": True, "filled": False}
+        if status in {"REJECTED", "CANCELED", "CANCELLED", "EXPIRED", "DONE_FOR_DAY"}:
+            retries = int(dict(self._paper_sell_order_intents().get(intent_id) or {}).get("retry_count") or 0) + 1
+            next_state = "RETRY_PENDING" if retries <= 2 else "BLOCKED_WITH_EXACT_CAUSE"
+            cause = str(broker_order.get("reject_reason") or broker_order.get("reason") or status)
+            self._persist_sell_intent(intent_id, status=next_state, retry_count=retries, retry_eligible=retries <= 2, first_causal_blocker=cause, **common)
+            self._persist_legacy_retirement_transition(lifecycle_id, status="LEGACY_EXIT_BLOCKED", retry_count=retries, retry_eligible=retries <= 2, first_causal_blocker=cause, **common)
+            return {"keep_pending": False, "filled": False}
+        if status != "FILLED":
+            self._persist_sell_intent(intent_id, status="BROKER_RECONCILIATION_REQUIRED", reconciliation_status="MALFORMED_RESPONSE", first_causal_blocker="UNKNOWN_BROKER_ORDER_STATUS", **common)
+            return {"keep_pending": True, "filled": False}
+        # A filled order is not a closed legacy lifecycle.  The independent
+        # paper-position listing must prove zero, or prove a dust residual.
+        residual = broker_residual_lookup({"symbol": row.get("symbol"), "position_id": row.get("position_id")}, broker_lookup=self._independent_broker_residual_lookup)
+        residual_qty = _to_float(residual.get("broker_residual_quantity"), -1.0)
+        if bool(residual.get("exit_allowed")) and residual_qty <= 0:
+            archive = dict(self._runtime_state.get("legacy_retirement_archive_v1") or {})
+            archive[intent_id] = {"intent_id": intent_id, "legacy_lifecycle_id": lifecycle_id, "symbol": row.get("symbol"), "broker_order_id": common["broker_order_id"], "closed_at": _now_iso(), "broker_zero_confirmed": True, "current_logic_performance_excluded": True, "capital_released_quantity": submitted}
+            self._runtime_state["legacy_retirement_archive_v1"] = archive
+            self._persist_sell_intent(intent_id, status="CLOSED_LEGACY_RETIREMENT", broker_zero_confirmed=True, broker_residual_lookup=residual, current_logic_performance_excluded=True, capital_released_quantity=submitted, **common)
+            self._persist_legacy_retirement_transition(lifecycle_id, status="LEGACY_RETIREMENT_COMPLETE", broker_zero_confirmed=True, broker_residual_lookup=residual, current_logic_performance_excluded=True, capital_released_quantity=submitted, **common)
+            return {"keep_pending": False, "filled": True}
+        dust = classify_dust_position_v1({"symbol": row.get("symbol"), "qty": max(0.0, residual_qty)}) if residual_qty >= 0 else {"is_dust": False}
+        if bool(dust.get("is_dust")):
+            self._persist_sell_intent(intent_id, status="BROKER_ZERO_CONFIRMED", broker_residual_lookup=residual, dust_residual=dust, **common)
+            self._persist_legacy_retirement_transition(lifecycle_id, status="LEGACY_DUST_RECONCILIATION", broker_residual_lookup=residual, dust_residual=dust, **common)
+            return {"keep_pending": False, "filled": False}
+        self._persist_sell_intent(intent_id, status="PARTIALLY_FILLED", broker_residual_lookup=residual, first_causal_blocker="BROKER_RESIDUAL_REMAINS", **common)
+        self._persist_legacy_retirement_transition(lifecycle_id, status="LEGACY_EXIT_FILLED_AWAITING_ZERO", broker_residual_lookup=residual, first_causal_blocker="BROKER_RESIDUAL_REMAINS", **common)
+        return {"keep_pending": True, "filled": False}
 
     def _validate_sell_approval(self, open_row: dict[str, Any]) -> dict[str, Any]:
         """Canonical gate — every paper sell must pass this human-approval check.
@@ -2834,6 +3081,15 @@ class PaperAutopilotEngine:
                 remaining[key] = item
                 continue
             order = dict(lookup.get("order") or {})
+            if bool(item.get("legacy_imported_retirement")):
+                if not bool(lookup.get("ok")):
+                    remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": "lookup_failed"}
+                    continue
+                result = self._refresh_imported_legacy_retirement_order(item, order)
+                if result.get("keep_pending"):
+                    remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": order.get("status")}
+                filled += int(bool(result.get("filled")))
+                continue
             if bool(item.get("legacy_swing_canary_adapter_v1")):
                 matching = [row for row in self._fetch_open_positions() if str(row.get("position_id") or "") == str(item.get("position_id") or "")]
                 result = self._record_legacy_swing_exit_broker_update(item, order, matching[0] if matching else None)
@@ -8152,6 +8408,10 @@ class PaperAutopilotEngine:
         retirement_review = self._legacy_retirement_review_phase(broker_position_by_symbol)
         self._legacy_retirement_execution_handoff_phase(broker_position_by_symbol, retirement_review)
         self._arm_legacy_retirement_sell_intents(broker_position_by_symbol)
+        # This is the only worker-owned bridge from the approved Phase 1
+        # legacy lifecycle into canonical paper submission.  API readers never
+        # invoke it and a closed/stale session remains a durable wait state.
+        self._runtime_state["legacy_retirement_submission_phase_v2"] = self._process_legacy_retirement_sell_intents()
         triage = self._legacy_position_risk_triage_phase(broker_position_by_symbol, position_evidence=evidence)
         resolution = build_legacy_portfolio_resolution_v1(
             broker_position_by_symbol,
@@ -8496,27 +8756,38 @@ class PaperAutopilotEngine:
         broker = self.alpaca_paper_broker
         account = dict(broker.account() or {}) if broker is not None and hasattr(broker, "account") else {}
         account_row = dict(account.get("account") or {}) if account.get("ok") else {}
-        account_id = str(account_row.get("id") or "")
+        account_id = str(account.get("account_id") or account_row.get("id") or "")
+        lifecycle = self._legacy_retirement_execution_state()
+        approval_scope = dict(lifecycle.get("owner_approval") or self._runtime_state.get("legacy_retirement_owner_approval_v1") or {})
         created = waiting = 0
         for row in queue:
             symbol = str(row.get("symbol") or "").upper()
             if not symbol or bool(row.get("dust_status")):
                 continue
             approval = dict((self._runtime_state.get("paper_sell_approvals") or {}).get(symbol) or {})
-            if not approval or str(approval.get("approved_account") or "") != account_id:
+            approved_by_scope = (str(approval_scope.get("approval_status") or "").upper() == "APPROVED"
+                                 and symbol in set(approval_scope.get("approved_symbols") or [])
+                                 and str(approval_scope.get("paper_account") or "") == account_id)
+            approved_by_legacy_adapter = bool(approval) and str(approval.get("approved_account") or "") == account_id
+            if not approved_by_scope and not approved_by_legacy_adapter:
                 continue
             position = dict(dict(broker_position_by_symbol or {}).get(symbol) or {})
             qty = _to_float(position.get("qty_available"), _to_float(position.get("qty"), 0.0))
             if qty <= 0 or self._position_pending_sell(symbol, str(row.get("position_id") or ""))[0]:
                 continue
-            intent_id = f"legacy-retire:{str(approval.get('approval_id') or '')}:{str(row.get('position_id') or symbol)}"[:96]
+            lifecycle_id = str(preflight_legacy_retirement_execution_v1(row, position, approval_scope, self._alpaca_safety_snapshot(), {"market_session_open": False, "freshness_status": "UNAVAILABLE", "executable_freshness": False, "paper_account": account_id}).get("intent_id") or "")
+            if not lifecycle_id:
+                continue
+            intent_id = lifecycle_id
             existing = self._paper_sell_order_intents().get(intent_id)
             if existing:
                 continue
             self._persist_sell_intent(intent_id, symbol=symbol, position_id=str(row.get("position_id") or ""),
-                                      approval_id=str(approval.get("approval_id") or ""),
+                                      approval_id=str(approval_scope.get("approval_id") or approval.get("approval_id") or ""),
                                       client_order_id=intent_id[:48], status="WAITING_FOR_REGULAR_SESSION",
                                       retry_eligible=False, legacy_imported=True,
+                                      legacy_imported_retirement=True, legacy_lifecycle_id=lifecycle_id,
+                                      approved_paper_account=account_id,
                                       order={"symbol": symbol, "side": "sell", "qty": qty, "paper_only": True,
                                              "paper_sell_approval_intent_id": intent_id[:48], "existing_exit_signal_verified": True})
             created += 1; waiting += 1
