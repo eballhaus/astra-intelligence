@@ -8796,7 +8796,7 @@ class PaperAutopilotEngine:
                     break
             if existing:
                 continue
-            intent_id = f"legacy-import:{symbol}:{_now_iso()[:10]}"
+            intent_id = f"legacy-retire:{symbol}"
             self._persist_sell_intent(intent_id, symbol=symbol, position_id=pos_id,
                                       approval_id=str(approval.get("approval_id") or ""),
                                       client_order_id=intent_id[:48], status="WAITING_FOR_REGULAR_SESSION",
