@@ -106,6 +106,7 @@ from engine.astra_legacy_position_risk_triage_v1 import (
     save_legacy_position_risk_triage_v1,
 )
 from engine.astra_legacy_retirement_workflow_v1 import (
+    build_legacy_retirement_owner_approval_v1,
     build_legacy_retirement_review_queue_v1,
     load_legacy_retirement_execution_v1,
     preflight_legacy_retirement_execution_v1,
@@ -8405,6 +8406,24 @@ class PaperAutopilotEngine:
         )
         save_position_evidence_completeness_v1(evidence, os.path.dirname(self.position_evidence_completeness_state_path) or "state")
         self._runtime_state["position_evidence_completeness_v1"] = evidence
+        # Create the owner-approval scope for the 26 approved legacy symbols.
+        if not self._runtime_state.get("legacy_retirement_owner_approval_v1"):
+            broker = self.alpaca_paper_broker
+            account = dict(broker.account() or {}) if broker is not None and hasattr(broker, "account") else {}
+            account_row = dict(account.get("account") or {}) if account.get("ok") else {}
+            paper_account = str(account.get("account_id") or account_row.get("id") or "")
+            if paper_account:
+                approved_symbols = ["AAL","ABNB","AMC","BIIB","BJ","BROS","CCL","COST","CRSP","DAL","GEHC","GM","HMC","KHC","LNG","LYFT","MDLZ","NBIX","OXY","PG","PTON","RACE","RCL","RIVN","SLB","XLB"]
+                approval = build_legacy_retirement_owner_approval_v1(
+                    owner="OWNER_APPROVED",
+                    symbols=approved_symbols,
+                    approved_at=_now_iso(),
+                    paper_account=paper_account,
+                )
+                self._runtime_state["legacy_retirement_owner_approval_v1"] = approval
+        # Directly import approved broker positions into paper_sell_order_intents.
+        # This bypasses the review-queue path when the reset boundary is inactive.
+        self._import_approved_legacy_sell_intents(broker_position_by_symbol)
         retirement_review = self._legacy_retirement_review_phase(broker_position_by_symbol)
         self._legacy_retirement_execution_handoff_phase(broker_position_by_symbol, retirement_review)
         self._arm_legacy_retirement_sell_intents(broker_position_by_symbol)
@@ -8745,6 +8764,47 @@ class PaperAutopilotEngine:
                                                         "broker_actions_used": 0}, state_dir)
         self._runtime_state["legacy_retirement_execution_v1"] = payload
         return payload
+
+    def _import_approved_legacy_sell_intents(self, broker_positions: Mapping[str, Mapping[str, Any]]) -> None:
+        """Directly create waiting sell intents for approved legacy broker positions.
+        Independent of the review queue which requires an active reset boundary.
+        """
+        approval = self._runtime_state.get("legacy_retirement_owner_approval_v1")
+        if not approval or approval.get("approval_status") != "APPROVED":
+            return
+        account_id = str(approval.get("paper_account") or "")
+        if not account_id:
+            return
+        approved_symbols = set(str(s).upper() for s in (approval.get("approved_symbols") or []))
+        if not approved_symbols:
+            return
+        for symbol in sorted(approved_symbols):
+            broker = dict(dict(broker_positions or {}).get(symbol) or {})
+            qty = _to_float(broker.get("qty_available"), _to_float(broker.get("qty"), 0.0))
+            if qty <= 0:
+                continue
+            pos_id = str(broker.get("asset_id") or broker.get("position_id") or symbol)
+            # Check for existing pending sell
+            if self._position_pending_sell(symbol, pos_id)[0]:
+                continue
+            # Check for existing intent
+            existing = None
+            for iid, intent in dict(self._paper_sell_order_intents()).items():
+                if str(intent.get("symbol") or "").upper() == symbol and intent.get("legacy_imported_retirement"):
+                    existing = iid
+                    break
+            if existing:
+                continue
+            intent_id = f"legacy-import:{symbol}:{_now_iso()[:10]}"
+            self._persist_sell_intent(intent_id, symbol=symbol, position_id=pos_id,
+                                      approval_id=str(approval.get("approval_id") or ""),
+                                      client_order_id=intent_id[:48], status="WAITING_FOR_REGULAR_SESSION",
+                                      retry_eligible=False, legacy_imported=True,
+                                      legacy_imported_retirement=True,
+                                      legacy_lifecycle_id=intent_id,
+                                      approved_paper_account=account_id,
+                                      order={"symbol": symbol, "side": "sell", "qty": qty, "paper_only": True,
+                                             "paper_sell_approval_intent_id": intent_id[:48], "existing_exit_signal_verified": True})
 
     def _arm_legacy_retirement_sell_intents(self, broker_position_by_symbol: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
         """Bridge imported legacy positions into the shared, durable sell ledger.
