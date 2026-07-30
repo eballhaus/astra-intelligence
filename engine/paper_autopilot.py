@@ -8774,7 +8774,11 @@ class PaperAutopilotEngine:
     def _import_approved_legacy_sell_intents(self, broker_positions: Mapping[str, Mapping[str, Any]]) -> None:
         """Directly create waiting sell intents for approved legacy broker positions.
         Independent of the review queue which requires an active reset boundary.
+        Safe to call repeatedly — only runs once per runtime session.
         """
+        # Only run import once per session; intents persist across restarts
+        if dict(self._paper_sell_order_intents()):
+            return
         approval = self._runtime_state.get("legacy_retirement_owner_approval_v1")
         if not approval or approval.get("approval_status") != "APPROVED":
             return
