@@ -2215,9 +2215,8 @@ class PaperAutopilotEngine:
         self._runtime_state["learned_exit_pending_sells"] = dict(pending or {})
 
     _UNRESOLVED_SELL_INTENT_STATES = {
-        "WAITING_FOR_REGULAR_SESSION",
-        "WAITING_FOR_FRESH_EVIDENCE",
-        "PREFLIGHT_READY",
+        # Post-submission states ONLY — pre-submission waiting states are handled
+        # by _process_legacy_retirement_sell_intents, not by _refresh_unresolved_sell_intents.
         "SUBMISSION_RESERVED",
         "INTENT_CREATED",
         "APPROVAL_RESERVED",
@@ -2499,6 +2498,7 @@ class PaperAutopilotEngine:
                 continue
             if str(intent.get("status") or "").upper() not in {
                 "WAITING_FOR_REGULAR_SESSION", "WAITING_FOR_FRESH_EVIDENCE", "PREFLIGHT_READY", "RETRY_PENDING",
+                "BROKER_RECONCILIATION_REQUIRED",
             }:
                 continue
             processed += 1
@@ -2514,6 +2514,7 @@ class PaperAutopilotEngine:
             current = dict(self._paper_sell_order_intents().get(intent_id) or {})
             if not current or str(current.get("status") or "").upper() not in {
                 "WAITING_FOR_REGULAR_SESSION", "WAITING_FOR_FRESH_EVIDENCE", "PREFLIGHT_READY", "RETRY_PENDING",
+                "BROKER_RECONCILIATION_REQUIRED",
             }:
                 return {"submitted": False, "blocked": True, "state": "DURABLE_INTENT_NOT_RETRYABLE"}
             broker = self.alpaca_paper_broker
