@@ -8849,6 +8849,14 @@ class PaperAutopilotEngine:
             qty = _to_float(position.get("qty_available"), _to_float(position.get("qty"), 0.0))
             if qty <= 0 or self._position_pending_sell(symbol, str(row.get("position_id") or ""))[0]:
                 continue
+            # Skip if this symbol already has a legacy retirement intent
+            has_existing = False
+            for iid, intent in dict(self._paper_sell_order_intents()).items():
+                if str(intent.get("symbol") or "").upper() == symbol and intent.get("legacy_imported_retirement"):
+                    has_existing = True
+                    break
+            if has_existing:
+                continue
             lifecycle_id = str(preflight_legacy_retirement_execution_v1(row, position, approval_scope, self._alpaca_safety_snapshot(), {"market_session_open": False, "freshness_status": "UNAVAILABLE", "executable_freshness": False, "paper_account": account_id}).get("intent_id") or "")
             if not lifecycle_id:
                 continue
