@@ -8793,15 +8793,19 @@ class PaperAutopilotEngine:
             # Check for existing pending sell
             if self._position_pending_sell(symbol, pos_id)[0]:
                 continue
-            # Check for existing intent
-            existing = None
+            intent_id = f"legacy-retire:{symbol}"
+            # Check for existing legacy retirement intent for this symbol
+            existing_id = None
             for iid, intent in dict(self._paper_sell_order_intents()).items():
                 if str(intent.get("symbol") or "").upper() == symbol and intent.get("legacy_imported_retirement"):
-                    existing = iid
+                    existing_id = iid
                     break
-            if existing:
+            if existing_id:
+                # Update quantity if broker position changed
+                prev = dict(self._paper_sell_order_intents().get(existing_id) or {})
+                if _to_float(prev.get("order", {}).get("qty"), 0.0) != qty:
+                    self._persist_sell_intent(existing_id, order={**dict(prev.get("order") or {}), "qty": qty})
                 continue
-            intent_id = f"legacy-retire:{symbol}"
             self._persist_sell_intent(intent_id, symbol=symbol, position_id=pos_id,
                                       approval_id=str(approval.get("approval_id") or ""),
                                       client_order_id=intent_id[:48], status="WAITING_FOR_REGULAR_SESSION",
