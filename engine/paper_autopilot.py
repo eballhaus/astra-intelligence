@@ -2327,7 +2327,14 @@ class PaperAutopilotEngine:
                     if str((row or {}).get("client_order_id") or "").strip() == client_order_id
                 ]
                 if not matches:
-                    self._persist_sell_intent(intent_id, status="BROKER_RECONCILIATION_REQUIRED", reconciliation_status="CLIENT_ORDER_NOT_FOUND_UNCONFIRMED", retry_eligible=False)
+                    # Reconciliation confirmed no matching broker order.
+                    # For legacy retirement intents, this means the original
+                    # submission never reached the broker and a safe retry is
+                    # permitted on the next cycle.
+                    if intent.get("legacy_imported_retirement"):
+                        self._persist_sell_intent(intent_id, status="WAITING_FOR_REGULAR_SESSION", reconciliation_status="RECONCILIATION_CLEARED_FOR_RETRY", first_causal_blocker="", retry_eligible=True)
+                    else:
+                        self._persist_sell_intent(intent_id, status="BROKER_RECONCILIATION_REQUIRED", reconciliation_status="CLIENT_ORDER_NOT_FOUND_UNCONFIRMED", retry_eligible=False)
                     ambiguous += 1
                     continue
                 order = matches[0]
@@ -2498,7 +2505,6 @@ class PaperAutopilotEngine:
                 continue
             if str(intent.get("status") or "").upper() not in {
                 "WAITING_FOR_REGULAR_SESSION", "WAITING_FOR_FRESH_EVIDENCE", "PREFLIGHT_READY", "RETRY_PENDING",
-                "BROKER_RECONCILIATION_REQUIRED",
             }:
                 continue
             processed += 1
@@ -2514,7 +2520,6 @@ class PaperAutopilotEngine:
             current = dict(self._paper_sell_order_intents().get(intent_id) or {})
             if not current or str(current.get("status") or "").upper() not in {
                 "WAITING_FOR_REGULAR_SESSION", "WAITING_FOR_FRESH_EVIDENCE", "PREFLIGHT_READY", "RETRY_PENDING",
-                "BROKER_RECONCILIATION_REQUIRED",
             }:
                 return {"submitted": False, "blocked": True, "state": "DURABLE_INTENT_NOT_RETRYABLE"}
             broker = self.alpaca_paper_broker
