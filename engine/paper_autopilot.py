@@ -4923,6 +4923,40 @@ class PaperAutopilotEngine:
                 still_pending += 1
         return {"reviewed": reviewed, "persisted": persisted, "still_pending": still_pending}
 
+    def _execution_critical_reconciliation_phase(self) -> dict[str, dict[str, Any]]:
+        """Advance already-submitted exits before advisory work can consume a cycle.
+
+        These operations only reconcile existing broker orders, broker residuals,
+        and local strict-truth persistence.  They never create a new order.  They
+        must therefore run before expensive evidence/advisory projection so an
+        already-filled exit cannot be stranded behind non-execution work.
+        """
+        operations = (
+            ("sell_intent_reconciliation", "pending_exit_reconciliation", self._refresh_unresolved_sell_intents),
+            ("learned_exit_refresh", "learned_exit_reconciliation", self._refresh_learned_exit_pending_sells),
+            ("authorized_lane_exit_refresh", "authorized_lane_exit_reconciliation", self._refresh_authorized_lane_exit_pending),
+            ("strict_truth_promotion_retry", "strict_truth_promotion_retry", self._retry_pending_strict_truth_promotions),
+        )
+        results: dict[str, dict[str, Any]] = {}
+        for result_key, phase, operation in operations:
+            self._note_worker_progress(phase)
+            try:
+                results[result_key] = dict(operation() or {})
+            except Exception as exc:
+                error = str(exc)[:180]
+                results[result_key] = {"observation_state": "FAILED", "error": error}
+                self._runtime_state["worker_last_suppressed_exception_v1"] = {
+                    "phase": phase,
+                    "exception_type": type(exc).__name__,
+                    "message": error,
+                    "occurred_at": _now_iso(),
+                    "retry_state": "RETRY_ON_NEXT_BOUNDED_CYCLE",
+                }
+        # Persist this safety-critical checkpoint before any advisory phase
+        # with unbounded historical inputs can consume the remainder of a cycle.
+        self._save_state_file()
+        return results
+
     def _broker_pending_sell_exists(self, symbol: str) -> tuple[bool, str]:
         broker = self.alpaca_paper_broker
         sym = str(symbol or "").upper().strip()
@@ -9990,6 +10024,9 @@ class PaperAutopilotEngine:
                 )
             except Exception as exc:
                 loss_containment_review = {"observation_state": "FAILED", "error": str(exc)[:180]}
+            # Disabling new entries never disables broker truth recovery for
+            # orders that were already submitted and subsequently filled.
+            execution_reconciliation = self._execution_critical_reconciliation_phase()
             try:
                 fmp_production_verification = self._run_fmp_production_verification_v1(broker_positions)
                 position_evidence_completeness, legacy_position_risk_triage, position_exit_readiness, unified_position_advisory = self._position_evidence_and_advisory_phase(
@@ -10022,6 +10059,7 @@ class PaperAutopilotEngine:
                 "legacy_swing_observation": legacy_refresh,
                 "legacy_quarantine_review_v1": quarantine_review,
                 "loss_containment_review_v1": loss_containment_review,
+                **execution_reconciliation,
                 "legacy_position_risk_triage_v1": legacy_position_risk_triage,
                 "position_evidence_completeness_v1": position_evidence_completeness,
                 "position_exit_readiness_v1": position_exit_readiness,
@@ -10046,6 +10084,7 @@ class PaperAutopilotEngine:
                 "legacy_swing_observation": legacy_refresh,
                 "legacy_quarantine_review_v1": quarantine_review,
                 "loss_containment_review_v1": loss_containment_review,
+                **execution_reconciliation,
                 "legacy_position_risk_triage_v1": legacy_position_risk_triage,
                 "position_evidence_completeness_v1": position_evidence_completeness,
                 "position_exit_readiness_v1": position_exit_readiness,
@@ -10485,6 +10524,14 @@ class PaperAutopilotEngine:
                 )
             except Exception as exc:
                 profit_protection_review = {"observation_state": "FAILED", "error": str(exc)[:180]}
+            # Reconcile already-submitted exits before evidence/advisory work.
+            # A costly downstream projection must never delay broker-zero
+            # confirmation or strict-truth promotion for a completed exit.
+            execution_reconciliation = self._execution_critical_reconciliation_phase()
+            sell_intent_reconciliation = dict(execution_reconciliation.get("sell_intent_reconciliation") or {})
+            learned_exit_refresh = dict(execution_reconciliation.get("learned_exit_refresh") or {})
+            authorized_lane_exit_refresh = dict(execution_reconciliation.get("authorized_lane_exit_refresh") or {})
+            strict_truth_promotion_retry = dict(execution_reconciliation.get("strict_truth_promotion_retry") or {})
             try:
                 self._note_worker_progress("fmp_production_verification")
                 fmp_production_verification = self._run_fmp_production_verification_v1(
@@ -10518,15 +10565,6 @@ class PaperAutopilotEngine:
             # before the broader candidate scan, which may take longer than a
             # bounded provider refresh cycle.
             self._save_state_file()
-            self._note_worker_progress("pending_exit_reconciliation")
-            # Ambiguous submissions are reconciled before any exit candidate
-            # evaluation.  This phase performs broker reads only; it never
-            # resubmits a sell or unlocks the consumed approval.
-            sell_intent_reconciliation = self._refresh_unresolved_sell_intents()
-            learned_exit_refresh = self._refresh_learned_exit_pending_sells()
-            authorized_lane_exit_refresh = self._refresh_authorized_lane_exit_pending()
-            self._note_worker_progress("strict_truth_promotion_retry")
-            strict_truth_promotion_retry = self._retry_pending_strict_truth_promotions()
             self._note_worker_progress("open_position_review")
             broker_position_review_rows = [
                 {

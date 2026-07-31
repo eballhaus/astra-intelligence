@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import pathlib
 import tempfile
 import unittest
@@ -210,6 +211,51 @@ class StrictTruthPromotionRecoveryTests(unittest.TestCase):
             records = json.loads((root / "broker_truth_records_v1.json").read_text())["records"]
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0]["lane_id"], "SWING")
+
+    def test_execution_reconciliation_isolated_and_persisted_before_advisory_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            engine = self._engine(root, _TradeIntel())
+            calls: list[str] = []
+
+            def failing_pending() -> dict:
+                calls.append("pending")
+                raise RuntimeError("broker read unavailable")
+
+            def learned() -> dict:
+                calls.append("learned")
+                return {"filled": 1}
+
+            def authorized() -> dict:
+                calls.append("authorized")
+                return {"filled": 1}
+
+            def strict_retry() -> dict:
+                calls.append("strict")
+                return {"persisted": 1}
+
+            engine._refresh_unresolved_sell_intents = failing_pending
+            engine._refresh_learned_exit_pending_sells = learned
+            engine._refresh_authorized_lane_exit_pending = authorized
+            engine._retry_pending_strict_truth_promotions = strict_retry
+
+            result = engine._execution_critical_reconciliation_phase()
+
+            self.assertEqual(calls, ["pending", "learned", "authorized", "strict"])
+            self.assertEqual(result["sell_intent_reconciliation"]["observation_state"], "FAILED")
+            self.assertEqual(result["strict_truth_promotion_retry"]["persisted"], 1)
+            persisted = json.loads((root / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(persisted["worker_cycle_phase"], "strict_truth_promotion_retry")
+            self.assertEqual(
+                engine._runtime_state["worker_last_suppressed_exception_v1"]["phase"],
+                "pending_exit_reconciliation",
+            )
+
+            source = inspect.getsource(PaperAutopilotEngine.run_cycle)
+            self.assertLess(
+                source.index("_execution_critical_reconciliation_phase()"),
+                source.index("_position_evidence_and_advisory_phase("),
+            )
 
 
 if __name__ == "__main__":
