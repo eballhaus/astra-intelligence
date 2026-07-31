@@ -90,6 +90,16 @@ class LegacyRetirementExecutionPhase2Tests(unittest.TestCase):
         self.assertEqual(self.broker.submit_calls, 0)
         self.assertEqual(self.engine._paper_sell_order_intents()[self.intent_id]["first_causal_blocker"], "PAPER_ACCOUNT_MISMATCH")
 
+    def test_authoritative_not_found_requires_and_persists_independent_zero_proof(self):
+        self.broker.position_rows = []
+        result = self.engine._process_legacy_retirement_sell_intents()
+        intent = self.engine._paper_sell_order_intents()[self.intent_id]
+        self.assertEqual(result["submitted"], 0)
+        self.assertEqual(intent["status"], "CLOSED_LEGACY_RETIREMENT")
+        self.assertTrue(intent["broker_zero_confirmed"])
+        self.assertEqual(intent["broker_residual_lookup"]["lookup_status"], "AUTHORITATIVE_NOT_FOUND")
+        self.assertEqual(self.broker.submit_calls, 0)
+
     def test_closed_market_stays_waiting(self):
         self.engine._runtime_state["market_session_open"] = False
         self.engine._legacy_regular_session_open = lambda: False

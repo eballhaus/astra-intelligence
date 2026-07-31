@@ -2764,10 +2764,49 @@ class PaperAutopilotEngine:
             symbol = str(current.get("symbol") or "").upper().strip()
             broker_position, broker_blocker = self._legacy_retirement_find_broker_position(symbol)
             if broker_blocker:
-                state = "BROKER_ZERO_CONFIRMED" if broker_blocker == "BROKER_POSITION_NOT_FOUND" else "BLOCKED_WITH_EXACT_CAUSE"
-                self._persist_sell_intent(intent_id, status=state, first_causal_blocker=broker_blocker)
-                self._persist_legacy_retirement_transition(lifecycle_id, status="CLOSED_LEGACY_RETIREMENT" if state == "BROKER_ZERO_CONFIRMED" else "LEGACY_EXIT_BLOCKED", first_causal_blocker=broker_blocker)
-                return {"submitted": False, "blocked": state != "BROKER_ZERO_CONFIRMED", "state": state}
+                if broker_blocker == "BROKER_POSITION_NOT_FOUND":
+                    # A fresh complete position listing is not enough on its
+                    # own to close a lifecycle.  Re-run the canonical
+                    # independent residual lookup so the durable record has
+                    # explicit authoritative-not-found proof.
+                    residual = broker_residual_lookup(
+                        {"symbol": symbol, "position_id": current.get("position_id")},
+                        broker_lookup=self._independent_broker_residual_lookup,
+                    )
+                    if bool(residual.get("exit_allowed")) and str(residual.get("lookup_status") or "") == "AUTHORITATIVE_NOT_FOUND":
+                        self._persist_sell_intent(
+                            intent_id,
+                            status="CLOSED_LEGACY_RETIREMENT",
+                            broker_zero_confirmed=True,
+                            broker_residual_lookup=residual,
+                            current_logic_performance_excluded=True,
+                            first_causal_blocker="",
+                        )
+                        self._persist_legacy_retirement_transition(
+                            lifecycle_id,
+                            status="LEGACY_RETIREMENT_COMPLETE",
+                            broker_zero_confirmed=True,
+                            broker_residual_lookup=residual,
+                            current_logic_performance_excluded=True,
+                            first_causal_blocker="",
+                        )
+                        return {"submitted": False, "blocked": False, "state": "CLOSED_LEGACY_RETIREMENT"}
+                    self._persist_sell_intent(
+                        intent_id,
+                        status="BLOCKED_WITH_EXACT_CAUSE",
+                        broker_residual_lookup=residual,
+                        first_causal_blocker=str(residual.get("lookup_status") or "BROKER_RESIDUAL_UNKNOWN"),
+                    )
+                    self._persist_legacy_retirement_transition(
+                        lifecycle_id,
+                        status="LEGACY_EXIT_BLOCKED",
+                        broker_residual_lookup=residual,
+                        first_causal_blocker=str(residual.get("lookup_status") or "BROKER_RESIDUAL_UNKNOWN"),
+                    )
+                    return {"submitted": False, "blocked": True, "state": "BLOCKED_WITH_EXACT_CAUSE"}
+                self._persist_sell_intent(intent_id, status="BLOCKED_WITH_EXACT_CAUSE", first_causal_blocker=broker_blocker)
+                self._persist_legacy_retirement_transition(lifecycle_id, status="LEGACY_EXIT_BLOCKED", first_causal_blocker=broker_blocker)
+                return {"submitted": False, "blocked": True, "state": "BLOCKED_WITH_EXACT_CAUSE"}
             market = self._legacy_retirement_market_evidence(symbol)
             market["paper_account"] = account_id
             preflight = preflight_legacy_retirement_execution_v1(current, broker_position, approval, self._alpaca_safety_snapshot(), market)
