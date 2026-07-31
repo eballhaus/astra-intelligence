@@ -20,8 +20,9 @@ except Exception:  # pragma: no cover - standalone diagnostic fallback
 
 LANE_SWING = "SWING"
 LANE_DAY = "DAY"
+LANE_SCALP = "SCALP"
 LANE_CRYPTO = "CRYPTO"
-VALID_LANES = {LANE_SWING, LANE_DAY, LANE_CRYPTO}
+VALID_LANES = {LANE_SWING, LANE_DAY, LANE_SCALP, LANE_CRYPTO}
 
 # Instrument classification is deliberately independent from the execution
 # lane.  This is Astra's existing canonical ETF registry, not a ticker-name
@@ -170,7 +171,9 @@ def apply_trade_lane_contract(
         style = "crypto" if style == "swing_trade" else style
     elif explicit_lane in VALID_LANES and not (explicit_lane == LANE_CRYPTO and asset_class != "crypto"):
         lane = explicit_lane
-    elif style in {"scalp", "day_trade"}:
+    elif explicit_lane == LANE_SCALP or style == "scalp":
+        lane = LANE_SCALP
+    elif style == "day_trade":
         lane = LANE_DAY
     else:
         lane = LANE_SWING
@@ -180,8 +183,8 @@ def apply_trade_lane_contract(
         capital_book = "paper_crypto_separate"
         same_session_exit_required = False
         overnight_allowed = True
-    elif lane == LANE_DAY:
-        intended_horizon = "scalp" if style == "scalp" else "day_trade"
+    elif lane in {LANE_DAY, LANE_SCALP}:
+        intended_horizon = "scalp" if lane == LANE_SCALP or style == "scalp" else "day_trade"
         capital_book = "paper_day_learning"
         # This is informational.  Existing exit controls remain the sole owner
         # of any actual close decision.
@@ -218,7 +221,7 @@ def apply_trade_lane_contract(
                 _first(result, "selection_timestamp", "decision_timestamp", "timestamp"), timestamp
             ),
             "expected_max_hold": _text(_first(result, "expected_max_hold", "expected_hold_window"))
-            or ("same_session" if lane == LANE_DAY else "multi_session"),
+            or ("same_session" if lane in {LANE_DAY, LANE_SCALP} else "multi_session"),
             "same_session_exit_required": same_session_exit_required,
             "overnight_allowed": overnight_allowed,
             "capital_book_id": capital_book,
@@ -241,7 +244,7 @@ def apply_trade_lane_contract(
 
 
 def lane_counts(rows: Iterable[Mapping[str, Any]], *, legacy: bool = False) -> Dict[str, int]:
-    counts = {LANE_DAY: 0, LANE_SWING: 0, LANE_CRYPTO: 0}
+    counts = {LANE_DAY: 0, LANE_SCALP: 0, LANE_SWING: 0, LANE_CRYPTO: 0}
     for row in rows:
         lane = apply_trade_lane_contract(row, legacy=legacy).get("lane_id")
         if lane in counts:
@@ -287,7 +290,8 @@ class AstraTradeLaneRegistryV1(CachedDiagnosticModule):
             "candidate_lane_counts": lane_counts(candidates),
             "open_position_lane_counts": lane_counts(positions, legacy=True),
             "lane_definitions": {
-                LANE_DAY: "Equity and ETF intraday learning lane; scalp is a strategy cohort within DAY.",
+                LANE_DAY: "Equity and ETF intraday learning lane.",
+                LANE_SCALP: "Equity and ETF 15-60 minute lane; shares the DAY capital book but retains execution and truth attribution.",
                 LANE_SWING: "Multi-session equity or ETF learning lane.",
                 LANE_CRYPTO: "Separate crypto evidence lane; never pooled with equity capital.",
             },

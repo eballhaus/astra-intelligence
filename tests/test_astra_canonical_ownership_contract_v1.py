@@ -150,7 +150,12 @@ class BrokerResidualLookupTests(unittest.TestCase):
 
 class ActivePositionPredicateTests(unittest.TestCase):
     def test_active_position_true(self):
-        self.assertTrue(is_broker_linked_active_position({"status": "OPEN", "quantity": 1.0}))
+        self.assertFalse(is_broker_linked_active_position({"status": "OPEN", "quantity": 1.0}))
+
+    def test_open_crypto_requires_broker_linkage_not_only_local_status_and_quantity(self):
+        self.assertTrue(is_broker_linked_active_position({
+            "status": "OPEN", "quantity": 1.0, "entry_fill_id": "broker-fill-1",
+        }))
 
     def test_simulated_position_false(self):
         self.assertFalse(is_broker_linked_active_position({"status": "SIMULATED", "quantity": 1.0}))
@@ -159,10 +164,10 @@ class ActivePositionPredicateTests(unittest.TestCase):
         self.assertFalse(is_broker_linked_active_position({"status": "OPEN", "quantity": 0.0}))
 
     def test_dust_allowed_by_default(self):
-        self.assertTrue(is_broker_linked_active_position({"status": "OPEN", "quantity": 0.0005}))
+        self.assertTrue(is_broker_linked_active_position({"status": "OPEN", "quantity": 0.0005, "broker_linked": "TRUE"}))
 
     def test_dust_excluded_when_disallowed(self):
-        self.assertFalse(is_broker_linked_active_position({"status": "OPEN", "quantity": 0.0005}, allow_dust=False))
+        self.assertFalse(is_broker_linked_active_position({"status": "OPEN", "quantity": 0.0005, "broker_linked": "TRUE"}, allow_dust=False))
 
 
 if __name__ == "__main__":

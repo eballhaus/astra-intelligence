@@ -409,9 +409,10 @@ class PaperAutopilotWorker:
             # Compatibility rows are retained only as a rejected diagnostic
             # claim. Active crypto reconciliation uses canonical SQLite rows.
             positions = [dict(row) for row in (self.autopilot.paper_positions() or []) if isinstance(row, dict)]
-            # The canonical current position store is distinct from the
-            # historical compatibility database used by paper_positions().
-            canonical_position_db = str(STATE / "paper_autopilot.db")
+            # The worker must inspect the same position store used by the
+            # executing engine.  ``paper_autopilot.db`` is a historical
+            # compatibility artifact in some deployments and may be empty.
+            canonical_position_db = str(getattr(self.autopilot, "db_path", "") or (STATE / "paper_autopilot.db"))
             canonical_crypto_positions = read_canonical_open_crypto_positions(canonical_position_db)
             broad_crypto_rows = [row for row in positions if str(row.get("asset_class") or row.get("asset_type") or "").lower() in {"crypto", "cryptocurrency"}]
             broad_crypto_count = len(broad_crypto_rows)
@@ -455,7 +456,7 @@ class PaperAutopilotWorker:
                 "lane_state": crypto_activation.get("lane_state"),
                 "broker_reconciliation_ok": bool(capacity.get("broker_positions_fetch_ok")) and broker_crypto_count == len(canonical_crypto_positions),
                 "broker_reconciliation_status": "CURRENT_MATCHED" if broker_crypto_count == len(canonical_crypto_positions) else "COUNT_MISMATCH_FAIL_CLOSED",
-                "canonical_local_position_source": "state/paper_autopilot.db.paper_positions",
+                "canonical_local_position_source": f"{canonical_position_db}.paper_positions",
                 "canonical_local_position_query_scope": "status=OPEN AND asset_type=crypto",
                 "canonical_local_open_crypto_count": len(canonical_crypto_positions),
                 "noncanonical_rows_observed": broad_crypto_count,
@@ -505,7 +506,7 @@ class PaperAutopilotWorker:
             target_lane = str(partial.get("target_lane") or "").upper()
             lane_observations = {
                 lane: {"observation_state": "NOT_EVALUATED_THIS_PARTIAL_CYCLE", "observation_scope": "bounded_partial_cycle"}
-                for lane in ("SWING", "DAY", "CRYPTO")
+                for lane in ("SWING", "DAY", "SCALP", "CRYPTO")
             }
             if target_lane in lane_observations and partial.get("microphase_completed"):
                 lane_observations[target_lane] = {
@@ -530,15 +531,15 @@ class PaperAutopilotWorker:
             capacity_lanes = dict((capacity.get("lanes") or {}))
             active_positions_by_lane = {
                 lane: dict(capacity_lanes.get(lane.lower()) or {}).get("raw_broker_position_count", 0)
-                for lane in ("SWING", "DAY", "CRYPTO")
+                for lane in ("SWING", "DAY", "SCALP", "CRYPTO")
             }
             managed_capacity_positions_by_lane = {
                 lane: dict(capacity_lanes.get(lane.lower()) or {}).get("positions_used", 0)
-                for lane in ("SWING", "DAY", "CRYPTO")
+                for lane in ("SWING", "DAY", "SCALP", "CRYPTO")
             }
             legacy_excluded_positions_by_lane = {
                 lane: dict(capacity_lanes.get(lane.lower()) or {}).get("legacy_excluded_position_count", 0)
-                for lane in ("SWING", "DAY", "CRYPTO")
+                for lane in ("SWING", "DAY", "SCALP", "CRYPTO")
             }
             multilane_completion = self.multilane_completion_matrix.build(
                 candidate_rows=completion_candidates,

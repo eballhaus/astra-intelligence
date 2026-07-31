@@ -883,6 +883,7 @@ def build_post_reset_strict_truth_v1(
         "realized_return_pct": realized_return,
         "realized_dollar_pl": realized_pnl,
         "post_reset_day_strict_truth": lane == "DAY",
+        "post_reset_scalp_strict_truth": lane == "SCALP",
         "post_reset_swing_strict_truth": lane == "SWING",
         "post_reset_crypto_strict_truth": lane == "CRYPTO",
         "strict_truth_eligible": True,
@@ -897,6 +898,7 @@ def build_lane_strict_truth_counts_v1(
     """Count post-reset strict truths by lane."""
     counts = {
         "POST_RESET_DAY_STRICT_TRUTH": 0,
+        "POST_RESET_SCALP_STRICT_TRUTH": 0,
         "POST_RESET_SWING_STRICT_TRUTH": 0,
         "POST_RESET_CRYPTO_STRICT_TRUTH": 0,
         "total": 0,
@@ -908,6 +910,8 @@ def build_lane_strict_truth_counts_v1(
         lane = _text(truth.get("lane")).upper()
         if lane == "DAY":
             counts["POST_RESET_DAY_STRICT_TRUTH"] += 1
+        elif lane == "SCALP":
+            counts["POST_RESET_SCALP_STRICT_TRUTH"] += 1
         elif lane == "SWING":
             counts["POST_RESET_SWING_STRICT_TRUTH"] += 1
         elif lane == "CRYPTO":

@@ -55,7 +55,7 @@ class CanonicalTruthGovernanceCortexTests(unittest.TestCase):
     def test_fact_envelope_has_required_canonical_provenance(self):
         fact = fact_envelope_v1("LOCAL_OPEN_CRYPTO_POSITION_COUNT", 0)
         self.assertTrue(fact["canonical"])
-        self.assertEqual(fact["source_store"], "state/paper_autopilot.db.paper_positions")
+        self.assertEqual(fact["source_store"], "PaperAutopilotEngine.db_path.paper_positions")
         self.assertEqual(fact["scope"], "OPEN + asset_type=crypto + canonical SQLite")
 
     def test_scope_mismatch_is_not_numeric_reconciliation(self):
@@ -94,7 +94,7 @@ class CanonicalTruthGovernanceCortexTests(unittest.TestCase):
         self.assertIn("LOCAL_OPEN_CRYPTO_POSITION_COUNT", registry)
         self.assertEqual(
             registry["LOCAL_OPEN_CRYPTO_POSITION_COUNT"]["canonical_store"],
-            "state/paper_autopilot.db.paper_positions",
+            "PaperAutopilotEngine.db_path.paper_positions",
         )
         self.assertIn("paper_positions", registry["LOCAL_OPEN_CRYPTO_POSITION_COUNT"]["canonical_store"])
 

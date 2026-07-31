@@ -51302,8 +51302,10 @@ def _multilane_activation_adaptive_truth_v2_payload(statuses: dict | None = None
     trace = _paper_autopilot_authoritative_trace_v3()
     source = dict(statuses.get("pladeu_candidate_source_metadata") or _pladeu_candidate_source_metadata_v1())
     day_capital = lane_capital_status("DAY")
+    scalp_capital = lane_capital_status("SCALP")
     crypto_capital = lane_capital_status("CRYPTO")
     day_handoff = lane_handoff_proof("DAY", trace.get("per_candidate_decision_trace") or [], day_capital, session=source.get("market_session_status"))
+    scalp_handoff = lane_handoff_proof("SCALP", trace.get("per_candidate_decision_trace") or [], scalp_capital, session=source.get("market_session_status"))
     crypto_handoff = lane_handoff_proof("CRYPTO", trace.get("per_candidate_decision_trace") or [], crypto_capital, session=source.get("market_session_status"))
     day_exit = _day_lane_exit_contract_v2()
     crypto_exit = {}
@@ -51312,10 +51314,17 @@ def _multilane_activation_adaptive_truth_v2_payload(statuses: dict | None = None
         crypto_exit["deterministic_fixture"] = dict(PAPER_AUTOPILOT.authorized_lane_exit_dry_run("CRYPTO") or {})
     except Exception as exc:
         crypto_exit = {"status": "WORKER_UNAVAILABLE", "reason": f"crypto_exit_worker_exception:{str(exc)[:100]}"}
+    scalp_exit = {}
+    try:
+        scalp_exit = dict(PAPER_AUTOPILOT.authorized_lane_exit_status("SCALP") or {})
+        scalp_exit["deterministic_fixture"] = dict(PAPER_AUTOPILOT.authorized_lane_exit_dry_run("SCALP") or {})
+    except Exception as exc:
+        scalp_exit = {"status": "WORKER_UNAVAILABLE", "reason": f"scalp_exit_worker_exception:{str(exc)[:100]}"}
     simulations = {}
     for lane, capital, session in (
         ("SWING", {"capital_configured": True, "capital_book_id": "paper_swing"}, "regular_hours"),
         ("DAY", day_capital, "regular_hours"),
+        ("SCALP", scalp_capital, "regular_hours"),
         ("CRYPTO", crypto_capital, "crypto_24_7"),
     ):
         symbol = "BTC/USD" if lane == "CRYPTO" else "SPY" if lane == "DAY" else "AAPL"
@@ -51323,19 +51332,20 @@ def _multilane_activation_adaptive_truth_v2_payload(statuses: dict | None = None
             "lane_id": lane, "symbol": symbol, "candidate_id": f"fixture-{lane.lower()}",
             "recommendation_id": f"fixture-rec-{lane.lower()}", "selection_id": f"fixture-select-{lane.lower()}",
             "selected": True, "order_ready": True, "submit_order": False, "broker_actions_used": 0,
-            "capital_book_id": capital.get("capital_book_id"), "same_session_exit_required": lane == "DAY",
-            "overnight_allowed": lane != "DAY", "equity_market_session_gate_applied": False,
+            "capital_book_id": capital.get("capital_book_id"), "same_session_exit_required": lane in {"DAY", "SCALP"},
+            "overnight_allowed": lane not in {"DAY", "SCALP"}, "equity_market_session_gate_applied": False,
         }
         simulations[lane.lower()] = {
             "deterministic_simulation_proof": lane_handoff_proof(lane, [row], capital, session=session),
             "fixture_truth_excluded_from_official_counts": True,
-            "live_runtime_dry_run_proof": day_handoff if lane == "DAY" else crypto_handoff if lane == "CRYPTO" else lane_handoff_proof(lane, trace.get("per_candidate_decision_trace") or [], capital, session=session),
+            "live_runtime_dry_run_proof": day_handoff if lane == "DAY" else scalp_handoff if lane == "SCALP" else crypto_handoff if lane == "CRYPTO" else lane_handoff_proof(lane, trace.get("per_candidate_decision_trace") or [], capital, session=session),
         }
     day_enabled = bool(_day_lane_pilot_config_v1().get("day_lane_pilot_enabled"))
     crypto_validation = _crypto_paper_lane_validation_v1_payload(statuses) or {}
     crypto_enabled = bool(crypto_validation.get("paper_crypto_enabled"))
     swing_trace_rows = [row for row in (trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict) and str(row.get("lane_id") or "").upper() == "SWING"]
     day_trace_rows = [row for row in (trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict) and str(row.get("lane_id") or "").upper() == "DAY"]
+    scalp_trace_rows = [row for row in (trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict) and str(row.get("lane_id") or "").upper() == "SCALP"]
     crypto_trace_rows = [row for row in (trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict) and str(row.get("lane_id") or "").upper() == "CRYPTO"]
     required_consumers = ["canonical_outcome", "symbol_behavior", "active_learning", "librarian", "warehouse", "cortex", "governance", "learning_center"]
     learning = {
@@ -51345,7 +51355,7 @@ def _multilane_activation_adaptive_truth_v2_payload(statuses: dict | None = None
         "status": "PENDING_STRICT_TRUTH" if not truth.get("total_broker_confirmed_complete") else "ACKNOWLEDGEMENT_RECONCILIATION_REQUIRED",
         "strict_truth_path_deterministically_proven": all(
             bool((simulations.get(lane, {}).get("deterministic_simulation_proof") or {}).get("proven"))
-            for lane in ("swing", "day", "crypto")
+            for lane in ("swing", "day", "scalp", "crypto")
         ),
         "actual_delivery_evidence_pending": not bool(truth.get("total_broker_confirmed_complete")),
         "payload_references_not_accepted_as_acknowledgement": True,
@@ -51363,6 +51373,8 @@ def _multilane_activation_adaptive_truth_v2_payload(statuses: dict | None = None
         deferred_runtime_evidence.append("SWING_CURRENT_CANDIDATE_TRACE_PENDING")
     if not day_handoff.get("proven"):
         deferred_runtime_evidence.append("DAY_CURRENT_AUTHORITATIVE_TRACE_PENDING")
+    if not scalp_handoff.get("proven"):
+        deferred_runtime_evidence.append("SCALP_CURRENT_AUTHORITATIVE_TRACE_PENDING")
     if not crypto_trace_rows:
         deferred_runtime_evidence.append("CRYPTO_CURRENT_CANDIDATE_TRACE_PENDING")
     if not crypto_validation.get("broker_capability_available"):
@@ -51376,7 +51388,7 @@ def _multilane_activation_adaptive_truth_v2_payload(statuses: dict | None = None
     pending_actual_truth = not bool(truth.get("total_broker_confirmed_complete"))
     activation_contracts = {
         lane: dict((multiline.get("lanes") or {}).get(lane.lower(), {}).get("activation_contract") or {})
-        for lane in ("SWING", "DAY", "CRYPTO")
+        for lane in ("SWING", "DAY", "SCALP", "CRYPTO")
     }
     contracts_consistent = all(bool(contract.get("activation_contract_consistent", False)) for contract in activation_contracts.values())
     status = (
@@ -51394,18 +51406,20 @@ def _multilane_activation_adaptive_truth_v2_payload(statuses: dict | None = None
         "activation_contracts": activation_contracts,
         "activation_contract_consistent": contracts_consistent,
         "day_configuration": {**day_capital, "pilot_enabled": day_enabled},
+        "scalp_configuration": {**scalp_capital, "shared_capital_book": day_capital.get("capital_book_id")},
         "crypto_configuration": {**crypto_capital, "lane_enabled": crypto_enabled, "enablement_key": "ASTRA_ENABLE_ALPACA_CRYPTO_PAPER"},
         "candidate_freshness": operational_freshness(source.get("candidate_snapshot_age_seconds", source.get("candidate_cache_age_seconds"))),
-        "handoff_proof": {"day": day_handoff, "crypto": crypto_handoff},
-        "authoritative_trace_counts": {"swing": len(swing_trace_rows), "day": len(day_trace_rows), "crypto": len(crypto_trace_rows)},
-        "exit_authorization": {"day": day_exit, "crypto": crypto_exit},
-        "adaptive_throughput": {"day": adaptive_throughput("DAY", records), "crypto": adaptive_throughput("CRYPTO", records)},
+        "handoff_proof": {"day": day_handoff, "scalp": scalp_handoff, "crypto": crypto_handoff},
+        "authoritative_trace_counts": {"swing": len(swing_trace_rows), "day": len(day_trace_rows), "scalp": len(scalp_trace_rows), "crypto": len(crypto_trace_rows)},
+        "exit_authorization": {"day": day_exit, "scalp": scalp_exit, "crypto": crypto_exit},
+        "adaptive_throughput": {"day": adaptive_throughput("DAY", records), "scalp": adaptive_throughput("SCALP", records), "crypto": adaptive_throughput("CRYPTO", records)},
         "strict_broker_truth": truth,
         "learning_delivery": learning,
         "simulations": simulations,
         "deferred_live_market_evidence": list(dict.fromkeys(
             deferred_runtime_evidence
             + (["DAY current regular-session authoritative candidate and paper round trip"] if not day_handoff.get("proven") else [])
+            + (["SCALP current regular-session authoritative candidate and paper round trip"] if not scalp_handoff.get("proven") else [])
             + (["actual paired paper fills and consumer acknowledgements"] if pending_actual_truth else [])
         )),
         "top_blockers": list(dict.fromkeys(blockers)),
@@ -70171,9 +70185,10 @@ def _crypto_operational_candidate_rows_v3() -> list[dict]:
 
 def _paper_autopilot_crypto_open_rows_v1() -> list[dict]:
     """The sole local active-crypto reader: canonical SQLite OPEN rows only."""
-    # PaperAutopilot.db_path is a compatibility/history database in some
-    # runtimes. Active position authority is intentionally fixed here.
-    db_path = os.path.join(STATE, "paper_autopilot.db")
+    # The executing PaperAutopilot owns the authoritative local position
+    # store. A legacy ``paper_autopilot.db`` compatibility file can exist but
+    # must never replace the configured engine database in live reconciliation.
+    db_path = str(getattr(PAPER_AUTOPILOT, "db_path", "") or os.path.join(STATE, "paper_autopilot.db"))
     if callable(read_canonical_open_crypto_positions):
         return read_canonical_open_crypto_positions(db_path)
     try:
@@ -70544,7 +70559,7 @@ def _crypto_operational_integrity_readiness_v1_payload(statuses: dict | None = N
         "pending_crypto_order_count": pending_crypto_order_count,
         "buying_power_available": buying_power is not None,
         "buying_power_source": buying_power_source,
-        "canonical_local_position_source": "state/paper_autopilot.db.paper_positions",
+        "canonical_local_position_source": "PaperAutopilotEngine.db_path.paper_positions",
         "canonical_local_position_query_scope": "status=OPEN AND asset_type=crypto",
         "canonical_local_open_crypto_count": len(local_crypto_positions),
         "noncanonical_rows_observed": None, "noncanonical_rows_excluded": None,
@@ -71337,7 +71352,7 @@ def _crypto_position_reconciliation_v1_payload(statuses: dict | None = None) -> 
         "status": "PASS" if matched else "WARNING",
         "generated_at": _now_utc_iso(),
         "paper_autopilot_crypto_open_rows": len(open_rows), "canonical_local_open_crypto_count": len(open_rows),
-        "canonical_local_position_source": "state/paper_autopilot.db.paper_positions",
+        "canonical_local_position_source": "PaperAutopilotEngine.db_path.paper_positions",
         "canonical_local_position_query_scope": "status=OPEN AND asset_type=crypto",
         "paper_autopilot_crypto_open_symbols": symbols,
         "alpaca_crypto_positions_count": broker_count if broker_count >= 0 else None,

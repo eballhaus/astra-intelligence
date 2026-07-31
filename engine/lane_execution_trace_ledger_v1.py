@@ -13,10 +13,10 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
 
-LANES = ("SWING", "DAY", "CRYPTO")
+LANES = ("SWING", "DAY", "SCALP", "CRYPTO")
 MAX_RECENT_IDS = 500
 MAX_DAILY_BUCKETS = 31
-COHORTS = ("SWING_EQUITY", "DAY_EQUITY", "DAY_ETF", "SWING_ETF", "CRYPTO")
+COHORTS = ("SWING_EQUITY", "DAY_EQUITY", "DAY_ETF", "SWING_ETF", "SCALP", "CRYPTO")
 
 
 def _now() -> str:
@@ -38,6 +38,8 @@ def _cohort_id(lane: str, asset_class: Any, instrument_type: Any) -> str:
     if lane == "CRYPTO" or _text(asset_class).lower() == "crypto":
         return "CRYPTO"
     suffix = "ETF" if _text(instrument_type).upper() == "ETF" else "EQUITY"
+    if lane == "SCALP":
+        return "SCALP"
     return f"{lane}_{suffix}" if lane in {"DAY", "SWING"} else "SWING_EQUITY"
 
 

@@ -73,6 +73,8 @@ def _sanitize_order(row: dict[str, Any]) -> dict[str, Any]:
         "limit_price",
         "stop_price",
         "filled_avg_price",
+        "fill_id",
+        "execution_id",
         "status",
         "extended_hours",
         "notional",
@@ -719,11 +721,18 @@ class AlpacaPaperBroker:
                 continue
             if status not in {"filled", "partially_filled", "done_for_day", "canceled"}:
                 continue
-            filled_orders_reviewed += 1
             filled_at = _safe_text(row.get("filled_at") or row.get("updated_at") or row.get("submitted_at") or row.get("created_at"))
+            broker_order_id = _safe_text(row.get("id"))
+            # Strict fill lineage needs a broker-issued immutable id. Do not
+            # derive one from a timestamp, price, or quantity.
+            if not broker_order_id:
+                continue
+            filled_orders_reviewed += 1
+            explicit_fill_id = _safe_text(row.get("fill_id") or row.get("execution_id"))
             fill = {
-                "fill_id": _safe_text(row.get("id")) or f"{symbol}:{side}:{filled_at}:{round(qty, 6)}:{round(price, 6)}",
-                "broker_order_id": _safe_text(row.get("id")),
+                "fill_id": explicit_fill_id or broker_order_id,
+                "fill_identifier_type": "BROKER_EXECUTION_ID" if explicit_fill_id else "BROKER_ORDER_ID_FILLED_EVIDENCE",
+                "broker_order_id": broker_order_id,
                 "client_order_id": _safe_text(row.get("client_order_id")),
                 "symbol": symbol,
                 "side": side,

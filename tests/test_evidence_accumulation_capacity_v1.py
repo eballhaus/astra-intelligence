@@ -117,6 +117,26 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
         self.assertEqual(capacity["lanes"]["day"]["configured_capital_limit"], 15000.0)
         self.assertEqual(capacity["lanes"]["day"]["positions_remaining"], 1)
 
+    def test_scalp_has_own_four_position_limit_and_shares_day_capital(self):
+        env = {**BASE_ENV, "ASTRA_SCALP_EVIDENCE_POSITION_LIMIT": "4"}
+        capacity = build_capacity_snapshot(
+            broker_snapshot={"broker_reconciliation_active": True, "broker_positions_fetch_ok": True, "broker_state_age_seconds": 0},
+            account_snapshot={"buying_power": 50000},
+            open_positions=[
+                {"symbol": "DAY1", "lane_id": "DAY", "market_value": 7000},
+                {"symbol": "SCALP1", "lane_id": "SCALP", "market_value": 7000},
+            ],
+            env=env,
+            global_position_limit=10,
+        )
+        scalp = capacity["lanes"]["scalp"]
+        day = capacity["lanes"]["day"]
+        self.assertEqual(scalp["configured_position_limit"], 4)
+        self.assertEqual(scalp["capital_book_id"], "paper_day_learning")
+        self.assertEqual(scalp["capital_used"], 14000.0)
+        self.assertEqual(day["capital_used"], 14000.0)
+        self.assertTrue(candidate_capacity_decision(capacity, lane_id="SCALP", symbol="SCALP2", open_symbols=[])["allowed"])
+
     def test_swing_uses_approved_active_slot_capacity_without_separate_concurrency_cap(self):
         capacity = build_capacity_snapshot(
             broker_snapshot={"broker_reconciliation_active": True, "broker_positions_fetch_ok": True, "broker_state_age_seconds": 0},

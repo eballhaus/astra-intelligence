@@ -9,6 +9,7 @@ class MultilaneBrokerTruthLearningContractTests(unittest.TestCase):
             "symbol": "SPY", "truth_quality": "BROKER_CONFIRMED_COMPLETE", "entry_fill_id": "buy-1",
             "exit_fill_id": "sell-1", "entry_order_id": "buy-order-1", "exit_order_id": "sell-order-1",
             "lifecycle_id": "life-1", "asset_class": "equity", "instrument_type": "ETF",
+            "broker_residual_zero_confirmed": True,
             "paper_entry_horizon_style": "swing_trade",
         }
         incomplete = {"symbol": "BTC/USD", "asset_class": "crypto", "truth_quality": "BROKER_CONFIRMED_COMPLETE"}

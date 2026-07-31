@@ -15,9 +15,9 @@ from typing import Any, Mapping, Iterable
 
 
 VERSION = "1.0.0"
-LANES = ("SWING", "DAY", "CRYPTO")
-APPROVED_CEILINGS = {"DAY": 15000.0, "CRYPTO": 10000.0}
-APPROVED_CONCURRENT_POSITION_LIMITS = {"DAY": 3, "CRYPTO": 4}
+LANES = ("SWING", "DAY", "SCALP", "CRYPTO")
+APPROVED_CEILINGS = {"DAY": 15000.0, "SCALP": 15000.0, "CRYPTO": 10000.0}
+APPROVED_CONCURRENT_POSITION_LIMITS = {"DAY": 3, "SCALP": 4, "CRYPTO": 4}
 DEFAULT_GLOBAL_POSITION_LIMIT = 10
 DEFAULT_BROKER_STATE_MAX_AGE_SECONDS = 120.0
 
@@ -143,6 +143,15 @@ def _reserve_config(lane: str, env: Mapping[str, Any]) -> dict[str, Any]:
         entries_key = "ASTRA_DAY_EVIDENCE_MAX_DAILY_ENTRIES"
         loss_key = "ASTRA_DAY_EVIDENCE_MAX_DAILY_LOSS"
         fallback_capital_key = "ASTRA_DAY_LANE_CAPITAL_LIMIT"
+    elif lane == "SCALP":
+        # SCALP has its own bounded position count but consumes the existing
+        # intraday capital book.  It must never create a second allocation.
+        enabled_key = "ASTRA_DAY_EVIDENCE_RESERVE_ENABLED"
+        capital_key = "ASTRA_DAY_EVIDENCE_CAPITAL_LIMIT"
+        position_key = "ASTRA_SCALP_EVIDENCE_POSITION_LIMIT"
+        entries_key = "ASTRA_SCALP_EVIDENCE_MAX_DAILY_ENTRIES"
+        loss_key = "ASTRA_DAY_EVIDENCE_MAX_DAILY_LOSS"
+        fallback_capital_key = "ASTRA_DAY_LANE_CAPITAL_LIMIT"
     elif lane == "CRYPTO":
         enabled_key = "ASTRA_CRYPTO_EVIDENCE_RESERVE_ENABLED"
         capital_key = "ASTRA_CRYPTO_EVIDENCE_CAPITAL_LIMIT"
@@ -168,7 +177,8 @@ def _reserve_config(lane: str, env: Mapping[str, Any]) -> dict[str, Any]:
         capital_status = "CAPITAL_LIMIT_EXCEEDS_APPROVAL"
     else:
         capital_status = "PASS"
-    raw_position_limit = env.get(position_key, "1")
+    default_position_limit = env.get("ASTRA_PAPER_HORIZON_SCALP_CAPACITY", "4") if lane == "SCALP" else "1"
+    raw_position_limit = env.get(position_key, default_position_limit)
     configured_position_limit = _integer(raw_position_limit, 1)
     if configured_position_limit <= 0:
         capital_status = "CAPITAL_CONFIGURATION_INVALID"
@@ -178,7 +188,7 @@ def _reserve_config(lane: str, env: Mapping[str, Any]) -> dict[str, Any]:
         "lane_id": lane,
         "reserve_enabled": _truthy(env.get(enabled_key, "0")),
         "reserve_type": "EVIDENCE_RESERVE",
-        "capital_book_id": "paper_day_learning" if lane == "DAY" else "paper_crypto_separate",
+        "capital_book_id": "paper_day_learning" if lane in {"DAY", "SCALP"} else "paper_crypto_separate",
         "approved_ceiling": ceiling,
         "configured_capital_limit": configured_capital,
         "configured_position_limit": configured_position_limit,
@@ -315,7 +325,20 @@ def build_capacity_snapshot(
         pending_order_count = len(lane_pending[lane])
         active_commitment_count = len(lane_commitments[lane])
         used = open_position_count + pending_order_count + active_commitment_count
-        used_capital = round(sum(_position_value(row) for row in active_lane_rows + lane_pending[lane]), 4)
+        if lane in {"DAY", "SCALP"}:
+            # Both intraday execution lanes use one approved capital book.
+            # Per-lane position limits remain separate; capital accounting is
+            # deliberately shared to prevent concurrent double allocation.
+            shared_rows = [
+                row
+                for intraday_lane in ("DAY", "SCALP")
+                for row in lane_rows[intraday_lane]
+                if not _approved_legacy_slot_exclusion(row) and not _strategy_capacity_excluded(row)
+            ]
+            shared_pending = [row for intraday_lane in ("DAY", "SCALP") for row in lane_pending[intraday_lane]]
+            used_capital = round(sum(_position_value(row) for row in shared_rows + shared_pending), 4)
+        else:
+            used_capital = round(sum(_position_value(row) for row in active_lane_rows + lane_pending[lane]), 4)
         legacy_excluded_capital = round(sum(_position_value(row) for row in legacy_excluded_rows), 4)
         dust_excluded_capital = round(sum(_position_value(row) for row in dust_excluded_rows), 4)
         raw_lane_capital = round(used_capital + legacy_excluded_capital + dust_excluded_capital, 4)
@@ -329,9 +352,9 @@ def build_capacity_snapshot(
         blockers: list[str] = []
         if not state_fresh:
             blockers.append("BROKER_STATE_STALE")
-        elif not position_details_available and lane in {"DAY", "CRYPTO"}:
+        elif not position_details_available and lane in {"DAY", "SCALP", "CRYPTO"}:
             blockers.append("BROKER_POSITION_DETAILS_UNAVAILABLE")
-        if lane in {"DAY", "CRYPTO"}:
+        if lane in {"DAY", "SCALP", "CRYPTO"}:
             if config.get("capital_configuration_status") != "PASS":
                 blockers.append(str(config.get("capital_configuration_status")))
             if not config.get("reserve_enabled"):
@@ -370,7 +393,7 @@ def build_capacity_snapshot(
                     decision = "FAIL_CLOSED"
             else:
                 decision = "AVAILABLE_FROM_LANE_RESERVE" if not global_remaining else "AVAILABLE"
-        if lane in {"DAY", "CRYPTO"} and state_fresh:
+        if lane in {"DAY", "SCALP", "CRYPTO"} and state_fresh:
             if active_commitment_count > 0:
                 reserve_state = "RESERVED_FOR_IN_FLIGHT_CANDIDATE"
             elif pending_order_count > 0:
@@ -383,7 +406,7 @@ def build_capacity_snapshot(
             reserve_state = decision
         lanes[lane.lower()] = {
             "lane_id": lane,
-            "lane_enabled": _truthy(values.get("ASTRA_DAY_LANE_PILOT_ENABLED", "0")) if lane == "DAY" else _truthy(values.get("ASTRA_ENABLE_ALPACA_CRYPTO_PAPER", "0")) if lane == "CRYPTO" else True,
+            "lane_enabled": _truthy(values.get("ASTRA_DAY_LANE_PILOT_ENABLED", "0")) if lane in {"DAY", "SCALP"} else _truthy(values.get("ASTRA_ENABLE_ALPACA_CRYPTO_PAPER", "0")) if lane == "CRYPTO" else True,
             "execution_enabled": True if lane == "SWING" else bool(config.get("reserve_enabled")),
             "capital_book_id": config.get("capital_book_id"),
             "reserve_enabled": bool(config.get("reserve_enabled")),

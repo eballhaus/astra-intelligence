@@ -14,7 +14,7 @@ from typing import Any
 
 
 VERSION = "1.1.0"
-LANES = ("SWING", "DAY", "CRYPTO")
+LANES = ("SWING", "DAY", "SCALP", "CRYPTO")
 STAGES = (
     "market_data", "candidate_discovery", "candidate_freshness", "eligibility",
     "horizon_assignment", "lifecycle_forecast", "execution_integrity",
@@ -56,6 +56,8 @@ def _lane(row: dict[str, Any]) -> str:
     if str(row.get("asset_class") or row.get("asset_type") or "").lower() in {"crypto", "cryptocurrency"}:
         return "CRYPTO"
     horizon = str(row.get("horizon") or row.get("intended_horizon") or "").lower()
+    if "scalp" in horizon:
+        return "SCALP"
     return "DAY" if "day" in horizon or "intraday" in horizon else "SWING"
 
 

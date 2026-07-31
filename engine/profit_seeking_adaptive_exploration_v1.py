@@ -115,9 +115,19 @@ def _field_text(row: dict[str, Any], *keys: str, default: str = "unknown") -> st
 class ProfitSeekingAdaptiveExplorationV1:
     """Paper-only controlled exploration and caution/aggression calibration."""
 
-    def __init__(self, state_dir: str = "state", ttl_seconds: float = CACHE_TTL_SECONDS) -> None:
+    def __init__(
+        self,
+        state_dir: str = "state",
+        ttl_seconds: float = CACHE_TTL_SECONDS,
+        *,
+        db_path: str | None = None,
+    ) -> None:
         self.state_dir = str(state_dir or "state")
         self.ttl_seconds = float(ttl_seconds or CACHE_TTL_SECONDS)
+        # The execution owner chooses its canonical SQLite store.  The
+        # historical compatibility filename is only a fallback for standalone
+        # cache-only diagnostics.
+        self.db_path = str(db_path or os.path.join(self.state_dir, "paper_autopilot.db"))
         self._cache: dict[str, Any] | None = None
         self._cache_ts = 0.0
 
@@ -133,7 +143,7 @@ class ProfitSeekingAdaptiveExplorationV1:
         return rows[-MAX_ROWS:]
 
     def _exploration_used_today(self) -> int:
-        db_path = os.path.join(self.state_dir, "paper_autopilot.db")
+        db_path = self.db_path
         if not os.path.exists(db_path):
             return 0
         try:

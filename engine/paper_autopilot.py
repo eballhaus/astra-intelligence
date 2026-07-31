@@ -740,7 +740,9 @@ def resolve_canonical_entry_price_lineage_v1(
         "entry_order_id": expected_order,
         "source_client_order_id": expected_client,
         "entry_fill_id": "",
+        "entry_fill_identifier_type": "UNAVAILABLE",
         "entry_filled_at": "",
+        "entry_filled_quantity": 0.0,
         "entry_slippage_pct": None,
         "entry_price_mismatch_pct": None,
         "entry_price_mismatch_over_5pct": False,
@@ -753,7 +755,7 @@ def resolve_canonical_entry_price_lineage_v1(
         order_id = str(order.get("id") or order.get("broker_order_id") or expected_order).strip()
         client_id = str(order.get("client_order_id") or expected_client).strip()
         paper_flag = order.get("paper_mode_verified")
-        if status != "filled" or not paper_broker_context or paper_flag is False:
+        if status not in {"filled", "partially_filled"} or not paper_broker_context or paper_flag is False:
             continue
         if not normalized_symbol or order_symbol != normalized_symbol:
             continue
@@ -761,7 +763,20 @@ def resolve_canonical_entry_price_lineage_v1(
         if filled_price <= 0.0:
             continue
         fill_time = str(order.get("filled_at") or "").strip()
-        fill_id = str(order.get("fill_id") or order.get("execution_id") or (f"{order_id}:{fill_time}" if order_id and fill_time else "")).strip()
+        explicit_fill_id = str(order.get("fill_id") or order.get("execution_id") or "").strip()
+        # Alpaca does not always expose an execution id. Its immutable order
+        # id is still durable fill evidence after a positive broker fill; do
+        # not manufacture a fill identifier from a timestamp or quantity.
+        fill_id = explicit_fill_id or order_id
+        fill_identifier_type = (
+            "BROKER_EXECUTION_ID" if explicit_fill_id else "BROKER_ORDER_ID_FILLED_EVIDENCE"
+        ) if fill_id else "UNAVAILABLE"
+        filled_quantity = _to_float(order.get("filled_qty") or order.get("filled_quantity") or order.get("qty"), 0.0)
+        if filled_quantity <= 0.0:
+            # A filled status without a positive broker quantity cannot become
+            # an active local position.  It remains pending for a later
+            # authoritative order/position refresh.
+            continue
         mismatch = _entry_price_pct_difference(provisional, filled_price)
         return {
             **base,
@@ -770,12 +785,14 @@ def resolve_canonical_entry_price_lineage_v1(
             "entry_price_source": "alpaca_paper_order.filled_avg_price",
             "entry_price_evidence_class": "BROKER_CONFIRMED_FILL",
             "entry_price_verified": True,
-            "entry_price_lineage_status": "BROKER_CONFIRMED_FILL",
-            "entry_price_lineage_reason": "filled_alpaca_paper_order_matches_symbol",
+            "entry_price_lineage_status": "BROKER_PARTIAL_FILL" if status == "partially_filled" else "BROKER_CONFIRMED_FILL",
+            "entry_price_lineage_reason": "partially_filled_alpaca_paper_order_matches_symbol" if status == "partially_filled" else "filled_alpaca_paper_order_matches_symbol",
             "entry_order_id": order_id,
             "source_client_order_id": client_id,
             "entry_fill_id": fill_id,
+            "entry_fill_identifier_type": fill_identifier_type,
             "entry_filled_at": fill_time,
+            "entry_filled_quantity": filled_quantity,
             "entry_slippage_pct": round(((filled_price - provisional) / provisional) * 100.0, 6) if provisional > 0.0 else None,
             "entry_price_mismatch_pct": mismatch,
             "entry_price_mismatch_over_5pct": bool(mismatch is not None and mismatch > 5.0),
@@ -803,6 +820,7 @@ def resolve_canonical_entry_price_lineage_v1(
             "entry_price_lineage_reason": "linked_broker_position_avg_entry_price",
             "entry_order_id": expected_order or position_order,
             "source_client_order_id": expected_client or position_client,
+            "entry_filled_quantity": _to_float(position.get("qty") or position.get("quantity"), 0.0),
             "entry_price_mismatch_pct": mismatch,
             "entry_price_mismatch_over_5pct": bool(mismatch is not None and mismatch > 5.0),
             "entry_price_mismatch_over_20pct": bool(mismatch is not None and mismatch > 20.0),
@@ -1646,7 +1664,8 @@ class PaperAutopilotEngine:
         if self.profit_seeking_exploration_suite is None:
             try:
                 self.profit_seeking_exploration_suite = ProfitSeekingAdaptiveExplorationV1(
-                    state_dir=os.path.dirname(self.state_path) or "state"
+                    state_dir=os.path.dirname(self.state_path) or "state",
+                    db_path=self.db_path,
                 )
             except Exception:
                 self.profit_seeking_exploration_suite = None
@@ -1718,8 +1737,8 @@ class PaperAutopilotEngine:
             "worker_cycle_phase": "not_started",
             "worker_cycle_count": 0,
             "worker_cycle_error": "",
-            "evidence_reserve_entry_timestamps": {"DAY": [], "CRYPTO": []},
-            "lane_reserve_commitments": {"DAY": {}, "CRYPTO": {}},
+            "evidence_reserve_entry_timestamps": {"DAY": [], "SCALP": [], "CRYPTO": []},
+            "lane_reserve_commitments": {"DAY": {}, "SCALP": {}, "CRYPTO": {}},
             "lane_reserve_commitment_stats": {
                 "requested": 0, "released": 0, "expired": 0,
                 "converted_to_pending_order": 0, "converted_to_open_position": 0,
@@ -1924,12 +1943,12 @@ class PaperAutopilotEngine:
                 if isinstance(payload.get("evidence_reserve_entry_timestamps"), dict):
                     self._runtime_state["evidence_reserve_entry_timestamps"] = {
                         lane: list(payload.get("evidence_reserve_entry_timestamps", {}).get(lane) or [])[-32:]
-                        for lane in ("DAY", "CRYPTO")
+                        for lane in ("DAY", "SCALP", "CRYPTO")
                     }
                 if isinstance(payload.get("lane_reserve_commitments"), dict):
                     self._runtime_state["lane_reserve_commitments"] = {
                         lane: dict(payload.get("lane_reserve_commitments", {}).get(lane) or {})
-                        for lane in ("DAY", "CRYPTO")
+                        for lane in ("DAY", "SCALP", "CRYPTO")
                     }
                 if isinstance(payload.get("lane_reserve_commitment_stats"), dict):
                     self._runtime_state["lane_reserve_commitment_stats"].update(
@@ -2021,11 +2040,11 @@ class PaperAutopilotEngine:
             "legacy_migration_application_v1": dict(self._runtime_state.get("legacy_migration_application_v1") or {}),
             "evidence_reserve_entry_timestamps": {
                 lane: list((self._runtime_state.get("evidence_reserve_entry_timestamps") or {}).get(lane) or [])[-32:]
-                for lane in ("DAY", "CRYPTO")
+                for lane in ("DAY", "SCALP", "CRYPTO")
             },
             "lane_reserve_commitments": {
                 lane: dict((self._runtime_state.get("lane_reserve_commitments") or {}).get(lane) or {})
-                for lane in ("DAY", "CRYPTO")
+                for lane in ("DAY", "SCALP", "CRYPTO")
             },
             "lane_reserve_commitment_stats": dict(self._runtime_state.get("lane_reserve_commitment_stats") or {}),
             "adaptive_learning_capacity_policy": dict(self._adaptive_learning_capacity_policy or {}),
@@ -3255,7 +3274,7 @@ class PaperAutopilotEngine:
                 "broker_submission_blocked": True, "lane_id": "SWING", "paper_mode_verified": True,
                 "broker_live_endpoint_allowed": False,
             }
-        if lane not in {"DAY", "CRYPTO"}:
+        if lane not in {"DAY", "SCALP", "SWING", "CRYPTO"}:
             return {"authorized": False, "status": "NOT_APPLICABLE", "reason": "lane_not_authorized_for_v2_exit"}
         owner = lane_owner_contract(open_row)
         capital = lane_capital_status(lane)
@@ -3267,8 +3286,8 @@ class PaperAutopilotEngine:
             return {"authorized": False, "status": "UNRESOLVED", "reason": "LANE_CONTRACT_REQUIRED"}
         if not entry_order_id or not entry_fill_id:
             return {"authorized": False, "status": "UNRESOLVED", "reason": "ENTRY_FILL_LINEAGE_REQUIRED"}
-        if lane == "DAY" and not (open_row.get("same_session_exit_required") is True and open_row.get("overnight_allowed") is False):
-            return {"authorized": False, "status": "UNRESOLVED", "reason": "DAY_SAME_SESSION_CONTRACT_REQUIRED"}
+        if lane in {"DAY", "SCALP"} and not (open_row.get("same_session_exit_required") is True and open_row.get("overnight_allowed") is False):
+            return {"authorized": False, "status": "UNRESOLVED", "reason": "INTRADAY_SAME_SESSION_CONTRACT_REQUIRED"}
         safety = self._alpaca_safety_snapshot()
         if not bool(safety.get("paper_mode_verified")) or bool(safety.get("broker_live_endpoint_allowed")):
             return {"authorized": False, "status": "UNRESOLVED", "reason": "PAPER_ONLY_BROKER_BOUNDARY_REQUIRED"}
@@ -3291,7 +3310,7 @@ class PaperAutopilotEngine:
         lane = str(lane_id or "").upper().strip()
         capital = lane_capital_status(lane)
         broker_ready = bool(self.alpaca_paper_broker is not None and hasattr(self.alpaca_paper_broker, "submit_paper_order"))
-        if lane not in {"DAY", "CRYPTO"}:
+        if lane not in {"DAY", "SCALP", "SWING", "CRYPTO"}:
             status, reason = "UNRESOLVED", "unsupported_lane"
         elif not bool(capital.get("capital_configured")):
             status, reason = "UNRESOLVED", str(capital.get("capital_configuration_status") or "CAPITAL_CONFIGURATION_REQUIRED")
@@ -3433,11 +3452,19 @@ class PaperAutopilotEngine:
         orders[key] = order_record
         terminal = status in {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}
         if status in {"PARTIALLY_FILLED", "FILLED"} and filled_qty > 0:
-            fill_id = str(order.get("fill_id") or order.get("execution_id") or f"{order_id}:{order.get('filled_at') or filled_qty}")
+            explicit_fill_id = str(order.get("fill_id") or order.get("execution_id") or "").strip()
+            fill_id = explicit_fill_id or order_id
+            if not fill_id:
+                # A response without the broker's immutable order identity
+                # cannot supply lifecycle fill lineage.
+                lifecycle.update({"orders": orders, "fills": fills, "reconciliations": reconciliations, "closures": closures, "truths": truths, "capacity_releases": releases, "effectiveness": effectiveness, "last_updated_at": _now_iso()})
+                self._runtime_state["legacy_swing_exit_lifecycle"] = lifecycle
+                return {"terminal": terminal, "order_status": status, "reconciliation_state": "FILL_LINEAGE_UNAVAILABLE", "closure": None, "truth_created": False}
             fills[fill_id] = {"fill_id": fill_id, "broker_order_id": order_id, "client_order_id": item.get("client_order_id"), "action_id": action_id,
                               "position_id": item.get("position_id"), "symbol": item.get("symbol"), "fill_timestamp": order.get("filled_at") or _now_iso(),
                               "fill_quantity": filled_qty, "fill_price": _to_float(order.get("filled_avg_price"), 0.0), "cumulative_filled_quantity": filled_qty,
-                              "remaining_quantity": remaining_qty, "source": "authoritative_paper_broker_order"}
+                              "remaining_quantity": remaining_qty, "source": "authoritative_paper_broker_order",
+                              "fill_identifier_type": "BROKER_EXECUTION_ID" if explicit_fill_id else "BROKER_ORDER_ID_FILLED_EVIDENCE"}
         residual = broker_residual_lookup(
             {"position_id": item.get("position_id"), "symbol": item.get("symbol"), "asset_type": item.get("asset_type") or "stock", "quantity": broker_position.get("qty") if isinstance(broker_position, dict) else None},
             broker_lookup=lambda checked_symbol, checked_position_id: self._independent_broker_residual_lookup(checked_symbol, checked_position_id),
@@ -3528,12 +3555,18 @@ class PaperAutopilotEngine:
                 continue
             exit_order_id = str(order.get("id") or order_id)
             filled_at = str(order.get("filled_at") or "").strip()
-            exit_fill_id = str(order.get("fill_id") or order.get("execution_id") or (f"{exit_order_id}:{filled_at}" if filled_at else "")).strip()
+            explicit_fill_id = str(order.get("fill_id") or order.get("execution_id") or "").strip()
+            exit_fill_id = explicit_fill_id or exit_order_id
             if not exit_fill_id:
                 remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": "filled_missing_fill_lineage"}
                 continue
             latest = {"symbol": item.get("symbol"), "price": _to_float(order.get("filled_avg_price"), 0.0), "timestamp": _now_iso(), "source": "alpaca_paper_order_fill"}
-            closed = self._close_position(rows[0], latest, str(item.get("exit_reason") or "lane_exit"), broker_fill={"exit_order_id": exit_order_id, "exit_fill_id": exit_fill_id, "filled_at": filled_at})
+            closed = self._close_position(rows[0], latest, str(item.get("exit_reason") or "lane_exit"), broker_fill={
+                "exit_order_id": exit_order_id,
+                "exit_fill_id": exit_fill_id,
+                "exit_fill_identifier_type": "BROKER_EXECUTION_ID" if explicit_fill_id else "BROKER_ORDER_ID_FILLED_EVIDENCE",
+                "filled_at": filled_at,
+            })
             filled += 1 if closed.get("ok") else 0
         self._runtime_state["authorized_lane_exit_pending"] = remaining
         return {"checked": checked, "filled": filled, "pending": len(remaining)}
@@ -4747,6 +4780,8 @@ class PaperAutopilotEngine:
                 "reason": "BROKER_RESIDUAL_NONZERO",
                 "residual_qty": residual_qty,
             }
+        if not bool(broker_fill.get("broker_residual_zero_confirmed")):
+            return {"persisted": False, "reason": "BROKER_ZERO_CONFIRMATION_REQUIRED"}
         if not exit_fill_id or not exit_order_id:
             return {
                 "persisted": False,
@@ -4772,7 +4807,7 @@ class PaperAutopilotEngine:
             "entry_order_id": entry_order_id, "entry_fill_id": entry_fill_id,
             "exit_order_id": exit_order_id, "exit_fill_id": exit_fill_id,
             "entry_time": str(open_row.get("entry_timestamp") or ""),
-            "exit_time": str(broker_fill.get("filled_at") or _now_iso()),
+            "exit_time": str(broker_fill.get("filled_at") or ""),
             "entry_price": broker_entry_price,
             "entry_price_source": str(open_row.get("entry_price_source") or ""),
             "entry_price_evidence_class": str(open_row.get("entry_price_evidence_class") or ""),
@@ -4787,8 +4822,13 @@ class PaperAutopilotEngine:
             "time_to_peak": _safe_json_load(open_row.get("row_json")).get("time_to_peak"),
             "profit_giveback": _safe_json_load(open_row.get("row_json")).get("profit_giveback_pct"),
             "exit_reason": str(exit_reason or ""), "paper_mode_verified": True,
-            "official_metric_eligible": False, "created_at": _now_iso(), "updated_at": _now_iso(),
+            "broker_residual_zero_confirmed": True,
+            "broker_residual_lookup_status": str(broker_fill.get("broker_residual_lookup_status") or ""),
+            "current_logic_performance_eligible": True,
+            "official_metric_eligible": True, "created_at": _now_iso(), "updated_at": _now_iso(),
         }
+        if not record["exit_time"]:
+            return {"persisted": False, "reason": "EXIT_FILL_TIMESTAMP_REQUIRED"}
         record["natural_trade_label"] = natural_paper_trade_label(record)
         record["truth_state"] = "BROKER_TRUTH_CONFIRMED"
         if not strict_broker_truth(record):
@@ -4828,6 +4868,60 @@ class PaperAutopilotEngine:
                 pass
             return {"persisted": False, "reason": f"registry_write_failed:{str(exc)[:100]}"}
         return {"persisted": True, "stable_key": record["stable_key"], "strict_count": strict_count}
+
+    def _retry_pending_strict_truth_promotions(self, max_rows: int = 12) -> dict[str, Any]:
+        """Retry only local strict-truth registry persistence after broker-zero close.
+
+        The broker lifecycle is already complete at this point. This bounded
+        worker task performs no broker or order action; it prevents a transient
+        registry write failure from becoming a permanent truth-production gap.
+        """
+        with self._connect() as conn:
+            rows = [dict(row or {}) for row in conn.execute(
+                """SELECT * FROM paper_positions
+                   WHERE status='CLOSED' AND lifecycle_notes LIKE '%strict_truth_promotion_pending%'
+                   ORDER BY updated_at ASC LIMIT ?""",
+                (max(1, min(50, int(max_rows))),),
+            ).fetchall()]
+        reviewed = persisted = still_pending = 0
+        for row in rows:
+            notes = _safe_json_load(row.get("lifecycle_notes"))
+            if not bool(notes.get("strict_truth_promotion_pending")):
+                continue
+            reviewed += 1
+            broker_fill = {
+                "exit_order_id": str(row.get("exit_order_id") or ""),
+                "exit_fill_id": str(row.get("exit_fill_id") or ""),
+                "filled_at": str(notes.get("exit_filled_at") or ""),
+                "broker_residual_zero_confirmed": bool(notes.get("broker_residual_zero_confirmed")),
+                "broker_residual_lookup_status": str(notes.get("broker_residual_lookup_status") or ""),
+                "exit_fill_identifier_type": str(notes.get("exit_fill_identifier_type") or ""),
+            }
+            result = self._persist_strict_lane_truth(
+                row,
+                broker_fill,
+                exit_price=_to_float(row.get("exit_price"), 0.0),
+                return_percent=_to_float(row.get("return_percent"), 0.0),
+                hold_seconds=_to_float(row.get("hold_seconds"), 0.0),
+                exit_reason=str(notes.get("exit_reason") or "broker_confirmed_exit"),
+            )
+            notes["strict_truth_promotion_pending"] = not bool(result.get("persisted") or result.get("deduplicated"))
+            notes["strict_truth_promotion_result"] = dict(result or {})
+            notes["strict_truth_promotion_updated_at"] = _now_iso()
+            try:
+                with self._connect() as conn:
+                    conn.execute(
+                        "UPDATE paper_positions SET lifecycle_notes=?, updated_at=? WHERE position_id=?",
+                        (_safe_json(notes), _now_iso(), row.get("position_id")),
+                    )
+                    conn.commit()
+            except Exception:
+                pass
+            if result.get("persisted") or result.get("deduplicated"):
+                persisted += 1
+            else:
+                still_pending += 1
+        return {"reviewed": reviewed, "persisted": persisted, "still_pending": still_pending}
 
     def _broker_pending_sell_exists(self, symbol: str) -> tuple[bool, str]:
         broker = self.alpaca_paper_broker
@@ -5165,8 +5259,38 @@ class PaperAutopilotEngine:
                 fill_price = _to_float(order.get("filled_avg_price"), _to_float(item.get("current_price"), 0.0))
                 latest = {"symbol": symbol, "price": fill_price, "source": "alpaca_paper_order_fill", "quote_quality": "broker_confirmed_fill", "provider_used": "alpaca_paper", "timestamp": _now_iso()}
                 close_result = {"ok": False, "error": "open_position_not_found_for_filled_order"}
+                exit_order_id = str(order.get("id") or order_id).strip()
+                explicit_fill_id = str(order.get("fill_id") or order.get("execution_id") or "").strip()
+                exit_fill_id = explicit_fill_id or exit_order_id
+                if not exit_fill_id:
+                    remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": "filled_missing_broker_fill_identifier"}
+                    active += 1
+                    continue
                 if open_rows:
-                    close_result = self._close_position(open_rows[0], latest, f"learned_exit_validation:{item.get('policy')}")
+                    close_result = self._close_position(
+                        open_rows[0],
+                        latest,
+                        f"learned_exit_validation:{item.get('policy')}",
+                        broker_fill={
+                            "exit_order_id": exit_order_id,
+                            "exit_fill_id": exit_fill_id,
+                            "exit_fill_identifier_type": "BROKER_EXECUTION_ID" if explicit_fill_id else "BROKER_ORDER_ID_FILLED_EVIDENCE",
+                            "filled_at": str(order.get("filled_at") or "").strip(),
+                            "filled_qty": _to_float(order.get("filled_qty") or order.get("filled_quantity"), 0.0),
+                        },
+                    )
+                if not close_result.get("ok"):
+                    # A broker-filled exit without confirmed zero residual is
+                    # still unresolved. Preserve the exact intent for a later
+                    # independent broker reconciliation; never drop it.
+                    remaining[key] = {
+                        **item,
+                        "last_checked_at": _now_iso(),
+                        "last_order_status": "filled_reconciliation_pending",
+                        "last_close_error": str(close_result.get("error") or "broker_zero_reconciliation_required")[:160],
+                    }
+                    active += 1
+                    continue
                 state = self._learned_exit_daily_state()
                 state["used"] = _to_int(state.get("used"), 0) + (1 if close_result.get("ok") else 0)
                 state["learned_corrected_exits"] = _to_int(state.get("learned_corrected_exits"), 0) + (1 if close_result.get("ok") else 0)
@@ -5742,7 +5866,9 @@ class PaperAutopilotEngine:
             rows = [dict(row or {}) for row in conn.execute(
                 """
                 SELECT * FROM paper_positions
-                WHERE status='OPEN' AND COALESCE(entry_price_verified, 0)=0
+                WHERE status IN ('OPEN', 'PENDING_ENTRY')
+                  AND (COALESCE(entry_price_verified, 0)=0
+                       OR entry_price_lineage_status='BROKER_PARTIAL_FILL')
                 ORDER BY entry_timestamp ASC LIMIT 12
                 """
             ).fetchall()]
@@ -5773,6 +5899,10 @@ class PaperAutopilotEngine:
             if not bool(lineage.get("entry_price_verified")):
                 awaiting += 1
                 continue
+            entry_filled_quantity = _to_float(lineage.get("entry_filled_quantity"), 0.0)
+            if entry_filled_quantity <= 0.0:
+                awaiting += 1
+                continue
             notes = _safe_json_load(row.get("lifecycle_notes"))
             notes["entry_price_lineage_reconciliation_v1"] = {
                 "reconciled_at": _now_iso(),
@@ -5785,17 +5915,20 @@ class PaperAutopilotEngine:
                 cursor = conn.execute(
                     """
                     UPDATE paper_positions
-                    SET entry_price=?,
+                    SET status=CASE WHEN status='PENDING_ENTRY' THEN 'OPEN' ELSE status END,
+                        quantity=?, entry_price=?,
                         provisional_entry_price=CASE WHEN provisional_entry_price IS NULL OR provisional_entry_price<=0 THEN ? ELSE provisional_entry_price END,
                         broker_filled_avg_price=?, entry_price_source=?, entry_price_evidence_class=?,
                         entry_price_verified=1, entry_price_provisional=0,
                         entry_price_lineage_status=?, entry_price_lineage_reason=?,
                         entry_order_id=?, source_broker_order_id=?, source_client_order_id=?,
                         entry_fill_id=?, entry_filled_at=?, lifecycle_notes=?, updated_at=?
-                    WHERE position_id=? AND COALESCE(entry_price_verified, 0)=0
+                    WHERE position_id=?
+                      AND (COALESCE(entry_price_verified, 0)=0
+                           OR entry_price_lineage_status='BROKER_PARTIAL_FILL')
                     """,
                     (
-                        lineage.get("canonical_entry_price"), lineage.get("provisional_entry_price"),
+                        entry_filled_quantity, lineage.get("canonical_entry_price"), lineage.get("provisional_entry_price"),
                         lineage.get("broker_filled_avg_price"), lineage.get("entry_price_source"),
                         lineage.get("entry_price_evidence_class"), lineage.get("entry_price_lineage_status"),
                         lineage.get("entry_price_lineage_reason"), lineage.get("entry_order_id") or entry_order_id,
@@ -5808,6 +5941,44 @@ class PaperAutopilotEngine:
             if int(cursor.rowcount or 0) <= 0:
                 continue
             repaired += 1
+            if str(row.get("status") or "").upper() == "PENDING_ENTRY":
+                # Pending acknowledgements do not create managed positions.
+                # Activate tracking and the lifecycle only after the broker
+                # proves a positive, ID-linked entry fill.
+                if self._position_tracker is not None:
+                    try:
+                        self._position_tracker.open_position(
+                            symbol=symbol,
+                            asset_type=str(row.get("asset_type") or "stock"),
+                            entry_price=_to_float(lineage.get("canonical_entry_price"), 0.0),
+                            quantity=entry_filled_quantity,
+                            notes="paper_autopilot_broker_confirmed_entry",
+                        )
+                    except Exception:
+                        pass
+                if callable(create_lifecycle_record):
+                    try:
+                        entry_context = _safe_json_load(row.get("lifecycle_notes"))
+                        create_lifecycle_record({
+                            "lifecycle_id": str(row.get("position_id") or ""),
+                            "symbol": symbol,
+                            "asset_type": str(row.get("asset_type") or "stock"),
+                            "entry_timestamp": str(lineage.get("entry_filled_at") or row.get("entry_timestamp") or ""),
+                            "entry_price": _to_float(lineage.get("canonical_entry_price"), 0.0),
+                            "current_price": _to_float(lineage.get("canonical_entry_price"), 0.0),
+                            "entry_order_id": str(lineage.get("entry_order_id") or entry_order_id),
+                            "entry_fill_id": str(lineage.get("entry_fill_id") or ""),
+                            "source_client_order_id": str(lineage.get("source_client_order_id") or client_order_id),
+                            "lane_id": str(row.get("lane_id") or entry_context.get("lane_id") or ""),
+                            "position_owner": str(row.get("position_owner") or entry_context.get("position_owner") or ""),
+                            "exit_policy_owner": str(row.get("exit_policy_owner") or entry_context.get("exit_policy_owner") or ""),
+                            "entry_price_verified": True,
+                            "entry_price_evidence_class": str(lineage.get("entry_price_evidence_class") or ""),
+                            "source_endpoint": "paper_autopilot_broker_entry_reconciliation",
+                            "lifecycle_stage": "entry",
+                        })
+                    except Exception:
+                        pass
             if lineage.get("entry_price_mismatch_pct") is not None:
                 mismatch_rows.append({
                     "position_id": row.get("position_id"), "symbol": symbol,
@@ -6430,9 +6601,9 @@ class PaperAutopilotEngine:
         """Return bounded DAY/CRYPTO reserve usage without scanning history."""
         now = datetime.now(UTC)
         today = now.astimezone(ZoneInfo("America/New_York")).date().isoformat()
-        usage = self._runtime_state.setdefault("evidence_reserve_entry_timestamps", {"DAY": [], "CRYPTO": []})
+        usage = self._runtime_state.setdefault("evidence_reserve_entry_timestamps", {"DAY": [], "SCALP": [], "CRYPTO": []})
         counts: dict[str, int] = {}
-        for lane in ("DAY", "CRYPTO"):
+        for lane in ("DAY", "SCALP", "CRYPTO"):
             kept: list[str] = []
             for raw in list(usage.get(lane) or []):
                 try:
@@ -6441,7 +6612,7 @@ class PaperAutopilotEngine:
                         parsed = parsed.replace(tzinfo=UTC)
                     age = (now - parsed.astimezone(UTC)).total_seconds()
                     same_day = parsed.astimezone(ZoneInfo("America/New_York")).date().isoformat() == today
-                    if (lane == "DAY" and same_day) or (lane == "CRYPTO" and age <= 86400):
+                    if (lane in {"DAY", "SCALP"} and same_day) or (lane == "CRYPTO" and age <= 86400):
                         kept.append(str(raw))
                 except (TypeError, ValueError):
                     continue
@@ -6451,10 +6622,10 @@ class PaperAutopilotEngine:
 
     def _record_evidence_reserve_entry(self, lane: str) -> None:
         lane = str(lane or "").upper()
-        if lane not in {"DAY", "CRYPTO"}:
+        if lane not in {"DAY", "SCALP", "CRYPTO"}:
             return
         self._evidence_reserve_entry_counts()
-        usage = self._runtime_state.setdefault("evidence_reserve_entry_timestamps", {"DAY": [], "CRYPTO": []})
+        usage = self._runtime_state.setdefault("evidence_reserve_entry_timestamps", {"DAY": [], "SCALP": [], "CRYPTO": []})
         usage.setdefault(lane, []).append(_now_iso())
 
     def _lane_reserve_commitment_ttl_seconds(self) -> int:
@@ -6464,9 +6635,9 @@ class PaperAutopilotEngine:
         """Return live in-flight commitments and expire abandoned worker holds."""
         now = datetime.now(UTC)
         active: list[dict[str, Any]] = []
-        commitments = self._runtime_state.setdefault("lane_reserve_commitments", {"DAY": {}, "CRYPTO": {}})
+        commitments = self._runtime_state.setdefault("lane_reserve_commitments", {"DAY": {}, "SCALP": {}, "CRYPTO": {}})
         stats = self._runtime_state.setdefault("lane_reserve_commitment_stats", {})
-        for lane in ("DAY", "CRYPTO"):
+        for lane in ("DAY", "SCALP", "CRYPTO"):
             lane_rows = commitments.setdefault(lane, {})
             for commitment_id, record in list(lane_rows.items()):
                 row = dict(record or {})
@@ -6490,7 +6661,7 @@ class PaperAutopilotEngine:
 
     def _lane_reserve_commitment_snapshot(self) -> dict[str, Any]:
         active = self._active_lane_reserve_commitments()
-        by_lane = {lane: [row for row in active if str(row.get("lane_id") or "").upper() == lane] for lane in ("DAY", "CRYPTO")}
+        by_lane = {lane: [row for row in active if str(row.get("lane_id") or "").upper() == lane] for lane in ("DAY", "SCALP", "CRYPTO")}
         return {
             "commitment_state_owner": "PaperAutopilot",
             "active_commitments": len(active),
@@ -6508,7 +6679,7 @@ class PaperAutopilotEngine:
     ) -> dict[str, Any]:
         """Hold a DAY/CRYPTO reserve only at final selection, never at review."""
         lane = str(row.get("lane_id") or "").upper()
-        if lane not in {"DAY", "CRYPTO"}:
+        if lane not in {"DAY", "SCALP", "CRYPTO"}:
             return {"required": False, "commitment_state": "NOT_REQUIRED", "allowed": True}
         decision = candidate_capacity_decision(
             capacity_snapshot,
@@ -6520,7 +6691,7 @@ class PaperAutopilotEngine:
             return {"required": True, "commitment_state": "REJECTED", "allowed": False, "reason": decision.get("capacity_decision"), "capacity_decision": decision}
         candidate_id = str(row.get("candidate_id") or row.get("recommendation_id") or row.get("symbol") or "unknown")
         commitment_id = hashlib.sha256(f"{cycle_id}|{lane}|{candidate_id}".encode("utf-8")).hexdigest()[:24]
-        commitments = self._runtime_state.setdefault("lane_reserve_commitments", {"DAY": {}, "CRYPTO": {}})
+        commitments = self._runtime_state.setdefault("lane_reserve_commitments", {"DAY": {}, "SCALP": {}, "CRYPTO": {}})
         lane_rows = commitments.setdefault(lane, {})
         existing = dict(lane_rows.get(commitment_id) or {})
         if existing and str(existing.get("commitment_state") or "").upper() in {"REQUESTED", "HELD", "CONVERTED_TO_PENDING_ORDER"}:
@@ -6553,7 +6724,7 @@ class PaperAutopilotEngine:
         return {"required": True, "commitment_state": "HELD", "allowed": True, "commitment_id": commitment_id, "record": record, "idempotent": False}
 
     def _release_lane_reserve_commitment(self, lane: str, commitment_id: str, reason: str) -> None:
-        lane_rows = (self._runtime_state.setdefault("lane_reserve_commitments", {"DAY": {}, "CRYPTO": {}}).get(str(lane).upper()) or {})
+        lane_rows = (self._runtime_state.setdefault("lane_reserve_commitments", {"DAY": {}, "SCALP": {}, "CRYPTO": {}}).get(str(lane).upper()) or {})
         if not commitment_id or commitment_id not in lane_rows:
             return
         record = dict(lane_rows.get(commitment_id) or {})
@@ -6563,7 +6734,7 @@ class PaperAutopilotEngine:
         stats["released"] = _to_int(stats.get("released"), 0) + 1
 
     def _convert_lane_reserve_commitment(self, lane: str, commitment_id: str, state: str, broker_order_id: str = "") -> None:
-        lane_rows = (self._runtime_state.setdefault("lane_reserve_commitments", {"DAY": {}, "CRYPTO": {}}).get(str(lane).upper()) or {})
+        lane_rows = (self._runtime_state.setdefault("lane_reserve_commitments", {"DAY": {}, "SCALP": {}, "CRYPTO": {}}).get(str(lane).upper()) or {})
         if not commitment_id or commitment_id not in lane_rows:
             return
         record = dict(lane_rows.get(commitment_id) or {})
@@ -7822,6 +7993,10 @@ class PaperAutopilotEngine:
             or ""
         ).strip()
         canonical_horizon_confidence = 65.0 if bool(entry_context.get("paper_entry_horizon_inferred")) else 95.0
+        entry_is_filled = bool(entry_price_lineage.get("entry_price_verified") and entry_fill_id)
+        entry_quantity = _to_float(entry_price_lineage.get("entry_filled_quantity"), 0.0) if entry_is_filled else 0.0
+        if entry_is_filled and entry_quantity <= 0.0:
+            return {"ok": False, "error": "broker_filled_quantity_required", "symbol": symbol}
 
         with self._connect() as conn:
             conn.execute(
@@ -7835,13 +8010,14 @@ class PaperAutopilotEngine:
                     source_recommendation_id, source_decision_id, source_eligibility_evaluation_id,
                     source_bucket, lifecycle_notes, row_json, entry_metadata_generation,
                     entry_metadata_json, order_intent_id, created_at, updated_at
-                ) VALUES (?, ?, ?, 'OPEN', ?, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     pid,
                     symbol,
                     asset_type,
-                    1.0,
+                    "OPEN" if entry_is_filled else "PENDING_ENTRY",
+                    entry_quantity,
                     entry_price,
                     now_iso,
                     canonical_horizon,
@@ -7894,13 +8070,13 @@ class PaperAutopilotEngine:
             )
             conn.commit()
 
-        if self._position_tracker is not None:
+        if entry_is_filled and self._position_tracker is not None:
             try:
                 self._position_tracker.open_position(
                     symbol=symbol,
                     asset_type=asset_type,
                     entry_price=entry_price,
-                    quantity=1.0,
+                    quantity=entry_quantity,
                     notes="paper_autopilot",
                     snapshot_fields={
                         "source_bucket": source_bucket,
@@ -7914,7 +8090,7 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 pass
-        if callable(create_lifecycle_record):
+        if entry_is_filled and callable(create_lifecycle_record):
             try:
                 create_lifecycle_record(
                     {
@@ -7979,6 +8155,8 @@ class PaperAutopilotEngine:
             "asset_type": asset_type,
             "broker_order_id": source_broker_order_id,
             "entry_fill_id": entry_fill_id,
+            "entry_position_status": "OPEN" if entry_is_filled else "PENDING_ENTRY",
+            "entry_quantity": entry_quantity,
             "entry_lane_horizon_contract_v1": entry_contract,
             "broker_order_status": str(broker_order_payload.get("status") or ""),
             "paper_autopilot_limits_ok": bool(broker_order.get("paper_autopilot_limits_ok", True)) if isinstance(broker_order, dict) else True,
@@ -8016,11 +8194,13 @@ class PaperAutopilotEngine:
         # Every lane needs a real fill plus an independent broker residual
         # lookup.  Local remaining quantity is reconciliation context only.
         if self._requires_broker_residual_proof(open_row):
-            contract = self._authorized_lane_exit_contract(open_row)
-            if lane in {"DAY", "CRYPTO"} and not contract.get("authorized"):
-                return {"ok": False, "error": str(contract.get("reason") or "lane_exit_not_authorized"), "contract": contract}
+            # Submission authorization is enforced before the adapter call.
+            # Once a broker fill exists, reconciliation must never leave the
+            # lifecycle open merely because an activation switch changed; the
+            # only close authority is now the independently verified broker
+            # residual result below.
             if not isinstance(broker_fill, dict) or not str(broker_fill.get("exit_order_id") or "").strip() or not str(broker_fill.get("exit_fill_id") or "").strip():
-                return {"ok": False, "error": "broker_exit_fill_required_before_lifecycle_close", "contract": contract}
+                return {"ok": False, "error": "broker_exit_fill_required_before_lifecycle_close"}
             # Real broker residual lookup before exit closure.
             residual = broker_residual_lookup(
                 open_row,
@@ -8037,6 +8217,12 @@ class PaperAutopilotEngine:
             remaining_qty = residual.get("broker_residual_quantity")
             if remaining_qty is not None and remaining_qty > 0.0:
                 return {"ok": False, "error": "broker_residual_quantity_nonzero", "remaining_qty": remaining_qty, "filled_qty": filled_qty}
+            broker_fill = {
+                **broker_fill,
+                "remaining_qty": remaining_qty,
+                "broker_residual_zero_confirmed": True,
+                "broker_residual_lookup_status": str(residual.get("lookup_status") or ""),
+            }
 
         entry_price = _to_float(open_row.get("entry_price"), 0.0)
         now_iso = _now_iso()
@@ -8080,6 +8266,7 @@ class PaperAutopilotEngine:
                     hold_seconds,
                     _safe_json(
                         {
+                            **notes,
                             "exit_reason": exit_reason,
                             "quote_quality": latest_row.get("quote_quality"),
                             "provider_used": latest_row.get("provider_used") or latest_row.get("source"),
@@ -8088,13 +8275,17 @@ class PaperAutopilotEngine:
                             "final_return_percent": round(ret, 4),
                             "continuation_flag": bool(_to_float(notes.get("peak_unrealized_pnl_percent"), max(ret, 0.0)) >= 1.0 and ret > 0),
                             "deterioration_flag": bool(_to_float(notes.get("drawdown_from_peak_percent"), 0.0) >= 1.6),
+                            "broker_residual_zero_confirmed": bool((broker_fill or {}).get("broker_residual_zero_confirmed")),
+                            "broker_residual_lookup_status": str((broker_fill or {}).get("broker_residual_lookup_status") or ""),
+                            "exit_filled_at": str((broker_fill or {}).get("filled_at") or ""),
+                            "exit_fill_identifier_type": str((broker_fill or {}).get("exit_fill_identifier_type") or ""),
                         }
                     ),
                     now_iso,
                     pid,
                 ),
             )
-            if lane in {"DAY", "CRYPTO"} and isinstance(broker_fill, dict):
+            if isinstance(broker_fill, dict):
                 conn.execute(
                     "UPDATE paper_positions SET exit_order_id=?, exit_fill_id=? WHERE position_id=?",
                     (str(broker_fill.get("exit_order_id") or ""), str(broker_fill.get("exit_fill_id") or ""), pid),
@@ -8147,7 +8338,42 @@ class PaperAutopilotEngine:
             except Exception:
                 pass
 
-        if self.trade_intel is not None and hasattr(self.trade_intel, "record_trade"):
+        # This is the only promotion boundary from a broker-closed managed
+        # lifecycle into current-strategy learning. A physical close remains
+        # durable when its provenance is incomplete, but it cannot teach the
+        # system or count as an official strict truth.
+        strict_truth_result = {}
+        if lane in {"DAY", "SCALP", "SWING", "CRYPTO"} and isinstance(broker_fill, dict):
+            strict_truth_result = self._persist_strict_lane_truth(
+                open_row,
+                broker_fill,
+                exit_price=exit_price,
+                return_percent=ret,
+                hold_seconds=hold_seconds,
+                exit_reason=exit_reason,
+            )
+
+        if isinstance(broker_fill, dict):
+            # Preserve a retryable promotion state. A registry write failure
+            # cannot erase a broker-confirmed closure or permanently strand
+            # it outside strict truth.
+            try:
+                with self._connect() as conn:
+                    persisted_notes = _safe_json_load(
+                        conn.execute("SELECT lifecycle_notes FROM paper_positions WHERE position_id=?", (pid,)).fetchone()[0]
+                    )
+                    persisted_notes["strict_truth_promotion_pending"] = not bool(strict_truth_result.get("persisted"))
+                    persisted_notes["strict_truth_promotion_result"] = dict(strict_truth_result or {})
+                    persisted_notes["strict_truth_promotion_updated_at"] = _now_iso()
+                    conn.execute(
+                        "UPDATE paper_positions SET lifecycle_notes=?, updated_at=? WHERE position_id=?",
+                        (_safe_json(persisted_notes), _now_iso(), pid),
+                    )
+                    conn.commit()
+            except Exception:
+                pass
+
+        if bool(strict_truth_result.get("persisted")) and self.trade_intel is not None and hasattr(self.trade_intel, "record_trade"):
             try:
                 self.trade_intel.record_trade(
                     {
@@ -8226,17 +8452,6 @@ class PaperAutopilotEngine:
         close_map[symbol] = time.time()
         self._runtime_state["last_close_by_symbol"] = close_map
 
-        strict_truth_result = {}
-        if lane in {"DAY", "CRYPTO"} and isinstance(broker_fill, dict):
-            strict_truth_result = self._persist_strict_lane_truth(
-                open_row,
-                broker_fill,
-                exit_price=exit_price,
-                return_percent=ret,
-                hold_seconds=hold_seconds,
-                exit_reason=exit_reason,
-            )
-
         return {
             "ok": True,
             "position_id": pid,
@@ -8245,7 +8460,7 @@ class PaperAutopilotEngine:
             "exit_reason": exit_reason,
             "hold_seconds": round(hold_seconds, 2),
             "lane_id": lane,
-            "strict_exit_fill_linked": bool(lane in {"DAY", "CRYPTO"} and broker_fill),
+            "strict_exit_fill_linked": bool(lane in {"DAY", "SCALP", "SWING", "CRYPTO"} and broker_fill),
             "strict_broker_truth_persistence": strict_truth_result,
         }
 
@@ -9973,7 +10188,10 @@ class PaperAutopilotEngine:
                     _t0 = _time.monotonic()
                     self._note_worker_progress("partial_candidate_microphase")
                     lane_cursor = _to_int(self._runtime_state.get("partial_candidate_lane_cursor"), 0)
-                    rotating_lanes = ["DAY", "SWING", "CRYPTO"]
+                    # SCALP has its own capacity, hold window, exit path, and
+                    # strict-truth cohort. It must receive a real worker turn
+                    # rather than being silently folded into DAY.
+                    rotating_lanes = ["DAY", "SCALP", "SWING", "CRYPTO"]
                     target_lane = rotating_lanes[lane_cursor % len(rotating_lanes)]
                     self._runtime_state["partial_candidate_lane_cursor"] = (lane_cursor + 1) % max(1, len(rotating_lanes))
 
@@ -10016,10 +10234,15 @@ class PaperAutopilotEngine:
                                     or row.get("assigned_horizon")
                                     or row.get("intended_horizon")
                                 ).lower()
-                                if target_lane == "DAY" and (lane == "DAY" or horizon in ("scalp", "day_trade", "day", "intraday")):
+                                if target_lane == "DAY" and (lane == "DAY" or horizon in ("day_trade", "day", "intraday")):
                                     if len(candidate_rows) < 5:
                                         r = dict(row)
                                         r.setdefault("lane_id", "DAY")
+                                        candidate_rows.append(r)
+                                elif target_lane == "SCALP" and (lane == "SCALP" or horizon == "scalp"):
+                                    if len(candidate_rows) < 5:
+                                        r = dict(row)
+                                        r["lane_id"] = "SCALP"
                                         candidate_rows.append(r)
                                 elif target_lane == "SWING" and (lane == "SWING" or horizon in ("swing_trade", "swing", "position_trade")):
                                     if len(candidate_rows) < 5:
@@ -10302,6 +10525,8 @@ class PaperAutopilotEngine:
             sell_intent_reconciliation = self._refresh_unresolved_sell_intents()
             learned_exit_refresh = self._refresh_learned_exit_pending_sells()
             authorized_lane_exit_refresh = self._refresh_authorized_lane_exit_pending()
+            self._note_worker_progress("strict_truth_promotion_retry")
+            strict_truth_promotion_retry = self._retry_pending_strict_truth_promotions()
             self._note_worker_progress("open_position_review")
             broker_position_review_rows = [
                 {
@@ -10402,7 +10627,7 @@ class PaperAutopilotEngine:
                     should_close, reason = True, forced_lane_reason
                 if should_close and hold_seconds >= float(min_hold):
                     lane = str(row.get("lane_id") or "").upper().strip()
-                    if lane in {"DAY", "CRYPTO"}:
+                    if lane in {"DAY", "SCALP", "SWING", "CRYPTO"}:
                         result = self._submit_authorized_lane_exit(
                             row,
                             dict(broker_position_by_symbol.get(symbol) or {}),
@@ -10411,7 +10636,7 @@ class PaperAutopilotEngine:
                     else:
                         result = self._close_position(row, latest, reason)
                     if result.get("ok"):
-                        closed += 1 if lane not in {"DAY", "CRYPTO"} else 0
+                        closed += 1 if lane not in {"DAY", "SCALP", "SWING", "CRYPTO"} else 0
                         state = self._learned_exit_daily_state()
                         state["baseline_exits"] = _to_int(state.get("baseline_exits"), 0) + 1
                         self._update_learned_exit_daily_state(state)
@@ -10717,7 +10942,7 @@ class PaperAutopilotEngine:
                         horizon_capacity_reason = "crypto_day_trade_capacity_available" if horizon_ok else "crypto_day_trade_capacity_reached"
                 else:
                     horizon_ok, horizon_capacity_reason = self._horizon_has_capacity(horizon_capacity, candidate_horizon)
-                if not horizon_ok and capacity_decision.get("allowed") and candidate_lane in {"DAY", "CRYPTO"}:
+                if not horizon_ok and capacity_decision.get("allowed") and candidate_lane in {"DAY", "SCALP", "CRYPTO"}:
                     # The evidence reserve replaces only the exhausted global
                     # slot.  Candidate quality, session, risk, liquidity, and
                     # lane position/capital gates still run below.
@@ -10954,7 +11179,7 @@ class PaperAutopilotEngine:
                             crypto_swing_available = max(0, crypto_swing_available - 1)
                         else:
                             crypto_day_available = max(0, crypto_day_available - 1)
-                    if candidate_lane in {"DAY", "CRYPTO"} and capacity_decision.get("capacity_decision") == "AVAILABLE_FROM_LANE_RESERVE":
+                    if candidate_lane in {"DAY", "SCALP", "CRYPTO"} and capacity_decision.get("capacity_decision") == "AVAILABLE_FROM_LANE_RESERVE":
                         self._record_evidence_reserve_entry(candidate_lane)
                     if commitment.get("commitment_id"):
                         committed_state = "CONVERTED_TO_OPEN_POSITION" if opened_row.get("entry_fill_id") else "CONVERTED_TO_PENDING_ORDER"
@@ -11014,6 +11239,7 @@ class PaperAutopilotEngine:
                 "positions_closed": int(closed),
                 "paper_sell_intent_reconciliation": dict(sell_intent_reconciliation),
                 "learned_exit_pending_refresh": dict(learned_exit_refresh),
+                "strict_truth_promotion_retry": dict(strict_truth_promotion_retry),
                 "positions_skipped": int(skipped),
                 "candidates_seen": int(len(candidates)),
                 "paper_opportunity_allocation": allocation_status,
@@ -12487,7 +12713,17 @@ class PaperAutopilotEngine:
         now = datetime.now(UTC)
         now_iso = _now_iso()
         with self._connect() as conn:
-            open_rows = [dict(r or {}) for r in (conn.execute("SELECT * FROM paper_positions WHERE status='OPEN' ORDER BY entry_timestamp ASC").fetchall() or [])]
+            raw_open_rows = [dict(r or {}) for r in (conn.execute("SELECT * FROM paper_positions WHERE status='OPEN' ORDER BY entry_timestamp ASC").fetchall() or [])]
+            # Reconciliation may inspect legacy equities, but a local crypto
+            # OPEN row without broker linkage is not an active position. It
+            # belongs in the false-open diagnostic/migration path, never in
+            # ownership, capacity, lifecycle, or strict-truth comparisons.
+            open_rows = [
+                row for row in raw_open_rows
+                if _norm_asset(row.get("asset_type") or "stock") != "crypto"
+                or is_broker_linked_active_position(row, allow_dust=True)
+            ]
+            false_crypto_open_rows = len(raw_open_rows) - len(open_rows)
             symbol_counts: dict[str, int] = {}
             newest_id_by_symbol: dict[str, str] = {}
             newest_ts_by_symbol: dict[str, str] = {}
@@ -12779,6 +13015,7 @@ class PaperAutopilotEngine:
             "lifecycle_open_count": int(_to_float(lifecycle_index.get("lifecycle_open_count"), 0.0)),
             "lifecycle_closed_count": int(_to_float(lifecycle_index.get("lifecycle_closed_count"), 0.0)),
             "paper_positions_open_count": int(len(open_rows)),
+            "false_crypto_open_rows_excluded": int(false_crypto_open_rows),
             "stale_open_rows": int(sum(1 for row in open_rows if str(row.get("symbol") or "").upper().strip() not in broker_open_symbols)) if broker_fetch_ok else 0,
             "stale_open_rows_before": int(len(open_rows)),
             "stale_open_rows_after": int(stale_open_rows_after),

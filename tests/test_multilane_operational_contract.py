@@ -92,6 +92,7 @@ class MultilaneOperationalContractTests(unittest.TestCase):
             "symbol": "BTC/USD", "strategy_cohort": "CRYPTO_SEPARATE", "market_regime": "RISK_ON",
             "entry_timestamp": "2026-07-18T12:00:00Z", "entry_fill_id": "entry-1", "exit_fill_id": "exit-1",
             "entry_order_id": "order-1", "exit_order_id": "order-exit-1", "lifecycle_id": "life-1",
+            "broker_residual_zero_confirmed": True,
         }
         second = {**truth, "truth_id": "truth-2", "entry_fill_id": "entry-2", "exit_fill_id": "exit-2", "entry_order_id": "order-2", "exit_order_id": "order-exit-2", "lifecycle_id": "life-2"}
         payload = build_multilane_operational_status(

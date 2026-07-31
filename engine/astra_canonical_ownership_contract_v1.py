@@ -309,19 +309,30 @@ def is_broker_linked_active_position(
 
     reconciliation_reason = _text(row.get("reconciliation_reason")).upper()
     broker_linked_flag = _text(row.get("broker_linked")).upper()
+    # OPEN is a local lifecycle state, not broker evidence.  A current crypto
+    # position must carry either a broker-issued fill/order link, a broker
+    # position link, or an explicit reconciliation assertion.  In particular,
+    # a verified local price by itself cannot revive an acknowledgment-only
+    # row into capacity, monitoring, or strict truth.
     has_broker_linkage_evidence = bool(
         _text(row.get("entry_fill_id"))
         or _text(row.get("exit_fill_id"))
-        or bool(row.get("entry_price_verified"))
-        or bool(row.get("exit_price_verified"))
+        or _text(row.get("broker_position_id"))
+        or _text(row.get("source_broker_position_id"))
+        or (
+            bool(row.get("entry_price_verified"))
+            and bool(_text(row.get("entry_order_id")) or _text(row.get("source_broker_order_id")))
+        )
         or broker_linked_flag in {"TRUE", "YES", "1"}
     )
 
-    # If the record explicitly declares no broker linkage AND lacks any
-    # counter-evidence (fill ids, verified prices), it is not a real position.
+    # An explicit no-linkage marker always wins unless stronger broker
+    # evidence exists.  Conversely, absence of any linkage is fail-closed.
     if ("NO_BROKER_LINKAGE" in reconciliation_reason) and not has_broker_linkage_evidence:
         return False
     if broker_linked_flag in {"FALSE", "0", "NO"} and not has_broker_linkage_evidence:
+        return False
+    if not has_broker_linkage_evidence:
         return False
 
     qty_field = row.get("quantity")

@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from engine.astra_multilane_activation_v2 import (
     adaptive_throughput,
+    canonical_lane_activation_contract,
     day_regular_session_allowed,
     lane_capital_status,
     lane_handoff_proof,
@@ -41,10 +42,22 @@ class MultilaneActivationV2ContractTests(unittest.TestCase):
         self.assertTrue(day_regular_session_allowed("regular_hours"))
         self.assertFalse(day_regular_session_allowed("pre_market"))
 
+    def test_scalp_keeps_distinct_activation_and_attribution_while_using_day_capital(self):
+        env = {"ASTRA_DAY_LANE_PILOT_ENABLED": "1", "ASTRA_DAY_LANE_CAPITAL_LIMIT": "15000"}
+        activation = canonical_lane_activation_contract(
+            "SCALP",
+            env,
+            broker_safety={"paper_mode_verified": True, "paper_endpoint_verified": True, "live_endpoint_rejected": True, "broker_execution_enabled": True},
+        )
+        self.assertEqual(activation["lane_id"], "SCALP")
+        self.assertEqual(activation["capital_book_id"], "paper_day_learning")
+        self.assertTrue(activation["execution_enabled"])
+
     def test_strict_truth_needs_real_paired_fill_and_lifecycle_lineage(self):
         row = {
             "truth_quality": "BROKER_CONFIRMED_COMPLETE", "entry_order_id": "bo", "entry_fill_id": "bf",
             "exit_order_id": "so", "exit_fill_id": "sf", "lifecycle_id": "l1",
+            "broker_residual_zero_confirmed": True,
         }
         self.assertTrue(strict_broker_truth(row))
         self.assertFalse(strict_broker_truth({k: v for k, v in row.items() if k != "exit_fill_id"}))
@@ -53,6 +66,7 @@ class MultilaneActivationV2ContractTests(unittest.TestCase):
         rows = [{
             "lane_id": "DAY", "truth_quality": "BROKER_CONFIRMED_COMPLETE", "entry_order_id": f"b{i}",
             "entry_fill_id": f"bf{i}", "exit_order_id": f"s{i}", "exit_fill_id": f"sf{i}", "lifecycle_id": f"l{i}",
+            "broker_residual_zero_confirmed": True,
         } for i in range(20)]
         payload = adaptive_throughput("DAY", rows)
         self.assertEqual(payload["adaptive_level"], 3)
@@ -73,13 +87,13 @@ class MultilaneActivationV2ContractTests(unittest.TestCase):
                     "entry_price_source": "alpaca_paper_order.filled_avg_price",
                     "entry_price_evidence_class": "BROKER_CONFIRMED_FILL", "quantity": 1,
                 },
-                {"exit_order_id": "so", "exit_fill_id": "sf", "filled_at": "2026-01-01T01:00:00Z"},
+                {"exit_order_id": "so", "exit_fill_id": "sf", "filled_at": "2026-01-01T01:00:00Z", "broker_residual_zero_confirmed": True},
                 exit_price=101, return_percent=1, hold_seconds=3600, exit_reason="fixture",
             )
             self.assertTrue(result["persisted"])
             self.assertFalse(engine._persist_strict_lane_truth(
                 {"lane_id": "DAY", "symbol": "NVDA", "asset_type": "stock", "position_id": "l1", "entry_order_id": "bo", "entry_fill_id": "bf", "entry_price": 100, "quantity": 1},
-                {"exit_order_id": "so", "exit_fill_id": "sf", "filled_at": "2026-01-01T01:00:00Z"},
+                {"exit_order_id": "so", "exit_fill_id": "sf", "filled_at": "2026-01-01T01:00:00Z", "broker_residual_zero_confirmed": True},
                 exit_price=101, return_percent=1, hold_seconds=3600, exit_reason="fixture",
             )["persisted"])
 

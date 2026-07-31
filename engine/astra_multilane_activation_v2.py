@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
-from engine.astra_trade_lane_registry_v1 import LANE_CRYPTO, LANE_DAY, LANE_SWING
+from engine.astra_trade_lane_registry_v1 import LANE_CRYPTO, LANE_DAY, LANE_SCALP, LANE_SWING
 
 
 TRUTH_CLASS = "BROKER_CONFIRMED_COMPLETE"
@@ -57,6 +57,9 @@ class LaneEnvelope:
 
 LANE_ENVELOPES = {
     LANE_DAY: LaneEnvelope(LANE_DAY, "paper_day_learning", DAY_CEILING, 1, 3, 2, 8, False),
+    # SCALP is separately attributed, but it intentionally consumes the
+    # already-approved intraday capital book rather than a new allocation.
+    LANE_SCALP: LaneEnvelope(LANE_SCALP, "paper_day_learning", DAY_CEILING, 1, 4, 2, 8, False),
     LANE_CRYPTO: LaneEnvelope(LANE_CRYPTO, "paper_crypto_separate", CRYPTO_CEILING, 1, 4, 2, 6, True),
 }
 
@@ -143,7 +146,7 @@ def lane_capital_status(lane_id: str, env: Mapping[str, str] | None = None) -> d
     if envelope is None:
         return {"capital_configuration_status": "NOT_APPLICABLE", "capital_configured": lane == LANE_SWING}
     values = env or os.environ
-    key = "ASTRA_DAY_LANE_CAPITAL_LIMIT" if lane == LANE_DAY else "ASTRA_CRYPTO_PAPER_CAPITAL_LIMIT"
+    key = "ASTRA_DAY_LANE_CAPITAL_LIMIT" if lane in {LANE_DAY, LANE_SCALP} else "ASTRA_CRYPTO_PAPER_CAPITAL_LIMIT"
     raw = _text(values.get(key))
     configured = _number(raw)
     if not raw:
@@ -229,7 +232,7 @@ def canonical_lane_activation_contract(
 
     kill_key = ""
     legacy_status = "NOT_APPLICABLE"
-    if lane == LANE_DAY:
+    if lane in {LANE_DAY, LANE_SCALP}:
         activation_key = "ASTRA_DAY_LANE_PILOT_ENABLED"
         kill_key = "ASTRA_DAY_LANE_PILOT_DISABLE_SWITCH"
         requested = _truthy(values.get(activation_key, "0"))
@@ -343,7 +346,7 @@ def canonical_multilane_activation_contract(
     broker_safety: Mapping[str, Any] | None = None,
     lane_inputs: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Build the shared SWING/DAY/CRYPTO envelope without side effects."""
+    """Build the shared SWING/DAY/SCALP/CRYPTO envelope without side effects."""
     inputs = dict(lane_inputs or {})
     return {
         lane: canonical_lane_activation_contract(
@@ -352,7 +355,7 @@ def canonical_multilane_activation_contract(
             broker_safety=broker_safety,
             **dict(inputs.get(lane) or {}),
         )
-        for lane in (LANE_SWING, LANE_DAY, LANE_CRYPTO)
+        for lane in (LANE_SWING, LANE_DAY, LANE_SCALP, LANE_CRYPTO)
     }
 
 
@@ -381,7 +384,7 @@ def lane_handoff_proof(
             continue
         has_identity = bool(_text(row.get("candidate_id")) and _text(row.get("recommendation_id")) and _text(row.get("candidate_source")))
         no_broker_action = not bool(row.get("submit_order")) and int(_number(row.get("broker_actions_used")) or 0) == 0
-        if lane == LANE_DAY and has_identity and no_broker_action and bool(capital.get("capital_configured")) and _text(row.get("capital_book_id")) == expected_book and not day_regular_session_allowed(session or row.get("market_session_mode") or row.get("session_type")):
+        if lane in {LANE_DAY, LANE_SCALP} and has_identity and no_broker_action and bool(capital.get("capital_configured")) and _text(row.get("capital_book_id")) == expected_book and not day_regular_session_allowed(session or row.get("market_session_mode") or row.get("session_type")):
             return {
                 "proven": True,
                 "market_session_trace_proven": True,
@@ -409,12 +412,12 @@ def lane_handoff_proof(
         if not bool(capital.get("capital_configured")):
             invalid_reasons.append(str(capital.get("capital_configuration_status") or "CAPITAL_CONFIGURATION_REQUIRED"))
             continue
-        if lane == LANE_DAY:
+        if lane in {LANE_DAY, LANE_SCALP}:
             if not day_regular_session_allowed(session or row.get("market_session_mode") or row.get("session_type")):
                 invalid_reasons.append("BLOCKED_MARKET_SESSION")
                 continue
             if row.get("same_session_exit_required") is not True or row.get("overnight_allowed") is not False:
-                invalid_reasons.append("DAY_EXIT_CONTRACT_MISSING")
+                invalid_reasons.append("INTRADAY_EXIT_CONTRACT_MISSING")
                 continue
         if lane == LANE_CRYPTO and bool(row.get("equity_market_session_gate_applied")):
             invalid_reasons.append("CRYPTO_EQUITY_SESSION_CONTAMINATION")
@@ -446,7 +449,7 @@ def lane_handoff_proof(
 
 
 def strict_broker_truth(row: Mapping[str, Any]) -> bool:
-    """Strict truth requires both real fill identifiers and closed lineage."""
+    """Strict truth requires paired fills, a closed lifecycle, and broker-zero proof."""
     evidence = _text(row.get("evidence_class") or row.get("truth_quality")).upper()
     return bool(
         evidence == TRUTH_CLASS
@@ -455,18 +458,20 @@ def strict_broker_truth(row: Mapping[str, Any]) -> bool:
         and _text(row.get("entry_order_id") or row.get("broker_order_id"))
         and _text(row.get("exit_order_id"))
         and _text(row.get("lifecycle_id"))
+        and bool(row.get("broker_residual_zero_confirmed") or row.get("broker_zero_confirmed"))
     )
 
 
 def strict_truth_counts(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     valid = [dict(row) for row in rows if isinstance(row, Mapping) and strict_broker_truth(row)]
-    by_lane = {lane: [row for row in valid if _row_lane(row) == lane] for lane in (LANE_SWING, LANE_DAY, LANE_CRYPTO)}
+    by_lane = {lane: [row for row in valid if _row_lane(row) == lane] for lane in (LANE_SWING, LANE_DAY, LANE_SCALP, LANE_CRYPTO)}
     equities = [row for row in valid if _text(row.get("asset_class")).lower() == "equity"]
     etfs = [row for row in valid if _text(row.get("instrument_type")).upper() == "ETF"]
     return {
         "total_broker_confirmed_complete": len(valid),
         "swing_broker_confirmed_complete": len(by_lane[LANE_SWING]),
         "day_broker_confirmed_complete": len(by_lane[LANE_DAY]),
+        "scalp_broker_confirmed_complete": len(by_lane[LANE_SCALP]),
         "crypto_broker_confirmed_complete": len(by_lane[LANE_CRYPTO]),
         "equity_broker_confirmed_complete": len(equities),
         "etf_broker_confirmed_complete": len(etfs),
@@ -478,7 +483,7 @@ def strict_truth_counts(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
 def natural_paper_trade_label(row: Mapping[str, Any]) -> str:
     """Return a lane/cohort label only for real natural paper execution."""
     lane = _row_lane(row)
-    if lane not in {LANE_SWING, LANE_DAY, LANE_CRYPTO}:
+    if lane not in {LANE_SWING, LANE_DAY, LANE_SCALP, LANE_CRYPTO}:
         return ""
     if lane == LANE_CRYPTO:
         return "NATURAL_PAPER_CRYPTO"
@@ -497,7 +502,7 @@ def is_natural_paper_truth(row: Mapping[str, Any]) -> bool:
 
 def natural_lane_performance_attribution(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     """Small, honest cohort scorecard over strict natural broker truths only."""
-    buckets = ("DAY_EQUITY", "DAY_ETF", "SWING_EQUITY", "SWING_ETF", "CRYPTO")
+    buckets = ("DAY_EQUITY", "DAY_ETF", "SCALP_EQUITY", "SCALP_ETF", "SWING_EQUITY", "SWING_ETF", "CRYPTO")
     grouped = {bucket: [] for bucket in buckets}
     for source in rows:
         if not isinstance(source, Mapping) or not is_natural_paper_truth(source):

@@ -85,6 +85,7 @@ class MultilaneNaturalAuditTests(unittest.TestCase):
             "instrument_type": "ETF", "natural_trade_label": "NATURAL_PAPER_DAY_ETF",
             "entry_fill_id": "entry", "exit_fill_id": "exit", "entry_order_id": "bo", "exit_order_id": "so",
             "lifecycle_id": "life", "realized_return": 1.25,
+            "broker_residual_zero_confirmed": True,
         }
         fixture = {**natural, "natural_trade_label": "FIXTURE_DAY_ETF", "entry_fill_id": "fixture-entry"}
         result = natural_lane_performance_attribution([natural, fixture])

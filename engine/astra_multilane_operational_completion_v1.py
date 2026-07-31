@@ -12,7 +12,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
-from engine.astra_trade_lane_registry_v1 import LANE_CRYPTO, LANE_DAY, LANE_SWING, apply_trade_lane_contract, safety_fields
+from engine.astra_trade_lane_registry_v1 import LANE_CRYPTO, LANE_DAY, LANE_SCALP, LANE_SWING, apply_trade_lane_contract, safety_fields
 from engine.astra_paper_provider_cortex_completion_v1 import build_truth_acceleration_oversight
 from engine.astra_multilane_activation_v2 import (
     adaptive_throughput,
@@ -25,9 +25,9 @@ from engine.astra_multilane_activation_v2 import (
 )
 
 
-LANES = (LANE_SWING, LANE_DAY, LANE_CRYPTO)
+LANES = (LANE_SWING, LANE_DAY, LANE_SCALP, LANE_CRYPTO)
 MAX_DETAIL_ROWS = 25
-COHORTS = ("SWING_EQUITY", "DAY_EQUITY", "DAY_ETF", "SWING_ETF", "CRYPTO")
+COHORTS = ("SWING_EQUITY", "DAY_EQUITY", "DAY_ETF", "SCALP_EQUITY", "SCALP_ETF", "SWING_ETF", "CRYPTO")
 
 
 def _text(value: Any) -> str:
@@ -54,7 +54,7 @@ def _cohort_id(row: Mapping[str, Any]) -> str:
     if lane == LANE_CRYPTO or _text(row.get("asset_class")).lower() == "crypto":
         return "CRYPTO"
     suffix = "ETF" if _text(row.get("instrument_type")).upper() == "ETF" else "EQUITY"
-    return f"{lane}_{suffix}" if lane in {LANE_DAY, LANE_SWING} else "SWING_EQUITY"
+    return f"{lane}_{suffix}" if lane in {LANE_DAY, LANE_SCALP, LANE_SWING} else "SWING_EQUITY"
 
 
 def _truth_independence(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
@@ -435,9 +435,9 @@ def _stage_row(candidate: Mapping[str, Any], trace: Mapping[str, Any], *, curren
     )
     if not current:
         blocker = "BLOCKED_STALE_CANDIDATE"
-    elif not capital_configured and row.get("lane_id") in {LANE_DAY, LANE_CRYPTO}:
+    elif not capital_configured and row.get("lane_id") in {LANE_DAY, LANE_SCALP, LANE_CRYPTO}:
         blocker = "BLOCKED_CAPITAL"
-    elif not pilot_enabled and row.get("lane_id") == LANE_DAY:
+    elif not pilot_enabled and row.get("lane_id") in {LANE_DAY, LANE_SCALP}:
         blocker = "BLOCKED_PILOT_DISABLED"
     elif not trace and not blocker and not allowed:
         blocker = "BLOCKED_PIPELINE_UNWIRED"
@@ -530,7 +530,7 @@ def build_multilane_operational_status(
         lane_positions = [row for row in positions if row.get("lane_id") == lane]
         lane_truths = [row for row in truths if row.get("lane_id") == lane]
         blockers = Counter(_text(row.get("order_blocker")) for row in rows if _text(row.get("order_blocker")))
-        capital = lane_capital_status(lane) if lane in {LANE_DAY, LANE_CRYPTO} else {
+        capital = lane_capital_status(lane) if lane in {LANE_DAY, LANE_SCALP, LANE_CRYPTO} else {
             "capital_configured": True, "capital_book_id": "paper_swing", "approved_ceiling": None,
             "configured_limit": None, "capital_in_use": 0.0, "capital_reserved": 0.0, "capital_available": None,
             "capital_configuration_status": "NOT_APPLICABLE",
@@ -569,9 +569,9 @@ def build_multilane_operational_status(
                 if crypto_lane.get("paper_account_crypto_support") or crypto_lane.get("broker_capability_available")
                 else "BROKER_CAPABILITY_BLOCKED"
             )
-        elif lane == LANE_DAY and not capital.get("capital_configured"):
+        elif lane in {LANE_DAY, LANE_SCALP} and not capital.get("capital_configured"):
             status = str(capital.get("capital_configuration_status") or "CAPITAL_CONFIGURATION_REQUIRED")
-        elif lane == LANE_DAY and not enabled:
+        elif lane in {LANE_DAY, LANE_SCALP} and not enabled:
             status = "PILOT_DISABLED"
         elif handoff.get("market_session_trace_proven"):
             status = "MARKET_CLOSED"
@@ -632,7 +632,7 @@ def build_multilane_operational_status(
                 **trace_funnel,
                 "broker_truth_complete": len(lane_truths),
             },
-            "lane_contract": _lane_contract(lane, f"{lane}_EQUITY" if lane != LANE_CRYPTO else "CRYPTO"),
+        "lane_contract": _lane_contract(lane, f"{lane}_EQUITY" if lane != LANE_CRYPTO else "CRYPTO"),
             "detailed_candidates": rows[:MAX_DETAIL_ROWS],
         }
     etf_rows = [row for row in current if row.get("instrument_type") == "ETF"]
@@ -645,7 +645,7 @@ def build_multilane_operational_status(
         cohort_rows = [row for row in current if _cohort_id(row) == cohort]
         cohort_positions = [row for row in positions if _cohort_id(row) == cohort]
         cohort_truths = [row for row in truths if _cohort_id(row) == cohort]
-        canonical_lane = LANE_CRYPTO if cohort == "CRYPTO" else LANE_DAY if cohort.startswith("DAY") else LANE_SWING
+        canonical_lane = LANE_CRYPTO if cohort == "CRYPTO" else LANE_DAY if cohort.startswith("DAY") else LANE_SCALP if cohort.startswith("SCALP") else LANE_SWING
         cohort_funnel = dict(ledger_cohorts.get(cohort) or {})
         cohort_payloads[cohort.lower()] = {
             "cohort_id": cohort, "canonical_lane": canonical_lane,

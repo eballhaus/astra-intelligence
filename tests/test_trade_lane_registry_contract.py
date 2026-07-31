@@ -5,12 +5,12 @@ from engine.trade_lifecycle_tracker import _normalize_record
 
 
 class TradeLaneRegistryContractTests(unittest.TestCase):
-    def test_explicit_lane_contract_keeps_scalp_inside_day_book(self):
+    def test_explicit_lane_contract_keeps_scalp_in_its_own_lane_and_day_book(self):
         payload = apply_trade_lane_contract(
             {"symbol": "NVDA", "paper_entry_horizon_style": "scalp", "recommendation_id": "rec-1"},
             now="2026-07-12T12:00:00Z",
         )
-        self.assertEqual(payload["lane_id"], "DAY")
+        self.assertEqual(payload["lane_id"], "SCALP")
         self.assertEqual(payload["strategy_cohort"], "SCALP")
         self.assertEqual(payload["capital_book_id"], "paper_day_learning")
         self.assertTrue(payload["same_session_exit_required"])
