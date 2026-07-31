@@ -4,6 +4,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import patch
 from pathlib import Path
 
 from engine.astra_legacy_retirement_workflow_v1 import build_legacy_retirement_owner_approval_v1
@@ -145,6 +146,109 @@ class LegacyRetirementExecutionPhase2Tests(unittest.TestCase):
         refreshed = self.engine._refresh_legacy_retirement_quote_evidence()
         self.assertEqual(refreshed["refreshed"], 1)
         self.assertIn("AAL", self.engine._runtime_state["legacy_retirement_quote_evidence_v1"])
+
+    def test_quote_evidence_survives_restart_and_advances_the_same_intent(self):
+        self.engine._runtime_state["legacy_retirement_quote_evidence_v1"] = {}
+        self.engine._legacy_regular_session_open = lambda: True
+        refreshed = self.engine._refresh_legacy_retirement_quote_evidence()
+        self.assertEqual(refreshed["refreshed"], 1)
+        self.engine._save_state_file()
+
+        restarted = PaperAutopilotEngine(
+            db_path=str(Path(self.tmp.name) / "memory.sqlite"),
+            state_path=str(Path(self.tmp.name) / "state.json"),
+            alpaca_paper_broker=self.broker,
+        )
+        restarted._alpaca_safety_snapshot = self.engine._alpaca_safety_snapshot
+        restarted._legacy_regular_session_open = lambda: True
+        restarted._runtime_state["market_session_open"] = True
+        self.assertIn("AAL", restarted._runtime_state["legacy_retirement_quote_evidence_v1"])
+
+        result = restarted._process_legacy_retirement_sell_intents()
+        self.assertEqual(result["submitted"], 1)
+        self.assertEqual(self.broker.submit_calls, 1)
+        self.assertEqual(restarted._paper_sell_order_intents()[self.intent_id]["status"], "BROKER_ACKNOWLEDGED")
+
+    def test_quote_provider_exception_is_visible_and_does_not_stop_other_intents(self):
+        self.engine._persist_sell_intent(
+            "legacy-phase2-bad", symbol="BAD", position_id="asset-bad", legacy_imported=True,
+            legacy_imported_retirement=True, legacy_lifecycle_id="legacy-lifecycle-bad",
+            client_order_id="legacy-phase2-bad", status="WAITING_FOR_FRESH_EVIDENCE",
+            order={"symbol": "BAD", "side": "sell", "qty": 1, "paper_only": True},
+        )
+        self.engine._legacy_regular_session_open = lambda: True
+
+        def latest_quote(symbol):
+            if symbol == "BAD":
+                raise RuntimeError("malformed quote response")
+            return {"ok": True, "quote": {"timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "bid_price": 10, "ask_price": 10.1}}
+
+        self.broker.latest_quote = latest_quote
+        refreshed = self.engine._refresh_legacy_retirement_quote_evidence()
+        self.assertEqual(refreshed["symbol_results"]["AAL"]["status"], "ACCEPTED_PROVIDER_NATIVE_QUOTE")
+        self.assertEqual(refreshed["symbol_results"]["BAD"]["first_causal_blocker"], "LEGACY_RETIREMENT_QUOTE_PROVIDER_EXCEPTION")
+        self.assertIn("AAL", self.engine._runtime_state["legacy_retirement_quote_evidence_v1"])
+
+    def test_one_intent_processing_failure_does_not_stop_the_remaining_batch(self):
+        self.engine._persist_sell_intent(
+            "legacy-phase2-bad", symbol="BAD", position_id="asset-bad", legacy_imported=True,
+            legacy_imported_retirement=True, legacy_lifecycle_id="legacy-lifecycle-bad",
+            client_order_id="legacy-phase2-bad", status="WAITING_FOR_FRESH_EVIDENCE",
+            order={"symbol": "BAD", "side": "sell", "qty": 1, "paper_only": True},
+        )
+        original = self.engine._submit_imported_legacy_retirement_intent
+
+        def submit(intent_id, intent):
+            if intent_id == "legacy-phase2-bad":
+                raise ValueError("malformed intent")
+            return original(intent_id, intent)
+
+        self.engine._submit_imported_legacy_retirement_intent = submit
+        result = self.engine._process_legacy_retirement_sell_intents()
+        self.assertEqual(result["submitted"], 1)
+        self.assertEqual(result["blocked"], 1)
+        self.assertEqual(self.broker.submit_calls, 1)
+        bad = self.engine._paper_sell_order_intents()["legacy-phase2-bad"]
+        self.assertEqual(bad["first_causal_blocker"], "LEGACY_RETIREMENT_INTENT_PROCESSING_EXCEPTION")
+
+    def test_external_worker_progress_and_quote_state_are_durable(self):
+        self.engine._runtime_state["legacy_retirement_quote_refresh_v1"] = {"refreshed": 1}
+        self.engine.record_external_worker_progress(
+            worker_generation_id="generation-test",
+            process_id=123,
+            parent_process_id=45,
+            cycle_count=9,
+            phase="legacy_retirement_quote_refresh",
+            cycle_started_at="2026-07-31T19:40:00Z",
+            cycle_completed_at="2026-07-31T19:40:02Z",
+            persist=True,
+        )
+        restarted = PaperAutopilotEngine(
+            db_path=str(Path(self.tmp.name) / "memory.sqlite"),
+            state_path=str(Path(self.tmp.name) / "state.json"),
+            alpaca_paper_broker=self.broker,
+        )
+        self.assertEqual(restarted._runtime_state["worker_generation_id"], "generation-test")
+        self.assertEqual(restarted._runtime_state["worker_cycle_phase"], "legacy_retirement_quote_refresh")
+        self.assertEqual(restarted._runtime_state["legacy_retirement_quote_refresh_v1"]["refreshed"], 1)
+
+    def test_api_control_write_preserves_worker_owned_quote_evidence(self):
+        self.engine._runtime_state["legacy_retirement_quote_evidence_v1"] = {"AAL": {"provider_quote_timestamp": "2026-07-31T19:40:00Z"}}
+        self.engine._save_state_file()
+        api_engine = PaperAutopilotEngine(
+            db_path=str(Path(self.tmp.name) / "memory.sqlite"),
+            state_path=str(Path(self.tmp.name) / "state.json"),
+            alpaca_paper_broker=self.broker,
+        )
+        api_engine._runtime_state["legacy_retirement_quote_evidence_v1"] = {}
+        with patch.dict("os.environ", {"ASTRA_PROCESS_ROLE": "api"}):
+            api_engine.toggle(False)
+        reloaded = PaperAutopilotEngine(
+            db_path=str(Path(self.tmp.name) / "memory.sqlite"),
+            state_path=str(Path(self.tmp.name) / "state.json"),
+            alpaca_paper_broker=self.broker,
+        )
+        self.assertIn("AAL", reloaded._runtime_state["legacy_retirement_quote_evidence_v1"])
 
 
 if __name__ == "__main__":

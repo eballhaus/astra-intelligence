@@ -136,6 +136,54 @@ class PaperAutopilotWorker:
         state["autopilot_enabled"] = bool(getattr(self.autopilot, "_enabled", False))
         return state
 
+    def _sync_autopilot_progress(
+        self,
+        phase: str,
+        *,
+        cycle_started_at: str = "",
+        cycle_completed_at: str = "",
+        error: str = "",
+        error_type: str = "",
+        persist: bool = False,
+    ) -> None:
+        """Bridge the isolated worker's real lifecycle into engine state.
+
+        The wrapper owns the process lease and the engine owns the retirement
+        state.  Without this bridge, an old in-process-thread generation can
+        remain in ``paper_autopilot_state.json`` even while this process is
+        healthy, making a live worker look stalled.
+        """
+        recorder = getattr(self.autopilot, "record_external_worker_progress", None)
+        if callable(recorder):
+            recorder(
+                worker_generation_id=self.lease.generation_id,
+                process_id=os.getpid(),
+                parent_process_id=os.getppid(),
+                cycle_count=self.cycle_count,
+                phase=phase,
+                cycle_started_at=cycle_started_at,
+                cycle_completed_at=cycle_completed_at,
+                error=error,
+                error_type=error_type,
+                persist=persist,
+            )
+            return
+        # Compatibility fallback for a deliberately minimal test double.
+        runtime = getattr(self.autopilot, "_runtime_state", None)
+        if isinstance(runtime, dict):
+            runtime.update({
+                "worker_generation_id": self.lease.generation_id,
+                "worker_process_id": os.getpid(),
+                "worker_parent_process_id": os.getppid(),
+                "worker_cycle_count": self.cycle_count,
+                "worker_cycle_phase": phase,
+                "worker_heartbeat_at": utc_now(),
+            })
+            if cycle_started_at:
+                runtime["worker_cycle_started_at"] = cycle_started_at
+            if cycle_completed_at:
+                runtime["worker_cycle_completed_at"] = cycle_completed_at
+
     def _backend_health_latency_ms(self) -> float | None:
         """Bounded internal health probe; never calls a provider or broker."""
         host = os.getenv("ASTRA_BACKEND_HOST", "127.0.0.1")
@@ -627,6 +675,7 @@ class PaperAutopilotWorker:
         before, policy = self._sample_resource()
         resource_state = str(before.get("resource_state") or "RESOURCE_NORMAL")
         if resource_state in {"RESOURCE_HIGH_PAUSE", "RESOURCE_MEMORY_PAUSE", "RESOURCE_API_LATENCY_PAUSE", "RESOURCE_UNKNOWN_FAIL_CLOSED"}:
+            self._sync_autopilot_progress("external_cycle_resource_paused", persist=True)
             self._publish(
                 resource=before,
                 resource_policy=policy,
@@ -646,6 +695,7 @@ class PaperAutopilotWorker:
             self._run_continuous_governance()
             return
         if resource_state == "RESOURCE_RECOVERY_COOLDOWN":
+            self._sync_autopilot_progress("external_cycle_recovery_cooldown", persist=True)
             self._publish(
                 resource=before,
                 resource_policy=policy,
@@ -668,7 +718,9 @@ class PaperAutopilotWorker:
         symbol_budget = 1 if resource_state == "RESOURCE_ELEVATED" or policy.get("resume_mode") == "RESUME_ONE_SYMBOL" else self.limits.maximum_symbols_per_cycle
         # This is a per-process cycle budget, not a persistent strategy setting.
         self.autopilot.max_stocks = min(int(original_max_stocks), symbol_budget)
-        self._publish(resource=before, resource_policy=policy, cycle_id=cycle_id, cycle_state="ACTIVE_BOUNDED", last_cycle_started_at=utc_now(), resource_pause_state=resource_state)
+        cycle_started_at = utc_now()
+        self._sync_autopilot_progress("external_cycle_active", cycle_started_at=cycle_started_at, persist=True)
+        self._publish(resource=before, resource_policy=policy, cycle_id=cycle_id, cycle_state="ACTIVE_BOUNDED", last_cycle_started_at=cycle_started_at, resource_pause_state=resource_state)
         try:
             result = dict(self.autopilot.run_cycle() or {})
             elapsed = time.monotonic() - started
@@ -685,6 +737,8 @@ class PaperAutopilotWorker:
             if policy.get("resume_mode") == "RESUME_ONE_SYMBOL":
                 policy = {**policy, "resume_mode": "RESUME_NORMAL_BOUNDED"}
                 self.resource_policy = policy
+            completed_at = utc_now()
+            self._sync_autopilot_progress("external_cycle_completed", cycle_completed_at=completed_at, persist=True)
             self._publish(
                 resource=before,
                 resource_policy=policy,
@@ -692,8 +746,8 @@ class PaperAutopilotWorker:
                 cycle_state=state,
                 cycle_stop_reason=stop_reason,
                 cycle_elapsed_seconds=round(elapsed, 3),
-                last_cycle_completed_at=utc_now(),
-                last_checkpoint_at=utc_now(),
+                last_cycle_completed_at=completed_at,
+                last_checkpoint_at=completed_at,
                 cycle_count=self.cycle_count,
                 cursor=str(scheduler.get("round_robin_cursor") or ""),
                 symbols_due=int(scheduler.get("symbols_due") or 0),
@@ -709,6 +763,12 @@ class PaperAutopilotWorker:
             )
             self._run_continuous_governance()
         except Exception as exc:  # Fail closed and leave the API unaffected.
+            self._sync_autopilot_progress(
+                "external_cycle_failed",
+                error=str(exc)[:180],
+                error_type=type(exc).__name__,
+                persist=True,
+            )
             self._publish(resource=before, resource_policy=policy, cycle_id=cycle_id, cycle_state="FAILED_SAFE", cycle_stop_reason="worker_cycle_exception", last_error=str(exc)[:240], last_error_at=utc_now())
             self._run_continuous_governance()
         finally:
@@ -724,6 +784,7 @@ class PaperAutopilotWorker:
         if hasattr(signal, "SIGHUP"):
             signal.signal(signal.SIGHUP, self._on_signal)
         initial_resource, initial_policy = self._sample_resource()
+        self._sync_autopilot_progress("external_worker_started", persist=True)
         self._publish(resource=initial_resource, resource_policy=initial_policy, cycle_state="IDLE", ownership_state="SINGLE_WORKER_ACTIVE")
         self._run_continuous_governance()
         try:

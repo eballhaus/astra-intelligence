@@ -1886,6 +1886,27 @@ class PaperAutopilotEngine:
                     self._runtime_state["legacy_swing_exit_lifecycle"] = dict(payload.get("legacy_swing_exit_lifecycle") or {})
                 if isinstance(payload.get("legacy_retirement_entry_provenance_v1"), dict):
                     self._runtime_state["legacy_retirement_entry_provenance_v1"] = dict(payload.get("legacy_retirement_entry_provenance_v1") or {})
+                # These fields are produced by the worker-only approved legacy
+                # retirement phase.  They must survive a restart; otherwise a
+                # fresh provider quote is lost before preflight can consume it.
+                for key in (
+                    "legacy_retirement_owner_approval_v1",
+                    "legacy_retirement_execution_v1",
+                    "legacy_retirement_quote_evidence_v1",
+                    "legacy_retirement_quote_refresh_v1",
+                    "legacy_retirement_submission_phase_v2",
+                    "legacy_retirement_quote_cursor_v1",
+                    "worker_process_id",
+                    "worker_parent_process_id",
+                    "worker_last_suppressed_exception_v1",
+                ):
+                    value = payload.get(key)
+                    if isinstance(value, dict):
+                        self._runtime_state[key] = dict(value)
+                    elif key == "legacy_retirement_quote_cursor_v1" and value is not None:
+                        self._runtime_state[key] = _to_int(value, 0)
+                    elif key in {"worker_process_id", "worker_parent_process_id"} and value is not None:
+                        self._runtime_state[key] = _to_int(value, 0)
                 if isinstance(payload.get("position_resolution_reviews"), dict):
                     self._runtime_state["position_resolution_reviews"] = dict(payload.get("position_resolution_reviews") or {})
                 if isinstance(payload.get("loss_containment_state_v1"), dict):
@@ -1952,7 +1973,7 @@ class PaperAutopilotEngine:
         except Exception:
             return
 
-    def _save_state_file(self):
+    def _save_state_file(self, *, worker_owned: bool = False):
         payload = {
             "autopilot_enabled": bool(getattr(self, "_enabled", False)),
             "paper_mode": self.paper_mode,
@@ -1981,6 +2002,15 @@ class PaperAutopilotEngine:
             "legacy_swing_market_activity": dict(self._runtime_state.get("legacy_swing_market_activity") or {}),
             "legacy_swing_exit_lifecycle": dict(self._runtime_state.get("legacy_swing_exit_lifecycle") or {}),
             "legacy_retirement_entry_provenance_v1": dict(self._runtime_state.get("legacy_retirement_entry_provenance_v1") or {}),
+            "legacy_retirement_owner_approval_v1": dict(self._runtime_state.get("legacy_retirement_owner_approval_v1") or {}),
+            "legacy_retirement_execution_v1": dict(self._runtime_state.get("legacy_retirement_execution_v1") or {}),
+            "legacy_retirement_quote_evidence_v1": dict(self._runtime_state.get("legacy_retirement_quote_evidence_v1") or {}),
+            "legacy_retirement_quote_refresh_v1": dict(self._runtime_state.get("legacy_retirement_quote_refresh_v1") or {}),
+            "legacy_retirement_submission_phase_v2": dict(self._runtime_state.get("legacy_retirement_submission_phase_v2") or {}),
+            "legacy_retirement_quote_cursor_v1": _to_int(self._runtime_state.get("legacy_retirement_quote_cursor_v1"), 0),
+            "worker_process_id": _to_int(self._runtime_state.get("worker_process_id"), 0),
+            "worker_parent_process_id": _to_int(self._runtime_state.get("worker_parent_process_id"), 0),
+            "worker_last_suppressed_exception_v1": dict(self._runtime_state.get("worker_last_suppressed_exception_v1") or {}),
             "position_resolution_reviews": dict(self._runtime_state.get("position_resolution_reviews") or {}),
             "loss_containment_state_v1": dict(self._runtime_state.get("loss_containment_state_v1") or {}),
             "profit_protection_state_v1": dict(self._runtime_state.get("profit_protection_state_v1") or {}),
@@ -2010,6 +2040,39 @@ class PaperAutopilotEngine:
             },
         }
         try:
+            # The API process may persist only the guarded enable switch.  It
+            # must not replace worker-produced evidence with its stale
+            # in-memory snapshot while the isolated worker is cycling.
+            if not worker_owned and str(os.getenv("ASTRA_PROCESS_ROLE", "api") or "api").strip().lower() != "worker":
+                try:
+                    with open(self.state_path, "r", encoding="utf-8") as existing_handle:
+                        existing = json.load(existing_handle)
+                    if isinstance(existing, dict):
+                        for key in (
+                            "paper_sell_order_intents",
+                            "legacy_retirement_owner_approval_v1",
+                            "legacy_retirement_execution_v1",
+                            "legacy_retirement_quote_evidence_v1",
+                            "legacy_retirement_quote_refresh_v1",
+                            "legacy_retirement_submission_phase_v2",
+                            "legacy_retirement_quote_cursor_v1",
+                            "worker_generation_id",
+                            "worker_process_id",
+                            "worker_parent_process_id",
+                            "worker_heartbeat_at",
+                            "worker_cycle_started_at",
+                            "worker_cycle_completed_at",
+                            "worker_cycle_phase",
+                            "worker_cycle_count",
+                            "worker_cycle_error",
+                            "worker_last_suppressed_exception_v1",
+                        ):
+                            if key in existing:
+                                payload[key] = existing[key]
+                except Exception:
+                    # The control write remains fail-closed: an unavailable
+                    # prior snapshot cannot manufacture worker evidence.
+                    pass
             temporary_path = f"{self.state_path}.{os.getpid()}.tmp"
             with open(temporary_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, separators=(",", ":"), ensure_ascii=True)
@@ -2025,6 +2088,50 @@ class PaperAutopilotEngine:
         self._runtime_state["worker_cycle_phase"] = str(phase or "unknown")[:96]
         if error:
             self._runtime_state["worker_cycle_error"] = str(error)[:240]
+
+    def record_external_worker_progress(
+        self,
+        *,
+        worker_generation_id: str,
+        process_id: int,
+        parent_process_id: int,
+        cycle_count: int,
+        phase: str,
+        cycle_started_at: str = "",
+        cycle_completed_at: str = "",
+        error: str = "",
+        error_type: str = "",
+        persist: bool = False,
+    ) -> None:
+        """Persist the isolated worker's real cycle ownership and phase.
+
+        ``PaperAutopilotEngine`` no longer owns an in-process loop.  The
+        external worker is therefore the authority for heartbeat generation,
+        while this engine remains the authority for its durable operational
+        state.  Keeping that bridge explicit prevents stale thread-era
+        metadata from masquerading as current cycle progress.
+        """
+        self._runtime_state.update({
+            "worker_generation_id": str(worker_generation_id or ""),
+            "worker_process_id": max(0, _to_int(process_id, 0)),
+            "worker_parent_process_id": max(0, _to_int(parent_process_id, 0)),
+            "worker_cycle_count": max(0, _to_int(cycle_count, 0)),
+        })
+        if cycle_started_at:
+            self._runtime_state["worker_cycle_started_at"] = str(cycle_started_at)
+        if cycle_completed_at:
+            self._runtime_state["worker_cycle_completed_at"] = str(cycle_completed_at)
+        self._note_worker_progress(phase, error=error)
+        if error:
+            self._runtime_state["worker_last_suppressed_exception_v1"] = {
+                "phase": str(phase or "unknown")[:96],
+                "exception_type": str(error_type or "WorkerCycleError")[:96],
+                "message": str(error)[:240],
+                "occurred_at": _now_iso(),
+                "retry_state": "RETRY_ON_NEXT_BOUNDED_CYCLE",
+            }
+        if persist:
+            self._save_state_file(worker_owned=True)
 
     def worker_liveness_status(self) -> dict[str, Any]:
         """Return worker-owned liveness without status-path broker reads."""
@@ -2468,25 +2575,76 @@ class PaperAutopilotEngine:
                    if bool(dict(row).get("legacy_imported_retirement")) and str(dict(row).get("status") or "") in {"WAITING_FOR_REGULAR_SESSION", "WAITING_FOR_FRESH_EVIDENCE", "PREFLIGHT_READY", "RETRY_PENDING"}]
         records = dict(self._runtime_state.get("legacy_retirement_quote_evidence_v1") or {})
         if not self._legacy_regular_session_open() or broker is None or not hasattr(broker, "latest_quote"):
-            return {"refreshed": 0, "reason": "MARKET_CLOSED_OR_QUOTE_ADAPTER_UNAVAILABLE"}
+            return {
+                "refreshed": 0,
+                "provider_requests": 0,
+                "intents_eligible": len(intents),
+                "reason": "MARKET_CLOSED_OR_QUOTE_ADAPTER_UNAVAILABLE",
+                "evaluated_at": _now_iso(),
+            }
         cursor = int(self._runtime_state.get("legacy_retirement_quote_cursor_v1") or 0)
         limit = max(1, min(12, int(os.getenv("ASTRA_LEGACY_RETIREMENT_QUOTES_PER_CYCLE", "8"))))
         selected = intents[cursor:cursor + limit]
         if len(selected) < limit and cursor:
             selected += intents[:limit - len(selected)]
+        symbol_results: dict[str, dict[str, Any]] = {}
+        accepted = 0
+        failures = 0
         for intent in selected:
             symbol = str(intent.get("symbol") or "").upper()
             try:
                 payload = dict(broker.latest_quote(symbol) or {})
-            except Exception:
+            except Exception as exc:
+                failures += 1
+                symbol_results[symbol] = {
+                    "status": "PROVIDER_EXCEPTION",
+                    "first_causal_blocker": "LEGACY_RETIREMENT_QUOTE_PROVIDER_EXCEPTION",
+                    "exception_type": type(exc).__name__,
+                    "message": str(exc)[:180],
+                    "evaluated_at": _now_iso(),
+                }
                 continue
             quote = dict(payload.get("quote") or {})
             timestamp = quote.get("timestamp") or quote.get("t")
             if bool(payload.get("ok")) and timestamp:
-                records[symbol] = {"provider_quote_timestamp": timestamp, "bid": quote.get("bid_price") or quote.get("bp"), "ask": quote.get("ask_price") or quote.get("ap"), "provider": "alpaca_paper_market_data"}
+                accepted += 1
+                records[symbol] = {
+                    "provider_quote_timestamp": timestamp,
+                    "bid": quote.get("bid_price") or quote.get("bp"),
+                    "ask": quote.get("ask_price") or quote.get("ap"),
+                    "provider": "alpaca_paper_market_data",
+                    "symbol": symbol,
+                    "retrieval_timestamp": _now_iso(),
+                }
+                symbol_results[symbol] = {
+                    "status": "ACCEPTED_PROVIDER_NATIVE_QUOTE",
+                    "provider_quote_timestamp": timestamp,
+                    "provider": "alpaca_paper_market_data",
+                    "evaluated_at": _now_iso(),
+                }
+            else:
+                failures += 1
+                symbol_results[symbol] = {
+                    "status": "QUOTE_REJECTED",
+                    "first_causal_blocker": "LEGACY_RETIREMENT_PROVIDER_NATIVE_QUOTE_UNAVAILABLE",
+                    "response_state": str(payload.get("response_state") or "UNKNOWN")[:96],
+                    "http_status": payload.get("http_status"),
+                    "evaluated_at": _now_iso(),
+                }
         self._runtime_state["legacy_retirement_quote_evidence_v1"] = records
         self._runtime_state["legacy_retirement_quote_cursor_v1"] = (cursor + len(selected)) % max(1, len(intents))
-        return {"refreshed": len(selected), "remaining": max(0, len(intents) - len(selected))}
+        return {
+            "refreshed": accepted,
+            "provider_requests": len(selected),
+            "failed": failures,
+            "intents_eligible": len(intents),
+            "selected_symbols": [str(row.get("symbol") or "").upper() for row in selected],
+            "symbol_results": symbol_results,
+            "remaining": max(0, len(intents) - len(selected)),
+            "cursor_before": cursor,
+            "cursor_after": self._runtime_state["legacy_retirement_quote_cursor_v1"],
+            "evaluated_at": _now_iso(),
+        }
 
     def _legacy_retirement_find_broker_position(self, symbol: str) -> tuple[dict[str, Any], str]:
         broker = self.alpaca_paper_broker
@@ -2535,7 +2693,40 @@ class PaperAutopilotEngine:
             }:
                 continue
             processed += 1
-            result = self._submit_imported_legacy_retirement_intent(intent_id, intent)
+            try:
+                result = self._submit_imported_legacy_retirement_intent(intent_id, intent)
+            except Exception as exc:
+                # A malformed symbol or an isolated adapter failure must not
+                # prevent the remaining approved retirements from receiving
+                # their own bounded preflight.  Preserve the failure against
+                # this durable intent rather than losing it to a broad cycle
+                # exception.
+                lifecycle_id = str(intent.get("legacy_lifecycle_id") or "")
+                blocker = "LEGACY_RETIREMENT_INTENT_PROCESSING_EXCEPTION"
+                self._persist_sell_intent(
+                    intent_id,
+                    status="BLOCKED_WITH_EXACT_CAUSE",
+                    first_causal_blocker=blocker,
+                    processing_exception_type=type(exc).__name__,
+                    processing_exception_message=str(exc)[:180],
+                )
+                if lifecycle_id:
+                    self._persist_legacy_retirement_transition(
+                        lifecycle_id,
+                        status="LEGACY_EXIT_BLOCKED",
+                        first_causal_blocker=blocker,
+                        processing_exception_type=type(exc).__name__,
+                        processing_exception_message=str(exc)[:180],
+                    )
+                self._runtime_state["worker_last_suppressed_exception_v1"] = {
+                    "phase": "legacy_retirement_intent_processing",
+                    "symbol": str(intent.get("symbol") or "").upper(),
+                    "exception_type": type(exc).__name__,
+                    "message": str(exc)[:240],
+                    "occurred_at": _now_iso(),
+                    "retry_state": "REQUIRES_EXACT_BLOCKER_REVIEW",
+                }
+                result = {"submitted": False, "blocked": True, "state": "BLOCKED_WITH_EXACT_CAUSE"}
             submitted += int(bool(result.get("submitted")))
             waiting += int(str(result.get("state") or "").startswith("WAITING_"))
             blocked += int(bool(result.get("blocked")))
@@ -9395,6 +9586,13 @@ class PaperAutopilotEngine:
                 position_evidence_completeness = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 position_exit_readiness = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 unified_position_advisory = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                self._runtime_state["worker_last_suppressed_exception_v1"] = {
+                    "phase": "position_evidence_and_advisory_phase",
+                    "exception_type": type(exc).__name__,
+                    "message": str(exc)[:240],
+                    "occurred_at": _now_iso(),
+                    "retry_state": "RETRY_ON_NEXT_BOUNDED_CYCLE",
+                }
             safety = self._alpaca_safety_snapshot()
             out = {
                 "ok": True,
@@ -9439,6 +9637,11 @@ class PaperAutopilotEngine:
             self._runtime_state["last_cycle_utc"] = _now_iso()
             self._runtime_state["last_cycle_summary"] = out
             self._runtime_state["last_execution_trace"] = trace
+            # The isolated worker owns the cycle.  This branch still performs
+            # retirement evidence and advisory work, so returning without a
+            # durable save would drop its producer output before the next
+            # cycle can consume it.
+            self._save_state_file()
             return out
 
         with self._cycle_lock:
@@ -9541,6 +9744,13 @@ class PaperAutopilotEngine:
                     position_evidence_completeness_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
                     position_exit_readiness_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
                     unified_position_advisory_partial = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                    self._runtime_state["worker_last_suppressed_exception_v1"] = {
+                        "phase": "partial_position_evidence_and_advisory_phase",
+                        "exception_type": type(exc).__name__,
+                        "message": str(exc)[:240],
+                        "occurred_at": _now_iso(),
+                        "retry_state": "RETRY_ON_NEXT_BOUNDED_CYCLE",
+                    }
                 # Update peak memory from broker snapshot
                 peak_memory_update: dict[str, Any] = {}
                 try:
@@ -9868,6 +10078,13 @@ class PaperAutopilotEngine:
                 position_evidence_completeness = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 position_exit_readiness = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 unified_position_advisory = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                self._runtime_state["worker_last_suppressed_exception_v1"] = {
+                    "phase": "full_position_evidence_and_advisory_phase",
+                    "exception_type": type(exc).__name__,
+                    "message": str(exc)[:240],
+                    "occurred_at": _now_iso(),
+                    "retry_state": "RETRY_ON_NEXT_BOUNDED_CYCLE",
+                }
             # Market evidence is a restart-stable worker product.  Persist it
             # before the broader candidate scan, which may take longer than a
             # bounded provider refresh cycle.
