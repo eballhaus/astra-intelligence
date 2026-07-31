@@ -34,6 +34,9 @@ class _Broker:
     def order(self, _order_id):
         return {"ok": True, "order": dict(self.order_row)}
 
+    def latest_quote(self, _symbol):
+        return {"ok": True, "quote": {"timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "bid_price": 10, "ask_price": 10.1}}
+
 
 class LegacyRetirementExecutionPhase2Tests(unittest.TestCase):
     def setUp(self):
@@ -133,6 +136,15 @@ class LegacyRetirementExecutionPhase2Tests(unittest.TestCase):
         intent = self.engine._paper_sell_order_intents()[self.intent_id]
         self.assertEqual(intent["status"], "RETRY_PENDING")
         self.assertEqual(intent["retry_count"], 1)
+
+    def test_quote_refresh_produces_provider_native_evidence_before_submission(self):
+        self.engine._legacy_regular_session_open = lambda: False
+        refreshed = self.engine._refresh_legacy_retirement_quote_evidence()
+        self.assertEqual(refreshed["reason"], "MARKET_CLOSED_OR_QUOTE_ADAPTER_UNAVAILABLE")
+        self.engine._legacy_regular_session_open = lambda: True
+        refreshed = self.engine._refresh_legacy_retirement_quote_evidence()
+        self.assertEqual(refreshed["refreshed"], 1)
+        self.assertIn("AAL", self.engine._runtime_state["legacy_retirement_quote_evidence_v1"])
 
 
 if __name__ == "__main__":

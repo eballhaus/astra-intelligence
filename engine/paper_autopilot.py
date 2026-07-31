@@ -2461,6 +2461,33 @@ class PaperAutopilotEngine:
             "quote_provenance": canonical,
         }
 
+    def _refresh_legacy_retirement_quote_evidence(self) -> dict[str, Any]:
+        """Boundedly refresh provider-native quotes for armed legacy sells."""
+        broker = self.alpaca_paper_broker
+        intents = [dict(row) for row in self._paper_sell_order_intents().values()
+                   if bool(dict(row).get("legacy_imported_retirement")) and str(dict(row).get("status") or "") in {"WAITING_FOR_REGULAR_SESSION", "WAITING_FOR_FRESH_EVIDENCE", "PREFLIGHT_READY", "RETRY_PENDING"}]
+        records = dict(self._runtime_state.get("legacy_retirement_quote_evidence_v1") or {})
+        if not self._legacy_regular_session_open() or broker is None or not hasattr(broker, "latest_quote"):
+            return {"refreshed": 0, "reason": "MARKET_CLOSED_OR_QUOTE_ADAPTER_UNAVAILABLE"}
+        cursor = int(self._runtime_state.get("legacy_retirement_quote_cursor_v1") or 0)
+        limit = max(1, min(12, int(os.getenv("ASTRA_LEGACY_RETIREMENT_QUOTES_PER_CYCLE", "8"))))
+        selected = intents[cursor:cursor + limit]
+        if len(selected) < limit and cursor:
+            selected += intents[:limit - len(selected)]
+        for intent in selected:
+            symbol = str(intent.get("symbol") or "").upper()
+            try:
+                payload = dict(broker.latest_quote(symbol) or {})
+            except Exception:
+                continue
+            quote = dict(payload.get("quote") or {})
+            timestamp = quote.get("timestamp") or quote.get("t")
+            if bool(payload.get("ok")) and timestamp:
+                records[symbol] = {"provider_quote_timestamp": timestamp, "bid": quote.get("bid_price") or quote.get("bp"), "ask": quote.get("ask_price") or quote.get("ap"), "provider": "alpaca_paper_market_data"}
+        self._runtime_state["legacy_retirement_quote_evidence_v1"] = records
+        self._runtime_state["legacy_retirement_quote_cursor_v1"] = (cursor + len(selected)) % max(1, len(intents))
+        return {"refreshed": len(selected), "remaining": max(0, len(intents) - len(selected))}
+
     def _legacy_retirement_find_broker_position(self, symbol: str) -> tuple[dict[str, Any], str]:
         broker = self.alpaca_paper_broker
         if broker is None or not hasattr(broker, "positions"):
@@ -8436,6 +8463,7 @@ class PaperAutopilotEngine:
         # This is the only worker-owned bridge from the approved Phase 1
         # legacy lifecycle into canonical paper submission.  API readers never
         # invoke it and a closed/stale session remains a durable wait state.
+        self._runtime_state["legacy_retirement_quote_refresh_v1"] = self._refresh_legacy_retirement_quote_evidence()
         self._runtime_state["legacy_retirement_submission_phase_v2"] = self._process_legacy_retirement_sell_intents()
         triage = self._legacy_position_risk_triage_phase(broker_position_by_symbol, position_evidence=evidence)
         resolution = build_legacy_portfolio_resolution_v1(
