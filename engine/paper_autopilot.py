@@ -1895,6 +1895,7 @@ class PaperAutopilotEngine:
                     "legacy_retirement_quote_evidence_v1",
                     "legacy_retirement_quote_refresh_v1",
                     "legacy_retirement_submission_phase_v2",
+                    "legacy_retirement_terminal_reconciliation_v1",
                     "legacy_retirement_quote_cursor_v1",
                     "worker_process_id",
                     "worker_parent_process_id",
@@ -2007,6 +2008,7 @@ class PaperAutopilotEngine:
             "legacy_retirement_quote_evidence_v1": dict(self._runtime_state.get("legacy_retirement_quote_evidence_v1") or {}),
             "legacy_retirement_quote_refresh_v1": dict(self._runtime_state.get("legacy_retirement_quote_refresh_v1") or {}),
             "legacy_retirement_submission_phase_v2": dict(self._runtime_state.get("legacy_retirement_submission_phase_v2") or {}),
+            "legacy_retirement_terminal_reconciliation_v1": dict(self._runtime_state.get("legacy_retirement_terminal_reconciliation_v1") or {}),
             "legacy_retirement_quote_cursor_v1": _to_int(self._runtime_state.get("legacy_retirement_quote_cursor_v1"), 0),
             "worker_process_id": _to_int(self._runtime_state.get("worker_process_id"), 0),
             "worker_parent_process_id": _to_int(self._runtime_state.get("worker_parent_process_id"), 0),
@@ -2055,6 +2057,7 @@ class PaperAutopilotEngine:
                             "legacy_retirement_quote_evidence_v1",
                             "legacy_retirement_quote_refresh_v1",
                             "legacy_retirement_submission_phase_v2",
+                            "legacy_retirement_terminal_reconciliation_v1",
                             "legacy_retirement_quote_cursor_v1",
                             "worker_generation_id",
                             "worker_process_id",
@@ -2850,12 +2853,166 @@ class PaperAutopilotEngine:
             return {"keep_pending": False, "filled": True}
         dust = classify_dust_position_v1({"symbol": row.get("symbol"), "qty": max(0.0, residual_qty)}) if residual_qty >= 0 else {"is_dust": False}
         if bool(dust.get("is_dust")):
-            self._persist_sell_intent(intent_id, status="BROKER_ZERO_CONFIRMED", broker_residual_lookup=residual, dust_residual=dust, **common)
+            # A broker-held dust residual is not broker zero.  It must remain
+            # visible to reconciliation and exposure, while staying outside
+            # automatic re-submission until a separately valid tradability
+            # preflight exists.
+            self._persist_sell_intent(
+                intent_id,
+                status="BROKER_HELD_DUST",
+                broker_zero_confirmed=False,
+                broker_residual_lookup=residual,
+                dust_residual=dust,
+                current_logic_performance_excluded=True,
+                first_causal_blocker="BROKER_HELD_DUST_RESIDUAL",
+                **common,
+            )
             self._persist_legacy_retirement_transition(lifecycle_id, status="LEGACY_DUST_RECONCILIATION", broker_residual_lookup=residual, dust_residual=dust, **common)
             return {"keep_pending": False, "filled": False}
         self._persist_sell_intent(intent_id, status="PARTIALLY_FILLED", broker_residual_lookup=residual, first_causal_blocker="BROKER_RESIDUAL_REMAINS", **common)
         self._persist_legacy_retirement_transition(lifecycle_id, status="LEGACY_EXIT_FILLED_AWAITING_ZERO", broker_residual_lookup=residual, first_causal_blocker="BROKER_RESIDUAL_REMAINS", **common)
         return {"keep_pending": True, "filled": False}
+
+    def _reconcile_legacy_retirement_terminal_states(
+        self,
+        broker_position_by_symbol: Mapping[str, Mapping[str, Any]],
+        *,
+        broker_positions_verified: bool,
+    ) -> dict[str, Any]:
+        """Repair terminal legacy labels from the current canonical broker set.
+
+        Older lifecycle records used ``BROKER_ZERO_CONFIRMED`` for a dust
+        residual.  This bounded, worker-only reconciliation never submits an
+        order.  It only corrects the durable truth label after the normal
+        broker-position refresh has succeeded.
+        """
+        if not broker_positions_verified:
+            return {
+                "checked": 0,
+                "corrected_to_dust": 0,
+                "corrected_to_nonzero": 0,
+                "confirmed_zero": 0,
+                "first_causal_blocker": "BROKER_POSITION_SNAPSHOT_UNAVAILABLE",
+            }
+        checked = corrected_to_dust = corrected_to_nonzero = confirmed_zero = 0
+        active = {
+            str(symbol or "").upper().strip(): dict(row or {})
+            for symbol, row in dict(broker_position_by_symbol or {}).items()
+            if str(symbol or "").strip()
+        }
+        for intent_id, raw in list(self._paper_sell_order_intents().items()):
+            intent = dict(raw or {})
+            if not bool(intent.get("legacy_imported_retirement")):
+                continue
+            if str(intent.get("status") or "").upper() not in {
+                "BROKER_ZERO_CONFIRMED",
+                "CLOSED_LEGACY_RETIREMENT",
+            }:
+                continue
+            # A previously durable independent zero proof remains valid.  The
+            # migration target is only the old ambiguous/dust-labelled state.
+            residual = dict(intent.get("broker_residual_lookup") or {})
+            if bool(intent.get("broker_zero_confirmed")) and str(residual.get("lookup_status") or "") in {
+                "ZERO_CONFIRMED", "AUTHORITATIVE_NOT_FOUND",
+            }:
+                continue
+            checked += 1
+            symbol = str(intent.get("symbol") or "").upper().strip()
+            lifecycle_id = str(intent.get("legacy_lifecycle_id") or "")
+            broker_row = dict(active.get(symbol) or {})
+            if not broker_row:
+                authoritative_zero = {
+                    "lookup_status": "AUTHORITATIVE_NOT_FOUND",
+                    "authoritative_not_found": True,
+                    "paper_account_validated": True,
+                    "symbol": symbol,
+                    "retrieval_timestamp": _now_iso(),
+                }
+                proof = broker_residual_lookup(
+                    {"symbol": symbol, "position_id": intent.get("position_id")},
+                    broker_position=authoritative_zero,
+                )
+                if not bool(proof.get("exit_allowed")):
+                    continue
+                self._persist_sell_intent(
+                    intent_id,
+                    status="CLOSED_LEGACY_RETIREMENT",
+                    broker_zero_confirmed=True,
+                    broker_residual_lookup=proof,
+                    current_logic_performance_excluded=True,
+                    first_causal_blocker="",
+                )
+                if lifecycle_id:
+                    self._persist_legacy_retirement_transition(
+                        lifecycle_id,
+                        status="LEGACY_RETIREMENT_COMPLETE",
+                        broker_zero_confirmed=True,
+                        broker_residual_lookup=proof,
+                        current_logic_performance_excluded=True,
+                        first_causal_blocker="",
+                    )
+                confirmed_zero += 1
+                continue
+            authoritative = {
+                **broker_row,
+                "residual_lookup_authoritative": True,
+                "paper_account_validated": True,
+                "retrieval_timestamp": _now_iso(),
+            }
+            proof = broker_residual_lookup(
+                {"symbol": symbol, "position_id": intent.get("position_id")},
+                broker_position=authoritative,
+            )
+            quantity = _to_float(proof.get("broker_residual_quantity"), 0.0)
+            dust = classify_dust_position_v1({**broker_row, "symbol": symbol, "qty": quantity})
+            if bool(dust.get("is_dust")):
+                self._persist_sell_intent(
+                    intent_id,
+                    status="BROKER_HELD_DUST",
+                    broker_zero_confirmed=False,
+                    broker_residual_lookup=proof,
+                    dust_residual=dust,
+                    current_logic_performance_excluded=True,
+                    first_causal_blocker="BROKER_HELD_DUST_RESIDUAL",
+                )
+                if lifecycle_id:
+                    self._persist_legacy_retirement_transition(
+                        lifecycle_id,
+                        status="LEGACY_DUST_RECONCILIATION",
+                        broker_zero_confirmed=False,
+                        broker_residual_lookup=proof,
+                        dust_residual=dust,
+                        current_logic_performance_excluded=True,
+                        first_causal_blocker="BROKER_HELD_DUST_RESIDUAL",
+                    )
+                corrected_to_dust += 1
+                continue
+            self._persist_sell_intent(
+                intent_id,
+                status="PARTIALLY_FILLED",
+                broker_zero_confirmed=False,
+                broker_residual_lookup=proof,
+                current_logic_performance_excluded=True,
+                first_causal_blocker="BROKER_RESIDUAL_REMAINS",
+            )
+            if lifecycle_id:
+                self._persist_legacy_retirement_transition(
+                    lifecycle_id,
+                    status="LEGACY_EXIT_FILLED_AWAITING_ZERO",
+                    broker_zero_confirmed=False,
+                    broker_residual_lookup=proof,
+                    current_logic_performance_excluded=True,
+                    first_causal_blocker="BROKER_RESIDUAL_REMAINS",
+                )
+            corrected_to_nonzero += 1
+        return {
+            "checked": checked,
+            "corrected_to_dust": corrected_to_dust,
+            "corrected_to_nonzero": corrected_to_nonzero,
+            "confirmed_zero": confirmed_zero,
+            "first_causal_blocker": "" if checked else "NO_LEGACY_TERMINAL_RECONCILIATION_REQUIRED",
+            "reconciled_at": _now_iso(),
+        }
 
     def _validate_sell_approval(self, open_row: dict[str, Any]) -> dict[str, Any]:
         """Canonical gate — every paper sell must pass this human-approval check.
@@ -8615,6 +8772,7 @@ class PaperAutopilotEngine:
         *,
         loss_containment: Mapping[str, Any] | None = None,
         profit_protection: Mapping[str, Any] | None = None,
+        broker_positions_verified: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
         """Project worker-cached evidence into complete, non-executing advisories.
 
@@ -8651,6 +8809,12 @@ class PaperAutopilotEngine:
         retirement_review = self._legacy_retirement_review_phase(broker_position_by_symbol)
         self._legacy_retirement_execution_handoff_phase(broker_position_by_symbol, retirement_review)
         self._arm_legacy_retirement_sell_intents(broker_position_by_symbol)
+        self._runtime_state["legacy_retirement_terminal_reconciliation_v1"] = (
+            self._reconcile_legacy_retirement_terminal_states(
+                broker_position_by_symbol,
+                broker_positions_verified=bool(broker_positions_verified),
+            )
+        )
         # This is the only worker-owned bridge from the approved Phase 1
         # legacy lifecycle into canonical paper submission.  API readers never
         # invoke it and a closed/stale session remains a durable wait state.
@@ -9577,6 +9741,7 @@ class PaperAutopilotEngine:
                 position_evidence_completeness, legacy_position_risk_triage, position_exit_readiness, unified_position_advisory = self._position_evidence_and_advisory_phase(
                     broker_positions,
                     loss_containment=loss_containment_review,
+                    broker_positions_verified=bool(broker_snapshot.get("broker_positions_fetch_ok", False)),
                 )
                 provider_consumption_telemetry = self._refresh_provider_consumption_telemetry_v1(legacy_position_risk_triage)
             except Exception as exc:
@@ -9735,6 +9900,7 @@ class PaperAutopilotEngine:
                         broker_position_by_symbol,
                         loss_containment=loss_containment_review_partial,
                         profit_protection=profit_protection_review_partial,
+                        broker_positions_verified=bool(broker_snapshot.get("broker_positions_fetch_ok", False)),
                     )
                     provider_consumption_telemetry_partial = self._refresh_provider_consumption_telemetry_v1(legacy_position_risk_triage_partial)
                 except Exception as exc:
@@ -10067,6 +10233,7 @@ class PaperAutopilotEngine:
                     broker_position_by_symbol,
                     loss_containment=loss_containment_review,
                     profit_protection=profit_protection_review,
+                    broker_positions_verified=bool(broker_snapshot.get("broker_positions_fetch_ok", False)),
                 )
                 provider_consumption_telemetry = self._refresh_provider_consumption_telemetry_v1(
                     legacy_position_risk_triage,

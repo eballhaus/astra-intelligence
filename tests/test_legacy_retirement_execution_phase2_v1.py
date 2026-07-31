@@ -130,6 +130,33 @@ class LegacyRetirementExecutionPhase2Tests(unittest.TestCase):
         self.assertEqual(self.engine._paper_sell_order_intents()[self.intent_id]["status"], "CLOSED_LEGACY_RETIREMENT")
         self.assertTrue(self.engine._runtime_state["legacy_retirement_archive_v1"][self.intent_id]["current_logic_performance_excluded"])
 
+    def test_filled_order_with_dust_residual_is_never_labelled_broker_zero(self):
+        self.engine._process_legacy_retirement_sell_intents()
+        self.broker.order_row.update({"status": "filled", "filled_qty": "2"})
+        self.broker.position_rows = [{"symbol": "AAL", "asset_id": "asset-1", "qty": "0.000001", "qty_available": "0.000001"}]
+        self.engine._refresh_authorized_lane_exit_pending()
+        intent = self.engine._paper_sell_order_intents()[self.intent_id]
+        self.assertEqual(intent["status"], "BROKER_HELD_DUST")
+        self.assertFalse(intent["broker_zero_confirmed"])
+        self.assertEqual(intent["first_causal_blocker"], "BROKER_HELD_DUST_RESIDUAL")
+        self.assertNotIn(self.intent_id, self.engine._runtime_state.get("legacy_retirement_archive_v1") or {})
+
+    def test_terminal_dust_mislabel_is_repaired_from_verified_broker_snapshot(self):
+        self.engine._persist_sell_intent(
+            self.intent_id,
+            status="BROKER_ZERO_CONFIRMED",
+            broker_order_id="sell-1",
+            reconciliation_status="ORIGINAL_ORDER_FILLED",
+        )
+        repaired = self.engine._reconcile_legacy_retirement_terminal_states(
+            {"AAL": {"symbol": "AAL", "qty": "0.000001", "qty_available": "0.000001"}},
+            broker_positions_verified=True,
+        )
+        intent = self.engine._paper_sell_order_intents()[self.intent_id]
+        self.assertEqual(repaired["corrected_to_dust"], 1)
+        self.assertEqual(intent["status"], "BROKER_HELD_DUST")
+        self.assertFalse(intent["broker_zero_confirmed"])
+
     def test_terminal_rejection_is_bounded_retry(self):
         self.engine._process_legacy_retirement_sell_intents()
         self.broker.order_row.update({"status": "rejected", "reject_reason": "broker rejected"})
