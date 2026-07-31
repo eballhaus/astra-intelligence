@@ -8419,7 +8419,7 @@ class PaperAutopilotEngine:
             account_row = dict(account.get("account") or {}) if account.get("ok") else {}
             paper_account = str(account.get("account_id") or account_row.get("id") or "")
             if paper_account:
-                approved_symbols = ["AAL","ABNB","AMC","BIIB","BJ","BROS","CCL","COST","CRSP","DAL","GEHC","GM","HMC","KHC","LNG","LYFT","MDLZ","NBIX","OXY","PG","PTON","RACE","RCL","RIVN","SLB","XLB"]
+                approved_symbols = ["AAL","ABNB","AMC","BBAI","BIIB","BJ","BROS","CCL","COST","CRSP","DAL","FSLR","GEHC","GM","HMC","IONQ","KHC","KLAC","LNG","LYFT","MDLZ","NBIX","NFLX","NVDA","NXPI","OXY","PG","PTON","QBTS","RACE","RCL","RGTI","RIOT","RIVN","SG","SLB","XLB"]
                 approval = build_legacy_retirement_owner_approval_v1(
                     owner="OWNER_APPROVED",
                     symbols=approved_symbols,
@@ -8772,13 +8772,7 @@ class PaperAutopilotEngine:
         return payload
 
     def _import_approved_legacy_sell_intents(self, broker_positions: Mapping[str, Mapping[str, Any]]) -> None:
-        """Directly create waiting sell intents for approved legacy broker positions.
-        Independent of the review queue which requires an active reset boundary.
-        Safe to call repeatedly — only runs once per runtime session.
-        """
-        # Only run import once per session; intents persist across restarts
-        if dict(self._paper_sell_order_intents()):
-            return
+        """Directly create waiting sell intents for approved legacy broker positions."""
         approval = self._runtime_state.get("legacy_retirement_owner_approval_v1")
         if not approval or approval.get("approval_status") != "APPROVED":
             return
