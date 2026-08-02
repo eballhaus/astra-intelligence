@@ -5424,7 +5424,6 @@ class PaperAutopilotEngine:
                 cur = cur.get(k)
             return [dict(x) for x in (cur or []) if isinstance(x, dict)] if isinstance(cur, list) else []
 
-        rows: list[dict[str, Any]] = []
         rows.extend(_rows_from(["stocks", "final"]))
         rows.extend(_rows_from(["top_action_views", "canonical_decision_views", "stocks_buy_candidates"]))
         rows.extend(_rows_from(["stocks", "qualified"]))
