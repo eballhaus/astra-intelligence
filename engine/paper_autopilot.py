@@ -5399,14 +5399,18 @@ class PaperAutopilotEngine:
         # Raw crypto ranking rows lack asset_class/lane_id — set them before
         # normalization so _normalize_paper_entry_bridge does not default them
         # to equity/SWING.
-        if callable(self.get_crypto_candidate_rows_fn):
-            try:
-                rows.extend(
-                    [{**dict(row or {}), "asset_class": "crypto", "lane_id": "CRYPTO", "asset_type": "crypto"}
-                     for row in (self.get_crypto_candidate_rows_fn() or []) if isinstance(row, dict)]
-                )
-            except Exception:
-                pass
+        crypto_fn = self.get_crypto_candidate_rows_fn if callable(getattr(self, "get_crypto_candidate_rows_fn", None)) else None
+        if crypto_fn is None:
+            # Fallback: read directly from the crypto rankings snapshot populated
+            # by the worker's _refresh_crypto_rankings during each cycle.
+            crypto_fn = lambda: list((self._runtime_state.get("crypto_rankings_snapshot_v1") or {}).get("rows") or [])
+        try:
+            rows.extend(
+                [{**dict(row or {}), "asset_class": "crypto", "lane_id": "CRYPTO", "asset_type": "crypto"}
+                 for row in (crypto_fn() or []) if isinstance(row, dict)]
+            )
+        except Exception:
+            pass
         if not self.get_top_buys_fn:
             return rows
         try:
