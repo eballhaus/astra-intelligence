@@ -5396,10 +5396,14 @@ class PaperAutopilotEngine:
         rows: list[dict[str, Any]] = []
         # Crypto ranks are collected independently so they are never blocked by
         # an equity-only top-buys source returning None during off-hours.
+        # Raw crypto ranking rows lack asset_class/lane_id — set them before
+        # normalization so _normalize_paper_entry_bridge does not default them
+        # to equity/SWING.
         if callable(self.get_crypto_candidate_rows_fn):
             try:
                 rows.extend(
-                    [dict(row) for row in (self.get_crypto_candidate_rows_fn() or []) if isinstance(row, dict)]
+                    [{**dict(row or {}), "asset_class": "crypto", "lane_id": "CRYPTO", "asset_type": "crypto"}
+                     for row in (self.get_crypto_candidate_rows_fn() or []) if isinstance(row, dict)]
                 )
             except Exception:
                 pass
@@ -5434,7 +5438,8 @@ class PaperAutopilotEngine:
         if callable(self.get_crypto_candidate_rows_fn):
             try:
                 rows.extend(
-                    [dict(row) for row in (self.get_crypto_candidate_rows_fn() or []) if isinstance(row, dict)]
+                    [{**dict(row or {}), "asset_class": "crypto", "lane_id": "CRYPTO", "asset_type": "crypto"}
+                     for row in (self.get_crypto_candidate_rows_fn() or []) if isinstance(row, dict)]
                 )
             except Exception:
                 pass
