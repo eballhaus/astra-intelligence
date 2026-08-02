@@ -5393,8 +5393,18 @@ class PaperAutopilotEngine:
         }
 
     def _collect_candidate_rows(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        # Crypto ranks are collected independently so they are never blocked by
+        # an equity-only top-buys source returning None during off-hours.
+        if callable(self.get_crypto_candidate_rows_fn):
+            try:
+                rows.extend(
+                    [dict(row) for row in (self.get_crypto_candidate_rows_fn() or []) if isinstance(row, dict)]
+                )
+            except Exception:
+                pass
         if not self.get_top_buys_fn:
-            return []
+            return rows
         try:
             payload = self.get_top_buys_fn() or {}
         except Exception:
