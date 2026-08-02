@@ -48,6 +48,14 @@ class PaperAutopilotWorker:
     def __init__(self, autopilot: Any, *, once: bool = False) -> None:
         self.autopilot = autopilot
         self.once = once
+        # Ensure the autopilot has the crypto candidate function set, even when
+        # the worker starts independently of the server factory.
+        if not callable(getattr(autopilot, "get_crypto_candidate_rows_fn", None)):
+            try:
+                from server_extend import _crypto_operational_candidate_rows_v3
+                autopilot.get_crypto_candidate_rows_fn = _crypto_operational_candidate_rows_v3
+            except Exception:
+                pass
         self.limits = RuntimeLimits.from_env()
         self.lease = WorkerLease()
         self.stop_requested = False
