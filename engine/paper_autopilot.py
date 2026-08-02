@@ -5438,7 +5438,10 @@ class PaperAutopilotEngine:
             seen.add(sym)
             row = _normalize_paper_entry_bridge(row)
             row.setdefault("symbol", sym)
-            row.setdefault("asset_type", "stock")
+            # Preserve crypto asset class so the downstream execution path
+            # (asset == "crypto") can correctly identify lane-specific gates.
+            is_crypto = str(row.get("asset_class") or row.get("asset_type") or "").strip().lower() in {"crypto", "cryptocurrency"}
+            row.setdefault("asset_type", "crypto" if is_crypto else "stock")
             dedup.append(row)
         if self.edge_development_suite is not None and hasattr(self.edge_development_suite, "decorate_candidates"):
             try:
