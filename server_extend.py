@@ -51481,6 +51481,7 @@ def _horizon_candidate_flow_v1(statuses: dict | None = None) -> dict:
                 if key in horizon_bundle and key not in merged_assignment:
                     merged_assignment[key] = horizon_bundle.get(key)
             assignment = merged_assignment
+    current_snapshot_rows = _cached_candidate_rows_for_horizon_flow_v1()
     trace = _paper_autopilot_last_trace_v1()
     trace_rows = [dict(row) for row in (trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict)]
     source = "paper_autopilot_last_execution_trace" if trace_rows else "cached_top_buys_snapshot"
@@ -51531,7 +51532,11 @@ def _horizon_candidate_flow_v1(statuses: dict | None = None) -> dict:
                 horizon: ({reason: int(rejected_counts.get(horizon, 0))} if int(rejected_counts.get(horizon, 0)) > 0 else {})
                 for horizon in ("scalp", "day_trade", "swing_trade")
             }
-        return {
+        assignment_has_candidate_evidence = bool(any(candidate_counts.values()) or assigned_rows)
+        # A persisted zero-row horizon bundle can outlive the current Top Buys
+        # snapshot. It is not authoritative for current candidate generation.
+        if assignment_has_candidate_evidence or not current_snapshot_rows:
+            return {
             "candidate_flow_status": str(assignment.get("status") or "ok"),
             "candidate_flow_source": "existing_horizon_lifecycle_capacity_bundle_v1",
             "candidate_count_by_horizon": candidate_counts,
@@ -51552,10 +51557,13 @@ def _horizon_candidate_flow_v1(statuses: dict | None = None) -> dict:
             "excluded_replacement_rows": replacement_rows[:10],
             "provider_calls_used": 0,
             "llm_calls_used": 0,
-            **_safety_flags_v1(),
-        }
-    if not trace_rows:
-        trace_rows = _cached_candidate_rows_for_horizon_flow_v1()
+                **_safety_flags_v1(),
+            }
+    if current_snapshot_rows:
+        trace_rows = current_snapshot_rows
+        source = "bounded_top_buys_runtime_snapshot"
+    elif not trace_rows:
+        trace_rows = current_snapshot_rows
     candidate_counts = Counter()
     qualified_counts = Counter()
     rejected_counts = Counter()
@@ -51816,6 +51824,11 @@ def _normalize_horizon_reason_counts_v1(reasons: dict, horizon: str, fallback: s
 
 
 def _day_trade_top_rejected_candidates_v1(statuses: dict | None = None, limit: int = 10) -> list[dict]:
+    # A current Top Buys snapshot proves candidate generation but does not
+    # prove an execution rejection. Do not let an older execution trace turn
+    # those current rows into false rejected candidates.
+    if _cached_candidate_rows_for_horizon_flow_v1():
+        return []
     rows = []
     trace = _paper_autopilot_last_trace_v1()
     source_rows = [dict(row) for row in (trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict)]
@@ -52649,18 +52662,23 @@ def _candidate_level_horizon_trace_v1_payload(statuses: dict | None = None) -> d
             **_safety_flags_v1(),
         }
     trace = _paper_autopilot_last_trace_v1()
-    source_rows = [dict(row) for row in (trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict)]
-    source_name = "paper_autopilot_last_execution_trace"
-    try:
-        audit_payload = EXECUTION_PARTICIPATION_AUDIT.status(paper_trace=trace, force=False)
-    except Exception:
-        audit_payload = {}
-    if not source_rows:
-        source_rows = [dict(row) for row in (audit_payload.get("candidate_lineage_rows") or []) if isinstance(row, dict) and str(row.get("asset_class") or "equity") == "equity"]
-        source_name = "execution_participation_audit_v1"
-    if not source_rows:
-        source_rows = _cached_candidate_rows_for_horizon_flow_v1()
-        source_name = "cached_top_buys_or_horizon_candidate_rows_unresolved"
+    current_snapshot_rows = _cached_candidate_rows_for_horizon_flow_v1()
+    audit_payload = {}
+    if current_snapshot_rows:
+        source_rows = current_snapshot_rows
+        source_name = "bounded_top_buys_runtime_snapshot"
+    else:
+        source_rows = [dict(row) for row in (trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict)]
+        source_name = "paper_autopilot_last_execution_trace"
+        if not source_rows:
+            try:
+                audit_payload = EXECUTION_PARTICIPATION_AUDIT.status(paper_trace=trace, force=False)
+            except Exception:
+                audit_payload = {}
+            source_rows = [dict(row) for row in (audit_payload.get("candidate_lineage_rows") or []) if isinstance(row, dict) and str(row.get("asset_class") or "equity") == "equity"]
+            source_name = "execution_participation_audit_v1"
+        if not source_rows:
+            source_name = "cached_top_buys_or_horizon_candidate_rows_unresolved"
     flow = _horizon_candidate_flow_v1(statuses)
     day_reasons = ((flow.get("rejection_reasons_by_horizon") or {}).get("day_trade") or {})
     fallback_reason = next(
@@ -52693,7 +52711,10 @@ def _candidate_level_horizon_trace_v1_payload(statuses: dict | None = None) -> d
             source_name == "execution_participation_audit_v1"
             and (not row.get("assigned_horizon") or not row.get("horizon_scores") or not row.get("source_data_timestamp"))
         )
-        if not terminal_status and source_name != "cached_top_buys_or_horizon_candidate_rows_unresolved":
+        if not terminal_status and source_name == "bounded_top_buys_runtime_snapshot":
+            terminal_status = "CURRENT_CANDIDATE_NOT_EXECUTION_EVALUATED"
+            reason = "candidate_present_in_current_top_buys_snapshot_not_yet_in_execution_trace"
+        elif not terminal_status and source_name != "cached_top_buys_or_horizon_candidate_rows_unresolved":
             terminal_status = _day_trade_final_status_v1(reason, eligible)
         if not terminal_status:
             terminal_status = "REJECTED_MISSING_DATA"
@@ -68875,6 +68896,7 @@ def _turnover_intended_style_from_row_v1(row: dict) -> str:
     for key in (
         "intended_trade_style",
         "paper_entry_horizon_style",
+        "trade_horizon_style",
         "canonical_horizon",
         "assigned_horizon",
         "preferred_horizon",
