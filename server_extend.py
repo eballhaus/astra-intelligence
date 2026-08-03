@@ -35568,10 +35568,20 @@ def alpaca_paper_status_v1(force: bool = False):
     cached = _CACHE.get("alpaca_paper_status_v1") if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}
     cached_data = cached.get("data") if isinstance(cached, dict) else None
     cache_age = max(0.0, time.time() - _to_float(cached.get("ts"), 0.0)) if cached else 9999.0
-    if isinstance(cached_data, dict) and cached_data and cache_age <= 90.0 and not force:
+    if isinstance(cached_data, dict) and cached_data and not force:
         out_cached = dict(cached_data)
         out_cached["cache_hit"] = True
         out_cached["cache_age_seconds"] = round(cache_age, 3)
+        # Cache-first reads must never replace a previously verified broker
+        # snapshot with the zero-row cold fallback. Preserve its count and
+        # truth source, while making its age explicit until the next approved
+        # force=true read refreshes it.
+        if cache_age > 90.0:
+            out_cached["broker_status_refresh_deferred"] = True
+            out_cached["broker_status_refresh_deferred_reason"] = "cached_broker_snapshot_stale_refresh_requires_force_true"
+            out_cached["broker_snapshot_status"] = "STALE_CACHED_READ_ONLY"
+            out_cached["broker_snapshot_age_seconds"] = round(cache_age, 3)
+            out_cached["broker_refresh_success"] = False
         out_cached.setdefault("api_calls_used", 0)
         out_cached.setdefault("provider_calls_used", 0)
         out_cached.setdefault("llm_calls_used", 0)
