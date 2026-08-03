@@ -3274,6 +3274,10 @@ class PaperAutopilotEngine:
                 "broker_submission_blocked": True, "lane_id": "SWING", "paper_mode_verified": True,
                 "broker_live_endpoint_allowed": False,
             }
+        # SWING exits remain unavailable to the V2 lane writer unless they
+        # enter through the explicit legacy-canary adapter above.
+        if lane == "SWING":
+            return {"authorized": False, "status": "NOT_APPLICABLE", "reason": "lane_not_authorized_for_v2_exit"}
         if lane not in {"DAY", "SCALP", "SWING", "CRYPTO"}:
             return {"authorized": False, "status": "NOT_APPLICABLE", "reason": "lane_not_authorized_for_v2_exit"}
         owner = lane_owner_contract(open_row)
