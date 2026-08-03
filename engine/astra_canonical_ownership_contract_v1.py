@@ -353,13 +353,23 @@ def classify_dust_position_v1(
     position: Mapping[str, Any],
     is_broker_position: bool = True,
 ) -> dict[str, Any]:
-    """Classify a dust position for durable representation."""
+    """Classify a broker residual without removing it from reconciliation.
+
+    Equity residuals are dust when either the fractional quantity or notional
+    is below the canonical tradable threshold.  Crypto quantities have
+    asset-native units, so a tiny crypto quantity is dust only when its
+    broker-reported notional is also below the canonical notional threshold.
+    """
     row = dict(position or {})
     symbol = _text(row.get("symbol")).upper()
-    qty = _num(row.get("quantity") or row.get("qty") or 0.0) or 0.0
-    market_value = _num(row.get("market_value") or 0.0) or 0.0
+    qty_raw = row.get("quantity") if row.get("quantity") not in (None, "") else row.get("qty")
+    market_value_raw = row.get("market_value")
+    qty = _num(qty_raw) or 0.0
+    market_value = _num(market_value_raw) or 0.0
+    asset_type = _text(row.get("asset_type") or row.get("asset_class")).lower()
+    is_crypto = asset_type in {"crypto", "cryptocurrency"}
 
-    is_dust = 0.0 < abs(qty) < 0.001
+    is_dust = (not is_crypto) and 0.0 < abs(qty) < 0.001
     is_below_notional = market_value > 0 and market_value < 0.01
 
     if not is_dust and not is_below_notional:
@@ -389,6 +399,73 @@ def classify_dust_position_v1(
         "counts_toward_exposure": True,
         "counts_toward_reconciliation": True,
         "as_of": _iso(),
+    }
+
+
+def classify_meaningful_exposure_v1(
+    position: Mapping[str, Any],
+    *,
+    source: str = "broker",
+) -> dict[str, Any]:
+    """Return the canonical duplicate-entry view of an exposure.
+
+    Broker truth remains authoritative for reconciliation even when a row is
+    dust.  This narrower classification is used only by entry duplicate
+    prevention: dust cannot consume a new-entry symbol, while malformed or
+    ambiguous exposure fails closed rather than being silently treated as
+    dust.  Crypto uses the notional rule from ``classify_dust_position_v1``.
+    """
+    row = dict(position or {})
+    symbol = _text(row.get("symbol")).upper()
+    qty_raw = row.get("quantity") if row.get("quantity") not in (None, "") else row.get("qty")
+    market_value_raw = row.get("market_value")
+    qty = _num(qty_raw)
+    market_value = _num(market_value_raw)
+    asset_type = _text(row.get("asset_type") or row.get("asset_class")).lower()
+    is_crypto = asset_type in {"crypto", "cryptocurrency"}
+
+    base = {
+        "symbol": symbol,
+        "source": _text(source, "broker"),
+        "asset_type": asset_type or "unknown",
+        "quantity": qty,
+        "market_value": market_value,
+        "dust_classification": classify_dust_position_v1(row),
+    }
+    if qty is None or qty < 0 or (market_value is not None and market_value < 0):
+        return {
+            **base,
+            "meaningful_exposure": True,
+            "exposure_state": "AMBIGUOUS_FAIL_CLOSED",
+            "reason": "missing_or_malformed_broker_exposure",
+        }
+    if qty == 0:
+        return {
+            **base,
+            "meaningful_exposure": False,
+            "exposure_state": "NO_OPEN_EXPOSURE",
+            "reason": "zero_quantity",
+        }
+    if is_crypto and market_value is None:
+        return {
+            **base,
+            "meaningful_exposure": True,
+            "exposure_state": "AMBIGUOUS_FAIL_CLOSED",
+            "reason": "crypto_notional_unavailable",
+        }
+    dust = dict(base["dust_classification"] or {})
+    if bool(dust.get("is_dust")):
+        return {
+            **base,
+            "meaningful_exposure": False,
+            "exposure_state": "DUST_ONLY_POSITION_PRESENT",
+            "reason": ",".join(dust.get("dust_reasons") or ["canonical_dust_threshold"]),
+        }
+    return {
+        **base,
+        "meaningful_exposure": True,
+        "exposure_state": "MEANINGFUL_DUPLICATE_EXPOSURE",
+        "reason": "canonical_exposure_above_dust_threshold",
     }
 
 

@@ -74,6 +74,7 @@ from engine.astra_canonical_ownership_contract_v1 import (
     broker_residual_lookup,
     is_broker_linked_active_position,
     classify_dust_position_v1,
+    classify_meaningful_exposure_v1,
     persist_dust_position_v1,
     load_dust_positions_v1,
 )
@@ -5913,6 +5914,107 @@ class PaperAutopilotEngine:
                 pass
         return out
 
+    def _duplicate_exposure_snapshot(
+        self,
+        broker_snapshot: Mapping[str, Any],
+        internal_rows: list[dict[str, Any]],
+        *,
+        expire_reservations: bool = False,
+    ) -> dict[str, Any]:
+        """Build the entry-only duplicate view without weakening broker truth.
+
+        Raw broker symbols are still used by reconciliation and capacity.  A
+        duplicate entry is blocked only by meaningful exposure, an in-flight
+        entry order, or a live submission reservation.  This keeps a real but
+        untradable broker dust residual visible without treating it as a new
+        position-sized exposure.
+        """
+        snapshot = dict(broker_snapshot or {})
+        broker_rows = {
+            str(symbol or "").upper().strip(): dict(row or {})
+            for symbol, row in dict(snapshot.get("broker_position_by_symbol") or {}).items()
+            if str(symbol or "").strip() and isinstance(row, Mapping)
+        }
+        broker_meaningful: set[str] = set()
+        broker_dust: set[str] = set()
+        broker_ambiguous: set[str] = set()
+        details: dict[str, dict[str, Any]] = {}
+        for symbol, row in broker_rows.items():
+            classification = classify_meaningful_exposure_v1({**row, "symbol": symbol}, source="broker")
+            details[symbol] = {"broker": classification}
+            state = str(classification.get("exposure_state") or "")
+            if bool(classification.get("meaningful_exposure")):
+                broker_meaningful.add(symbol)
+                if state == "AMBIGUOUS_FAIL_CLOSED":
+                    broker_ambiguous.add(symbol)
+            elif state == "DUST_ONLY_POSITION_PRESENT":
+                broker_dust.add(symbol)
+
+        # A current successful broker reconciliation wins over an older local
+        # workflow row.  When broker truth is unavailable, a meaningful local
+        # OPEN row remains a conservative duplicate block.
+        broker_truth_current = bool(
+            snapshot.get("broker_reconciliation_active")
+            and snapshot.get("broker_positions_fetch_ok")
+        )
+        internal_meaningful: set[str] = set()
+        internal_dust: set[str] = set()
+        for raw in internal_rows or []:
+            row = dict(raw or {})
+            symbol = str(row.get("symbol") or "").upper().strip()
+            # A current broker snapshot is authoritative both when it contains
+            # a symbol and when it proves the local row is no longer open.
+            if not symbol or broker_truth_current:
+                continue
+            classification = classify_meaningful_exposure_v1(row, source="internal")
+            details.setdefault(symbol, {})["internal"] = classification
+            if bool(classification.get("meaningful_exposure")):
+                internal_meaningful.add(symbol)
+            elif str(classification.get("exposure_state") or "") == "DUST_ONLY_POSITION_PRESENT":
+                internal_dust.add(symbol)
+
+        pending_order_symbols: set[str] = set()
+        for raw in list(snapshot.get("broker_pending_orders") or []):
+            order = dict(raw or {})
+            symbol = str(order.get("symbol") or "").upper().strip()
+            if not symbol:
+                continue
+            side = str(order.get("side") or order.get("order_side") or "").lower().strip()
+            # A missing side is ambiguous and must remain fail-closed while an
+            # order is open.  Sell orders cannot create additional exposure.
+            if side in {"", "buy", "long"}:
+                pending_order_symbols.add(symbol)
+                details.setdefault(symbol, {})["open_order"] = {
+                    "exposure_state": "OPEN_ORDER_CONFLICT",
+                    "meaningful_exposure": True,
+                    "side": side or "unknown",
+                }
+
+        reservation_symbols = {
+            str(row.get("symbol") or "").upper().strip()
+            for row in self._active_lane_reserve_commitments(expire_abandoned=expire_reservations)
+            if str(row.get("symbol") or "").strip()
+        }
+        for symbol in reservation_symbols:
+            details.setdefault(symbol, {})["reservation"] = {
+                "exposure_state": "SUBMISSION_RESERVATION_CONFLICT",
+                "meaningful_exposure": True,
+            }
+
+        blocking_symbols = set(broker_meaningful) | set(internal_meaningful) | set(pending_order_symbols) | set(reservation_symbols)
+        return {
+            "blocking_symbols": blocking_symbols,
+            "broker_meaningful_symbols": broker_meaningful,
+            "broker_dust_symbols": broker_dust,
+            "broker_ambiguous_symbols": broker_ambiguous,
+            "internal_meaningful_symbols": internal_meaningful,
+            "internal_dust_symbols": internal_dust,
+            "pending_order_symbols": pending_order_symbols,
+            "reservation_symbols": reservation_symbols,
+            "details_by_symbol": details,
+            "broker_truth_current": broker_truth_current,
+        }
+
     def _reconcile_entry_price_lineage_v1(self, broker_snapshot: dict[str, Any]) -> dict[str, Any]:
         """Replace a stored provisional price only with ID-linked paper fill evidence.
 
@@ -6690,8 +6792,8 @@ class PaperAutopilotEngine:
     def _lane_reserve_commitment_ttl_seconds(self) -> int:
         return max(15, min(300, _to_int(os.getenv("ASTRA_LANE_RESERVE_COMMITMENT_TTL_SECONDS"), 90)))
 
-    def _active_lane_reserve_commitments(self) -> list[dict[str, Any]]:
-        """Return live in-flight commitments and expire abandoned worker holds."""
+    def _active_lane_reserve_commitments(self, *, expire_abandoned: bool = True) -> list[dict[str, Any]]:
+        """Return live in-flight commitments, expiring only from a worker path."""
         now = datetime.now(UTC)
         active: list[dict[str, Any]] = []
         commitments = self._runtime_state.setdefault("lane_reserve_commitments", {"DAY": {}, "SCALP": {}, "CRYPTO": {}})
@@ -6710,6 +6812,8 @@ class PaperAutopilotEngine:
                 except (TypeError, ValueError):
                     expired = True
                 if state in {"REQUESTED", "HELD", "CONVERTED_TO_PENDING_ORDER"} and expired:
+                    if not expire_abandoned:
+                        continue
                     row.update({"commitment_state": "EXPIRED", "state": "EXPIRED", "released_at": _now_iso(), "release_reason": "commitment_ttl_expired"})
                     lane_rows[commitment_id] = row
                     stats["expired"] = _to_int(stats.get("expired"), 0) + 1
@@ -7085,6 +7189,7 @@ class PaperAutopilotEngine:
         internal_open_syms: set[str] | None = None,
         broker_open_syms: set[str] | None = None,
         broker_reconciliation_active: bool = False,
+        duplicate_exposure_snapshot: Mapping[str, Any] | None = None,
         max_new_positions_per_cycle: int | None = None,
         capacity_decision: dict[str, Any] | None = None,
         capacity_snapshot: Mapping[str, Any] | None = None,
@@ -7118,16 +7223,34 @@ class PaperAutopilotEngine:
         gate_meta: dict[str, Any] = {"commitment_score": 0.0}
         internal_set = set(internal_open_syms or set())
         broker_set = set(broker_open_syms or set())
+        duplicate_snapshot = dict(duplicate_exposure_snapshot or {})
         duplicate_source = "none"
+        duplicate_exposure_state = "NO_DUPLICATE_EXPOSURE"
+        duplicate_detail: dict[str, Any] = {}
         if symbol:
             in_internal = symbol in internal_set
             in_broker = symbol in broker_set
-            if in_internal and in_broker:
-                duplicate_source = "both"
-            elif in_internal:
-                duplicate_source = "internal"
-            elif in_broker:
-                duplicate_source = "broker"
+            in_open_order = symbol in set(duplicate_snapshot.get("pending_order_symbols") or set())
+            in_reservation = symbol in set(duplicate_snapshot.get("reservation_symbols") or set())
+            sources = []
+            if in_internal:
+                sources.append("internal")
+            if in_broker:
+                sources.append("broker")
+            if in_open_order:
+                sources.append("open_order")
+            if in_reservation:
+                sources.append("reservation")
+            if sources:
+                duplicate_source = "both" if set(sources) == {"internal", "broker"} else "+".join(sources)
+                duplicate_detail = dict((duplicate_snapshot.get("details_by_symbol") or {}).get(symbol) or {})
+                duplicate_exposure_state = str(
+                    (duplicate_detail.get("open_order") or duplicate_detail.get("reservation") or duplicate_detail.get("broker") or duplicate_detail.get("internal") or {}).get("exposure_state")
+                    or "MEANINGFUL_DUPLICATE_EXPOSURE"
+                )
+            elif symbol in set(duplicate_snapshot.get("broker_dust_symbols") or set()) or symbol in set(duplicate_snapshot.get("internal_dust_symbols") or set()):
+                duplicate_exposure_state = "DUST_ONLY_POSITION_PRESENT"
+                duplicate_detail = dict((duplicate_snapshot.get("details_by_symbol") or {}).get(symbol) or {})
         max_new_limit = int(max_new_positions_per_cycle) if max_new_positions_per_cycle is not None else int(self.max_new_positions_per_cycle)
         reserve_capacity_allowed = bool((capacity_decision or {}).get("allowed"))
         if not bool(activation.get("execution_enabled")):
@@ -7385,6 +7508,9 @@ class PaperAutopilotEngine:
             "commitment_score": round(_to_float(gate_meta.get("commitment_score"), 0.0), 2),
             "duplicate_active_position": bool(symbol in open_syms) if symbol else False,
             "duplicate_source": duplicate_source,
+            "duplicate_exposure_state": duplicate_exposure_state,
+            "duplicate_exposure_details": duplicate_detail,
+            "dust_only_position_present": bool(duplicate_exposure_state == "DUST_ONLY_POSITION_PRESENT"),
             "broker_reconciliation_active": bool(broker_reconciliation_active),
             "market_session_mode": str(session_diag.get("market_session_mode") or ""),
             "session_state": str(activation.get("session_state") or "CANDIDATE_DEPENDENT"),
@@ -10331,7 +10457,12 @@ class PaperAutopilotEngine:
                     blocker_reason = ""
                     partial_candidate_traces: list[dict[str, Any]] = []
 
-                    broker_positions = dict(broker_snapshot.get("broker_position_by_symbol") or {})
+                    duplicate_exposure = self._duplicate_exposure_snapshot(
+                        broker_snapshot,
+                        self._fetch_open_positions(),
+                        expire_reservations=True,
+                    )
+                    duplicate_open_symbols = set(duplicate_exposure.get("blocking_symbols") or set())
 
                     # A partial cycle is a bounded observation path, not a
                     # weaker order-ready path.  It uses the same provider
@@ -10348,16 +10479,18 @@ class PaperAutopilotEngine:
                             evidence_capacity_snapshot,
                             lane_id=lane,
                             symbol=sym,
-                            open_symbols=set(broker_positions),
+                            open_symbols=duplicate_open_symbols,
                         )
                         trace, allowed, reason, _meta = self._candidate_trace_row(
                             hydrated,
-                            open_syms=set(broker_positions),
+                            open_syms=duplicate_open_symbols,
                             stock_capacity=max(1, _to_int(capacity_decision.get("positions_remaining"), 0)),
                             crypto_capacity=max(1, _to_int(capacity_decision.get("positions_remaining"), 0)),
                             total_capacity=max(1, _to_int(capacity_decision.get("positions_remaining"), 0)),
-                            broker_open_syms=set(broker_positions),
+                            internal_open_syms=set(duplicate_exposure.get("internal_meaningful_symbols") or set()),
+                            broker_open_syms=set(duplicate_exposure.get("broker_meaningful_symbols") or set()),
                             broker_reconciliation_active=bool(broker_snapshot.get("broker_reconciliation_active")),
+                            duplicate_exposure_snapshot=duplicate_exposure,
                             capacity_decision=capacity_decision,
                             capacity_snapshot=evidence_capacity_snapshot,
                             current_candidates=candidate_rows,
@@ -10496,6 +10629,13 @@ class PaperAutopilotEngine:
             broker_snapshot = self._broker_open_symbols_snapshot()
             broker_open_syms = set(broker_snapshot.get("broker_open_symbols") or set())
             broker_position_by_symbol = dict(broker_snapshot.get("broker_position_by_symbol") or {})
+            duplicate_exposure = self._duplicate_exposure_snapshot(
+                broker_snapshot,
+                open_rows_initial,
+                expire_reservations=True,
+            )
+            duplicate_internal_open_syms = set(duplicate_exposure.get("internal_meaningful_symbols") or set())
+            duplicate_broker_open_syms = set(duplicate_exposure.get("broker_meaningful_symbols") or set())
             self._note_worker_progress("entry_price_lineage_reconciliation")
             entry_price_lineage_refresh = self._reconcile_entry_price_lineage_v1(broker_snapshot)
             legacy_activation_refresh = self._refresh_legacy_forward_activations(broker_position_by_symbol)
@@ -10607,10 +10747,10 @@ class PaperAutopilotEngine:
             # When broker reconciliation is active and fetch succeeded, broker positions are the
             # source of truth for duplicate suppression on paper order submission.
             if broker_reconciliation_active and broker_positions_fetch_ok:
-                open_syms = set(broker_open_syms)
+                open_syms = set(duplicate_exposure.get("blocking_symbols") or set())
                 capacity_source = "broker"
             else:
-                open_syms = set(internal_open_syms)
+                open_syms = set(duplicate_exposure.get("blocking_symbols") or set())
                 capacity_source = "internal"
 
             open_rows = list(open_rows_initial)
@@ -10964,18 +11104,21 @@ class PaperAutopilotEngine:
                     reason = "missing_symbol" if not symbol else "duplicate_active_position"
                     duplicate_source = "none"
                     if symbol:
-                        in_internal = symbol in internal_open_syms
-                        in_broker = symbol in broker_open_syms
-                        if in_internal and in_broker:
-                            duplicate_source = "both"
-                        elif in_internal:
-                            duplicate_source = "internal"
-                        elif in_broker:
-                            duplicate_source = "broker"
+                        sources = []
+                        if symbol in duplicate_internal_open_syms:
+                            sources.append("internal")
+                        if symbol in duplicate_broker_open_syms:
+                            sources.append("broker")
+                        if symbol in set(duplicate_exposure.get("pending_order_symbols") or set()):
+                            sources.append("open_order")
+                        if symbol in set(duplicate_exposure.get("reservation_symbols") or set()):
+                            sources.append("reservation")
+                        duplicate_source = "both" if set(sources) == {"internal", "broker"} else "+".join(sources) or "unknown"
                     decision_trace.append(_execution_trace_event(
                         row, symbol=symbol, asset_type=asset, eligible=False,
                         selected=False, decision_reason=reason,
                         duplicate_source=duplicate_source,
+                        duplicate_exposure_state=str(((duplicate_exposure.get("details_by_symbol") or {}).get(symbol) or {}).get("broker", {}).get("exposure_state") or "MEANINGFUL_DUPLICATE_EXPOSURE"),
                         broker_reconciliation_active=broker_reconciliation_active,
                     ))
                     final_blocker_reason = reason
@@ -11065,9 +11208,10 @@ class PaperAutopilotEngine:
                     crypto_capacity=crypto_capacity,
                     total_capacity=max(total_capacity, crypto_capacity) if asset == "crypto" else total_capacity,
                     selected_so_far=selected_count,
-                    internal_open_syms=internal_open_syms,
-                    broker_open_syms=broker_open_syms,
-                broker_reconciliation_active=broker_reconciliation_active,
+                    internal_open_syms=duplicate_internal_open_syms,
+                    broker_open_syms=duplicate_broker_open_syms,
+                    broker_reconciliation_active=broker_reconciliation_active,
+                    duplicate_exposure_snapshot=duplicate_exposure,
                 capacity_decision=capacity_decision,
                 capacity_snapshot=evidence_capacity_snapshot,
                 current_candidates=candidates,
@@ -11557,7 +11701,9 @@ class PaperAutopilotEngine:
         candidates = [_normalize_paper_entry_bridge(row) for row in candidate_rows if isinstance(row, dict)]
         limit = max(1, min(30, int(max_candidates or 30)))
         capacities = self._current_execution_capacities()
-        open_syms = set(capacities.get("open_symbols") or set())
+        internal_rows = self._fetch_open_positions()
+        duplicate_exposure = self._duplicate_exposure_snapshot({}, internal_rows)
+        open_syms = set(duplicate_exposure.get("blocking_symbols") or set())
         stock_capacity = int(capacities.get("stock_capacity", 0))
         crypto_capacity = int(capacities.get("crypto_capacity", 0))
         total_capacity = int(capacities.get("total_capacity", 0))
@@ -11579,9 +11725,10 @@ class PaperAutopilotEngine:
                 crypto_capacity=crypto_capacity,
                 total_capacity=total_capacity,
                 selected_so_far=selected,
-                internal_open_syms=open_syms,
+                internal_open_syms=set(duplicate_exposure.get("internal_meaningful_symbols") or set()),
                 broker_open_syms=set(),
                 broker_reconciliation_active=False,
+                duplicate_exposure_snapshot=duplicate_exposure,
                 capacity_decision=capacity_decision,
                 capacity_snapshot=canonical_capacity,
                 current_candidates=candidates,
@@ -11775,20 +11922,24 @@ class PaperAutopilotEngine:
             except Exception:
                 broad_universe_status = {}
         capacities = self._current_execution_capacities()
+        internal_rows = self._fetch_open_positions()
         internal_open_syms = set(capacities.get("open_symbols") or set())
         broker_snapshot = self._broker_open_symbols_snapshot()
         broker_open_syms = set(broker_snapshot.get("broker_open_symbols") or set())
+        duplicate_exposure = self._duplicate_exposure_snapshot(broker_snapshot, internal_rows)
+        duplicate_internal_open_syms = set(duplicate_exposure.get("internal_meaningful_symbols") or set())
+        duplicate_broker_open_syms = set(duplicate_exposure.get("broker_meaningful_symbols") or set())
         broker_reconciliation_active = bool(broker_snapshot.get("broker_reconciliation_active", False))
         broker_positions_fetch_ok = bool(broker_snapshot.get("broker_positions_fetch_ok", False))
         broker_learning_rows = self._broker_learning_position_rows(broker_snapshot, self._fetch_open_positions())
         stale_internal_positions = sorted(x for x in internal_open_syms if x and x not in broker_open_syms)
         if broker_reconciliation_active and broker_positions_fetch_ok:
-            open_syms = set(broker_open_syms)
+            open_syms = set(duplicate_exposure.get("blocking_symbols") or set())
             capacity_source = "broker"
             effective_stock_open = int(len([s for s in broker_open_syms if s]))
             effective_crypto_open = 0
         else:
-            open_syms = set(internal_open_syms)
+            open_syms = set(duplicate_exposure.get("blocking_symbols") or set())
             capacity_source = "internal"
             effective_stock_open = int(capacities.get("open_positions_stock", 0))
             effective_crypto_open = int(capacities.get("open_positions_crypto", 0))
@@ -11815,9 +11966,10 @@ class PaperAutopilotEngine:
                 crypto_capacity=crypto_capacity,
                 total_capacity=total_capacity,
                 selected_so_far=selected,
-                internal_open_syms=internal_open_syms,
-                broker_open_syms=broker_open_syms,
+                internal_open_syms=duplicate_internal_open_syms,
+                broker_open_syms=duplicate_broker_open_syms,
                 broker_reconciliation_active=broker_reconciliation_active,
+                duplicate_exposure_snapshot=duplicate_exposure,
                 current_candidates=candidates,
             )
             if allowed:
@@ -12078,18 +12230,22 @@ class PaperAutopilotEngine:
                 broad_status = {}
 
         capacities = self._current_execution_capacities()
+        internal_rows = self._fetch_open_positions()
         internal_open_syms = set(capacities.get("open_symbols") or set())
         broker_snapshot = self._broker_open_symbols_snapshot()
         broker_open_syms = set(broker_snapshot.get("broker_open_symbols") or set())
+        duplicate_exposure = self._duplicate_exposure_snapshot(broker_snapshot, internal_rows)
+        duplicate_internal_open_syms = set(duplicate_exposure.get("internal_meaningful_symbols") or set())
+        duplicate_broker_open_syms = set(duplicate_exposure.get("broker_meaningful_symbols") or set())
         broker_reconciliation_active = bool(broker_snapshot.get("broker_reconciliation_active", False))
         broker_positions_fetch_ok = bool(broker_snapshot.get("broker_positions_fetch_ok", False))
         if broker_reconciliation_active and broker_positions_fetch_ok:
-            open_syms = set(broker_open_syms)
+            open_syms = set(duplicate_exposure.get("blocking_symbols") or set())
             effective_stock_open = int(len([s for s in broker_open_syms if s]))
             effective_crypto_open = 0
             capacity_source = "broker"
         else:
-            open_syms = set(internal_open_syms)
+            open_syms = set(duplicate_exposure.get("blocking_symbols") or set())
             effective_stock_open = int(capacities.get("open_positions_stock", 0))
             effective_crypto_open = int(capacities.get("open_positions_crypto", 0))
             capacity_source = "internal"
@@ -12125,9 +12281,10 @@ class PaperAutopilotEngine:
                 crypto_capacity=crypto_capacity,
                 total_capacity=total_capacity,
                 selected_so_far=selected,
-                internal_open_syms=internal_open_syms,
-                broker_open_syms=broker_open_syms,
+                internal_open_syms=duplicate_internal_open_syms,
+                broker_open_syms=duplicate_broker_open_syms,
                 broker_reconciliation_active=broker_reconciliation_active,
+                duplicate_exposure_snapshot=duplicate_exposure,
                 max_new_positions_per_cycle=simulated_max_new,
                 current_candidates=candidates,
             )

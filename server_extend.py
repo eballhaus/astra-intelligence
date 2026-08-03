@@ -61888,6 +61888,10 @@ def _reconciliation_truth_counts_v1(registry: dict[str, Any]) -> dict[str, int]:
 
 
 def _astra_trade_state_reconciliation_payload(statuses: dict | None = None, *, force: bool = False) -> dict:
+    # Keep dashboard dust diagnostics aligned with the canonical entry and
+    # capacity contract. Raw broker rows remain available for reconciliation.
+    from engine.astra_canonical_ownership_contract_v1 import classify_dust_position_v1
+
     statuses = dict(statuses or {})
     started_at = time.time()
     broker_snapshot = _trade_state_reconciliation_cached_broker_snapshot_v1(statuses, force=force)
@@ -62075,8 +62079,7 @@ def _astra_trade_state_reconciliation_payload(statuses: dict | None = None, *, f
             continue
         symbol = str(row.get("symbol") or "").upper().strip()
         market_value = abs(_to_float(row.get("market_value"), 0.0))
-        qty = abs(_to_float(row.get("qty"), 0.0))
-        if market_value < 1.0 or qty < 0.0001:
+        if bool(classify_dust_position_v1(row).get("is_dust")):
             dust_symbols.append(symbol)
             dust_value_total += market_value
     fills = [r for r in truth_rows if str(r.get("filled_at") or "").strip()]
