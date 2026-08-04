@@ -6198,6 +6198,9 @@ class PaperAutopilotEngine:
                 )
                 if str(old.get(key) or "").strip()
             }
+            historical_archive = _safe_json_load(old.get("lifecycle_notes")).get("historical_reconciliation_archive_v1") or {}
+            if str(historical_archive.get("legacy_parent_position_id") or "").strip():
+                direct_ids.add(str(historical_archive.get("legacy_parent_position_id")).strip())
             legacy_intents = [
                 dict(value or {})
                 for value in intents.values()
@@ -6251,14 +6254,14 @@ class PaperAutopilotEngine:
 
         with self._connect() as conn:
             rows = [dict(row or {}) for row in conn.execute(
-                "SELECT * FROM paper_positions WHERE status='OPEN' ORDER BY updated_at DESC"
+                "SELECT * FROM paper_positions WHERE status IN ('OPEN','BROKER_HELD_DUST') ORDER BY updated_at DESC"
             ).fetchall()]
             by_symbol: dict[str, list[dict[str, Any]]] = {}
             for row in rows:
                 by_symbol.setdefault(str(row.get("symbol") or "").upper().strip(), []).append(row)
             for symbol, group in by_symbol.items():
                 current = [row for row in group if str(row.get("position_owner") or "").upper() in {"DAY", "SCALP", "SWING", "CRYPTO"} and bool(row.get("entry_price_verified")) and str(row.get("entry_fill_id") or "")]
-                historical = [row for row in group if str(row.get("position_owner") or "").upper() == "LEGACY" and str(row.get("reconciliation_reason") or "") == "PARTIAL_EXIT_RESIDUAL"]
+                historical = [row for row in group if str(row.get("position_owner") or "").upper() == "LEGACY" and str(row.get("reconciliation_reason") or "") in {"PARTIAL_EXIT_RESIDUAL", "BROKER_HELD_DUST_RESIDUAL"}]
                 if len(current) != 1 or not historical:
                     continue
                 for old in historical:
@@ -6276,18 +6279,29 @@ class PaperAutopilotEngine:
                     if not bool(dust.get("is_dust")) or not distinct_current or not distinct_lifecycle:
                         continue
                     notes = _safe_json_load(old.get("lifecycle_notes"))
+                    parent_lifecycle_id = str(intent.get("legacy_lifecycle_id") or "")
+                    already_archived = str(old.get("status") or "") == "BROKER_HELD_DUST"
                     notes["historical_reconciliation_archive_v1"] = {
                         "archived_at": _now_iso(), "reason": "NEWER_BROKER_CONFIRMED_LIFECYCLE_SAME_SYMBOL",
                         "current_position_id": current[0].get("position_id"), "legacy_retirement_intent_id": intent.get("order_intent_id"),
                         "legacy_parent_position_id": intent.get("position_id"),
+                        "legacy_parent_lifecycle_id": parent_lifecycle_id,
                         "lineage_resolution": lineage_resolution,
                         "dust_quantity": qty,
                     }
-                    conn.execute(
-                        "UPDATE paper_positions SET status='BROKER_HELD_DUST', quantity=?, reconciliation_reason='BROKER_HELD_DUST_RESIDUAL', reconciliation_parent_position_id=?, reconciliation_parent_retirement_intent_id=?, reconciliation_lineage_resolution=?, lifecycle_notes=?, updated_at=? WHERE position_id=? AND status='OPEN'",
-                        (qty, str(intent.get("position_id") or ""), str(intent.get("order_intent_id") or ""), lineage_resolution, _safe_json(notes), _now_iso(), old.get("position_id")),
-                    )
-                    archived.append({"symbol": symbol, "historical_position_id": old.get("position_id"), "current_position_id": current[0].get("position_id"), "dust_quantity": qty})
+                    # A previously archived row needs only immutable-parent
+                    # backfill; it must never be reopened or counted again.
+                    if already_archived:
+                        conn.execute(
+                            "UPDATE paper_positions SET reconciliation_parent_position_id=?, reconciliation_parent_lifecycle_id=?, reconciliation_parent_retirement_intent_id=?, reconciliation_lineage_resolution=?, lifecycle_notes=?, updated_at=? WHERE position_id=? AND status='BROKER_HELD_DUST'",
+                            (str(intent.get("position_id") or ""), parent_lifecycle_id, str(intent.get("order_intent_id") or ""), lineage_resolution, _safe_json(notes), _now_iso(), old.get("position_id")),
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE paper_positions SET status='BROKER_HELD_DUST', quantity=?, reconciliation_reason='BROKER_HELD_DUST_RESIDUAL', reconciliation_parent_position_id=?, reconciliation_parent_lifecycle_id=?, reconciliation_parent_retirement_intent_id=?, reconciliation_lineage_resolution=?, lifecycle_notes=?, updated_at=? WHERE position_id=? AND status='OPEN'",
+                            (qty, str(intent.get("position_id") or ""), parent_lifecycle_id, str(intent.get("order_intent_id") or ""), lineage_resolution, _safe_json(notes), _now_iso(), old.get("position_id")),
+                        )
+                        archived.append({"symbol": symbol, "historical_position_id": old.get("position_id"), "current_position_id": current[0].get("position_id"), "dust_quantity": qty})
             conn.commit()
         return {"archived": archived, "archived_count": len(archived), "broker_actions_used": 0}
 

@@ -256,6 +256,7 @@ class BrokerEntryPriceLineageRepairTests(unittest.TestCase):
                 "legacy-retire:SG": {
                     "legacy_imported_retirement": True, "position_id": "original-legacy-position",
                     "order_intent_id": "legacy-retire:SG", "symbol": "SG", "status": "BROKER_HELD_DUST",
+                    "legacy_lifecycle_id": "legacy-retire:SG",
                     "submission_timestamp": "2026-07-31T19:55:00Z", "submitted_quantity": 22.4614,
                     "cumulative_filled_quantity": 22.4614, "broker_order_id": "retirement-filled-order",
                     "broker_order_status": "FILLED", "order": {"side": "sell"},
@@ -265,15 +266,50 @@ class BrokerEntryPriceLineageRepairTests(unittest.TestCase):
             }
             report = engine._archive_historical_reconciliation_collisions_v1()
             with engine._connect() as conn:
-                old = dict(conn.execute("SELECT status,quantity,reconciliation_parent_position_id,reconciliation_parent_retirement_intent_id,reconciliation_lineage_resolution FROM paper_positions WHERE position_id='recon-legacy'").fetchone())
+                old = dict(conn.execute("SELECT status,quantity,reconciliation_parent_position_id,reconciliation_parent_lifecycle_id,reconciliation_parent_retirement_intent_id,reconciliation_lineage_resolution FROM paper_positions WHERE position_id='recon-legacy'").fetchone())
                 current = dict(conn.execute("SELECT status,quantity,lane_id,position_owner,exit_policy_owner FROM paper_positions WHERE position_id='new-day'").fetchone())
             self.assertEqual(report["archived_count"], 1)
             self.assertEqual(old["status"], "BROKER_HELD_DUST")
             self.assertAlmostEqual(old["quantity"], 0.00000027)
             self.assertEqual(old["reconciliation_parent_position_id"], "original-legacy-position")
+            self.assertEqual(old["reconciliation_parent_lifecycle_id"], "legacy-retire:SG")
             self.assertEqual(old["reconciliation_parent_retirement_intent_id"], "legacy-retire:SG")
             self.assertEqual(old["reconciliation_lineage_resolution"], "VERIFIED_RETIREMENT_ARITHMETIC_PROVENANCE")
             self.assertEqual(current, {"status": "OPEN", "quantity": 16.805042016, "lane_id": "DAY", "position_owner": "DAY", "exit_policy_owner": "DAY"})
+
+    def test_terminal_dust_row_backfills_parent_lifecycle_without_rearchiving(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            engine = PaperAutopilotEngine(db_path=str(root / "paper.db"), state_path=str(root / "state.json"))
+            notes = json.dumps({"historical_reconciliation_archive_v1": {
+                "legacy_parent_position_id": "original-legacy-position",
+                "legacy_retirement_intent_id": "legacy-retire:SG",
+            }})
+            with engine._connect() as conn:
+                conn.execute("""INSERT INTO paper_positions(position_id,symbol,asset_type,status,quantity,entry_price,entry_price_verified,entry_fill_id,entry_timestamp,lane_id,position_owner,exit_policy_owner,reconciliation_reason,lifecycle_notes,created_at,updated_at) VALUES ('recon-legacy','SG','stock','BROKER_HELD_DUST',0.00000027,8.9,0,'','2026-07-27T22:23:01Z','','LEGACY','LEGACY','BROKER_HELD_DUST_RESIDUAL',?,'2026-07-31T20:00:00Z','2026-07-31T20:00:00Z')""", (notes,))
+                conn.execute("""INSERT INTO paper_positions(position_id,symbol,asset_type,status,quantity,entry_price,entry_price_verified,entry_fill_id,entry_timestamp,lane_id,position_owner,exit_policy_owner,lifecycle_notes,created_at,updated_at) VALUES ('new-day','SG','stock','OPEN',16.805042016,5.95,1,'new-entry-fill','2026-08-04T13:44:29Z','DAY','DAY','DAY','{}','2026-08-04T13:44:29Z','2026-08-04T13:44:29Z')""")
+                conn.commit()
+            engine._runtime_state["paper_sell_order_intents"] = {
+                "legacy-retire:SG": {
+                    "legacy_imported_retirement": True, "position_id": "original-legacy-position",
+                    "order_intent_id": "legacy-retire:SG", "legacy_lifecycle_id": "legacy-lifecycle-sg",
+                    "symbol": "SG", "status": "BROKER_HELD_DUST", "submission_timestamp": "2026-07-31T19:55:00Z",
+                    "submitted_quantity": 22.4614, "cumulative_filled_quantity": 22.4614,
+                    "broker_order_id": "retirement-filled-order", "broker_order_status": "FILLED",
+                    "order": {"side": "sell"}, "broker_residual_lookup": {"broker_residual_quantity": 0.00000027},
+                    "dust_residual": {"is_dust": True},
+                }
+            }
+            report = engine._archive_historical_reconciliation_collisions_v1()
+            with engine._connect() as conn:
+                old = dict(conn.execute("SELECT status,quantity,reconciliation_parent_position_id,reconciliation_parent_lifecycle_id,reconciliation_parent_retirement_intent_id FROM paper_positions WHERE position_id='recon-legacy'").fetchone())
+            self.assertEqual(report["archived_count"], 0)
+            self.assertEqual(old, {
+                "status": "BROKER_HELD_DUST", "quantity": 0.00000027,
+                "reconciliation_parent_position_id": "original-legacy-position",
+                "reconciliation_parent_lifecycle_id": "legacy-lifecycle-sg",
+                "reconciliation_parent_retirement_intent_id": "legacy-retire:SG",
+            })
 
     def test_symbol_only_or_ambiguous_retirement_lineage_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
