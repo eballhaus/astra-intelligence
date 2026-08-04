@@ -617,6 +617,7 @@ class ContinuousGovernanceV1:
             scanner_invariant("ALL_CRITICAL_CONSUMERS_USE_APPROVED_SOURCE", not any(str(row.get("category")) == "CANONICAL_SOURCE_VIOLATION" for row in roots), "noncanonical source used by a critical consumer")
             scanner_invariant("NO_ENDPOINT_CRITICAL_FACT_CONTRADICTION", not any(str(row.get("category")) in {"CANONICAL_SOURCE_VIOLATION", "SCOPE_MISMATCH"} for row in roots), "critical fact contradiction present")
             scanner_invariant("NO_VALID_EVIDENCE_SILENTLY_DROPPED_BY_CONSUMER", not any(str(row.get("category")) == "EVIDENCE_CONSUMER_FAILURE" for row in roots), "valid evidence not consumed")
+            scanner_invariant("HISTORICAL_RECONCILIATION_CANNOT_OVERRIDE_CURRENT_POSITION_OWNER", not any(str(row.get("category")) == "HISTORICAL_RECONCILIATION_OWNERSHIP_COLLISION" for row in roots), "historical reconciliation row remains an operational position owner")
             scanner_invariant("SAFE_CORRECTION_MUST_BE_ALLOWLISTED", all(bool(row.get("safe_correction_available")) or bool(row.get("human_repair_required")) for row in roots), "unclassified correction authority")
             scanner_invariant("RECURRENT_DEFECT_MUST_ESCALATE", not any(str(row.get("state")) == "RECURRENT" for row in roots), "recurrent root cause requires review")
             resource = _dict(integrity.get("resource_protection"))

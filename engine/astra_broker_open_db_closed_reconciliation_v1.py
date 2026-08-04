@@ -22,6 +22,12 @@ def _num(val, default=0.0):
 def migrate_broker_open_db_closed(apply: bool = True):
     conn = sqlite3.connect("state/ai_trading_memory.db")
     cur = conn.cursor()
+    # Reconciliation parentage is immutable ownership evidence.  It cannot be
+    # left only in lifecycle_notes because monitoring refreshes those notes.
+    columns = {row[1] for row in cur.execute("PRAGMA table_info(paper_positions)").fetchall()}
+    for column in ("reconciliation_parent_position_id", "reconciliation_parent_lifecycle_id"):
+        if column not in columns:
+            cur.execute(f"ALTER TABLE paper_positions ADD COLUMN {column} TEXT")
     now = _now_iso()
     
     # Get broker positions from capacity snapshot
@@ -69,7 +75,8 @@ def migrate_broker_open_db_closed(apply: bool = True):
         cur.execute("""
             SELECT position_id, entry_price, entry_price_verified, entry_price_source,
                    entry_order_id, entry_fill_id, source_candidate_id, source_lifecycle_id,
-                   lane_id, position_owner, lifecycle_notes, reconciliation_reason
+                   lane_id, position_owner, lifecycle_notes, reconciliation_reason,
+                   entry_timestamp
             FROM paper_positions 
             WHERE symbol=? AND status='CLOSED' 
             ORDER BY rowid DESC LIMIT 1
@@ -97,6 +104,7 @@ def migrate_broker_open_db_closed(apply: bool = True):
             old_owner = closed_row[9]
             old_notes = closed_row[10]
             old_reason = closed_row[11]
+            old_entry_timestamp = closed_row[12]
             
             # Broker-reported avg_entry is the current position entry price
             broker_entry = bdata["avg_entry_price"]
@@ -140,29 +148,34 @@ def migrate_broker_open_db_closed(apply: bool = True):
                 cur.execute("""
                     INSERT INTO paper_positions (
                         position_id, symbol, asset_type, status, quantity,
-                        entry_price, entry_price_verified, entry_price_provisional,
+                        entry_price, entry_timestamp, entry_price_verified, entry_price_provisional,
                         entry_price_source, entry_price_lineage_status,
                         lane_id, position_owner, exit_policy_owner,
                         entry_order_id, entry_fill_id,
                         source_candidate_id, source_lifecycle_id,
                         lifecycle_notes, reconciliation_reason,
                         reconciliation_evidence_source, prior_status,
-                        source_bucket, created_at, updated_at, reconciled_at
+                        source_bucket, created_at, updated_at, reconciled_at,
+                        reconciliation_parent_position_id, reconciliation_parent_lifecycle_id
                     ) VALUES (?, ?, ?, ?, ?,
-                              ?, ?, ?, ?, ?,
-                              ?, ?, ?, ?, ?,
+                              ?, ?, ?, ?, ?, ?,
+                              ?, ?, ?,
                               ?, ?,
-                              ?, ?, ?, ?, ?, ?, ?)
+                              ?, ?,
+                              ?, ?, ?, ?,
+                              ?, ?, ?, ?,
+                              ?, ?)
                 """, (
                     new_pos_id, sym, bdata["asset_class"], "OPEN", round(bdata["qty"], 6),
-                    round(used_entry, 6), entry_verified, 0,
+                    round(used_entry, 6), old_entry_timestamp or now, entry_verified, 0,
                     entry_source, "UNPROVEN",
                     lane_id, position_owner, position_owner,
                     old_entry_order, old_entry_fill,
                     old_candidate, old_lifecycle,
                     notes, "PARTIAL_EXIT_RESIDUAL",
                     "broker_position_truth", "CLOSED",
-                    ownership_status, now, now, now
+                    ownership_status, now, now, now,
+                    old_pos_id, old_lifecycle
                 ))
                 
                 created += 1

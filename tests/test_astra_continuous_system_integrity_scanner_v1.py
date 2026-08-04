@@ -35,6 +35,16 @@ class ContinuousSystemIntegrityScannerTests(unittest.TestCase):
         self.assertFalse(payload["behavior_safe_to_apply"])
         self.assertFalse(payload["entry_behavior_changed"])
 
+    def test_historical_reconciliation_collision_blocks_sentinel_pass_and_reports_cortex_owner(self):
+        payload = self._scan(historical_reconciliation_ownership_collisions={"collisions": [{
+            "symbol": "SG", "historical_reconciliation_id": "recon-old", "current_position_ids": ["day-new"],
+        }]})
+        self.assertEqual(payload["status"], "CRITICAL")
+        root = payload["active_root_causes"][0]
+        self.assertEqual(root["category"], "HISTORICAL_RECONCILIATION_OWNERSHIP_COLLISION")
+        self.assertIn("Cortex", root["affected_endpoints"])
+        self.assertTrue(root["human_repair_required"])
+
     def test_unsafe_correction_is_rejected_without_mutation(self):
         registry = SafeCorrectionRegistryV1(self.temp.name)
         transaction = registry.prepare("root-1", "CLOSE_POSITION", target_component="position store", target_artifact="position", before_state={"status": "OPEN"}, after_state={"status": "CLOSED"})

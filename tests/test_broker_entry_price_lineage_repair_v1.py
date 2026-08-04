@@ -1,4 +1,5 @@
 import json
+import os
 import pathlib
 import tempfile
 import unittest
@@ -8,6 +9,7 @@ import engine.paper_autopilot as paper_autopilot_module
 from engine.alpaca_paper_broker import AlpacaPaperBroker
 from engine.paper_autopilot import PaperAutopilotEngine, resolve_canonical_entry_price_lineage_v1
 from engine.trade_lifecycle_excursion_v1 import TradeLifecycleExcursionV1
+from engine.astra_broker_open_db_closed_reconciliation_v1 import migrate_broker_open_db_closed
 
 
 class _FilledOrderBroker:
@@ -241,6 +243,74 @@ class BrokerEntryPriceLineageRepairTests(unittest.TestCase):
             self.assertEqual(old["status"], "BROKER_HELD_DUST")
             self.assertAlmostEqual(old["quantity"], 0.00000027)
             self.assertEqual(current, {"status": "OPEN", "lane_id": "DAY", "position_owner": "DAY", "exit_policy_owner": "DAY"})
+
+    def test_historical_reconciliation_maps_to_distinct_retirement_parent_by_provenance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            engine = PaperAutopilotEngine(db_path=str(root / "paper.db"), state_path=str(root / "state.json"))
+            with engine._connect() as conn:
+                conn.execute("""INSERT INTO paper_positions(position_id,symbol,asset_type,status,quantity,entry_price,entry_price_verified,entry_fill_id,entry_timestamp,lane_id,position_owner,exit_policy_owner,reconciled_at,reconciliation_reason,reconciliation_evidence_source,prior_status,lifecycle_notes,created_at,updated_at) VALUES ('recon-legacy','SG','stock','OPEN',22.4614,8.9,0,'','2026-07-27T22:23:01Z','','LEGACY','LEGACY','2026-07-27T22:23:01Z','PARTIAL_EXIT_RESIDUAL','broker_position_truth','CLOSED','{}','2026-07-27T22:23:01Z','2026-07-27T22:23:01Z')""")
+                conn.execute("""INSERT INTO paper_positions(position_id,symbol,asset_type,status,quantity,entry_price,entry_price_verified,entry_fill_id,entry_timestamp,lane_id,position_owner,exit_policy_owner,lifecycle_notes,created_at,updated_at) VALUES ('new-day','SG','stock','OPEN',16.805042016,5.95,1,'new-entry-fill','2026-08-04T13:44:29Z','DAY','DAY','DAY','{}','2026-08-04T13:44:29Z','2026-08-04T13:44:29Z')""")
+                conn.commit()
+            engine._runtime_state["paper_sell_order_intents"] = {
+                "legacy-retire:SG": {
+                    "legacy_imported_retirement": True, "position_id": "original-legacy-position",
+                    "order_intent_id": "legacy-retire:SG", "symbol": "SG", "status": "BROKER_HELD_DUST",
+                    "submission_timestamp": "2026-07-31T19:55:00Z", "submitted_quantity": 22.4614,
+                    "cumulative_filled_quantity": 22.4614, "broker_order_id": "retirement-filled-order",
+                    "broker_order_status": "FILLED", "order": {"side": "sell"},
+                    "broker_residual_lookup": {"broker_residual_quantity": 0.00000027},
+                    "dust_residual": {"is_dust": True},
+                }
+            }
+            report = engine._archive_historical_reconciliation_collisions_v1()
+            with engine._connect() as conn:
+                old = dict(conn.execute("SELECT status,quantity,reconciliation_parent_position_id,reconciliation_parent_retirement_intent_id,reconciliation_lineage_resolution FROM paper_positions WHERE position_id='recon-legacy'").fetchone())
+                current = dict(conn.execute("SELECT status,quantity,lane_id,position_owner,exit_policy_owner FROM paper_positions WHERE position_id='new-day'").fetchone())
+            self.assertEqual(report["archived_count"], 1)
+            self.assertEqual(old["status"], "BROKER_HELD_DUST")
+            self.assertAlmostEqual(old["quantity"], 0.00000027)
+            self.assertEqual(old["reconciliation_parent_position_id"], "original-legacy-position")
+            self.assertEqual(old["reconciliation_parent_retirement_intent_id"], "legacy-retire:SG")
+            self.assertEqual(old["reconciliation_lineage_resolution"], "VERIFIED_RETIREMENT_ARITHMETIC_PROVENANCE")
+            self.assertEqual(current, {"status": "OPEN", "quantity": 16.805042016, "lane_id": "DAY", "position_owner": "DAY", "exit_policy_owner": "DAY"})
+
+    def test_symbol_only_or_ambiguous_retirement_lineage_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            engine = PaperAutopilotEngine(db_path=str(root / "paper.db"), state_path=str(root / "state.json"))
+            with engine._connect() as conn:
+                conn.execute("""INSERT INTO paper_positions(position_id,symbol,asset_type,status,quantity,entry_price,entry_price_verified,entry_fill_id,entry_timestamp,lane_id,position_owner,exit_policy_owner,reconciled_at,reconciliation_reason,reconciliation_evidence_source,prior_status,lifecycle_notes,created_at,updated_at) VALUES ('recon-legacy','SG','stock','OPEN',22.4614,8.9,0,'','2026-07-27T22:23:01Z','DAY','LEGACY','LEGACY','2026-07-27T22:23:01Z','PARTIAL_EXIT_RESIDUAL','broker_position_truth','CLOSED','{}','2026-07-27T22:23:01Z','2026-07-27T22:23:01Z')""")
+                conn.execute("""INSERT INTO paper_positions(position_id,symbol,asset_type,status,quantity,entry_price,entry_price_verified,entry_fill_id,entry_timestamp,lane_id,position_owner,exit_policy_owner,lifecycle_notes,created_at,updated_at) VALUES ('new-day','SG','stock','OPEN',16.8,5.95,1,'new-entry-fill','2026-08-04T13:44:29Z','DAY','DAY','DAY','{}','2026-08-04T13:44:29Z','2026-08-04T13:44:29Z')""")
+                conn.commit()
+            base = {"legacy_imported_retirement": True, "symbol": "SG", "status": "BROKER_HELD_DUST", "submission_timestamp": "2026-07-31T19:55:00Z", "submitted_quantity": 22.4614, "cumulative_filled_quantity": 22.4614, "broker_order_id": "order", "broker_order_status": "FILLED", "order": {"side": "sell"}, "broker_residual_lookup": {"broker_residual_quantity": 0.00000027}, "dust_residual": {"is_dust": True}}
+            engine._runtime_state["paper_sell_order_intents"] = {"one": {**base, "position_id": "original-a", "order_intent_id": "one"}, "two": {**base, "position_id": "original-b", "order_intent_id": "two"}}
+            report = engine._archive_historical_reconciliation_collisions_v1()
+            with engine._connect() as conn:
+                old = dict(conn.execute("SELECT status FROM paper_positions WHERE position_id='recon-legacy'").fetchone())
+            self.assertEqual(report["archived_count"], 0)
+            self.assertEqual(old["status"], "OPEN")
+
+    def test_broker_open_reconciliation_persists_immutable_parent_lineage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            state_dir = root / "state"
+            state_dir.mkdir()
+            engine = PaperAutopilotEngine(db_path=str(state_dir / "ai_trading_memory.db"), state_path=str(root / "engine_state.json"))
+            with engine._connect() as conn:
+                conn.execute("""INSERT INTO paper_positions(position_id,symbol,asset_type,status,quantity,entry_price,entry_price_verified,entry_price_source,entry_timestamp,entry_order_id,entry_fill_id,source_lifecycle_id,lane_id,position_owner,lifecycle_notes,created_at,updated_at) VALUES ('legacy-parent','AMC','stock','CLOSED',1,10,0,'legacy','2026-07-01T00:00:00Z','','','legacy-life','','LEGACY','{}','2026-07-01T00:00:00Z','2026-07-01T00:00:00Z')""")
+                conn.commit()
+            (state_dir / "paper_autopilot_state.json").write_text(json.dumps({"last_evidence_capacity_snapshot": {"position_rows_for_read_only_consumers": [{"symbol": "AMC", "qty": 1.0, "avg_entry_price": 10.0, "current_price": 11.0, "market_value": 11.0, "asset_class": "us_equity"}]}}))
+            original_cwd = os.getcwd()
+            try:
+                os.chdir(root)
+                result = migrate_broker_open_db_closed(apply=True)
+            finally:
+                os.chdir(original_cwd)
+            self.assertEqual(result["created"], 1)
+            with engine._connect() as conn:
+                row = dict(conn.execute("SELECT reconciliation_parent_position_id,reconciliation_parent_lifecycle_id FROM paper_positions WHERE position_id LIKE 'recon:AMC:%'").fetchone())
+            self.assertEqual(row, {"reconciliation_parent_position_id": "legacy-parent", "reconciliation_parent_lifecycle_id": "legacy-life"})
 
     def test_partial_entry_reconciles_cumulative_broker_fill_on_later_cycle(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(paper_autopilot_module, "create_lifecycle_record", None):

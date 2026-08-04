@@ -199,6 +199,18 @@ class ContinuousGovernanceTests(unittest.TestCase):
             self.assertTrue(result["paper_only_preserved"])
             self.assertFalse(result["forced_exits_enabled"])
 
+    def test_historical_reconciliation_collision_prevents_governance_pass(self):
+        runtime_state = runtime(review=False)
+        runtime_state["system_integrity_scanner_v1"] = {
+            "status": "CRITICAL", "scan_owner": "canonical_worker", "resource_protection": {}, "crypto_market_data": {},
+            "state_mutations_from_get": 0,
+            "active_root_causes": [{"category": "HISTORICAL_RECONCILIATION_OWNERSHIP_COLLISION", "severity": "CRITICAL"}],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            result = ContinuousGovernanceV1(directory).run_worker_cycle(worker_state=worker_state(), runtime_state=runtime_state, safety=SAFETY)
+        rows = {row["invariant_id"]: row for row in result["invariants"]}
+        self.assertEqual(rows["HISTORICAL_RECONCILIATION_CANNOT_OVERRIDE_CURRENT_POSITION_OWNER"]["state"], "WARN")
+
 
 if __name__ == "__main__":
     unittest.main()

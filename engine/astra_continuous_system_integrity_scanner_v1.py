@@ -193,6 +193,21 @@ class ContinuousSystemIntegrityScannerV1:
                             "affected_components": [contradiction.get("owning_component") or "truth arbitration"],
                             "safe_correction_available": True})
         recovery = dict(context.get("position_lane_horizon_recovery") or {})
+        ownership_collisions = dict(context.get("historical_reconciliation_ownership_collisions") or {})
+        for collision in list(ownership_collisions.get("collisions") or [])[:max_rows]:
+            if not isinstance(collision, dict):
+                continue
+            signals.append({"kind": "HISTORICAL_RECONCILIATION_OWNERSHIP_COLLISION", "severity": "CRITICAL", "confidence": "VERIFIED",
+                            "canonical_fact_ids": ["CURRENT_BROKER_POSITION_OWNER", "HISTORICAL_RECONCILIATION_LINEAGE"],
+                            "affected_endpoints": ["advisory", "risk", "exit management", "Governance", "Cortex"],
+                            "affected_components": ["PaperAutopilot._archive_historical_reconciliation_collisions_v1"],
+                            "first_bad_handoff": "historical reconciliation row -> current position ownership arbitration",
+                            "owner": "PaperAutopilot._archive_historical_reconciliation_collisions_v1",
+                            "repair": "resolve the parent retirement lineage or retain a fail-closed ownership collision",
+                            "downstream_symptoms": ["CURRENT_POSITION_MISCLASSIFIED_AS_LEGACY", "LANE_HORIZON_OWNER_AMBIGUOUS"],
+                            "safe_correction_available": False,
+                            "affected_position_identity": collision.get("current_position_ids"),
+                            "historical_reconciliation_id": collision.get("historical_reconciliation_id")})
         if recovery:
             lane_conflicts = _number(recovery.get("lane_conflict_count"))
             horizon_conflicts = _number(recovery.get("horizon_conflict_count"))

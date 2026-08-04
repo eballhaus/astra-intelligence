@@ -1816,6 +1816,13 @@ class PaperAutopilotEngine:
                 "reconciled_at": "TEXT",
                 "reconciliation_reason": "TEXT",
                 "reconciliation_evidence_source": "TEXT",
+                # Keep reconciliation parentage outside mutable lifecycle notes.
+                # Notes are refreshed by monitoring, but this identity must survive
+                # for later retirement and ownership arbitration.
+                "reconciliation_parent_position_id": "TEXT",
+                "reconciliation_parent_lifecycle_id": "TEXT",
+                "reconciliation_parent_retirement_intent_id": "TEXT",
+                "reconciliation_lineage_resolution": "TEXT",
                 "prior_status": "TEXT",
                 "canonical_horizon": "TEXT",
                 "canonical_horizon_source": "TEXT",
@@ -6172,6 +6179,76 @@ class PaperAutopilotEngine:
         """
         intents = self._paper_sell_order_intents()
         archived: list[dict[str, Any]] = []
+
+        def resolve_retirement_lineage(old: Mapping[str, Any]) -> tuple[dict[str, Any] | None, str]:
+            """Resolve a retired parent without treating a shared symbol as identity.
+
+            Older reconciliation rows were created before parent lineage had a
+            dedicated immutable column.  They may be backfilled only when one
+            completed legacy retirement is corroborated by the recorded sold
+            quantity, a pre-retirement reconciliation timestamp, and dust proof.
+            Any missing or ambiguous evidence fails closed.
+            """
+            direct_ids = {
+                str(old.get(key) or "").strip()
+                for key in (
+                    "position_id",
+                    "reconciliation_parent_position_id",
+                    "source_lifecycle_id",
+                )
+                if str(old.get(key) or "").strip()
+            }
+            legacy_intents = [
+                dict(value or {})
+                for value in intents.values()
+                if isinstance(value, dict)
+                and bool(value.get("legacy_imported_retirement"))
+                and str(value.get("status") or "") == "BROKER_HELD_DUST"
+            ]
+            direct = [
+                intent for intent in legacy_intents
+                if str(intent.get("position_id") or "").strip() in direct_ids
+            ]
+            if len(direct) == 1:
+                return direct[0], "EXPLICIT_PARENT_LINEAGE"
+            if len(direct) > 1:
+                return None, "AMBIGUOUS_EXPLICIT_PARENT_LINEAGE"
+
+            # Compatibility backfill for pre-column rows.  Symbol narrows the
+            # search but cannot establish lineage: all additional proof below
+            # must identify exactly one completed retirement.
+            old_qty = _to_float(old.get("quantity"), 0.0)
+            reconciled_at = _parse_iso_utc(str(old.get("reconciled_at") or old.get("created_at") or ""))
+            if old_qty <= 0.0 or reconciled_at is None:
+                return None, "MISSING_HISTORICAL_LINEAGE_EVIDENCE"
+            inferred: list[dict[str, Any]] = []
+            for intent in legacy_intents:
+                if str(intent.get("symbol") or "").upper().strip() != str(old.get("symbol") or "").upper().strip():
+                    continue
+                order = dict(intent.get("order") or {})
+                if str(order.get("side") or "").lower() != "sell":
+                    continue
+                sold_qty = _to_float(intent.get("cumulative_filled_quantity"), _to_float(intent.get("submitted_quantity"), 0.0))
+                # The reconciliation migration rounded position quantities to
+                # six decimals, so use a precision-bound comparison only.
+                if abs(old_qty - sold_qty) > max(0.000001, sold_qty * 0.0000001):
+                    continue
+                submitted_at = _parse_iso_utc(str(intent.get("submission_timestamp") or ""))
+                if submitted_at is None or reconciled_at > submitted_at:
+                    continue
+                residual = dict(intent.get("broker_residual_lookup") or {})
+                dust = dict(intent.get("dust_residual") or {})
+                if not bool(dust.get("is_dust")) or _to_float(residual.get("broker_residual_quantity"), -1.0) < 0.0:
+                    continue
+                if not str(intent.get("broker_order_id") or "").strip() or str(intent.get("broker_order_status") or "").upper() != "FILLED":
+                    continue
+                inferred.append(intent)
+            if len(inferred) == 1:
+                return inferred[0], "VERIFIED_RETIREMENT_ARITHMETIC_PROVENANCE"
+            if len(inferred) > 1:
+                return None, "AMBIGUOUS_RETIREMENT_LINEAGE"
+            return None, "NO_VERIFIED_RETIREMENT_LINEAGE"
+
         with self._connect() as conn:
             rows = [dict(row or {}) for row in conn.execute(
                 "SELECT * FROM paper_positions WHERE status='OPEN' ORDER BY updated_at DESC"
@@ -6185,7 +6262,7 @@ class PaperAutopilotEngine:
                 if len(current) != 1 or not historical:
                     continue
                 for old in historical:
-                    intent = next((dict(value or {}) for value in intents.values() if isinstance(value, dict) and bool(value.get("legacy_imported_retirement")) and str(value.get("position_id") or "") == str(old.get("position_id") or "") and str(value.get("status") or "") == "BROKER_HELD_DUST"), None)
+                    intent, lineage_resolution = resolve_retirement_lineage(old)
                     if not intent:
                         continue
                     residual = dict(intent.get("broker_residual_lookup") or {})
@@ -6202,15 +6279,45 @@ class PaperAutopilotEngine:
                     notes["historical_reconciliation_archive_v1"] = {
                         "archived_at": _now_iso(), "reason": "NEWER_BROKER_CONFIRMED_LIFECYCLE_SAME_SYMBOL",
                         "current_position_id": current[0].get("position_id"), "legacy_retirement_intent_id": intent.get("order_intent_id"),
+                        "legacy_parent_position_id": intent.get("position_id"),
+                        "lineage_resolution": lineage_resolution,
                         "dust_quantity": qty,
                     }
                     conn.execute(
-                        "UPDATE paper_positions SET status='BROKER_HELD_DUST', quantity=?, reconciliation_reason='BROKER_HELD_DUST_RESIDUAL', lifecycle_notes=?, updated_at=? WHERE position_id=? AND status='OPEN'",
-                        (qty, _safe_json(notes), _now_iso(), old.get("position_id")),
+                        "UPDATE paper_positions SET status='BROKER_HELD_DUST', quantity=?, reconciliation_reason='BROKER_HELD_DUST_RESIDUAL', reconciliation_parent_position_id=?, reconciliation_parent_retirement_intent_id=?, reconciliation_lineage_resolution=?, lifecycle_notes=?, updated_at=? WHERE position_id=? AND status='OPEN'",
+                        (qty, str(intent.get("position_id") or ""), str(intent.get("order_intent_id") or ""), lineage_resolution, _safe_json(notes), _now_iso(), old.get("position_id")),
                     )
                     archived.append({"symbol": symbol, "historical_position_id": old.get("position_id"), "current_position_id": current[0].get("position_id"), "dust_quantity": qty})
             conn.commit()
         return {"archived": archived, "archived_count": len(archived), "broker_actions_used": 0}
+
+    def _historical_reconciliation_ownership_collisions_v1(self) -> dict[str, Any]:
+        """Read-only detector for stale historical rows that still own a symbol."""
+        with self._connect() as conn:
+            rows = [dict(row or {}) for row in conn.execute(
+                "SELECT position_id,symbol,status,entry_fill_id,lane_id,position_owner,exit_policy_owner,reconciliation_reason,reconciliation_parent_position_id,reconciliation_parent_retirement_intent_id,reconciliation_lineage_resolution FROM paper_positions WHERE status='OPEN'"
+            ).fetchall()]
+        by_symbol: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            by_symbol.setdefault(str(row.get("symbol") or "").upper().strip(), []).append(row)
+        collisions: list[dict[str, Any]] = []
+        for symbol, group in by_symbol.items():
+            current = [row for row in group if str(row.get("position_owner") or "").upper() in {"DAY", "SCALP", "SWING", "CRYPTO"} and str(row.get("entry_fill_id") or "")]
+            historical = [row for row in group if str(row.get("position_owner") or "").upper() == "LEGACY" and str(row.get("reconciliation_reason") or "") == "PARTIAL_EXIT_RESIDUAL"]
+            if not current or not historical:
+                continue
+            for old in historical:
+                collisions.append({
+                    "symbol": symbol,
+                    "historical_reconciliation_id": old.get("position_id"),
+                    "historical_parent_position_id": old.get("reconciliation_parent_position_id"),
+                    "historical_retirement_intent_id": old.get("reconciliation_parent_retirement_intent_id"),
+                    "historical_lineage_resolution": old.get("reconciliation_lineage_resolution"),
+                    "current_position_ids": [row.get("position_id") for row in current],
+                    "current_entry_fill_ids": [row.get("entry_fill_id") for row in current],
+                    "first_causal_blocker": "HISTORICAL_RECONCILIATION_ROW_OPERATIONALLY_OPEN",
+                })
+        return {"collision_count": len(collisions), "collisions": collisions[:50], "broker_actions_used": 0}
 
     def entry_price_lineage_dry_run_audit_v1(self, max_rows: int = 250) -> dict[str, Any]:
         """Compare stored entry prices with ID-linked broker truth without applying repairs."""
