@@ -139,6 +139,29 @@ class PositionLaneHorizonRecoveryTests(unittest.TestCase):
         row = ledger["positions"][0]
         self.assertEqual((row["lane"], row["horizon"]), ("DAY", "scalp"))
 
+    def test_autopilot_uses_current_fill_identity_when_broker_and_db_timestamps_differ(self):
+        from engine.paper_autopilot import PaperAutopilotEngine
+
+        with tempfile.TemporaryDirectory() as directory:
+            engine = PaperAutopilotEngine(
+                db_path=f"{directory}/positions.db",
+                state_path=f"{directory}/paper_autopilot_state.json",
+                enabled=False,
+            )
+            engine._runtime_state["last_evidence_capacity_snapshot"] = {
+                "position_rows_for_read_only_consumers": [{
+                    "symbol": "PH", "asset_class": "us_equity", "entry_timestamp": "2026-07-14T13:31:28Z",
+                    "entry_fill_id": "fill-1", "entry_order_id": "order-1", "position_id": "pos-1",
+                }],
+            }
+            ledger = engine._recover_broker_position_lane_horizon_v1(
+                {"PH": _broker(entry_timestamp="2026-07-14T13:31:31Z")},
+                [_evidence(entry_timestamp="2026-07-14T13:31:28Z", entry_filled_at="2026-07-14T13:31:28Z")],
+            )
+        row = ledger["positions"][0]
+        self.assertEqual((row["lane"], row["horizon"]), ("DAY", "scalp"))
+        self.assertEqual(row["recovery_method"], "EXACT_ID_LINK")
+
     def test_retained_advisory_decision_receives_current_recovery_metadata(self):
         from engine.paper_autopilot import PaperAutopilotEngine
 

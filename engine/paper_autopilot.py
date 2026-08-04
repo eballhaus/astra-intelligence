@@ -9178,7 +9178,15 @@ class PaperAutopilotEngine:
             current_rows = current_by_symbol.get(normalized) or []
             if len(current_rows) == 1:
                 current = current_rows[0]
-                for key in ("entry_timestamp", "entry_filled_at", "asset_class", "asset_type"):
+                # These IDs are Astra metadata, not broker financial facts.
+                # Copying them into the recovery envelope permits an exact
+                # fill/order link when broker snapshots omit entry identity or
+                # normalize their timestamp differently by a few seconds.
+                for key in (
+                    "entry_timestamp", "entry_filled_at", "asset_class", "asset_type",
+                    "entry_fill_id", "entry_order_id", "source_broker_order_id",
+                    "source_client_order_id", "position_id",
+                ):
                     if not broker.get(key) and current.get(key):
                         broker[key] = current.get(key)
             broker_for_recovery[normalized] = broker
