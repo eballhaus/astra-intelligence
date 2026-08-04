@@ -54,6 +54,34 @@ class PositionEvidenceAndAdvisoryTests(unittest.TestCase):
         self.assertEqual(advisory["silent_drop_count"], 0)
         self.assertTrue(all(row["execution_authority"] == "DISABLED" for row in advisory["positions"]))
 
+    def test_advisory_uses_resolved_position_identity_not_stale_same_symbol_decision(self):
+        positions = {"SG": {"symbol": "SG", "unrealized_plpc": -0.01}}
+        recovery = {"positions": [{
+            "symbol": "SG",
+            "canonical_position_id": "current-sg-lifecycle",
+            "canonical_identity_status": "RESOLVED",
+        }]}
+        evidence = {"positions": [{"symbol": "SG", "canonical_lane_status": "RESOLVED"}]}
+        loss = {"decisions": {
+            "legacy-broker-asset": {
+                "symbol": "SG", "position_id": "legacy-broker-asset",
+                "canonical_recommendation": "HARD_BOUNDARY_BREACH",
+                "threshold_state": "HARD_BOUNDARY_BREACH",
+            },
+            "current-sg-lifecycle": {
+                "symbol": "SG", "position_id": "current-sg-lifecycle",
+                "canonical_recommendation": "HOLD", "threshold_state": "HEALTHY",
+            },
+        }}
+        advisory = build_unified_position_advisory_v1(
+            positions, evidence=evidence, triage={}, loss_containment=loss, recovery=recovery,
+        )
+        row = advisory["positions"][0]
+        self.assertEqual(row["canonical_position_id"], "current-sg-lifecycle")
+        self.assertEqual(row["lifecycle_id"], "current-sg-lifecycle")
+        self.assertEqual(row["canonical_identity_status"], "RESOLVED")
+        self.assertEqual(row["loss_containment_state"], "HOLD")
+
     def test_profile_assignment_without_consumer_is_explicit(self):
         fmp = {
             "activation-a": {

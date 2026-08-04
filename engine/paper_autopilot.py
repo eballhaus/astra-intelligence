@@ -8851,11 +8851,16 @@ class PaperAutopilotEngine:
         # Loss containment precedence — if the canonical engine reports a hard
         # breach or thesis failure, that overrides local threshold evaluation.
         lc_decisions = dict((self._runtime_state.get("loss_containment_state_v1") or {}).get("decisions") or {})
-        lc_match = None
-        for decision_id, decision in lc_decisions.items():
-            if isinstance(decision, dict) and str(decision.get("symbol") or "").upper() == str(open_row.get("symbol") or "").upper():
-                lc_match = decision
-                break
+        canonical_position_id = _pick_first_text(
+            open_row.get("canonical_position_id"),
+            open_row.get("lifecycle_id"),
+            open_row.get("position_id"),
+        )
+        # Never select another economic lifecycle by symbol.  A missing or
+        # broker-asset-only identity simply has no loss-containment override.
+        lc_match = dict(lc_decisions.get(canonical_position_id) or {}) if canonical_position_id else {}
+        if lc_match and str(lc_match.get("symbol") or "").upper() != str(open_row.get("symbol") or "").upper():
+            lc_match = {}
         if lc_match:
             lc_state = str(lc_match.get("threshold_state") or "")
             if lc_state == "HARD_BOUNDARY_BREACH":
@@ -9517,6 +9522,7 @@ class PaperAutopilotEngine:
             exit_readiness=exit_readiness,
             resolution=resolution,
             shadow_handoff=shadow_handoff,
+            recovery=recovery,
         )
         save_unified_position_advisory_v1(advisory, os.path.dirname(self.unified_position_advisory_state_path) or "state")
         self._runtime_state["unified_position_advisory_v1"] = advisory

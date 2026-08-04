@@ -86,6 +86,28 @@ def _index(rows: list[Mapping[str, Any]] | None) -> dict[str, dict[str, Any]]:
     return {_text(row.get("symbol")).upper(): dict(row) for row in rows or [] if isinstance(row, Mapping) and _text(row.get("symbol"))}
 
 
+def _decisions_by_position_id(state: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """Index decisions only by the Astra canonical position identity.
+
+    A broker asset identifier and an Astra lifecycle identifier are different
+    namespaces.  Symbol indexing can also select a retired same-symbol
+    decision after a new entry, so it is intentionally prohibited here.
+    """
+    decisions = dict((state or {}).get("decisions") or {})
+    indexed: dict[str, dict[str, Any]] = {}
+    for decision in decisions.values():
+        if not isinstance(decision, Mapping):
+            continue
+        position_id = _text(decision.get("position_id"))
+        if position_id:
+            indexed[position_id] = dict(decision)
+    return indexed
+
+
+def _recovery_by_symbol(recovery: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
+    return _index(list((recovery or {}).get("positions") or []))
+
+
 def _atomic_write(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
@@ -105,17 +127,25 @@ def build_unified_position_advisory_v1(
     loss_containment: Mapping[str, Any] | None = None, profit_protection: Mapping[str, Any] | None = None,
     exit_readiness: Mapping[str, Any] | None = None, resolution: Mapping[str, Any] | None = None,
     shadow_handoff: Mapping[str, Mapping[str, Any]] | None = None,
+    recovery: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     evidence_by_symbol = _index(list(evidence.get("positions") or []))
     triage_by_symbol = _index(list(triage.get("positions") or []))
-    loss_by_symbol = _index(list((loss_containment or {}).get("decisions", {}).values()))
-    profit_by_symbol = _index(list((profit_protection or {}).get("decisions", {}).values()))
+    loss_by_position_id = _decisions_by_position_id(loss_containment)
+    profit_by_position_id = _decisions_by_position_id(profit_protection)
     exit_by_symbol = _index(list((exit_readiness or {}).get("positions") or []))
     resolution_by_symbol = _index(list((resolution or {}).get("positions") or []))
+    recovery_by_symbol = _recovery_by_symbol(recovery)
     rows = []
     for symbol in sorted(broker_positions or {}):
         evidence_row, triage_row = evidence_by_symbol.get(symbol, {}), triage_by_symbol.get(symbol, {})
-        loss, profit = loss_by_symbol.get(symbol, {}), profit_by_symbol.get(symbol, {})
+        recovered = recovery_by_symbol.get(symbol, {})
+        canonical_position_id = _text(recovered.get("canonical_position_id"))
+        canonical_identity_status = _text(recovered.get("canonical_identity_status")) or "UNAVAILABLE"
+        # Missing or ambiguous identity must not select another lifecycle's
+        # risk decision.  The policy below remains fail-closed in that case.
+        loss = loss_by_position_id.get(canonical_position_id, {}) if canonical_identity_status == "RESOLVED" else {}
+        profit = profit_by_position_id.get(canonical_position_id, {}) if canonical_identity_status == "RESOLVED" else {}
         resolution_row = resolution_by_symbol.get(symbol, {})
         shadow = dict((shadow_handoff or {}).get(symbol) or {})
         legacy = bool(triage_row)
@@ -128,7 +158,11 @@ def build_unified_position_advisory_v1(
         blocker = _text(exit_row.get("first_causal_blocker")) or _text(triage_row.get("first_causal_blocker")) or _text(evidence_row.get("first_causal_blocker")) or _text((loss.get("exact_blockers") or [""])[0]) or "EVIDENCE_UNAVAILABLE"
         confidence = _text(triage_row.get("confidence")) or _text(loss.get("confidence")) or _text(evidence_row.get("evidence_confidence")) or "LOW"
         rows.append({
-            "symbol": symbol, "final_advisory": recommendation, "confidence": confidence,
+            "symbol": symbol,
+            "canonical_position_id": canonical_position_id or None,
+            "lifecycle_id": canonical_position_id or None,
+            "canonical_identity_status": canonical_identity_status,
+            "final_advisory": recommendation, "confidence": confidence,
             "priority": "HIGH" if recommendation in {"EXIT_REVIEW", "THESIS_BROKEN", "PROTECT_CAPITAL"} else "MEDIUM" if recommendation == "WATCH" else "LOW",
             "primary_reason": _text(resolution_row.get("plain_english_explanation")) or _text(triage_row.get("plain_english_reason")) or _text(loss.get("human_readable_reason")) or blocker,
             "supporting_reasons": [blocker], "evidence_used": triage_row.get("evidence_used") or {},

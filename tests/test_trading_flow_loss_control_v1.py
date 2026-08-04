@@ -153,6 +153,31 @@ class TrustedQuoteCandidateFlowTests(unittest.TestCase):
         self.assertFalse(should_exit)
         self.assertEqual(reason, "PROVIDER_NATIVE_MARKET_OBSERVATION_UNAVAILABLE")
 
+    def test_exit_evaluation_ignores_stale_same_symbol_loss_decision(self):
+        engine = self._engine({})
+        engine._runtime_state["loss_containment_state_v1"] = {"decisions": {
+            "legacy-asset-id": {
+                "symbol": "AAPL", "position_id": "legacy-asset-id",
+                "threshold_state": "HARD_BOUNDARY_BREACH",
+            },
+            "current-lifecycle-id": {
+                "symbol": "AAPL", "position_id": "current-lifecycle-id",
+                "threshold_state": "HEALTHY",
+            },
+        }}
+        should_exit, reason = engine._evaluate_exit(
+            {
+                "symbol": "AAPL", "canonical_position_id": "current-lifecycle-id",
+                "entry_price": 100.0, "hold_seconds": 60, "lifecycle_notes": "{}",
+            },
+            {
+                "symbol": "AAPL", "price": 100.0, "provider_used": "ALPACA",
+                "quote_timestamp": _iso(),
+            },
+        )
+        self.assertFalse(should_exit)
+        self.assertNotIn("loss_containment", reason)
+
     def test_symbol_mismatch_and_empty_quote_are_rejected_before_preflight(self):
         for quote, expected in (
             ({"symbol": "MSFT", "price": 100.0, "quote_timestamp": _iso()}, "QUOTE_SYMBOL_MISMATCH"),
