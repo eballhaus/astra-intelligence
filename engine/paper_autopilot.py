@@ -6030,7 +6030,12 @@ class PaperAutopilotEngine:
                 WHERE status IN ('OPEN', 'PENDING_ENTRY')
                   AND (COALESCE(entry_price_verified, 0)=0
                        OR entry_price_lineage_status='BROKER_PARTIAL_FILL')
-                ORDER BY entry_timestamp ASC LIMIT 12
+                -- A newly broker-filled PENDING_ENTRY is execution-critical.
+                -- Do not let historical unresolved rows exhaust the bounded
+                -- reconciliation budget before its ID-linked broker lookup.
+                ORDER BY CASE WHEN status='PENDING_ENTRY' THEN 0 ELSE 1 END,
+                         updated_at DESC, entry_timestamp DESC
+                LIMIT 12
                 """
             ).fetchall()]
         reviewed = repaired = awaiting = broker_reads = 0

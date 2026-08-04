@@ -14,9 +14,11 @@ class _FilledOrderBroker:
     def __init__(self, order):
         self._order = dict(order)
         self.calls = 0
+        self.order_ids = []
 
     def order(self, order_id):
         self.calls += 1
+        self.order_ids.append(str(order_id))
         return {"ok": True, "order": dict(self._order)}
 
 
@@ -183,6 +185,44 @@ class BrokerEntryPriceLineageRepairTests(unittest.TestCase):
             self.assertEqual(row["status"], "OPEN")
             self.assertEqual(row["quantity"], 0.25)
             self.assertTrue(row["entry_fill_id"])
+
+    def test_new_pending_entry_is_not_starved_by_old_unverified_rows(self):
+        """Bounded reconciliation prioritizes a current broker-filled entry."""
+        with tempfile.TemporaryDirectory() as tmp, patch.object(paper_autopilot_module, "create_lifecycle_record", None):
+            root = pathlib.Path(tmp)
+            broker = _FilledOrderBroker({
+                "id": "entry-current", "client_order_id": "client-current", "symbol": "SG", "status": "filled",
+                "filled_qty": "16.805042016", "filled_avg_price": "5.95", "filled_at": "2026-08-04T13:44:29Z",
+                "paper_mode_verified": True,
+            })
+            engine = PaperAutopilotEngine(db_path=str(root / "paper.db"), state_path=str(root / "state.json"), alpaca_paper_broker=broker)
+            with engine._connect() as conn:
+                for index in range(12):
+                    conn.execute(
+                        """INSERT INTO paper_positions(position_id, symbol, asset_type, status, quantity, entry_price,
+                        provisional_entry_price, source_broker_order_id, source_client_order_id, entry_order_id,
+                        entry_timestamp, row_json, lifecycle_notes, created_at, updated_at)
+                        VALUES (?, ?, 'stock', 'OPEN', 1, 2, 2, ?, ?, ?, '2026-07-01T14:30:00Z', '{}', '{}',
+                        '2026-07-01T14:30:00Z', '2026-07-01T14:30:00Z')""",
+                        (f"old-{index}", f"OLD{index}", f"old-order-{index}", f"old-client-{index}", f"old-order-{index}"),
+                    )
+                conn.execute(
+                    """INSERT INTO paper_positions(position_id, symbol, asset_type, status, quantity, entry_price,
+                    provisional_entry_price, source_broker_order_id, source_client_order_id, entry_order_id,
+                    entry_timestamp, row_json, lifecycle_notes, created_at, updated_at)
+                    VALUES ('pending-current', 'SG', 'stock', 'PENDING_ENTRY', 0, 5.945, 5.945, 'entry-current',
+                    'client-current', 'entry-current', '2026-08-04T13:44:26Z', '{}', '{}',
+                    '2026-08-04T13:44:26Z', '2026-08-04T13:44:26Z')"""
+                )
+                conn.commit()
+            report = engine._reconcile_entry_price_lineage_v1({"broker_reconciliation_active": True, "broker_position_by_symbol": {}})
+            with engine._connect() as conn:
+                row = dict(conn.execute("SELECT status, quantity, entry_fill_id FROM paper_positions WHERE position_id='pending-current'").fetchone())
+            self.assertEqual(report["repaired"], 1)
+            self.assertEqual(broker.order_ids[0], "entry-current")
+            self.assertEqual(row["status"], "OPEN")
+            self.assertAlmostEqual(row["quantity"], 16.805042016)
+            self.assertEqual(row["entry_fill_id"], "entry-current")
 
     def test_partial_entry_reconciles_cumulative_broker_fill_on_later_cycle(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(paper_autopilot_module, "create_lifecycle_record", None):
