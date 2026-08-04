@@ -10289,6 +10289,26 @@ class PaperAutopilotEngine:
                 self._note_worker_progress("bounded_broker_reconciliation")
                 safety = self._alpaca_safety_snapshot()
                 broker_snapshot = preflight_broker_snapshot or self._broker_open_symbols_snapshot()
+                # A bounded legacy-evidence pass must not strand a broker-filled
+                # entry in PENDING_ENTRY until a later full candidate cycle.
+                # This is read-only broker reconciliation of ID-linked entry
+                # fills; it cannot submit, replace, or cancel an order.
+                self._note_worker_progress("entry_price_lineage_reconciliation")
+                try:
+                    entry_price_lineage_refresh_partial = self._reconcile_entry_price_lineage_v1(broker_snapshot)
+                except Exception as exc:
+                    entry_price_lineage_refresh_partial = {
+                        "status": "FAILED_SAFE",
+                        "error": str(exc)[:180],
+                        "broker_actions_used": 0,
+                    }
+                    self._runtime_state["worker_last_suppressed_exception_v1"] = {
+                        "phase": "partial_entry_price_lineage_reconciliation",
+                        "exception_type": type(exc).__name__,
+                        "message": str(exc)[:240],
+                        "occurred_at": _now_iso(),
+                        "retry_state": "RETRY_ON_NEXT_BOUNDED_CYCLE",
+                    }
                 evidence_capacity_snapshot = self._evidence_capacity_snapshot_v1(
                     broker_snapshot,
                     self._fetch_open_positions(),
@@ -10554,6 +10574,7 @@ class PaperAutopilotEngine:
                     "legacy_swing_observation": legacy_canary_refresh,
                     "broker_reconciliation_active": bool(broker_snapshot.get("broker_reconciliation_active")),
                     "broker_positions_fetch_ok": bool(broker_snapshot.get("broker_positions_fetch_ok")),
+                    "entry_price_lineage_reconciliation": entry_price_lineage_refresh_partial,
                     "crypto_ranking_refresh": crypto_refresh,
                     "equity_risk_envelope_refresh": equity_risk_refresh,
                     "loss_containment_review_v1": loss_containment_review_partial,
@@ -10578,6 +10599,7 @@ class PaperAutopilotEngine:
                     "broker_reconciliation_active": bool(broker_snapshot.get("broker_reconciliation_active")),
                     "broker_positions_fetch_ok": bool(broker_snapshot.get("broker_positions_fetch_ok")),
                     "broker_open_positions_count": int(_to_int(broker_snapshot.get("broker_open_positions_count"), 0)),
+                    "entry_price_lineage_reconciliation": entry_price_lineage_refresh_partial,
                     "evidence_accumulation_capacity_v1": evidence_capacity_snapshot,
                     "crypto_ranking_refresh": crypto_refresh,
                     "equity_risk_envelope_refresh": equity_risk_refresh,

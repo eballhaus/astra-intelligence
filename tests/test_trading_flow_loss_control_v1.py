@@ -195,6 +195,13 @@ class TrustedQuoteCandidateFlowTests(unittest.TestCase):
             "broker_positions_fetch_ok": True,
             "broker_open_positions_count": 0,
         }
+        reconciliations = []
+        engine._reconcile_entry_price_lineage_v1 = lambda snapshot: reconciliations.append(dict(snapshot)) or {
+            "status": "AWAITING_BROKER_FILL",
+            "reviewed": 0,
+            "repaired": 0,
+            "broker_actions_used": 0,
+        }
         engine._fetch_open_positions = lambda: []
         engine._evidence_capacity_snapshot_v1 = lambda *_args: {"capacity_authority_state": "CURRENT"}
         engine._collect_candidate_rows = lambda: [_candidate()]
@@ -210,6 +217,11 @@ class TrustedQuoteCandidateFlowTests(unittest.TestCase):
         trace = engine._runtime_state["last_execution_trace"]
         candidate_trace = trace["per_candidate_decision_trace"][0]
         self.assertEqual(result["orders_submitted"], 0)
+        self.assertEqual(len(reconciliations), 1)
+        self.assertEqual(
+            result["entry_price_lineage_reconciliation"]["status"],
+            "AWAITING_BROKER_FILL",
+        )
         self.assertTrue(candidate_trace["valid_quote"])
         self.assertEqual(candidate_trace["quote_assignment_state"], "ASSIGNED_AND_CONSUMED")
         self.assertTrue(candidate_trace["partial_cycle_observation_only"])
