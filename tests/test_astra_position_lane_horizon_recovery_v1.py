@@ -30,7 +30,8 @@ def _evidence(**extra):
         "symbol": "PH", "asset_type": "stock", "position_id": "pos-1", "entry_order_id": "order-1",
         "entry_fill_id": "fill-1", "entry_timestamp": STAMP, "entry_filled_at": STAMP,
         "lane_id": "DAY", "canonical_horizon": "scalp", "current_reconciled": True,
-        "recovery_source_type": "ACTIVE_POSITION_LIFECYCLE", **extra,
+        "position_owner": "DAY", "exit_policy_owner": "DAY",
+        "candidate_id": "candidate-1", "recovery_source_type": "ACTIVE_POSITION_LIFECYCLE", **extra,
     }
 
 
@@ -77,8 +78,9 @@ class PositionLaneHorizonRecoveryTests(unittest.TestCase):
         self.assertIn("AMBIGUOUS_SYMBOL_ONLY_MATCH", row["exact_blockers"])
 
     def test_enrichment_cannot_overwrite_broker_financial_facts(self):
-        snapshot = build_canonical_position_snapshot({"PH": _broker()})
-        ledger = build_position_lane_horizon_recovery_v1({"PH": _broker()}, evidence_rows=[_evidence()])
+        broker = _broker(asset_id="alpaca-asset", entry_fill_id="fill-1")
+        snapshot = build_canonical_position_snapshot({"PH": broker})
+        ledger = build_position_lane_horizon_recovery_v1({"PH": broker}, evidence_rows=[_evidence()])
         enriched = enrich_canonical_position_snapshot_v1(snapshot, ledger)["positions"]["PH"]
         self.assertEqual(enriched["quantity"], 4.0)
         self.assertEqual(enriched["average_entry_price"], 100.0)
@@ -86,6 +88,71 @@ class PositionLaneHorizonRecoveryTests(unittest.TestCase):
         self.assertEqual(enriched["market_value"], 388.0)
         self.assertEqual(enriched["cost_basis"], 400.0)
         self.assertEqual(enriched["lane"], "DAY")
+        self.assertEqual(enriched["canonical_position_id"], "pos-1")
+        self.assertEqual(enriched["position_id"], "pos-1")
+        self.assertEqual(enriched["broker_asset_id"], "alpaca-asset")
+        self.assertEqual(enriched["lifecycle_id"], "pos-1")
+        self.assertEqual(enriched["candidate_id"], "candidate-1")
+        self.assertEqual(enriched["exit_policy_owner"], "DAY")
+
+    def test_exact_identity_recovers_candidate_from_persisted_position_metadata(self):
+        broker = _broker(asset_id="alpaca-asset", entry_fill_id="fill-1")
+        ledger = build_position_lane_horizon_recovery_v1(
+            {"PH": broker}, evidence_rows=[_evidence(candidate_id="", row_json='{"candidate_id":"candidate-from-row-json"}')]
+        )
+        self.assertEqual(ledger["positions"][0]["candidate_id"], "candidate-from-row-json")
+
+    def test_timestamp_fallback_never_promotes_broker_asset_id_to_canonical_identity(self):
+        broker = _broker(asset_id="alpaca-asset")
+        snapshot = build_canonical_position_snapshot({"PH": broker})
+        ledger = build_position_lane_horizon_recovery_v1({"PH": broker}, evidence_rows=[_evidence()])
+        recovered = ledger["positions"][0]
+        enriched = enrich_canonical_position_snapshot_v1(snapshot, ledger)["positions"]["PH"]
+        row = snapshot_to_loss_containment_rows({"positions": {"PH": enriched}})[0]
+        self.assertEqual(recovered["recovery_method"], "CURRENT_RECONCILED_SYMBOL_TIMESTAMP")
+        self.assertEqual(recovered["canonical_identity_status"], "UNAVAILABLE")
+        self.assertEqual(enriched.get("canonical_position_id"), None)
+        self.assertEqual(enriched["broker_asset_id"], "alpaca-asset")
+        self.assertEqual(row["position_id"], "unresolved:PH")
+        self.assertEqual(row["broker_asset_id"], "alpaca-asset")
+
+    def test_same_symbol_different_exact_lifecycles_fail_closed_for_identity(self):
+        broker = _broker(asset_id="alpaca-asset", entry_fill_id="fill-1")
+        snapshot = build_canonical_position_snapshot({"PH": broker})
+        ledger = build_position_lane_horizon_recovery_v1(
+            {"PH": broker}, evidence_rows=[_evidence(position_id="pos-1"), _evidence(position_id="pos-2")]
+        )
+        recovered = ledger["positions"][0]
+        enriched = enrich_canonical_position_snapshot_v1(snapshot, ledger)["positions"]["PH"]
+        self.assertEqual(recovered["canonical_identity_status"], "AMBIGUOUS")
+        self.assertEqual(recovered["canonical_position_id"], "")
+        self.assertNotIn("canonical_position_id", enriched)
+        self.assertNotIn("position_id", enriched)
+
+    def test_loss_containment_uses_exact_astra_position_identity(self):
+        from engine.paper_autopilot import PaperAutopilotEngine
+
+        with tempfile.TemporaryDirectory() as directory:
+            engine = PaperAutopilotEngine(
+                db_path=f"{directory}/positions.db",
+                state_path=f"{directory}/paper_autopilot_state.json",
+                enabled=False,
+            )
+            engine._runtime_state["last_evidence_capacity_snapshot"] = {
+                "position_rows_for_read_only_consumers": [{
+                    "symbol": "PH", "asset_class": "us_equity", "entry_timestamp": STAMP,
+                    "entry_fill_id": "fill-1", "entry_order_id": "order-1", "position_id": "pos-1",
+                }],
+            }
+            result = engine._loss_containment_review_phase(
+                open_rows=[_evidence(entry_metadata_generation="V1_MANDATORY")],
+                broker_position_by_symbol={"PH": _broker(asset_id="alpaca-asset", entry_fill_id="")},
+                broker_fetch_succeeded=True,
+            )
+        decision = result["state"]["decisions"]["pos-1"]
+        self.assertEqual(decision["position_id"], "pos-1")
+        self.assertEqual(decision["lane"], "DAY")
+        self.assertEqual(decision["ownership_classification"], "ACTIVE_DAY")
 
     def test_both_protection_engines_consume_identical_recovery(self):
         snapshot = build_canonical_position_snapshot({"PH": _broker()})

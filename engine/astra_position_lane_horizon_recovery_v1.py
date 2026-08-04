@@ -116,6 +116,13 @@ def _source_claim(
         except Exception:
             metadata = {}
     metadata = dict(metadata) if isinstance(metadata, Mapping) else {}
+    row_metadata = row.get("row_json") or {}
+    if isinstance(row_metadata, str):
+        try:
+            row_metadata = json.loads(row_metadata)
+        except (TypeError, ValueError):
+            row_metadata = {}
+    row_metadata = dict(row_metadata) if isinstance(row_metadata, Mapping) else {}
     return {
         "source_type": source_type,
         "source_id": source_id,
@@ -128,6 +135,21 @@ def _source_claim(
             or row.get("original_horizon")
             or row.get("intended_horizon")
         ),
+        # These fields are Astra-owned identity/ownership metadata.  They are
+        # populated only from a matched lifecycle record, never from the
+        # broker's asset identifier or a same-symbol fallback.
+        "canonical_position_id": _text(row.get("position_id")),
+        "canonical_lifecycle_id": _text(
+            row.get("lifecycle_id") or row.get("source_lifecycle_id") or row.get("position_id")
+        ),
+        "candidate_id": _text(
+            row.get("candidate_id") or row.get("source_candidate_id") or row_metadata.get("candidate_id")
+        ),
+        "entry_fill_id": _text(row.get("entry_fill_id") or row.get("fill_id")),
+        "entry_order_id": _text(row.get("entry_order_id") or row.get("source_broker_order_id")),
+        "position_owner": _text(row.get("position_owner")),
+        "management_owner": _text(row.get("management_owner") or row.get("position_owner")),
+        "exit_owner": _text(row.get("exit_policy_owner") or row.get("exit_owner")),
     }
 
 
@@ -236,6 +258,19 @@ def build_position_lane_horizon_recovery_v1(
             ))
         lane = _select_fact(claims, "lane", "CANONICAL_LANE_EVIDENCE_UNAVAILABLE")
         horizon = _select_fact(claims, "horizon", "CANONICAL_HORIZON_EVIDENCE_UNAVAILABLE")
+        exact_identity_claims = [
+            claim for claim in claims
+            if claim.get("match_method") in {"EXACT_ID_LINK", "ORDER_LINKED"}
+            and _text(claim.get("canonical_position_id"))
+        ]
+        identity_ids = {_text(claim.get("canonical_position_id")) for claim in exact_identity_claims}
+        identity_status = STATUS_UNAVAILABLE
+        identity_claim: dict[str, Any] = {}
+        if len(identity_ids) == 1:
+            identity_status = STATUS_RESOLVED
+            identity_claim = next(claim for claim in exact_identity_claims if _text(claim.get("canonical_position_id")))
+        elif len(identity_ids) > 1:
+            identity_status = STATUS_AMBIGUOUS
         identity_ambiguous = saw_symbol and not matches and any(
             _symbol(row.get("symbol")) == symbol and bool(row.get("current_reconciled")) for row in evidence
         )
@@ -254,6 +289,15 @@ def build_position_lane_horizon_recovery_v1(
             "lane_source_id": lane["source_id"], "lane_source_timestamp": lane["source_timestamp"],
             "horizon": horizon["value"], "horizon_status": horizon["status"], "horizon_source": horizon["source"],
             "horizon_source_id": horizon["source_id"], "horizon_source_timestamp": horizon["source_timestamp"],
+            "canonical_position_id": identity_claim.get("canonical_position_id") if identity_status == STATUS_RESOLVED else "",
+            "canonical_lifecycle_id": identity_claim.get("canonical_lifecycle_id") if identity_status == STATUS_RESOLVED else "",
+            "candidate_id": identity_claim.get("candidate_id") if identity_status == STATUS_RESOLVED else "",
+            "entry_fill_id": identity_claim.get("entry_fill_id") if identity_status == STATUS_RESOLVED else "",
+            "entry_order_id": identity_claim.get("entry_order_id") if identity_status == STATUS_RESOLVED else "",
+            "position_owner": identity_claim.get("position_owner") if identity_status == STATUS_RESOLVED else "",
+            "management_owner": identity_claim.get("management_owner") if identity_status == STATUS_RESOLVED else "",
+            "exit_owner": identity_claim.get("exit_owner") if identity_status == STATUS_RESOLVED else "",
+            "canonical_identity_status": identity_status,
             "recovery_method": method, "confidence": "CANONICAL" if claims and not blockers else "NONE",
             "conflicts": [claim for claim in claims if claim.get("lane") or claim.get("horizon")] if any("CONFLICT" in blocker for blocker in blockers) else [],
             "exact_blockers": blockers,
@@ -312,6 +356,21 @@ def enrich_canonical_position_snapshot_v1(snapshot: Mapping[str, Any], recovery:
             if horizon_status == STATUS_RESOLVED:
                 position["horizon"] = row["horizon"]
                 position["horizon_source"] = row["horizon_source"]
+            identity_status = _text(row.get("canonical_identity_status")).upper()
+            if identity_status == STATUS_RESOLVED:
+                # Keep the Alpaca asset ID separate.  The canonical Astra ID
+                # is the only identity used by risk and ownership consumers.
+                position.update({
+                    "canonical_position_id": row.get("canonical_position_id"),
+                    "position_id": row.get("canonical_position_id"),
+                    "lifecycle_id": row.get("canonical_lifecycle_id"),
+                    "candidate_id": row.get("candidate_id"),
+                    "entry_fill_id": row.get("entry_fill_id"),
+                    "entry_order_id": row.get("entry_order_id"),
+                    "position_owner": row.get("position_owner"),
+                    "management_owner": row.get("management_owner"),
+                    "exit_policy_owner": row.get("exit_owner"),
+                })
             # Recovery metadata is always attached so consumers can distinguish
             # RESOLVED (verified) from UNAVAILABLE (defaulted) lanes.
             position.update({
@@ -324,6 +383,7 @@ def enrich_canonical_position_snapshot_v1(snapshot: Mapping[str, Any], recovery:
                 "recovery_method": row.get("recovery_method") or "NONE",
                 "recovery_confidence": row.get("confidence") or 0.0,
                 "recovery_exact_blockers": list(row.get("exact_blockers") or []),
+                "canonical_identity_status": identity_status or STATUS_UNAVAILABLE,
             })
         positions[symbol] = position
     result["positions"] = positions

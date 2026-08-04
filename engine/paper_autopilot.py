@@ -9347,7 +9347,7 @@ class PaperAutopilotEngine:
         for row in rows:
             if not isinstance(row, dict):
                 continue
-            pid = _pick_first_text(row.get("position_id"), row.get("asset_id"), row.get("symbol"))
+            pid = _pick_first_text(row.get("canonical_position_id"), row.get("position_id"), row.get("symbol"))
             ownership_map[pid] = resolve_canonical_position_ownership_v1(row)
 
         observation_state = "FAILED" if broker_failed else "READY"
@@ -10104,7 +10104,7 @@ class PaperAutopilotEngine:
         for row in rows:
             if not isinstance(row, dict):
                 continue
-            pid = _pick_first_text(row.get("position_id"), row.get("asset_id"), row.get("symbol"))
+            pid = _pick_first_text(row.get("canonical_position_id"), row.get("position_id"), row.get("symbol"))
             ownership_map[pid] = resolve_canonical_position_ownership_v1(row)
 
         lc_state = self._runtime_state.get("loss_containment_state_v1") or {}

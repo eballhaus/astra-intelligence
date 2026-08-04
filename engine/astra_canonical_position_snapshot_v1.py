@@ -227,7 +227,18 @@ def snapshot_to_loss_containment_rows(snapshot: dict[str, Any]) -> list[dict[str
             continue
 
         row = {
-            "position_id": pos.get("broker_asset_id") or f"broker:{symbol}",
+            # A broker asset ID identifies the instrument, not an Astra
+            # lifecycle.  Missing canonical identity stays fail-closed.
+            "position_id": pos.get("canonical_position_id") or f"unresolved:{symbol}",
+            "canonical_position_id": pos.get("canonical_position_id") or "",
+            "broker_asset_id": pos.get("broker_asset_id") or "",
+            "lifecycle_id": pos.get("lifecycle_id") or "",
+            "candidate_id": pos.get("candidate_id") or "",
+            "entry_fill_id": pos.get("entry_fill_id") or "",
+            "entry_order_id": pos.get("entry_order_id") or "",
+            "position_owner": pos.get("position_owner") or "",
+            "management_owner": pos.get("management_owner") or "",
+            "exit_policy_owner": pos.get("exit_policy_owner") or "",
             "symbol": symbol,
             "asset_class": pos.get("asset_class"),
             "asset_type": pos.get("asset_class"),
