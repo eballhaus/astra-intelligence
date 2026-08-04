@@ -215,6 +215,91 @@ class TrustedQuoteCandidateFlowTests(unittest.TestCase):
         self.assertTrue(candidate_trace["partial_cycle_observation_only"])
         self.assertFalse(candidate_trace["submit_order"])
 
+    def test_full_cycle_exploration_cannot_bypass_invalid_pretrade_contract(self):
+        """The production entry loop must not submit an incomplete contract.
+
+        This exercises the same full-cycle exploration branch that can reach
+        ``_open_position_from_row``.  A positive exploration evaluation is
+        deliberately insufficient when the canonical pretrade contract has
+        already failed closed.
+        """
+        directory = tempfile.TemporaryDirectory(prefix="astra_invalid_contract_entry_")
+        self.addCleanup(directory.cleanup)
+        engine = PaperAutopilotEngine(
+            db_path=os.path.join(directory.name, "paper.db"),
+            state_path=os.path.join(directory.name, "state.json"),
+            enabled=True,
+            get_latest_row_fn=lambda _symbol, _asset: {
+                "symbol": "AAPL", "price": 101.25, "provider_used": "ALPACA",
+                "quote_timestamp": _iso(), "market_source_type": "QUOTE",
+            },
+        )
+        broker_snapshot = {
+            "broker_open_symbols": set(),
+            "broker_position_by_symbol": {},
+            "broker_reconciliation_active": True,
+            "broker_positions_fetch_ok": True,
+            "broker_open_positions_count": 0,
+        }
+        engine._refresh_legacy_swing_canary_pre_submit = lambda _positions: {"market_activity": {}}
+        engine._broker_open_symbols_snapshot = lambda: dict(broker_snapshot)
+        engine._fetch_open_positions = lambda: []
+        engine._alpaca_safety_snapshot = lambda: {
+            "paper_mode_verified": True,
+            "broker_execution_enabled": True,
+            "live_endpoint_rejected": True,
+            "open_orders_count": 0,
+        }
+        engine._refresh_legacy_forward_activations = lambda _positions: {}
+        engine._bounded_legacy_quarantine_review_phase = lambda **_kwargs: {}
+        engine._loss_containment_review_phase = lambda **_kwargs: {}
+        engine._profit_protection_review_phase = lambda **_kwargs: {}
+        engine._execution_critical_reconciliation_phase = lambda: {}
+        engine._run_fmp_production_verification_v1 = lambda *_args: {}
+        engine._position_evidence_and_advisory_phase = lambda *_args, **_kwargs: ({}, {}, {}, {})
+        engine._refresh_provider_consumption_telemetry_v1 = lambda *_args: {}
+        engine._reconcile_entry_price_lineage_v1 = lambda _snapshot: {}
+        engine._evidence_capacity_snapshot_v1 = lambda *_args: {
+            "capacity_authority_state": "CURRENT", "position_rows_for_read_only_consumers": [],
+        }
+        engine._duplicate_exposure_snapshot = lambda *_args, **_kwargs: {
+            "blocking_symbols": set(), "internal_meaningful_symbols": set(),
+            "broker_meaningful_symbols": set(), "pending_order_symbols": set(),
+            "reservation_symbols": set(), "broker_dust_symbols": set(),
+            "internal_dust_symbols": set(), "details_by_symbol": {},
+        }
+        engine._collect_candidate_rows = lambda: [_candidate()]
+        engine._is_candidate_paper_eligible = lambda _row: (False, "PRETRADE_DECISION_CONTRACT_MISSING_FIELDS", {"commitment_score": 0.0})
+
+        class _Exploration:
+            def evaluate_candidate(self, *_args, **_kwargs):
+                return {
+                    "controlled_exploration_considered": True,
+                    "controlled_exploration_allowed": True,
+                    "controlled_exploration_reason": "fixture_exploration_pass",
+                    "exploration_trade_quality_score": 99.0,
+                }
+
+        engine.profit_seeking_exploration_suite = _Exploration()
+        submitted = []
+        engine._open_position_from_row = lambda row, **_kwargs: submitted.append(dict(row)) or {"ok": True}
+        activation = {"execution_enabled": True, "exact_blockers": [], "lane_enabled": True}
+        invalid_contract = {
+            "contract_status": "INVALID", "contract_state": "CONTRACT_INCOMPLETE",
+            "order_ready_allowed": False,
+            "fail_closed_reason": "PRETRADE_DECISION_CONTRACT_MISSING_FIELDS",
+            "consumer_acknowledgements": {},
+        }
+        with patch("engine.paper_autopilot.canonical_lane_activation_contract", return_value=activation), patch(
+            "engine.paper_autopilot.build_pretrade_decision_contract", return_value=invalid_contract
+        ):
+            engine.run_cycle()
+
+        self.assertEqual(submitted, [])
+        trace = engine._runtime_state["last_execution_trace"]["per_candidate_decision_trace"][0]
+        self.assertFalse(trace["eligible"])
+        self.assertEqual(trace["decision_reason"], "PRETRADE_DECISION_CONTRACT_MISSING_FIELDS")
+
 
 class ServerQuoteAdapterTests(unittest.TestCase):
     def test_worker_adapter_preserves_router_native_timestamp_without_utc_fallback(self):

@@ -11259,7 +11259,14 @@ class PaperAutopilotEngine:
                             }
                     if exploration_decision:
                         row_trace.update(exploration_decision)
-                    if exploration_decision.get("controlled_exploration_allowed"):
+                    # Exploration can choose among fully qualified candidates;
+                    # it cannot restore an entry that the canonical pretrade
+                    # contract rejected.  The contract owns ORDER_READY
+                    # completeness and must remain fail-closed.
+                    contract_allows_exploration = bool(
+                        dict(row_trace.get("pretrade_decision_contract") or {}).get("order_ready_allowed")
+                    )
+                    if exploration_decision.get("controlled_exploration_allowed") and contract_allows_exploration:
                         allowed = True
                         reason = "controlled_profit_seeking_exploration"
                         row_trace["eligible"] = True
@@ -11273,6 +11280,13 @@ class PaperAutopilotEngine:
                         gate_meta["controlled_exploration_ok"] = True
                         gate_meta["controlled_exploration_reason"] = str(exploration_decision.get("controlled_exploration_reason") or reason)
                     else:
+                        if exploration_decision.get("controlled_exploration_allowed") and not contract_allows_exploration:
+                            row_trace["controlled_exploration_allowed"] = False
+                            row_trace["exploration_rejection_reason"] = str(
+                                dict(row_trace.get("pretrade_decision_contract") or {}).get("fail_closed_reason")
+                                or reason
+                                or "PRETRADE_DECISION_CONTRACT_INVALID"
+                            )
                         skipped += 1
                         row_trace["selected"] = False
                         row_trace["order_attempted"] = False
@@ -12003,7 +12017,10 @@ class PaperAutopilotEngine:
                             "controlled_exploration_reason": f"exploration_eval_exception:{str(exc)[:100]}",
                             "exploration_rejection_reason": "exploration_eval_exception",
                         })
-                if trace.get("controlled_exploration_allowed"):
+                contract_allows_exploration = bool(
+                    dict(trace.get("pretrade_decision_contract") or {}).get("order_ready_allowed")
+                )
+                if trace.get("controlled_exploration_allowed") and contract_allows_exploration:
                     eligible += 1
                     trace["eligible"] = True
                     trace["decision_reason"] = "controlled_profit_seeking_exploration"
@@ -12014,6 +12031,13 @@ class PaperAutopilotEngine:
                     else:
                         trace["selected"] = False
                 else:
+                    if trace.get("controlled_exploration_allowed") and not contract_allows_exploration:
+                        trace["controlled_exploration_allowed"] = False
+                        trace["exploration_rejection_reason"] = str(
+                            dict(trace.get("pretrade_decision_contract") or {}).get("fail_closed_reason")
+                            or trace.get("decision_reason")
+                            or "PRETRADE_DECISION_CONTRACT_INVALID"
+                        )
                     trace["selected"] = False
             trace["order_ready"] = bool(
                 trace.get("selected")
@@ -12317,11 +12341,21 @@ class PaperAutopilotEngine:
                         or {}
                     )
                     trace.update(exploration)
-                    if exploration.get("controlled_exploration_allowed"):
+                    contract_allows_exploration = bool(
+                        dict(trace.get("pretrade_decision_contract") or {}).get("order_ready_allowed")
+                    )
+                    if exploration.get("controlled_exploration_allowed") and contract_allows_exploration:
                         allowed = True
                         reason = "controlled_profit_seeking_exploration"
                         gate_meta = dict(gate_meta or {})
                         gate_meta["controlled_exploration_ok"] = True
+                    elif exploration.get("controlled_exploration_allowed"):
+                        trace["controlled_exploration_allowed"] = False
+                        trace["exploration_rejection_reason"] = str(
+                            dict(trace.get("pretrade_decision_contract") or {}).get("fail_closed_reason")
+                            or reason
+                            or "PRETRADE_DECISION_CONTRACT_INVALID"
+                        )
                 except Exception as exc:
                     trace["exploration_rejection_reason"] = f"exploration_eval_exception:{str(exc)[:80]}"
 
