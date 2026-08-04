@@ -9173,11 +9173,22 @@ class PaperAutopilotEngine:
             current = current_rows[0]
             # A row must be explicitly open, asset-compatible, and tied to
             # the current reconciliation timestamp before symbol fallback.
+            # A verified shared entry identity is stronger than broker-versus-
+            # database timestamp formatting: Alpaca snapshots can normalize
+            # an entry time by a few seconds after the fill is recorded.
             if _norm_asset(row.get("asset_type") or "stock") != _norm_asset(current.get("asset_type") or current.get("asset_class") or "stock"):
                 continue
             entry_at = _text(row.get("entry_filled_at") or row.get("entry_timestamp"))
             current_at = _text(current.get("entry_filled_at") or current.get("entry_timestamp"))
-            if not entry_at or not current_at or entry_at != current_at:
+            identity_keys = (
+                "entry_fill_id", "entry_order_id", "source_broker_order_id",
+                "source_client_order_id", "position_id",
+            )
+            exact_identity = any(
+                _text(row.get(key)) and _text(row.get(key)) == _text(current.get(key))
+                for key in identity_keys
+            )
+            if not exact_identity and (not entry_at or not current_at or entry_at != current_at):
                 continue
             evidence.append({
                 **row,

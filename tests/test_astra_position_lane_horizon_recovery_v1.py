@@ -155,7 +155,7 @@ class PositionLaneHorizonRecoveryTests(unittest.TestCase):
                 }],
             }
             ledger = engine._recover_broker_position_lane_horizon_v1(
-                {"PH": _broker(entry_timestamp="2026-07-14T13:31:31Z")},
+                {"PH": _broker(entry_fill_id="", entry_timestamp="2026-07-14T13:31:31Z")},
                 [_evidence(entry_timestamp="2026-07-14T13:31:28Z", entry_filled_at="2026-07-14T13:31:28Z")],
             )
         row = ledger["positions"][0]
