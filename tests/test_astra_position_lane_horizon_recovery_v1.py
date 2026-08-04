@@ -154,6 +154,26 @@ class PositionLaneHorizonRecoveryTests(unittest.TestCase):
         self.assertEqual(decision["lane"], "DAY")
         self.assertEqual(decision["ownership_classification"], "ACTIVE_DAY")
 
+    def test_sg_pton_rivn_shaped_day_positions_keep_distinct_canonical_identity(self):
+        examples = (
+            ("SG", "ede52fee-62f7-42b1-8b09-1d9a03278884", "adbe93e7-63cc-4bac-be65-0cc985dfd3c8"),
+            ("PTON", "ce4ae3d4-bd01-47b8-9b3d-34c441b9d23d", "e1e6a351-04a6-46f2-9dd3-39bc9cc99586"),
+            ("RIVN", "e677346b-4129-4ffa-8651-d27aa6b9e84f", "66f6d0cc-37d3-4bff-aa9d-4a83730d0b35"),
+        )
+        for symbol, position_id, fill_id in examples:
+            with self.subTest(symbol=symbol):
+                broker = _broker(symbol=symbol, asset_id=f"alpaca-{symbol}", entry_fill_id=fill_id)
+                snapshot = build_canonical_position_snapshot({symbol: broker})
+                ledger = build_position_lane_horizon_recovery_v1(
+                    {symbol: broker}, evidence_rows=[_evidence(symbol=symbol, position_id=position_id, entry_fill_id=fill_id)]
+                )
+                enriched = enrich_canonical_position_snapshot_v1(snapshot, ledger)["positions"][symbol]
+                row = snapshot_to_loss_containment_rows({"positions": {symbol: enriched}})[0]
+                self.assertEqual(row["position_id"], position_id)
+                self.assertEqual(row["lifecycle_id"], position_id)
+                self.assertEqual(row["entry_fill_id"], fill_id)
+                self.assertEqual(row["broker_asset_id"], f"alpaca-{symbol}")
+
     def test_both_protection_engines_consume_identical_recovery(self):
         snapshot = build_canonical_position_snapshot({"PH": _broker()})
         ledger = build_position_lane_horizon_recovery_v1({"PH": _broker()}, evidence_rows=[_evidence()])
