@@ -6161,6 +6161,57 @@ class PaperAutopilotEngine:
             "paper_only_preserved": True, "behavior_safe_to_apply": False,
         }
 
+    def _archive_historical_reconciliation_collisions_v1(self) -> dict[str, Any]:
+        """Remove retired/dust rows from operational ownership after a reopen.
+
+        A broker position is symbol-aggregated, while lifecycle ownership is
+        not.  When a completed legacy retirement left a broker-held dust
+        record and a later, ID-linked Astra entry reopens the same symbol, the
+        old reconciliation row must remain provenance only.  It cannot remain
+        OPEN or override the new lifecycle by symbol.
+        """
+        intents = self._paper_sell_order_intents()
+        archived: list[dict[str, Any]] = []
+        with self._connect() as conn:
+            rows = [dict(row or {}) for row in conn.execute(
+                "SELECT * FROM paper_positions WHERE status='OPEN' ORDER BY updated_at DESC"
+            ).fetchall()]
+            by_symbol: dict[str, list[dict[str, Any]]] = {}
+            for row in rows:
+                by_symbol.setdefault(str(row.get("symbol") or "").upper().strip(), []).append(row)
+            for symbol, group in by_symbol.items():
+                current = [row for row in group if str(row.get("position_owner") or "").upper() in {"DAY", "SCALP", "SWING", "CRYPTO"} and bool(row.get("entry_price_verified")) and str(row.get("entry_fill_id") or "")]
+                historical = [row for row in group if str(row.get("position_owner") or "").upper() == "LEGACY" and str(row.get("reconciliation_reason") or "") == "PARTIAL_EXIT_RESIDUAL"]
+                if len(current) != 1 or not historical:
+                    continue
+                for old in historical:
+                    intent = next((dict(value or {}) for value in intents.values() if isinstance(value, dict) and bool(value.get("legacy_imported_retirement")) and str(value.get("position_id") or "") == str(old.get("position_id") or "") and str(value.get("status") or "") == "BROKER_HELD_DUST"), None)
+                    if not intent:
+                        continue
+                    residual = dict(intent.get("broker_residual_lookup") or {})
+                    qty = _to_float(residual.get("broker_residual_quantity"), 0.0)
+                    # The archive transition is identity-based.  A same-symbol
+                    # broker aggregate is never evidence that the old lot is
+                    # dust; only its own completed retirement record is.
+                    dust = classify_dust_position_v1({"symbol": symbol, "qty": qty})
+                    distinct_current = str(current[0].get("position_id") or "") != str(old.get("position_id") or "")
+                    distinct_lifecycle = str(current[0].get("entry_fill_id") or "") != str(old.get("entry_fill_id") or "")
+                    if not bool(dust.get("is_dust")) or not distinct_current or not distinct_lifecycle:
+                        continue
+                    notes = _safe_json_load(old.get("lifecycle_notes"))
+                    notes["historical_reconciliation_archive_v1"] = {
+                        "archived_at": _now_iso(), "reason": "NEWER_BROKER_CONFIRMED_LIFECYCLE_SAME_SYMBOL",
+                        "current_position_id": current[0].get("position_id"), "legacy_retirement_intent_id": intent.get("order_intent_id"),
+                        "dust_quantity": qty,
+                    }
+                    conn.execute(
+                        "UPDATE paper_positions SET status='BROKER_HELD_DUST', quantity=?, reconciliation_reason='BROKER_HELD_DUST_RESIDUAL', lifecycle_notes=?, updated_at=? WHERE position_id=? AND status='OPEN'",
+                        (qty, _safe_json(notes), _now_iso(), old.get("position_id")),
+                    )
+                    archived.append({"symbol": symbol, "historical_position_id": old.get("position_id"), "current_position_id": current[0].get("position_id"), "dust_quantity": qty})
+            conn.commit()
+        return {"archived": archived, "archived_count": len(archived), "broker_actions_used": 0}
+
     def entry_price_lineage_dry_run_audit_v1(self, max_rows: int = 250) -> dict[str, Any]:
         """Compare stored entry prices with ID-linked broker truth without applying repairs."""
         cap = max(1, min(int(max_rows or 250), 500))
@@ -10301,12 +10352,14 @@ class PaperAutopilotEngine:
                 self._note_worker_progress("entry_price_lineage_reconciliation")
                 try:
                     entry_price_lineage_refresh_partial = self._reconcile_entry_price_lineage_v1(broker_snapshot)
+                    historical_collision_archive_partial = self._archive_historical_reconciliation_collisions_v1()
                 except Exception as exc:
                     entry_price_lineage_refresh_partial = {
                         "status": "FAILED_SAFE",
                         "error": str(exc)[:180],
                         "broker_actions_used": 0,
                     }
+                    historical_collision_archive_partial = {"archived": [], "archived_count": 0, "error": str(exc)[:180]}
                     self._runtime_state["worker_last_suppressed_exception_v1"] = {
                         "phase": "partial_entry_price_lineage_reconciliation",
                         "exception_type": type(exc).__name__,
@@ -10580,6 +10633,7 @@ class PaperAutopilotEngine:
                     "broker_reconciliation_active": bool(broker_snapshot.get("broker_reconciliation_active")),
                     "broker_positions_fetch_ok": bool(broker_snapshot.get("broker_positions_fetch_ok")),
                     "entry_price_lineage_reconciliation": entry_price_lineage_refresh_partial,
+                    "historical_reconciliation_collision_archive": historical_collision_archive_partial,
                     "crypto_ranking_refresh": crypto_refresh,
                     "equity_risk_envelope_refresh": equity_risk_refresh,
                     "loss_containment_review_v1": loss_containment_review_partial,
@@ -10605,6 +10659,7 @@ class PaperAutopilotEngine:
                     "broker_positions_fetch_ok": bool(broker_snapshot.get("broker_positions_fetch_ok")),
                     "broker_open_positions_count": int(_to_int(broker_snapshot.get("broker_open_positions_count"), 0)),
                     "entry_price_lineage_reconciliation": entry_price_lineage_refresh_partial,
+                    "historical_reconciliation_collision_archive": historical_collision_archive_partial,
                     "evidence_accumulation_capacity_v1": evidence_capacity_snapshot,
                     "crypto_ranking_refresh": crypto_refresh,
                     "equity_risk_envelope_refresh": equity_risk_refresh,
@@ -10665,6 +10720,7 @@ class PaperAutopilotEngine:
             duplicate_broker_open_syms = set(duplicate_exposure.get("broker_meaningful_symbols") or set())
             self._note_worker_progress("entry_price_lineage_reconciliation")
             entry_price_lineage_refresh = self._reconcile_entry_price_lineage_v1(broker_snapshot)
+            historical_collision_archive = self._archive_historical_reconciliation_collisions_v1()
             legacy_activation_refresh = self._refresh_legacy_forward_activations(broker_position_by_symbol)
             self._note_worker_progress("legacy_market_evidence")
             if not legacy_canary_refresh:
@@ -11527,6 +11583,7 @@ class PaperAutopilotEngine:
                 "broker_open_positions_count": int(len([s for s in broker_open_syms if s])),
                 "broker_positions_fetch_ok": bool(broker_positions_fetch_ok),
                 "entry_price_lineage_reconciliation": entry_price_lineage_refresh,
+                "historical_reconciliation_collision_archive": historical_collision_archive,
                 "broker_positions_error_sanitized": str(broker_snapshot.get("broker_positions_error_sanitized") or "")[:180],
                 "broker_orders_fetch_ok": bool(broker_snapshot.get("broker_orders_fetch_ok")),
                 "effective_broker_capacity_count": int(len([s for s in broker_open_syms if s])),

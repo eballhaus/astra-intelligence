@@ -224,6 +224,24 @@ class BrokerEntryPriceLineageRepairTests(unittest.TestCase):
             self.assertAlmostEqual(row["quantity"], 16.805042016)
             self.assertEqual(row["entry_fill_id"], "entry-current")
 
+    def test_historical_dust_row_cannot_override_new_same_symbol_lifecycle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            engine = PaperAutopilotEngine(db_path=str(root / "paper.db"), state_path=str(root / "state.json"))
+            with engine._connect() as conn:
+                conn.execute("""INSERT INTO paper_positions(position_id,symbol,asset_type,status,quantity,entry_price,entry_price_verified,entry_fill_id,entry_timestamp,lane_id,position_owner,exit_policy_owner,reconciliation_reason,lifecycle_notes,created_at,updated_at) VALUES ('legacy-sg','SG','stock','OPEN',22.4614,8.9,0,'','2026-07-07T14:49:19Z','','LEGACY','LEGACY','PARTIAL_EXIT_RESIDUAL','{}','2026-07-31T20:00:00Z','2026-07-31T20:00:00Z')""")
+                conn.execute("""INSERT INTO paper_positions(position_id,symbol,asset_type,status,quantity,entry_price,entry_price_verified,entry_fill_id,entry_timestamp,lane_id,position_owner,exit_policy_owner,lifecycle_notes,created_at,updated_at) VALUES ('day-sg','SG','stock','OPEN',16.805042016,5.95,1,'entry-sg','2026-08-04T13:44:29Z','DAY','DAY','DAY','{}','2026-08-04T13:44:29Z','2026-08-04T13:44:29Z')""")
+                conn.commit()
+            engine._runtime_state["paper_sell_order_intents"] = {"legacy-retire:SG": {"legacy_imported_retirement": True, "position_id": "legacy-sg", "order_intent_id": "legacy-retire:SG", "status": "BROKER_HELD_DUST", "broker_residual_lookup": {"broker_residual_quantity": 0.00000027}}}
+            report = engine._archive_historical_reconciliation_collisions_v1()
+            with engine._connect() as conn:
+                old = dict(conn.execute("SELECT status,quantity FROM paper_positions WHERE position_id='legacy-sg'").fetchone())
+                current = dict(conn.execute("SELECT status,lane_id,position_owner,exit_policy_owner FROM paper_positions WHERE position_id='day-sg'").fetchone())
+            self.assertEqual(report["archived_count"], 1)
+            self.assertEqual(old["status"], "BROKER_HELD_DUST")
+            self.assertAlmostEqual(old["quantity"], 0.00000027)
+            self.assertEqual(current, {"status": "OPEN", "lane_id": "DAY", "position_owner": "DAY", "exit_policy_owner": "DAY"})
+
     def test_partial_entry_reconciles_cumulative_broker_fill_on_later_cycle(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(paper_autopilot_module, "create_lifecycle_record", None):
             root = pathlib.Path(tmp)
