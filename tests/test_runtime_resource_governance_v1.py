@@ -7,18 +7,30 @@ from pathlib import Path
 from engine.astra_runtime_governance_v1 import (
     RuntimeLimits,
     WorkerLease,
+    _future_iso,
     advance_resource_policy,
     canonical_runtime_invariants,
     canonical_worker_state,
     classify_resource_signals,
     read_snapshot,
     rotate_log,
+    snapshot_age_seconds,
     write_snapshot,
     worker_liveness,
 )
 
 
 class RuntimeResourceGovernanceTests(unittest.TestCase):
+    def test_future_iso_uses_aware_utc_after_timezone_style_change(self):
+        now = datetime(2026, 8, 5, 13, 30, tzinfo=UTC)
+        self.assertEqual(_future_iso(60, now=now), "2026-08-05T13:31:00Z")
+
+    def test_snapshot_age_seconds_distinguishes_fresh_and_stale_heartbeat(self):
+        fresh = {"heartbeat_at": datetime.now(UTC).isoformat().replace("+00:00", "Z")}
+        stale = {"heartbeat_at": (datetime.now(UTC) - timedelta(seconds=181)).isoformat().replace("+00:00", "Z")}
+        self.assertLess(snapshot_age_seconds(fresh), 2.0)
+        self.assertGreater(snapshot_age_seconds(stale), 180.0)
+
     def test_snapshot_is_atomic_and_readable(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "worker.json"

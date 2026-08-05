@@ -15,7 +15,8 @@ import subprocess
 import time
 import uuid
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime
+from datetime import timezone
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,7 @@ WORKER_LOCK_PATH = STATE / "astra_worker_runtime_v1.lock"
 
 
 def utc_now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _as_float(value: Any, default: float = 0.0) -> float:
@@ -128,7 +129,7 @@ def _timestamp_age_seconds(value: Any) -> float | None:
     if not raw:
         return None
     try:
-        return max(0.0, (datetime.now(UTC) - datetime.fromisoformat(raw.replace("Z", "+00:00"))).total_seconds())
+        return max(0.0, (datetime.now(timezone.utc) - datetime.fromisoformat(raw.replace("Z", "+00:00"))).total_seconds())
     except ValueError:
         return None
 
@@ -337,13 +338,13 @@ def classify_resource_signals(signals: dict[str, Any], *, limits: RuntimeLimits 
 
 
 def _future_iso(seconds: int, *, now: datetime | None = None) -> str:
-    now = now or datetime.now(UTC)
-    return datetime.fromtimestamp(now.timestamp() + max(0, seconds), UTC).isoformat().replace("+00:00", "Z")
+    now = now or datetime.now(timezone.utc)
+    return datetime.fromtimestamp(now.timestamp() + max(0, seconds), timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _iso_is_future(value: Any, *, now: datetime | None = None) -> bool:
     try:
-        now = now or datetime.now(UTC)
+        now = now or datetime.now(timezone.utc)
         return datetime.fromisoformat(str(value).replace("Z", "+00:00")) > now
     except (TypeError, ValueError):
         return False
@@ -352,7 +353,7 @@ def _iso_is_future(value: Any, *, now: datetime | None = None) -> bool:
 def advance_resource_policy(previous: dict[str, Any] | None, sample: dict[str, Any], *, limits: RuntimeLimits | None = None, now: datetime | None = None) -> dict[str, Any]:
     """Persisted hysteresis state: elevated work is reduced, unsafe pressure pauses."""
     limits = limits or RuntimeLimits.from_env()
-    now = now or datetime.now(UTC)
+    now = now or datetime.now(timezone.utc)
     previous = dict(previous or {})
     candidate = str(sample.get("resource_candidate_state") or "RESOURCE_UNKNOWN_FAIL_CLOSED")
     prior_state = str(previous.get("resource_state") or "RESOURCE_NORMAL")
@@ -447,7 +448,7 @@ def resource_snapshot(*, worker_pid: int | None = None, backend_pid: int | None 
 def worker_liveness(state: dict[str, Any] | None = None, *, process: dict[str, Any] | None = None, now: datetime | None = None) -> dict[str, Any]:
     """Separate live process identity from preserved historical worker metadata."""
     state = dict(state or {})
-    now = now or datetime.now(UTC)
+    now = now or datetime.now(timezone.utc)
     declared_active = state.get("active_worker_present")
     if declared_active is None:
         declared_active = str(state.get("ownership_state") or "") != "NO_WORKER_ACTIVE"
@@ -567,6 +568,6 @@ def snapshot_age_seconds(snapshot: dict[str, Any]) -> float | None:
     if not raw:
         return None
     try:
-        return max(0.0, (datetime.now(UTC) - datetime.fromisoformat(raw.replace("Z", "+00:00"))).total_seconds())
+        return max(0.0, (datetime.now(timezone.utc) - datetime.fromisoformat(raw.replace("Z", "+00:00"))).total_seconds())
     except ValueError:
         return None
