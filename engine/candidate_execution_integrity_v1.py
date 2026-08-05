@@ -429,3 +429,66 @@ def candidate_execution_integrity(
         "behavior_safe_to_apply": False,
         "advisory_only": True,
     }
+
+
+def native_crypto_exit_execution_integrity(
+    exit_order: Mapping[str, Any] | None,
+    *,
+    supported_pairs: set[str] | list[str] | None = None,
+    tradable_pairs: set[str] | list[str] | None = None,
+    paper_mode_verified: bool = False,
+    live_endpoint_detected: bool = False,
+    broker_reconciliation_ok: bool = False,
+    kill_switch_enabled: bool = False,
+) -> dict[str, Any]:
+    """Validate a native crypto exit without re-evaluating an entry candidate.
+
+    The final paper-broker boundary still requires a verified lane contract,
+    cached capability facts, and a fresh executable quote.  Entry-only ranking,
+    horizon, capacity, and liquidity gates are intentionally not reused here.
+    This helper is pure and performs no provider or broker I/O.
+    """
+    row = dict(exit_order or {})
+    identity = normalize_crypto_pair_strict(
+        row.get("symbol") or row.get("ticker"),
+        asset_class=row.get("asset_class") or row.get("asset_type"),
+        base_symbol=row.get("base_symbol"),
+        quote_currency=row.get("quote_currency"),
+    )
+    pair = str(identity.get("normalized_symbol") or "")
+    supported = {str(item or "").upper().replace("-", "/") for item in (supported_pairs or [])}
+    tradable = {str(item or "").upper().replace("-", "/") for item in (tradable_pairs or [])}
+    quote_timestamp = row.get("provider_quote_timestamp") or row.get("quote_timestamp") or row.get("timestamp")
+    quote_age = _timestamp_age_seconds(quote_timestamp)
+    bid = _number(row.get("bid") or row.get("bid_price") or row.get("bp"), -1.0)
+    ask = _number(row.get("ask") or row.get("ask_price") or row.get("ap"), -1.0)
+    price = _number(row.get("price") or row.get("current_price") or row.get("last_price"), 0.0)
+    spread = _number(row.get("spread_pct"), -1.0)
+    if spread < 0 and bid > 0 and ask > 0 and ask >= bid:
+        midpoint = (bid + ask) / 2.0
+        if midpoint > 0:
+            spread = ((ask - bid) / midpoint) * 100.0
+    gates = {
+        "identity": "PASS" if identity.get("ok") else str(identity.get("reason") or "REJECTED_SYMBOL_NORMALIZATION"),
+        "native_contract": "PASS" if bool(row.get("native_lane_exit")) and bool(row.get("native_exit_contract_verified")) else "REJECTED_NATIVE_EXIT_CONTRACT_REQUIRED",
+        "exit_signal": "PASS" if bool(row.get("existing_exit_signal_verified")) else "REJECTED_EXIT_SIGNAL_REQUIRED",
+        "broker_support": "PASS" if pair and pair in supported else "REJECTED_UNSUPPORTED_CRYPTO_PAIR",
+        "broker_tradability": "PASS" if pair and pair in tradable else "REJECTED_UNTRADABLE_CRYPTO_PAIR",
+        "quote_freshness": "PASS" if quote_age is not None and quote_age <= 120 else "REJECTED_STALE_EXECUTABLE_CRYPTO_QUOTE",
+        "quote_price": "PASS" if price > 0 or (bid > 0 and ask > 0) else "REJECTED_EXECUTABLE_CRYPTO_QUOTE_PRICE_REQUIRED",
+        "quote_spread": "PASS" if 0 <= spread <= _configured_max_spread_pct(row) else "REJECTED_EXCESSIVE_CRYPTO_SPREAD",
+        "broker_reconciliation": "PASS" if broker_reconciliation_ok else "PENDING_BROKER_RECONCILIATION",
+        "paper_live_safety": "PASS" if paper_mode_verified and not live_endpoint_detected and not kill_switch_enabled else "REJECTED_PAPER_LIVE_SAFETY",
+    }
+    failed = [name for name, state in gates.items() if state != "PASS"]
+    first_gate = failed[0] if failed else ""
+    return {
+        "normalized_symbol": pair or None,
+        "execution_eligible": not failed,
+        "gate_status": gates,
+        "failed_gates": [gates[name] for name in failed],
+        "first_causal_blocker": gates.get(first_gate) if first_gate else None,
+        "quote_age_seconds": quote_age,
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+    }

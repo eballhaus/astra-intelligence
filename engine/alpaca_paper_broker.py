@@ -8,7 +8,10 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any
 
-from engine.candidate_execution_integrity_v1 import candidate_execution_integrity
+from engine.candidate_execution_integrity_v1 import (
+    candidate_execution_integrity,
+    native_crypto_exit_execution_integrity,
+)
 from engine.runtime_environment import load_runtime_environment
 
 VERSION = "1.0.0"
@@ -1003,18 +1006,29 @@ class AlpacaPaperBroker:
             capability = self.crypto_capability_status(False)
             if not bool(order.get("crypto_paper_activation_passed", False)):
                 return {"ok": False, "error": "crypto_paper_activation_proof_required"}
-            integrity = candidate_execution_integrity(
-                order,
-                supported_pairs=set(capability.get("supported_pairs") or []),
-                tradable_pairs=set(capability.get("tradable_pairs") or []),
-                lane_state="LANE_PAPER_ACTIVE_BOUNDED" if capability.get("crypto_trading_supported") else "LANE_BLOCKED",
-                paper_mode_verified=bool(safety.get("paper_mode_verified")),
-                live_endpoint_detected=bool(safety.get("live_endpoint_detected")),
-                capacity_available=bool(order.get("crypto_capacity_available", True)),
-                duplicate_pending=bool(order.get("duplicate_pending_order", False)),
-                broker_reconciliation_ok=bool(order.get("broker_reconciliation_ok", False)),
-                kill_switch_enabled=bool(order.get("crypto_kill_switch_enabled", False)),
-            )
+            if side == "sell" and bool(order.get("native_lane_exit")):
+                integrity = native_crypto_exit_execution_integrity(
+                    order,
+                    supported_pairs=set(capability.get("supported_pairs") or []),
+                    tradable_pairs=set(capability.get("tradable_pairs") or []),
+                    paper_mode_verified=bool(safety.get("paper_mode_verified")),
+                    live_endpoint_detected=bool(safety.get("live_endpoint_detected")),
+                    broker_reconciliation_ok=bool(order.get("broker_reconciliation_ok", False)),
+                    kill_switch_enabled=bool(order.get("crypto_kill_switch_enabled", False)),
+                )
+            else:
+                integrity = candidate_execution_integrity(
+                    order,
+                    supported_pairs=set(capability.get("supported_pairs") or []),
+                    tradable_pairs=set(capability.get("tradable_pairs") or []),
+                    lane_state="LANE_PAPER_ACTIVE_BOUNDED" if capability.get("crypto_trading_supported") else "LANE_BLOCKED",
+                    paper_mode_verified=bool(safety.get("paper_mode_verified")),
+                    live_endpoint_detected=bool(safety.get("live_endpoint_detected")),
+                    capacity_available=bool(order.get("crypto_capacity_available", True)),
+                    duplicate_pending=bool(order.get("duplicate_pending_order", False)),
+                    broker_reconciliation_ok=bool(order.get("broker_reconciliation_ok", False)),
+                    kill_switch_enabled=bool(order.get("crypto_kill_switch_enabled", False)),
+                )
             if not integrity.get("execution_eligible") or not bool(order.get("crypto_execution_integrity_passed", False)):
                 return {
                     "ok": False,

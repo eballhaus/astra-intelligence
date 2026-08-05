@@ -14,7 +14,10 @@ from datetime import UTC, datetime, timedelta, time as datetime_time
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
-from engine.candidate_execution_integrity_v1 import candidate_execution_integrity
+from engine.candidate_execution_integrity_v1 import (
+    candidate_execution_integrity,
+    native_crypto_exit_execution_integrity,
+)
 from engine.runtime_environment import load_runtime_environment, resolve_fmp_key
 from engine.astra_evidence_accumulation_capacity_v1 import (
     build_capacity_snapshot,
@@ -1703,6 +1706,9 @@ class PaperAutopilotEngine:
             "learned_exit_daily": {},
             "learned_exit_rollback": {},
             "authorized_lane_exit_pending": {},
+            # Lifecycle-keyed native exit transitions must survive a worker
+            # restart so pending reconciliation cannot be mistaken for HOLD.
+            "native_lane_exit_lifecycle_v1": {},
             # Every paper sell owns one durable intent.  An intent remains
             # authoritative across worker restarts while broker submission is
             # ambiguous, so a retry cannot manufacture a second sell.
@@ -1890,6 +1896,8 @@ class PaperAutopilotEngine:
                     self._runtime_state["learned_exit_rollback"] = dict(payload.get("learned_exit_rollback") or {})
                 if isinstance(payload.get("authorized_lane_exit_pending"), dict):
                     self._runtime_state["authorized_lane_exit_pending"] = dict(payload.get("authorized_lane_exit_pending") or {})
+                if isinstance(payload.get("native_lane_exit_lifecycle_v1"), dict):
+                    self._runtime_state["native_lane_exit_lifecycle_v1"] = dict(payload.get("native_lane_exit_lifecycle_v1") or {})
                 if isinstance(payload.get("paper_sell_order_intents"), dict):
                     self._runtime_state["paper_sell_order_intents"] = dict(payload.get("paper_sell_order_intents") or {})
                 if isinstance(payload.get("legacy_swing_fmp_evidence"), dict):
@@ -2021,6 +2029,7 @@ class PaperAutopilotEngine:
             "learned_exit_daily": dict(self._runtime_state.get("learned_exit_daily") or {}),
             "learned_exit_rollback": dict(self._runtime_state.get("learned_exit_rollback") or {}),
             "authorized_lane_exit_pending": dict(self._runtime_state.get("authorized_lane_exit_pending") or {}),
+            "native_lane_exit_lifecycle_v1": dict(self._runtime_state.get("native_lane_exit_lifecycle_v1") or {}),
             "paper_sell_order_intents": dict(self._runtime_state.get("paper_sell_order_intents") or {}),
             "legacy_swing_fmp_evidence": dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {}),
             "legacy_swing_fmp_activity": dict(self._runtime_state.get("legacy_swing_fmp_activity") or {}),
@@ -3281,8 +3290,82 @@ class PaperAutopilotEngine:
             "broker_actions": 1 if writer.get("submitted") else 0, "guard": guard,
         }
 
+    def _native_exit_provenance_contract(self, open_row: Mapping[str, Any], lane: str) -> dict[str, Any]:
+        """Prove that a SWING/CRYPTO row is one native Astra lifecycle.
+
+        This intentionally requires the immutable entry contract written by
+        the existing entry path.  It never derives authority from a symbol,
+        a broker asset id, or a reconstructed/legacy row.
+        """
+        row = dict(open_row or {})
+        position_id = str(row.get("position_id") or "").strip()
+        entry_order_id = str(row.get("entry_order_id") or row.get("source_broker_order_id") or "").strip()
+        entry_fill_id = str(row.get("entry_fill_id") or "").strip()
+        metadata = _safe_json_load(row.get("entry_metadata_json"))
+        blockers: list[str] = []
+        prohibited_flags = (
+            "legacy_swing_canary_adapter_v1", "legacy_imported_retirement", "legacy_imported",
+            "learned_exit_execution", "manual_exit", "canary", "reconstructed",
+        )
+        if not position_id:
+            blockers.append("CANONICAL_POSITION_ID_REQUIRED")
+        if str(row.get("entry_metadata_generation") or "") != "V1_MANDATORY":
+            blockers.append("NATIVE_ENTRY_METADATA_REQUIRED")
+        if str(metadata.get("metadata_generation") or "") != "V1_MANDATORY":
+            blockers.append("NATIVE_ENTRY_CONTRACT_REQUIRED")
+        if not str(metadata.get("candidate_id") or "").strip():
+            blockers.append("CANONICAL_CANDIDATE_ID_REQUIRED")
+        if str(metadata.get("lifecycle_id") or "").strip() != position_id:
+            blockers.append("CANONICAL_LIFECYCLE_ID_MISMATCH")
+        if str(metadata.get("lane") or "").upper().strip() != lane:
+            blockers.append("CANONICAL_LANE_CONTRACT_MISMATCH")
+        if str(metadata.get("broker_order_id") or "").strip() != entry_order_id:
+            blockers.append("ENTRY_ORDER_LINEAGE_MISMATCH")
+        if str(metadata.get("entry_fill_id") or "").strip() != entry_fill_id:
+            blockers.append("ENTRY_FILL_LINEAGE_MISMATCH")
+        if list(metadata.get("exact_blockers") or []):
+            blockers.append("ENTRY_CONTRACT_NOT_RESOLVED")
+        if not bool(row.get("entry_price_verified")):
+            blockers.append("BROKER_VERIFIED_ENTRY_PRICE_REQUIRED")
+        if str(row.get("source_lifecycle_id") or "").strip() and str(row.get("source_lifecycle_id") or "").strip() != position_id:
+            blockers.append("SOURCE_LIFECYCLE_ID_MISMATCH")
+        if str(row.get("source_candidate_id") or "").strip() and str(row.get("source_candidate_id") or "").strip() != str(metadata.get("candidate_id") or "").strip():
+            blockers.append("SOURCE_CANDIDATE_ID_MISMATCH")
+        if str(row.get("status") or "OPEN").upper().strip() != "OPEN":
+            blockers.append("OPEN_LIFECYCLE_REQUIRED")
+        source_bucket = str(row.get("source_bucket") or "").upper().strip()
+        # Source classification is a second independent provenance check. A
+        # stale or incomplete row must not become autonomous merely because it
+        # happens to carry otherwise valid-looking entry metadata.
+        if source_bucket.startswith("LEGACY"):
+            blockers.append("LEGACY_LIFECYCLE_HUMAN_APPROVAL_REQUIRED")
+        elif any(marker in source_bucket for marker in ("MANUAL", "LEARNED", "CANARY", "RECONSTRUCT", "AMBIGUOUS")):
+            blockers.append("NON_NATIVE_SOURCE_BUCKET")
+        if any(bool(row.get(flag)) for flag in prohibited_flags):
+            blockers.append("NON_NATIVE_EXIT_CLASSIFICATION")
+        if any(str(row.get(key) or "").strip() for key in (
+            "reconciliation_parent_position_id", "reconciliation_parent_lifecycle_id",
+            "reconciliation_parent_retirement_intent_id",
+        )):
+            blockers.append("RECONSTRUCTED_OR_AMBIGUOUS_LIFECYCLE")
+        if str(row.get("position_owner") or "").upper().strip() != lane:
+            blockers.append("LANE_POSITION_OWNER_MISMATCH")
+        if str(row.get("exit_policy_owner") or "").upper().strip() != lane:
+            blockers.append("LANE_EXIT_OWNER_MISMATCH")
+        explicit_manager = str(row.get("management_owner") or metadata.get("management_owner") or "").upper().strip()
+        if explicit_manager and explicit_manager != lane:
+            blockers.append("LANE_MANAGEMENT_OWNER_MISMATCH")
+        return {
+            "proven": not blockers,
+            "position_id": position_id,
+            "lifecycle_id": position_id,
+            "candidate_id": str(metadata.get("candidate_id") or ""),
+            "entry_contract": metadata,
+            "exact_blockers": list(dict.fromkeys(blockers)),
+        }
+
     def _authorized_lane_exit_contract(self, open_row: dict[str, Any]) -> dict[str, Any]:
-        """Authorize only explicit DAY/CRYPTO owners with a real entry fill."""
+        """Authorize only explicit, broker-linked lane lifecycle exits."""
         lane = str(open_row.get("lane_id") or "").upper().strip()
         if lane == "SWING" and bool(open_row.get("legacy_swing_canary_adapter_v1")):
             pre = dict(open_row.get("legacy_swing_canary_pre_submit") or {})
@@ -3310,16 +3393,17 @@ class PaperAutopilotEngine:
                 "broker_submission_blocked": True, "lane_id": "SWING", "paper_mode_verified": True,
                 "broker_live_endpoint_allowed": False,
             }
-        # SWING exits remain unavailable to the V2 lane writer unless they
-        # enter through the explicit legacy-canary adapter above.
-        if lane == "SWING":
-            return {"authorized": False, "status": "NOT_APPLICABLE", "reason": "lane_not_authorized_for_v2_exit"}
         if lane not in {"DAY", "SCALP", "SWING", "CRYPTO"}:
             return {"authorized": False, "status": "NOT_APPLICABLE", "reason": "lane_not_authorized_for_v2_exit"}
         owner = lane_owner_contract(open_row)
         capital = lane_capital_status(lane)
         entry_order_id = str(open_row.get("entry_order_id") or open_row.get("source_broker_order_id") or "").strip()
         entry_fill_id = str(open_row.get("entry_fill_id") or "").strip()
+        # Preserve the legacy fail-closed reason for an ordinary, unlinked
+        # SWING row.  Native authority below is available only to rows with
+        # immutable entry lineage, never to a symbol-only legacy position.
+        if lane == "SWING" and not entry_order_id and not entry_fill_id:
+            return {"authorized": False, "status": "NOT_APPLICABLE", "reason": "lane_not_authorized_for_v2_exit"}
         if not bool(capital.get("capital_configured")):
             return {"authorized": False, "status": "UNRESOLVED", "reason": str(capital.get("capital_configuration_status") or "CAPITAL_CONFIGURATION_REQUIRED")}
         if not bool(owner.get("automatic_management_allowed")):
@@ -3333,6 +3417,30 @@ class PaperAutopilotEngine:
             return {"authorized": False, "status": "UNRESOLVED", "reason": "PAPER_ONLY_BROKER_BOUNDARY_REQUIRED"}
         if self.alpaca_paper_broker is None or not hasattr(self.alpaca_paper_broker, "submit_paper_order"):
             return {"authorized": False, "status": "WORKER_UNAVAILABLE", "reason": "ALPACA_PAPER_BROKER_UNAVAILABLE"}
+        provenance: dict[str, Any] = {}
+        crypto_capability: dict[str, Any] = {}
+        if lane in {"SWING", "CRYPTO"}:
+            provenance = self._native_exit_provenance_contract(open_row, lane)
+            if not bool(provenance.get("proven")):
+                return {
+                    "authorized": False, "status": "UNRESOLVED",
+                    "reason": str((provenance.get("exact_blockers") or ["NATIVE_LIFECYCLE_CONTRACT_REQUIRED"])[0]),
+                    "provenance": provenance,
+                }
+        if lane == "CRYPTO":
+            if not hasattr(self.alpaca_paper_broker, "crypto_capability_status"):
+                return {"authorized": False, "status": "UNRESOLVED", "reason": "CRYPTO_BROKER_CAPABILITY_REQUIRED"}
+            try:
+                crypto_capability = dict(self.alpaca_paper_broker.crypto_capability_status(False) or {})
+            except Exception:
+                crypto_capability = {}
+            pair = str(open_row.get("symbol") or "").upper().replace("-", "/")
+            supported = {str(value or "").upper().replace("-", "/") for value in (crypto_capability.get("supported_pairs") or [])}
+            tradable = {str(value or "").upper().replace("-", "/") for value in (crypto_capability.get("tradable_pairs") or [])}
+            if not bool(crypto_capability.get("crypto_trading_supported")):
+                return {"authorized": False, "status": "UNRESOLVED", "reason": str(crypto_capability.get("exact_blocker") or "CRYPTO_BROKER_CAPABILITY_REQUIRED")}
+            if pair not in supported or pair not in tradable:
+                return {"authorized": False, "status": "UNRESOLVED", "reason": "CRYPTO_PAIR_NOT_TRADABLE"}
         return {
             "authorized": True,
             "status": "AUTHORIZED_AND_PROVEN",
@@ -3346,7 +3454,9 @@ class PaperAutopilotEngine:
             # Native lifecycle exits are distinct from learned/legacy/manual
             # sell actions.  They are authorized only by the immutable entry
             # lane contract above and only while the session gate is open.
-            "native_natural_exit_authorized": lane in {"DAY", "SCALP"},
+            "native_natural_exit_authorized": lane in {"DAY", "SCALP", "SWING", "CRYPTO"},
+            "native_exit_provenance": provenance,
+            "crypto_capability": crypto_capability,
         }
 
     def authorized_lane_exit_status(self, lane_id: str = "DAY") -> dict[str, Any]:
@@ -3384,8 +3494,18 @@ class PaperAutopilotEngine:
         )
         fixture["position_owner"] = lane
         fixture["exit_policy_owner"] = lane
+        fixture["position_id"] = "fixture-native-lifecycle"
+        fixture["status"] = "OPEN"
         fixture["entry_order_id"] = "fixture-entry-order"
         fixture["entry_fill_id"] = "fixture-entry-order:2026-01-01T00:00:00Z"
+        fixture["entry_price_verified"] = True
+        fixture["entry_metadata_generation"] = "V1_MANDATORY"
+        fixture["entry_metadata_json"] = _safe_json({
+            "metadata_generation": "V1_MANDATORY", "candidate_id": "fixture-candidate",
+            "lifecycle_id": fixture["position_id"], "lane": lane,
+            "broker_order_id": fixture["entry_order_id"], "entry_fill_id": fixture["entry_fill_id"],
+            "exact_blockers": [],
+        })
         contract = self._authorized_lane_exit_contract(fixture)
         return {
             "lane_id": lane,
@@ -3397,7 +3517,14 @@ class PaperAutopilotEngine:
             "contract": contract,
         }
 
-    def _submit_authorized_lane_exit(self, open_row: dict[str, Any], broker_position: dict[str, Any], exit_reason: str) -> dict[str, Any]:
+    def _submit_authorized_lane_exit(
+        self,
+        open_row: dict[str, Any],
+        broker_position: dict[str, Any],
+        exit_reason: str,
+        *,
+        latest_quote: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Submit an approved lane-owned paper exit and wait for its broker fill."""
         symbol = str(open_row.get("symbol") or "").upper().strip()
         position_id = str(open_row.get("position_id") or "").strip()
@@ -3411,18 +3538,14 @@ class PaperAutopilotEngine:
                 reason=exit_reason, blocker=pending_reason,
             )
             return {"ok": False, "submitted": False, "reason": pending_reason, "blocker": "broker_reconciliation_required"}
-        native_lane_candidate = (
-            str(open_row.get("lane_id") or "").upper().strip() in {"DAY", "SCALP"}
-            and open_row.get("same_session_exit_required") is True
-            and open_row.get("overnight_allowed") is False
-        )
+        contract = self._authorized_lane_exit_contract(open_row)
+        native_lane_candidate = bool(contract.get("authorized") and contract.get("native_natural_exit_authorized"))
         # Preserve the longstanding human-first contract for every writer
         # that is not an explicit same-session native lifecycle close.
         if not native_lane_candidate:
             approval_result = self._validate_sell_approval(open_row)
             if not approval_result["valid"]:
                 return {"ok": False, "submitted": False, "reason": approval_result["reason"], "blocker": approval_result.get("blocker", "approval")}
-        contract = self._authorized_lane_exit_contract(open_row)
         if not contract.get("authorized"):
             if contract.get("writer_path_connected"):
                 available = _to_float(broker_position.get("qty_available"), _to_float(broker_position.get("qty"), _to_float(open_row.get("quantity"), 0.0)))
@@ -3443,17 +3566,19 @@ class PaperAutopilotEngine:
             )
             return {"ok": False, "submitted": False, "reason": contract.get("reason"), "contract": contract}
         native_lane_exit = bool(contract.get("native_natural_exit_authorized"))
+        lane = str(contract.get("lane_id") or "")
         if native_lane_exit:
-            session = self._native_lane_exit_session_status()
-            if not bool(session.get("paper_order_submission_allowed")):
-                blocker = f"REGULAR_SESSION_REQUIRED:{str(session.get('market_session_mode') or 'unknown')}"
-                self._record_native_lane_exit_state(
-                    open_row, state="EXIT_BLOCKED_EXECUTION", decision="EXIT_READY",
-                    reason=exit_reason, blocker=blocker,
-                    next_reevaluation="next_regular_session",
-                    session_status=session,
-                )
-                return {"ok": False, "submitted": False, "reason": blocker, "blocker": "session", "contract": contract}
+            if lane != "CRYPTO":
+                session = self._native_lane_exit_session_status()
+                if not bool(session.get("paper_order_submission_allowed")):
+                    blocker = f"REGULAR_SESSION_REQUIRED:{str(session.get('market_session_mode') or 'unknown')}"
+                    self._record_native_lane_exit_state(
+                        open_row, state="EXIT_BLOCKED_EXECUTION", decision="EXIT_READY",
+                        reason=exit_reason, blocker=blocker,
+                        next_reevaluation="next_regular_session",
+                        session_status=session,
+                    )
+                    return {"ok": False, "submitted": False, "reason": blocker, "blocker": "session", "contract": contract}
         else:
             # Human approval remains mandatory for learned, legacy, manual,
             # and canary sell writers.  Native DAY/SCALP lifecycle exits are
@@ -3470,7 +3595,6 @@ class PaperAutopilotEngine:
                 reason=exit_reason, blocker="DUST_OR_UNAVAILABLE_QUANTITY",
             )
             return {"ok": False, "submitted": False, "reason": "DUST_OR_UNAVAILABLE_QUANTITY", "contract": contract, **normalized}
-        lane = str(contract.get("lane_id") or "")
         client_order_id = str(open_row.get("client_order_id") or f"astra-{lane.lower()}-exit-{position_id[:18] or symbol[:16]}")[:48]
         order = {
             "symbol": symbol, "side": "sell", "type": "market",
@@ -3485,6 +3609,49 @@ class PaperAutopilotEngine:
             "position_id": position_id,
             "native_lane_exit": native_lane_exit,
         }
+        if lane == "CRYPTO" and native_lane_exit:
+            quote = dict(latest_quote or {})
+            quote_evidence = {
+                key: quote.get(key)
+                for key in (
+                    "provider_quote_timestamp", "quote_timestamp", "timestamp", "price", "current_price",
+                    "last_price", "bid", "bid_price", "bp", "ask", "ask_price", "ap", "spread_pct",
+                    "max_spread_pct", "base_symbol", "quote_currency",
+                )
+                if quote.get(key) is not None
+            }
+            quote_evidence.setdefault("provider_quote_timestamp", quote.get("quote_timestamp") or quote.get("timestamp"))
+            capability = dict(contract.get("crypto_capability") or {})
+            crypto_order = {
+                **order,
+                **quote_evidence,
+                "asset_class": "crypto",
+                "crypto_paper_activation_passed": True,
+                "native_exit_contract_verified": bool((contract.get("native_exit_provenance") or {}).get("proven")),
+                "crypto_execution_integrity_passed": True,
+                "crypto_capacity_available": True,
+                "duplicate_pending_order": False,
+                "broker_reconciliation_ok": bool(broker_position),
+                "crypto_kill_switch_enabled": False,
+                "time_in_force": "gtc",
+            }
+            crypto_proof = native_crypto_exit_execution_integrity(
+                crypto_order,
+                supported_pairs=set(capability.get("supported_pairs") or []),
+                tradable_pairs=set(capability.get("tradable_pairs") or []),
+                paper_mode_verified=bool(contract.get("paper_mode_verified")),
+                live_endpoint_detected=bool(contract.get("broker_live_endpoint_allowed")),
+                broker_reconciliation_ok=bool(crypto_order.get("broker_reconciliation_ok")),
+                kill_switch_enabled=False,
+            )
+            if not bool(crypto_proof.get("execution_eligible")):
+                blocker = str(crypto_proof.get("first_causal_blocker") or "CRYPTO_EXIT_EXECUTION_PROOF_REQUIRED")
+                self._record_native_lane_exit_state(
+                    open_row, state="EXIT_BLOCKED_EVIDENCE", decision="EXIT_READY", reason=exit_reason,
+                    blocker=blocker, next_reevaluation="next_crypto_quote_refresh", crypto_exit_proof=crypto_proof,
+                )
+                return {"ok": False, "submitted": False, "reason": blocker, "blocker": "crypto_exit_evidence", "contract": contract}
+            order = crypto_order
         self._record_native_lane_exit_state(
             open_row, state="EXIT_READY", decision="EXIT_READY", reason=exit_reason,
             authorization_mode="NATIVE_LANE_CONTRACT" if native_lane_exit else "HUMAN_APPROVAL",
@@ -3669,6 +3836,16 @@ class PaperAutopilotEngine:
                 )
                 remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": order.get("status")}
                 continue
+            expected_symbol = str(item.get("symbol") or "").upper().strip()
+            observed_symbol = str(order.get("symbol") or "").upper().strip()
+            if expected_symbol and observed_symbol and observed_symbol != expected_symbol:
+                self._record_native_lane_exit_state(
+                    item, state="EXIT_BLOCKED_IDENTITY", decision="EXIT_READY",
+                    reason=str(item.get("exit_reason") or ""), blocker="BROKER_ORDER_SYMBOL_MISMATCH",
+                    next_reevaluation="broker_order_reconciliation",
+                )
+                remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": "symbol_mismatch"}
+                continue
             if order_status == "partially_filled":
                 self._persist_sell_intent(
                     str(item.get("client_order_id") or key), status="PARTIALLY_FILLED",
@@ -3723,10 +3900,15 @@ class PaperAutopilotEngine:
                 strict = dict(closed.get("strict_broker_truth_persistence") or {})
                 self._record_native_lane_exit_state(
                     rows[0],
-                    state="LEARNING_ACKNOWLEDGED" if bool(strict.get("persisted")) else "CLOSED_PENDING_TRUTH",
+                    state=(
+                        "LEARNING_ACKNOWLEDGED" if bool(closed.get("learning_acknowledged"))
+                        else "STRICT_TRUTH_CREATED" if bool(strict.get("persisted"))
+                        else "CLOSED_PENDING_TRUTH"
+                    ),
                     decision="CLOSED", reason=str(item.get("exit_reason") or "lane_exit"),
                     broker_order_id=exit_order_id, exit_fill_id=exit_fill_id,
                     strict_truth_created=bool(strict.get("persisted")),
+                    learning_acknowledged=bool(closed.get("learning_acknowledged")),
                 )
             else:
                 self._record_native_lane_exit_state(
@@ -4954,18 +5136,23 @@ class PaperAutopilotEngine:
             return {}
         rows = dict(self._runtime_state.get("native_lane_exit_lifecycle_v1") or {})
         previous = dict(rows.get(position_id) or {})
+        entry_contract = _safe_json_load(open_row.get("entry_metadata_json"))
         row = {
             **previous,
             "position_id": position_id,
+            "lifecycle_id": position_id,
             "symbol": str(open_row.get("symbol") or "").upper().strip(),
             "lane_id": str(open_row.get("lane_id") or "").upper().strip(),
+            "candidate_id": str(open_row.get("source_candidate_id") or entry_contract.get("candidate_id") or ""),
             "entry_order_id": str(open_row.get("entry_order_id") or open_row.get("source_broker_order_id") or ""),
             "entry_fill_id": str(open_row.get("entry_fill_id") or ""),
+            "exit_policy_owner": str(open_row.get("exit_policy_owner") or ""),
             "closure_state": state,
             "decision": decision,
             "reason": str(reason or ""),
             "exact_blocker": str(blocker or ""),
             "next_reevaluation": str(next_reevaluation or ""),
+            "new_entries_in_lane_safe": True,
             "updated_at": _now_iso(),
             **extra,
         }
@@ -9011,6 +9198,7 @@ class PaperAutopilotEngine:
             except Exception:
                 pass
 
+        learning_acknowledged = False
         if bool(strict_truth_result.get("persisted")) and self.trade_intel is not None and hasattr(self.trade_intel, "record_trade"):
             try:
                 self.trade_intel.record_trade(
@@ -9083,6 +9271,7 @@ class PaperAutopilotEngine:
                         "trade_origin": "paper_autopilot",
                     }
                 )
+                learning_acknowledged = True
             except Exception:
                 pass
 
@@ -9100,6 +9289,7 @@ class PaperAutopilotEngine:
             "lane_id": lane,
             "strict_exit_fill_linked": bool(lane in {"DAY", "SCALP", "SWING", "CRYPTO"} and broker_fill),
             "strict_broker_truth_persistence": strict_truth_result,
+            "learning_acknowledged": learning_acknowledged,
         }
 
     def _evaluate_exit(self, open_row: dict[str, Any], latest_row: dict[str, Any]) -> tuple[bool, str]:
@@ -11347,6 +11537,7 @@ class PaperAutopilotEngine:
                             row,
                             dict(broker_position_by_symbol.get(symbol) or {}),
                             reason,
+                            latest_quote=latest,
                         )
                     else:
                         result = self._close_position(row, latest, reason)
