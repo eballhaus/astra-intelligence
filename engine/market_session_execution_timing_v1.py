@@ -118,6 +118,22 @@ class MarketSessionExecutionTimingV1:
         }
         return day in holidays
 
+    def _regular_close_time(self, day: date) -> time:
+        """Return the locally known regular-session close for a trading day.
+
+        This is intentionally a conservative local calendar fallback.  The
+        calendar knowledge provider can still supply richer data, but the
+        worker must not miss a same-session exit merely because that cache is
+        unavailable.  The two recurring US-equity early closes below are the
+        ones relevant to the paper execution window.
+        """
+        thanksgiving = self._nth_weekday(day.year, 11, 3, 4)
+        day_after_thanksgiving = thanksgiving + timedelta(days=1)
+        christmas_eve = date(day.year, 12, 24)
+        if day in {day_after_thanksgiving, christmas_eve} and day.weekday() < 5 and not self._is_market_holiday(day):
+            return time(13, 0)
+        return time(16, 0)
+
     def session_status(self, now_utc: datetime | None = None) -> dict[str, Any]:
         if self.market_calendar_knowledge_suite is not None and hasattr(self.market_calendar_knowledge_suite, "status"):
             try:
@@ -175,6 +191,7 @@ class MarketSessionExecutionTimingV1:
         et = self._et_now(now_utc)
         weekday = et.weekday()
         current = et.time()
+        regular_close = self._regular_close_time(et.date())
         market_is_open = False
         market_is_tradable = False
         order_queueing_allowed = False
@@ -185,24 +202,25 @@ class MarketSessionExecutionTimingV1:
         elif self._is_market_holiday(et.date()):
             mode = "holiday_closed"
             reason = "US equities market is closed for a market holiday; ranking and learning may continue, but paper market orders are blocked."
-        elif time(9, 30) <= current < time(16, 0):
-            mode = "regular_market"
-            market_is_open = True
-            market_is_tradable = True
-            order_queueing_allowed = False
-            execution_confirmation_required = True
-            reason = "Regular market session; fresh confirmation required before paper order submission."
-        elif time(4, 0) <= current < time(9, 30):
-            mode = "premarket"
-            market_is_tradable = False
-            reason = "Premarket session; Astra may monitor but should wait for open structure before paper market orders."
-        elif time(16, 0) <= current < time(20, 0):
-            mode = "after_hours"
-            market_is_tradable = False
-            reason = "After-hours session; new paper market orders are deferred until fresh confirmation."
         else:
-            mode = "unknown_closed"
-            reason = "Closed-market window; new paper orders are blocked until tradable confirmation."
+            if time(9, 30) <= current < regular_close:
+                mode = "regular_market"
+                market_is_open = True
+                market_is_tradable = True
+                order_queueing_allowed = False
+                execution_confirmation_required = True
+                reason = "Regular market session; fresh confirmation required before paper order submission."
+            elif time(4, 0) <= current < time(9, 30):
+                mode = "premarket"
+                market_is_tradable = False
+                reason = "Premarket session; Astra may monitor but should wait for open structure before paper market orders."
+            elif regular_close <= current < time(20, 0):
+                mode = "after_hours"
+                market_is_tradable = False
+                reason = "After-hours session; new paper market orders are deferred until fresh confirmation."
+            else:
+                mode = "unknown_closed"
+                reason = "Closed-market window; new paper orders are blocked until tradable confirmation."
         paper_allowed = bool(market_is_open and market_is_tradable)
         return {
             "enabled": True,
@@ -215,6 +233,7 @@ class MarketSessionExecutionTimingV1:
             "execution_confirmation_required": bool(execution_confirmation_required),
             "session_reason": reason,
             "session_timestamp_et": et.isoformat(),
+            "regular_session_close_et": datetime.combine(et.date(), regular_close, tzinfo=et.tzinfo).isoformat(),
             "live_trading_changed": False,
             "alpaca_paper_only_preserved": True,
             "natural_exit_preserved": True,

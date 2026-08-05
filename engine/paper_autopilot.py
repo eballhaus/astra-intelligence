@@ -10,7 +10,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, time as datetime_time
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
@@ -2355,6 +2355,7 @@ class PaperAutopilotEngine:
         # Post-submission states ONLY — pre-submission waiting states are handled
         # by _process_legacy_retirement_sell_intents, not by _refresh_unresolved_sell_intents.
         "SUBMISSION_RESERVED",
+        "NATIVE_EXIT_RESERVED",
         "INTENT_CREATED",
         "APPROVAL_RESERVED",
         "SUBMISSION_ATTEMPTED",
@@ -3128,6 +3129,33 @@ class PaperAutopilotEngine:
         )
         return {"reserved": True, "approval_id": approval.get("approval_id")}
 
+    def _reserve_native_lane_exit_intent(self, order_intent_id: str, order: dict[str, Any]) -> dict[str, Any]:
+        """Reserve a native lane-owned exit without manufacturing human approval.
+
+        DAY/SCALP entries that carry the explicit same-session contract are
+        already authorized at entry for their *native* lifecycle close.  This
+        reservation is still durable and idempotent, but it deliberately does
+        not apply to learned, legacy, manual, or canary exits.
+        """
+        existing_id, _existing = self._matching_sell_intent(
+            str(order.get("symbol") or ""), str(order.get("position_id") or ""),
+        )
+        if existing_id:
+            return {"reserved": False, "reason": f"unresolved_sell_intent:{existing_id}"}
+        self._persist_sell_intent(
+            order_intent_id,
+            symbol=str(order.get("symbol") or "").upper().strip(),
+            position_id=str(order.get("position_id") or ""),
+            approval_id="",
+            client_order_id=str(order.get("client_order_id") or order_intent_id),
+            order=dict(order),
+            created_at=_now_iso(),
+            status="NATIVE_EXIT_RESERVED",
+            authorization_mode="NATIVE_LANE_CONTRACT",
+            retry_eligible=False,
+        )
+        return {"reserved": True, "authorization_mode": "NATIVE_LANE_CONTRACT"}
+
     def _legacy_swing_canary_execution_guard(self, pre_submit: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
         """Fail closed before the shared writer can see an active SWING canary."""
         pre = dict(pre_submit or {})
@@ -3315,6 +3343,10 @@ class PaperAutopilotEngine:
             "exit_policy_owner": owner.get("exit_policy_owner"),
             "paper_mode_verified": True,
             "broker_live_endpoint_allowed": False,
+            # Native lifecycle exits are distinct from learned/legacy/manual
+            # sell actions.  They are authorized only by the immutable entry
+            # lane contract above and only while the session gate is open.
+            "native_natural_exit_authorized": lane in {"DAY", "SCALP"},
         }
 
     def authorized_lane_exit_status(self, lane_id: str = "DAY") -> dict[str, Any]:
@@ -3374,27 +3406,69 @@ class PaperAutopilotEngine:
         # to manufacture a replacement sell after restart or timeout.
         pending, pending_reason = self._position_pending_sell(symbol, position_id)
         if pending:
+            self._record_native_lane_exit_state(
+                open_row, state="EXIT_BLOCKED_EXECUTION", decision="EXIT_READY",
+                reason=exit_reason, blocker=pending_reason,
+            )
             return {"ok": False, "submitted": False, "reason": pending_reason, "blocker": "broker_reconciliation_required"}
-        # Canonical human-approval gate — all sell paths must pass this.
-        approval_result = self._validate_sell_approval(open_row)
-        if not approval_result["valid"]:
-            return {"ok": False, "submitted": False, "reason": approval_result["reason"], "blocker": approval_result.get("blocker", "approval")}
+        native_lane_candidate = (
+            str(open_row.get("lane_id") or "").upper().strip() in {"DAY", "SCALP"}
+            and open_row.get("same_session_exit_required") is True
+            and open_row.get("overnight_allowed") is False
+        )
+        # Preserve the longstanding human-first contract for every writer
+        # that is not an explicit same-session native lifecycle close.
+        if not native_lane_candidate:
+            approval_result = self._validate_sell_approval(open_row)
+            if not approval_result["valid"]:
+                return {"ok": False, "submitted": False, "reason": approval_result["reason"], "blocker": approval_result.get("blocker", "approval")}
         contract = self._authorized_lane_exit_contract(open_row)
         if not contract.get("authorized"):
             if contract.get("writer_path_connected"):
                 available = _to_float(broker_position.get("qty_available"), _to_float(broker_position.get("qty"), _to_float(open_row.get("quantity"), 0.0)))
                 normalized = _normalize_paper_sell_qty(_to_float(open_row.get("quantity"), available), available, 6)
+                self._record_native_lane_exit_state(
+                    open_row, state="EXIT_BLOCKED_EXECUTION", decision="EXIT_READY",
+                    reason=exit_reason, blocker="EXECUTION_NOT_AUTHORIZED",
+                )
                 return {
                     "ok": False, "submitted": False, "reason": "BROKER_SUBMISSION_BLOCKED",
                     "writer_state": "WRITER_PATH_CONNECTED", "canary_state": "CANARY_DISABLED",
                     "kill_switch_state": "KILL_SWITCH_ACTIVE", "execution_state": "EXECUTION_NOT_AUTHORIZED",
                     "broker_submission_blocked": True, "broker_actions": 0, "contract": contract, **normalized,
                 }
+            self._record_native_lane_exit_state(
+                open_row, state="EXIT_BLOCKED_EXECUTION", decision="EXIT_READY",
+                reason=exit_reason, blocker=str(contract.get("reason") or "LANE_CONTRACT_REQUIRED"),
+            )
             return {"ok": False, "submitted": False, "reason": contract.get("reason"), "contract": contract}
+        native_lane_exit = bool(contract.get("native_natural_exit_authorized"))
+        if native_lane_exit:
+            session = self._native_lane_exit_session_status()
+            if not bool(session.get("paper_order_submission_allowed")):
+                blocker = f"REGULAR_SESSION_REQUIRED:{str(session.get('market_session_mode') or 'unknown')}"
+                self._record_native_lane_exit_state(
+                    open_row, state="EXIT_BLOCKED_EXECUTION", decision="EXIT_READY",
+                    reason=exit_reason, blocker=blocker,
+                    next_reevaluation="next_regular_session",
+                    session_status=session,
+                )
+                return {"ok": False, "submitted": False, "reason": blocker, "blocker": "session", "contract": contract}
+        else:
+            # Human approval remains mandatory for learned, legacy, manual,
+            # and canary sell writers.  Native DAY/SCALP lifecycle exits are
+            # the only exception, and their contract is verified above.
+            approval_result = self._validate_sell_approval(open_row)
+            if not approval_result["valid"]:
+                return {"ok": False, "submitted": False, "reason": approval_result["reason"], "blocker": approval_result.get("blocker", "approval")}
         available = _to_float(broker_position.get("qty_available"), _to_float(broker_position.get("qty"), _to_float(open_row.get("quantity"), 0.0)))
         normalized = _normalize_paper_sell_qty(_to_float(open_row.get("quantity"), available), available, 6)
         qty = _to_float(normalized.get("normalized_sell_qty"), 0.0)
         if qty <= 0 or not bool(normalized.get("sell_safe_to_submit")):
+            self._record_native_lane_exit_state(
+                open_row, state="EXIT_BLOCKED_EXECUTION", decision="EXIT_READY",
+                reason=exit_reason, blocker="DUST_OR_UNAVAILABLE_QUANTITY",
+            )
             return {"ok": False, "submitted": False, "reason": "DUST_OR_UNAVAILABLE_QUANTITY", "contract": contract, **normalized}
         lane = str(contract.get("lane_id") or "")
         client_order_id = str(open_row.get("client_order_id") or f"astra-{lane.lower()}-exit-{position_id[:18] or symbol[:16]}")[:48]
@@ -3409,18 +3483,38 @@ class PaperAutopilotEngine:
             "entry_order_id": contract.get("entry_order_id"), "entry_fill_id": contract.get("entry_fill_id"),
             "existing_exit_reason": str(exit_reason or ""), "learned_exit_execution": False,
             "position_id": position_id,
+            "native_lane_exit": native_lane_exit,
         }
-        reservation = self._reserve_sell_approval_intent(symbol, client_order_id, order)
+        self._record_native_lane_exit_state(
+            open_row, state="EXIT_READY", decision="EXIT_READY", reason=exit_reason,
+            authorization_mode="NATIVE_LANE_CONTRACT" if native_lane_exit else "HUMAN_APPROVAL",
+        )
+        reservation = (
+            self._reserve_native_lane_exit_intent(client_order_id, order)
+            if native_lane_exit else self._reserve_sell_approval_intent(symbol, client_order_id, order)
+        )
         if not reservation.get("reserved"):
+            self._record_native_lane_exit_state(
+                open_row, state="EXIT_BLOCKED_EXECUTION", decision="EXIT_READY",
+                reason=exit_reason, blocker=str(reservation.get("reason") or "EXIT_RESERVATION_FAILED"),
+            )
             return {"ok": False, "submitted": False, "reason": "APPROVAL_RESERVATION_FAILED", "contract": contract}
         try:
             self._persist_sell_intent(client_order_id, status="SUBMISSION_ATTEMPTED", broker_order_id="")
             result = dict(self.alpaca_paper_broker.submit_paper_order(order) or {})
         except Exception as exc:
             self._persist_sell_intent(client_order_id, status="AMBIGUOUS_SUBMISSION", reconciliation_status="BROKER_RECONCILIATION_REQUIRED", retry_eligible=False, submission_error=str(exc)[:120])
+            self._record_native_lane_exit_state(
+                open_row, state="EXIT_BLOCKED_EXECUTION", decision="EXIT_READY",
+                reason=exit_reason, blocker="BROKER_SUBMISSION_AMBIGUOUS",
+            )
             return {"ok": False, "submitted": False, "reason": f"lane_exit_submit_exception:{str(exc)[:120]}", "contract": contract}
         if not bool(result.get("ok")):
             self._persist_sell_intent(client_order_id, status="BROKER_REJECTED", reconciliation_status="BROKER_REJECTED", retry_eligible=False, broker_error=str(result.get("error") or "lane_exit_submit_failed")[:160])
+            self._record_native_lane_exit_state(
+                open_row, state="EXIT_BLOCKED_EXECUTION", decision="EXIT_READY",
+                reason=exit_reason, blocker=str(result.get("error") or "BROKER_REJECTED")[:160],
+            )
             return {"ok": False, "submitted": False, "reason": str(result.get("error") or "lane_exit_submit_failed")[:160], "contract": contract, **normalized}
         broker_order = dict(result.get("order") or {})
         pending_id = str(broker_order.get("id") or client_order_id)
@@ -3433,6 +3527,10 @@ class PaperAutopilotEngine:
         }
         self._runtime_state["authorized_lane_exit_pending"] = pending_map
         self._persist_sell_intent(client_order_id, status="SUBMITTED", reconciliation_status="PENDING_BROKER_ORDER_RECONCILIATION", broker_order_id=str(broker_order.get("id") or ""), retry_eligible=False)
+        self._record_native_lane_exit_state(
+            open_row, state="SELL_SUBMITTED", decision="EXIT_READY", reason=exit_reason,
+            broker_order_id=str(broker_order.get("id") or ""), client_order_id=str(broker_order.get("client_order_id") or client_order_id),
+        )
         return {"ok": True, "submitted": True, "pending_order_id": pending_id, "contract": contract, **normalized}
 
     def _record_legacy_swing_exit_broker_update(self, item: dict[str, Any], order: dict[str, Any], broker_position: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -3538,6 +3636,10 @@ class PaperAutopilotEngine:
             try:
                 lookup = dict(broker.order(order_id) or {})
             except Exception:
+                self._record_native_lane_exit_state(
+                    item, state="EXIT_BLOCKED_EXECUTION", decision="EXIT_READY",
+                    reason=str(item.get("exit_reason") or ""), blocker="BROKER_ORDER_LOOKUP_FAILED",
+                )
                 remaining[key] = item
                 continue
             order = dict(lookup.get("order") or {})
@@ -3559,7 +3661,41 @@ class PaperAutopilotEngine:
                     remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": order.get("status")}
                 filled += 1 if result.get("closure") else 0
                 continue
-            if not bool(lookup.get("ok")) or str(order.get("status") or "").lower() != "filled":
+            order_status = str(order.get("status") or "").lower()
+            if not bool(lookup.get("ok")):
+                self._record_native_lane_exit_state(
+                    item, state="EXIT_BLOCKED_EXECUTION", decision="EXIT_READY",
+                    reason=str(item.get("exit_reason") or ""), blocker="BROKER_ORDER_LOOKUP_FAILED",
+                )
+                remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": order.get("status")}
+                continue
+            if order_status == "partially_filled":
+                self._persist_sell_intent(
+                    str(item.get("client_order_id") or key), status="PARTIALLY_FILLED",
+                    reconciliation_status="AWAITING_FINAL_FILL_OR_BROKER_ZERO", broker_order_id=order_id,
+                )
+                self._record_native_lane_exit_state(
+                    item, state="PARTIALLY_FILLED", decision="EXIT_READY",
+                    reason=str(item.get("exit_reason") or ""), broker_order_id=order_id,
+                    filled_quantity=_to_float(order.get("filled_qty") or order.get("filled_quantity"), 0.0),
+                )
+                remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": order.get("status")}
+                continue
+            if order_status in {"rejected", "canceled", "expired", "done_for_day"}:
+                self._persist_sell_intent(
+                    str(item.get("client_order_id") or key), status="BROKER_REJECTED",
+                    reconciliation_status=f"BROKER_{order_status.upper()}", broker_order_id=order_id,
+                )
+                self._record_native_lane_exit_state(
+                    item, state="EXIT_BLOCKED_EXECUTION", decision="EXIT_READY",
+                    reason=str(item.get("exit_reason") or ""), blocker=f"BROKER_{order_status.upper()}",
+                )
+                continue
+            if order_status != "filled":
+                self._record_native_lane_exit_state(
+                    item, state="SELL_SUBMITTED", decision="EXIT_READY",
+                    reason=str(item.get("exit_reason") or ""), broker_order_id=order_id,
+                )
                 remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": order.get("status")}
                 continue
             rows = [r for r in self._fetch_open_positions() if str(r.get("position_id") or "") == str(item.get("position_id") or "")]
@@ -3570,6 +3706,10 @@ class PaperAutopilotEngine:
             explicit_fill_id = str(order.get("fill_id") or order.get("execution_id") or "").strip()
             exit_fill_id = explicit_fill_id or exit_order_id
             if not exit_fill_id:
+                self._record_native_lane_exit_state(
+                    item, state="AWAITING_BROKER_ZERO", decision="EXIT_READY",
+                    reason=str(item.get("exit_reason") or ""), blocker="BROKER_FILL_LINEAGE_MISSING", broker_order_id=exit_order_id,
+                )
                 remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": "filled_missing_fill_lineage"}
                 continue
             latest = {"symbol": item.get("symbol"), "price": _to_float(order.get("filled_avg_price"), 0.0), "timestamp": _now_iso(), "source": "alpaca_paper_order_fill"}
@@ -3579,6 +3719,22 @@ class PaperAutopilotEngine:
                 "exit_fill_identifier_type": "BROKER_EXECUTION_ID" if explicit_fill_id else "BROKER_ORDER_ID_FILLED_EVIDENCE",
                 "filled_at": filled_at,
             })
+            if closed.get("ok"):
+                strict = dict(closed.get("strict_broker_truth_persistence") or {})
+                self._record_native_lane_exit_state(
+                    rows[0],
+                    state="LEARNING_ACKNOWLEDGED" if bool(strict.get("persisted")) else "CLOSED_PENDING_TRUTH",
+                    decision="CLOSED", reason=str(item.get("exit_reason") or "lane_exit"),
+                    broker_order_id=exit_order_id, exit_fill_id=exit_fill_id,
+                    strict_truth_created=bool(strict.get("persisted")),
+                )
+            else:
+                self._record_native_lane_exit_state(
+                    rows[0], state="AWAITING_BROKER_ZERO", decision="EXIT_READY",
+                    reason=str(item.get("exit_reason") or "lane_exit"),
+                    blocker=str(closed.get("error") or "BROKER_ZERO_REQUIRED"), broker_order_id=exit_order_id,
+                )
+                remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": "filled_awaiting_broker_zero"}
             filled += 1 if closed.get("ok") else 0
         self._runtime_state["authorized_lane_exit_pending"] = remaining
         return {"checked": checked, "filled": filled, "pending": len(remaining)}
@@ -4738,12 +4894,132 @@ class PaperAutopilotEngine:
             return "day_lane_overnight_breach"
         if now_et.weekday() >= 5:
             return "day_lane_weekend_breach"
+        cutoff = self._day_lane_close_cutoff_et(now_et)
+        if now_et >= cutoff:
+            return "day_lane_session_close_required"
+        return ""
+
+    def _day_lane_close_cutoff_et(self, now_et: datetime) -> datetime:
+        """Return the last native DAY decision time, respecting early closes."""
+        close_time = datetime_time(16, 0)
+        suite = getattr(self, "market_session_timing_suite", None)
+        if suite is not None and hasattr(suite, "_regular_close_time"):
+            try:
+                close_time = suite._regular_close_time(now_et.date())
+            except Exception:
+                pass
         raw = str(os.getenv("ASTRA_DAY_LANE_FORCE_FLAT_TIME_ET", "15:55"))
         digits = "".join(ch for ch in raw if ch.isdigit())
-        cutoff = int(digits[:4] or "1555")
-        if (now_et.hour * 100 + now_et.minute) >= cutoff:
-            return "day_lane_force_flat"
-        return ""
+        configured = int(digits[:4] or "1555")
+        default_cutoff = close_time.hour * 100 + max(0, close_time.minute - 5)
+        cutoff_hhmm = min(configured, default_cutoff)
+        return now_et.replace(hour=cutoff_hhmm // 100, minute=cutoff_hhmm % 100, second=0, microsecond=0)
+
+    def _native_lane_exit_session_status(self) -> dict[str, Any]:
+        """Read the cached/local session guard without querying a broker."""
+        suite = getattr(self, "market_session_timing_suite", None)
+        if suite is not None and hasattr(suite, "status"):
+            try:
+                return dict(suite.status(broker_ready=True, open_orders_count=0) or {})
+            except TypeError:
+                try:
+                    return dict(suite.status() or {})
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        return {
+            "market_session_mode": "regular_market" if self._legacy_regular_session_open() else "unknown_closed",
+            "paper_order_submission_allowed": self._legacy_regular_session_open(),
+        }
+
+    def _record_native_lane_exit_state(
+        self,
+        open_row: Mapping[str, Any],
+        *,
+        state: str,
+        decision: str,
+        reason: str = "",
+        blocker: str = "",
+        next_reevaluation: str = "",
+        **extra: Any,
+    ) -> dict[str, Any]:
+        """Persist a canonical, lifecycle-keyed native exit transition.
+
+        The ledger is diagnostic and idempotency-safe: it never uses a stable
+        Alpaca asset id as a lifecycle identity and never creates broker work.
+        """
+        position_id = str(open_row.get("position_id") or "").strip()
+        if not position_id:
+            return {}
+        rows = dict(self._runtime_state.get("native_lane_exit_lifecycle_v1") or {})
+        previous = dict(rows.get(position_id) or {})
+        row = {
+            **previous,
+            "position_id": position_id,
+            "symbol": str(open_row.get("symbol") or "").upper().strip(),
+            "lane_id": str(open_row.get("lane_id") or "").upper().strip(),
+            "entry_order_id": str(open_row.get("entry_order_id") or open_row.get("source_broker_order_id") or ""),
+            "entry_fill_id": str(open_row.get("entry_fill_id") or ""),
+            "closure_state": state,
+            "decision": decision,
+            "reason": str(reason or ""),
+            "exact_blocker": str(blocker or ""),
+            "next_reevaluation": str(next_reevaluation or ""),
+            "updated_at": _now_iso(),
+            **extra,
+        }
+        rows[position_id] = row
+        self._runtime_state["native_lane_exit_lifecycle_v1"] = rows
+        return row
+
+    def _run_due_day_lane_close_stage(
+        self,
+        broker_position_by_symbol: Mapping[str, Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        """Prioritize due DAY lifecycle closes ahead of bounded evidence work.
+
+        This is not a new exit strategy and does not invent a sell signal.  It
+        consumes only the immutable same-session exit contract created at
+        entry, the broker's current position snapshot, and the existing
+        idempotent lane writer.  Running it before long evidence phases keeps
+        a slow scan from silently rolling a DAY lifecycle past its close.
+        """
+        reviewed = submitted = blocked = 0
+        rows = self._fetch_open_positions()
+        session = self._native_lane_exit_session_status()
+        for row in rows:
+            if str(row.get("lane_id") or "").upper().strip() != "DAY":
+                continue
+            reason = self._lane_forced_exit_reason(row)
+            if not reason:
+                continue
+            reviewed += 1
+            symbol = str(row.get("symbol") or "").upper().strip()
+            if not bool(session.get("paper_order_submission_allowed")):
+                blocked += 1
+                self._record_native_lane_exit_state(
+                    row, state="EXIT_BLOCKED_EXECUTION", decision="EXIT_READY",
+                    reason=reason,
+                    blocker=f"REGULAR_SESSION_REQUIRED:{str(session.get('market_session_mode') or 'unknown')}",
+                    next_reevaluation="next_regular_session", session_status=session,
+                )
+                continue
+            result = self._submit_authorized_lane_exit(
+                row, dict(broker_position_by_symbol.get(symbol) or {}), reason,
+            )
+            if bool(result.get("submitted")):
+                submitted += 1
+            elif not bool(result.get("ok")):
+                blocked += 1
+        return {
+            "reviewed": reviewed,
+            "submitted": submitted,
+            "blocked": blocked,
+            "session_mode": str(session.get("market_session_mode") or ""),
+            "paper_order_submission_allowed": bool(session.get("paper_order_submission_allowed")),
+            "broker_actions": submitted,
+        }
 
     def _persist_strict_lane_truth(
         self,
@@ -10288,6 +10564,7 @@ class PaperAutopilotEngine:
             },
             "legacy_quarantine_review_v1": dict(self._runtime_state.get("legacy_quarantine_review_summary_v1") or {}),
             "legacy_quarantine_attribution_summary_v1": dict(self._runtime_state.get("legacy_quarantine_attribution_summary_v1") or {}),
+            "native_lane_exit_lifecycle_v1": dict(self._runtime_state.get("native_lane_exit_lifecycle_v1") or {}),
             "loss_containment_review_v1": dict(self._runtime_state.get("loss_containment_review_v1") or {}),
             "profit_protection_review_v1": dict(self._runtime_state.get("profit_protection_review_v1") or {}),
             "legacy_canary_control_v1": legacy_canary_control,
@@ -10470,12 +10747,17 @@ class PaperAutopilotEngine:
                 self._note_worker_progress("broker_position_snapshot")
                 preflight_broker_snapshot = self._broker_open_symbols_snapshot()
                 preflight_positions = dict(preflight_broker_snapshot.get("broker_position_by_symbol") or {})
+                # Same-session DAY contracts get their close review before
+                # bounded evidence work.  This prevents a long scan or a
+                # partial-cycle return from silently rolling the position.
+                preclose_day_exit = self._run_due_day_lane_close_stage(preflight_positions)
                 self._refresh_legacy_forward_activations(preflight_positions)
                 self._note_worker_progress("legacy_market_evidence_preflight")
                 legacy_canary_refresh = self._refresh_legacy_swing_canary_pre_submit(preflight_positions)
                 self._save_state_file()
             except Exception as exc:
                 legacy_canary_refresh = {"observation_state": "FAILED", "error": str(exc)[:180]}
+                preclose_day_exit = {"reviewed": 0, "submitted": 0, "blocked": 0, "observation_state": "FAILED", "error": str(exc)[:180]}
             market_cycle = dict(legacy_canary_refresh.get("market_activity") or {})
             partial_legacy_cycle = str(market_cycle.get("cycle_state") or "").startswith("CYCLE_PARTIAL")
             prior_partial_streak = _to_int(self._runtime_state.get("partial_cycle_streak"), 0)
@@ -10776,6 +11058,7 @@ class PaperAutopilotEngine:
                     "ok": True, "orders_submitted": 0, "positions_closed": 0,
                     "cycle_reason": "legacy_market_evidence_bounded",
                     "legacy_swing_observation": legacy_canary_refresh,
+                    "preclose_day_exit": preclose_day_exit,
                     "broker_reconciliation_active": bool(broker_snapshot.get("broker_reconciliation_active")),
                     "broker_positions_fetch_ok": bool(broker_snapshot.get("broker_positions_fetch_ok")),
                     "entry_price_lineage_reconciliation": entry_price_lineage_refresh_partial,
