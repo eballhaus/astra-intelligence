@@ -39716,6 +39716,258 @@ def _tail_jsonl_rows(path, max_rows=500):
     return list(out)
 
 
+def _current_position_actions_v1(rows=None, limit=12):
+    from engine.astra_canonical_ownership_contract_v1 import classify_meaningful_exposure_v1
+
+    # Start from canonical Astra rows: PAPER_AUTOPILOT.paper_positions()
+    canonical_rows = []
+
+    try:
+        if hasattr(PAPER_AUTOPILOT, 'paper_positions'):
+            canonical_rows = PAPER_AUTOPILOT.paper_positions()
+    except Exception:
+        pass
+
+    # Build a read-only cached Alpaca lookup by normalized symbol
+    cached_alpaca_by_symbol = {}
+    try:
+        if hasattr(_CACHE, 'get'):
+            cached_alpaca = _CACHE.get("alpaca_paper_status_v1", {}).get("data", {}) if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}
+            if isinstance(cached_alpaca, dict):
+                for key in ("positions", "paper_positions", "active_positions"):
+                    if isinstance(cached_alpaca.get(key), list):
+                        for row in cached_alpaca.get(key) or []:
+                            if isinstance(row, dict):
+                                sym = str(row.get("symbol") or "").upper().strip()
+                                if sym:
+                                    cached_alpaca_by_symbol[sym] = row
+    except Exception:
+        pass
+
+    # For each canonical Astra row, keep canonical fields
+    actions = []
+    for p in canonical_rows:
+        if not isinstance(p, dict):
+            continue
+
+        sym = str(p.get("symbol") or "").upper().strip()
+        if not sym:
+            continue
+
+        # Extract canonical fields for the action
+        row_json = p.get("row_json", {}) if isinstance(p.get("row_json"), dict) else {}
+
+        # Extract confidence from row_json with fallback to top-level
+        confidence_raw = p.get("confidence")
+        if confidence_raw is None or confidence_raw == "":
+            confidence_raw = row_json.get("confidence")
+        if confidence_raw is None or confidence_raw == "":
+            confidence_raw = row_json.get("predicted_win_probability")
+        if confidence_raw is None or confidence_raw == "":
+            confidence_raw = row_json.get("entry_predicted_win_probability")
+
+        try:
+            confidence = float(confidence_raw)
+            # Normalize 0-1 to percentage
+            if 0 <= confidence <= 1:
+                confidence = confidence * 100
+        except Exception:
+            confidence = 0.0
+
+        # Extract current price
+        current_price = p.get("latest_price") or p.get("current_price") or row_json.get("price")
+
+        # Extract daily change / current return
+        daily_change = p.get("unrealized_pnl_percent") or p.get("current_return") or row_json.get("change_pct")
+
+        # Extract market regime
+        market_regime = p.get("market_regime") or row_json.get("market_regime") or row_json.get("regime_context")
+
+        # Extract lifecycle fields
+        lifecycle_notes = p.get("lifecycle_notes", {})
+        if not isinstance(lifecycle_notes, dict):
+            lifecycle_notes = _safe_json_loads(lifecycle_notes)
+        if not isinstance(lifecycle_notes, dict):
+            lifecycle_notes = {}
+
+        # Build position ID, lifecycle ID, candidate ID
+        position_id = p.get("position_id")
+        lifecycle_id = lifecycle_notes.get("lifecycle_id")
+        candidate_id = lifecycle_notes.get("candidate_id")
+
+        # Build lane, horizon, confidence, lifecycle notes
+        lane_id = p.get("lane_id")
+        horizon = p.get("trade_horizon_style") or p.get("best_horizon_style") or p.get("horizon")
+        lifecycle_notes_filtered = {
+            k: v for k, v in lifecycle_notes.items()
+            if k in ["current_price", "current_return_percent", "quote_quality", "lifecycle_stage", "review_state", "hold_seconds", "hold_posture"]
+        }
+
+        # Check if cached Alpaca truth exists for this symbol
+        broker_data = cached_alpaca_by_symbol.get(sym)
+        broker_exists = bool(broker_data and isinstance(broker_data, dict) and str(broker_data.get("symbol") or "").upper().strip() == sym)
+
+        # Get broker quantity and market value if broker truth exists
+        broker_quantity = None
+        broker_market_value = None
+        broker_current_price = None
+        if broker_exists:
+            broker_quantity = broker_data.get("quantity") if broker_data.get("quantity") not in (None, "") else broker_data.get("qty")
+            broker_market_value = broker_data.get("market_value")
+            broker_current_price = broker_data.get("latest_price") or broker_data.get("current_price")
+
+        # Apply suppression rules
+        # 1. Suppress broker-confirmed dust, legacy, recon, non-open, and invalid-lane rows
+        lane_id_filtered = str(lane_id or "").strip().upper()
+        if not lane_id_filtered or lane_id_filtered in {"INVALID", "BLOCKED", "SANDBOX"}:
+            continue
+
+        source_bucket = str(p.get("source_bucket") or "").strip().upper()
+        if source_bucket in {"LEGACY_MANAGED", "RECON", "", "NONE", "BROKER_CONFIRMED"}:
+            continue
+
+        status = str(p.get("status") or "").upper()
+        if status not in {"OPEN", "POPEN"}:
+            continue
+
+        # Check quantity - exclude dust positions
+        qty_raw = p.get("quantity") if p.get("quantity") not in (None, "") else p.get("qty")
+        try:
+            qty = float(qty_raw)
+        except Exception:
+            qty = 0.0
+
+        # Check if broker truth classifies as dust
+        broker_dust = False
+        if broker_exists:
+            # Use classify_meaningful_exposure_v1 for broker data
+            broker_classification = classify_meaningful_exposure_v1(broker_data, source="broker")
+            broker_dust = not broker_classification.get("meaningful_exposure", False)
+
+        # Use canonical quantity for exposure arithmetic when broker truth unavailable
+        # Fall back to local canonical quantity only when cached broker truth is genuinely unavailable
+        exposure_quantity = qty
+        if broker_exists and broker_quantity is not None:
+            try:
+                exposure_quantity = float(broker_quantity)
+            except Exception:
+                pass
+
+        # For classify_meaningful_exposure_v1, use the appropriate row
+        classification_row = broker_data if broker_exists else p
+
+        # Use classify_meaningful_exposure_v1 to check if meaningful
+        meaningful = classify_meaningful_exposure_v1(classification_row, source="broker")
+        if not meaningful.get("meaningful_exposure"):
+            # If broker truth exists and classifies as dust, suppress
+            if broker_exists and broker_dust:
+                continue
+            # Fall back to local canonical quantity classification
+            meaningful_canonical = classify_meaningful_exposure_v1(p, source="local")
+            if not meaningful_canonical.get("meaningful_exposure"):
+                continue
+
+        # Build action with canonical fields
+        action = {
+            "action": "MANAGE_POSITION",
+            "symbol": sym,
+            "asset_type": p.get("asset_type"),
+            "position_state": "POSITION_OPEN",
+            "lane_id": lane_id_filtered,
+            "source_bucket": source_bucket,
+            "confidence": confidence,
+            "market_regime": market_regime,
+            "market_regime_context": market_regime,
+            "price": current_price,
+            "daily_change": daily_change,
+            "paper_autopilot_eligible": True,
+            "advisory_only": True,
+            "execution_authority": "DISABLED",
+        }
+
+        # Add canonical-specific fields
+        if position_id:
+            action["position_id"] = position_id
+        if lifecycle_id:
+            action["lifecycle_id"] = lifecycle_id
+        if candidate_id:
+            action["candidate_id"] = candidate_id
+
+        # Add canonical fields for lane, horizon, confidence, lifecycle notes
+        if lane_id:
+            action["lane_id"] = lane_id
+        if horizon:
+            action["horizon"] = horizon
+
+        # Add lifecycle notes filtered to relevant fields
+        if lifecycle_notes_filtered:
+            action["lifecycle_notes"] = lifecycle_notes_filtered
+
+        # Add broker-specific fields if broker truth exists
+        if broker_exists:
+            if broker_quantity is not None:
+                action["broker_quantity"] = broker_quantity
+            if broker_market_value is not None:
+                action["broker_market_value"] = broker_market_value
+            if broker_current_price is not None and current_price is None:
+                action["price"] = broker_current_price
+
+        # Do not add broker, provider, or LLM calls
+
+        actions.append(action)
+
+    # Sort rows by urgency and then by hold_seconds (lower is more urgent)
+    def get_urgency_state(row):
+        lifecycle_notes = row.get("lifecycle_notes", {})
+        if not isinstance(lifecycle_notes, dict):
+            lifecycle_notes = _safe_json_loads(lifecycle_notes)
+
+        review_state = str(
+            lifecycle_notes.get("review_state")
+            or row.get("review_state")
+            or ""
+        ).lower()
+
+        current_return = _to_float(
+            lifecycle_notes.get("current_return_percent")
+            if lifecycle_notes.get("current_return_percent") not in (None, "")
+            else row.get("unrealized_pnl_percent"),
+            None,
+        )
+
+        if review_state in {"deteriorating", "weakening"}:
+            return "LOSING_MOMENTUM"
+        if current_return is not None and current_return >= 5.0:
+            return "PROTECT_PROFIT"
+        if current_return is not None and current_return <= -5.0:
+            return "LOSING_MOMENTUM"
+        return "HOLD"
+
+    def get_hold_seconds(row):
+        lifecycle_notes = row.get("lifecycle_notes", {})
+        if not isinstance(lifecycle_notes, dict):
+            lifecycle_notes = _safe_json_loads(lifecycle_notes)
+        return _to_float(lifecycle_notes.get("hold_seconds"), 0.0)
+
+    sorted_actions = []
+    for action in actions:
+        urgency_state = get_urgency_state(action)
+        hold_seconds = get_hold_seconds(action)
+        sorted_actions.append((urgency_state, hold_seconds, action))
+
+    # Sort by urgency (CRITICAL before MEDIUM before LOW) then by hold_seconds
+    urgency_order = {"LOSING_MOMENTUM": 0, "PROTECT_PROFIT": 1, "APPROACHING_SELL": 2, "HOLD": 3}
+    sorted_actions.sort(key=lambda x: (urgency_order.get(x[0], 4), x[1]))
+
+    # Limit to requested number of actions
+    result_actions = []
+    for urgency_state, hold_seconds, action in sorted_actions[:limit]:
+        action["canonical_lifecycle_state"] = urgency_state
+        result_actions.append(action)
+
+    return result_actions
+
+
 def _candidate_rows_from_payload(payload):
     p = dict(payload or {})
     rows = []
@@ -43838,18 +44090,10 @@ def _astra_copilot_suite_v1(limit=12, force=False):
         rows = []
     if not rows:
         rows = ((top_payload.get("stocks") or {}).get("final") or []) if isinstance(top_payload, dict) else []
-    cached_alpaca = ((_CACHE.get("alpaca_paper_status_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}
-    position_rows = []
-    if isinstance(cached_alpaca, dict):
-        for key in ("positions", "paper_positions", "active_positions"):
-            if isinstance(cached_alpaca.get(key), list):
-                position_rows.extend(cached_alpaca.get(key) or [])
-    active_symbols = {
-        str((p or {}).get("symbol") or (p or {}).get("ticker") or "").upper()
-        for p in position_rows
-        if isinstance(p, dict) and str((p or {}).get("symbol") or (p or {}).get("ticker") or "").strip()
-    }
-    candidate_actions = [_copilot_action_from_row(row, idx, active_symbols=active_symbols) for idx, row in enumerate((rows or [])[: max(1, int(_to_float(limit, 12)))])]
+
+    # Get current position actions first - they must rank ahead of candidates
+    current_position_actions = _current_position_actions_v1(limit=limit)
+
     # Current-position intelligence is generated by the worker and read here
     # from its committed cache.  It is advisory-only and never refreshes a
     # provider or broker during Copilot rendering.
@@ -43864,17 +44108,38 @@ def _astra_copilot_suite_v1(limit=12, force=False):
             "source_component": "astra_unified_position_advisory_v1",
             "execution_authority": "DISABLED", "advisory_only": True,
         })
-    actions = position_actions[: max(1, int(_to_float(limit, 12)))] + candidate_actions
+
+    # Combine actions: current position actions first, then advisory, then candidate
+    actions = current_position_actions + position_actions[: max(1, int(_to_float(limit, 12)))] + (rows or [])[: max(1, int(_to_float(limit, 12)))]
+
+    # Deduplicate: remove duplicates where symbol is already in current position actions
+    seen = set()
+    dedup_actions = []
+    for action in actions:
+        symbol = str(action.get("symbol") or "").upper()
+        if symbol not in seen:
+            seen.add(symbol)
+            dedup_actions.append(action)
+
+    actions = dedup_actions[: max(1, int(_to_float(limit, 12)))]
+
+    final_actions = []
+    for action in actions:
+        if isinstance(action, dict) and "action" in action:
+            final_actions.append(action)
+        else:
+            final_actions.append(_copilot_action_from_row(action, idx=len(final_actions), active_symbols=set()))
+
     actions_by_type = {}
-    for item in actions:
+    for item in final_actions:
         actions_by_type.setdefault(str(item.get("action") or "UNKNOWN"), []).append(item)
     return {
         "ok": True,
         "suite": "Astra Copilot Suite V1",
-        "status": "ok" if actions else "warming_up",
+        "status": "ok" if final_actions else "warming_up",
         "enabled": True,
-        "recommendations": actions,
-        "top_actions": actions[:5],
+        "recommendations": final_actions,
+        "top_actions": final_actions[:5],
         "actions_by_type": actions_by_type,
         "action_labels": {
             "BUY_NOW": "Buy Now",
@@ -43894,7 +44159,7 @@ def _astra_copilot_suite_v1(limit=12, force=False):
             "position_advisory_handoff_active": bool(position_actions),
             "position_advisory_rows_seen": len(position_actions),
             "broker_truth_source": "cached_alpaca_paper_status_v1",
-            "broker_confirmed_symbols_seen": sorted(active_symbols)[:20],
+            "broker_confirmed_symbols_seen": [],
             "paper_trading_state_source": "cached_paper_status",
             "shadow_learning_source": "unified_diagnostics_shadow_summaries",
             "horizon_intelligence_source": "horizon_lifecycle_readiness",
