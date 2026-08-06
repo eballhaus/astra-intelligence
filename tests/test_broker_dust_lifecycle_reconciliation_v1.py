@@ -118,6 +118,40 @@ class BrokerDustLifecycleReconciliationTests(unittest.TestCase):
         state = engine._runtime_state["native_lane_exit_lifecycle_v1"]["life-1"]
         self.assertEqual(state["closure_state"], "EXIT_BLOCKED_CRITICAL")
 
+    def test_open_position_review_reuses_canonical_quote_evidence_before_provider_fallback(self):
+        engine, directory = self._engine()
+        self.addCleanup(directory.cleanup)
+        calls: list[tuple] = []
+        engine.get_latest_row_fn = lambda *args: calls.append(args) or {"symbol": "PH", "price": 99.0}
+        row = {"symbol": "PH", "asset_type": "stock"}
+        cached = {
+            "PH": {
+                "symbol": "PH", "price": 10.0, "provider_used": "alpaca",
+                "provider_quote_timestamp": "2026-08-06T14:00:00Z",
+            }
+        }
+
+        quote = engine._open_position_review_quote_v1(row, {"current_price": 9.0}, cached)
+
+        self.assertEqual(quote["price"], 10.0)
+        self.assertEqual(quote["provider_quote_timestamp"], "2026-08-06T14:00:00Z")
+        self.assertEqual(calls, [])
+
+    def test_open_position_review_uses_existing_provider_fallback_when_evidence_missing(self):
+        engine, directory = self._engine()
+        self.addCleanup(directory.cleanup)
+        calls: list[tuple] = []
+        engine.get_latest_row_fn = lambda *args: calls.append(args) or {"symbol": "PH", "price": 11.0}
+
+        quote = engine._open_position_review_quote_v1(
+            {"symbol": "PH", "asset_type": "stock"},
+            {"current_price": 9.0},
+            {"PH": {"symbol": "PH", "price": 9.0, "retrieval_timestamp": "2026-08-06T14:00:00Z"}},
+        )
+
+        self.assertEqual(quote["price"], 11.0)
+        self.assertEqual(calls, [("PH", "stock")])
+
 
 if __name__ == "__main__":
     unittest.main()

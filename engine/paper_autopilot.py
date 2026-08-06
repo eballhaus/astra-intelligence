@@ -10240,6 +10240,58 @@ class PaperAutopilotEngine:
         self._save_loss_containment_state(state)
         return result
 
+    def _open_position_review_quote_v1(
+        self,
+        row: Mapping[str, Any],
+        broker_position: Mapping[str, Any],
+        quote_evidence: Mapping[str, Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        """Reuse this cycle's canonical quote before a fallback lookup.
+
+        Loss containment already owns the bounded provider refresh for current
+        broker positions.  Re-requesting the same quote during monitoring can
+        turn a bounded cycle into sequential provider waits.  The persisted
+        producer evidence retains its provider-native timestamp; a missing
+        record still takes the existing fail-closed provider path.
+        """
+        symbol = str(row.get("symbol") or "").upper().strip()
+        asset = _norm_asset(row.get("asset_type") or "stock")
+        cached = dict(dict(quote_evidence or {}).get(symbol) or {})
+        provider_timestamp = str(
+            cached.get("provider_quote_timestamp")
+            or cached.get("quote_timestamp")
+            or cached.get("market_observation_timestamp")
+            or ""
+        ).strip()
+        if cached and provider_timestamp:
+            cached.setdefault("symbol", symbol)
+            return cached
+        latest: dict[str, Any] = {}
+        broker_row = dict(broker_position or {})
+        broker_price = _to_float(
+            broker_row.get("current_price"),
+            _to_float(broker_row.get("market_price"), _to_float(broker_row.get("lastday_price"), 0.0)),
+        )
+        if broker_price > 0.0:
+            latest = {
+                "symbol": symbol,
+                "asset_type": asset,
+                "price": broker_price,
+                "quote_quality": "broker_position_snapshot",
+                "market_source_type": "BROKER_POSITION_SNAPSHOT",
+                "retrieval_timestamp": _now_iso(),
+                "source": "alpaca_broker_positions",
+                "provider_used": "alpaca_paper",
+            }
+        if callable(self.get_latest_row_fn):
+            try:
+                provider_quote = dict(self.get_latest_row_fn(symbol, asset) or {})
+            except Exception:
+                provider_quote = {}
+            if provider_quote:
+                latest = provider_quote
+        return latest
+
     def _load_profit_protection_state(self) -> dict[str, Any]:
         return load_profit_protection_state_v1(self.profit_protection_state_path)
 
@@ -11849,37 +11901,32 @@ class PaperAutopilotEngine:
                     len(open_rows_initial) - len(broker_confirmed_open_rows),
                 )
                 open_rows = broker_confirmed_open_rows
+            blocked_position_ids = {
+                str(position_id or "")
+                for position_id, value in dict(self._runtime_state.get("broker_position_dust_mismatch_v1") or {}).items()
+                if str(dict(value or {}).get("status") or "") in {
+                    "UNRESOLVED_CRITICAL", "UNVERIFIED_LOCAL_LINEAGE", "AMBIGUOUS_FAIL_CLOSED",
+                }
+            }
             min_hold = self._min_hold_seconds()
             for row in open_rows:
                 if closed >= self.max_closes_per_cycle:
                     break
+                if str(row.get("position_id") or "") in blocked_position_ids:
+                    # The earlier reconciliation guard owns this lifecycle
+                    # until broker residual lineage is proven.  Monitoring it
+                    # here would repeat provider work and risk an exit path
+                    # reinterpreting a broker aggregate as a local quantity.
+                    skipped += 1
+                    continue
                 symbol = str(row.get("symbol") or "").upper().strip()
                 asset = _norm_asset(row.get("asset_type") or "stock")
-                latest = {}
-                if broker_reconciliation_active and broker_positions_fetch_ok:
-                    broker_pos = dict(broker_position_by_symbol.get(symbol) or {})
-                    broker_price = _to_float(
-                        broker_pos.get("current_price"),
-                        _to_float(broker_pos.get("market_price"), _to_float(broker_pos.get("lastday_price"), 0.0)),
-                    )
-                    if broker_price > 0.0:
-                        latest = {
-                            "symbol": symbol,
-                            "asset_type": asset,
-                            "price": broker_price,
-                            "quote_quality": "broker_position_snapshot",
-                            "market_source_type": "BROKER_POSITION_SNAPSHOT",
-                            "retrieval_timestamp": _now_iso(),
-                            "source": "alpaca_broker_positions",
-                            "provider_used": "alpaca_paper",
-                        }
-                if callable(self.get_latest_row_fn):
-                    try:
-                        provider_quote = dict(self.get_latest_row_fn(symbol, asset) or {})
-                    except Exception:
-                        provider_quote = {}
-                    if provider_quote:
-                        latest = provider_quote
+                broker_pos = dict(broker_position_by_symbol.get(symbol) or {})
+                latest = self._open_position_review_quote_v1(
+                    row,
+                    broker_pos if broker_reconciliation_active and broker_positions_fetch_ok else {},
+                    latest_price_by_symbol,
+                )
                 if not latest:
                     skipped += 1
                     continue
