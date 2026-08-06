@@ -41,21 +41,32 @@ class BrokerDustLifecycleReconciliationTests(unittest.TestCase):
         root = pathlib.Path(directory.name)
         return PaperAutopilotEngine(db_path=str(root / "paper.db"), state_path=str(root / "state.json")), directory
 
-    def test_unmapped_broker_dust_blocks_exit_without_archiving_or_broker_write(self):
+    def test_unmapped_microscopic_broker_dust_is_quarantined_without_broker_write(self):
         engine, directory = self._engine()
         self.addCleanup(directory.cleanup)
         _insert_open_row(engine)
 
         result = engine._reconcile_current_position_broker_dust_mismatches_v1(_dust_snapshot())
 
-        self.assertEqual(result["critical"], 1)
+        self.assertEqual(result["critical"], 0)
+        self.assertEqual(result["quarantined"], 1)
         with engine._connect() as conn:
-            row = dict(conn.execute("SELECT status,quantity FROM paper_positions WHERE position_id='life-1'").fetchone())
-        self.assertEqual(row["status"], "OPEN")
-        self.assertEqual(row["quantity"], 1.0)
+            row = dict(conn.execute("SELECT status,quantity,lane_id,position_owner,exit_policy_owner,lifecycle_notes,reconciliation_reason,reconciliation_lineage_resolution FROM paper_positions WHERE position_id='life-1'").fetchone())
+        self.assertEqual(row["status"], "BROKER_HELD_DUST")
+        self.assertEqual(row["quantity"], 0.000000926)
+        self.assertEqual(row["lane_id"], "")
+        self.assertEqual(row["position_owner"], "HISTORICAL_DUST")
+        self.assertEqual(row["exit_policy_owner"], "HISTORICAL_DUST")
+        self.assertEqual(row["reconciliation_reason"], "IDENTITY_UNMAPPED_HISTORICAL_DUST_QUARANTINE")
+        self.assertEqual(row["reconciliation_lineage_resolution"], "IDENTITY_UNMAPPED_FAIL_CLOSED")
+        notes = __import__("json").loads(row["lifecycle_notes"])
+        self.assertEqual(notes["historical_broker_dust_quarantine_v1"]["original_local_quantity"], 1.0)
+        self.assertTrue(notes["historical_broker_dust_quarantine_v1"]["no_broker_zero_claimed"])
         state = engine._runtime_state["native_lane_exit_lifecycle_v1"]["life-1"]
-        self.assertEqual(state["closure_state"], "EXIT_BLOCKED_CRITICAL")
+        self.assertEqual(state["closure_state"], "HISTORICAL_BROKER_DUST_QUARANTINED")
         self.assertEqual(state["exact_blocker"], "BROKER_DUST_RESIDUAL_UNMAPPED_TO_CANONICAL_LIFECYCLE")
+        self.assertFalse(state["operational_lifecycle"])
+        self.assertFalse(state["strict_truth_eligible"])
         self.assertEqual(result["broker_actions_used"], 0)
 
     def test_unverified_local_lineage_stays_fail_closed_without_exit_state(self):
@@ -102,7 +113,7 @@ class BrokerDustLifecycleReconciliationTests(unittest.TestCase):
         self.assertFalse(result["records"])
         self.assertEqual(engine._runtime_state["native_lane_exit_lifecycle_v1"], {})
 
-    def test_due_day_close_preserves_reconciliation_blocker_and_never_submits(self):
+    def test_quarantined_dust_is_excluded_from_day_close_and_never_submits(self):
         engine, directory = self._engine()
         self.addCleanup(directory.cleanup)
         _insert_open_row(engine)
@@ -114,9 +125,38 @@ class BrokerDustLifecycleReconciliationTests(unittest.TestCase):
         result = engine._run_due_day_lane_close_stage(_dust_snapshot()["broker_position_by_symbol"])
 
         self.assertEqual(result["reviewed"], 0)
-        self.assertEqual(result["blocked"], 1)
+        self.assertEqual(result["blocked"], 0)
         state = engine._runtime_state["native_lane_exit_lifecycle_v1"]["life-1"]
-        self.assertEqual(state["closure_state"], "EXIT_BLOCKED_CRITICAL")
+        self.assertEqual(state["closure_state"], "HISTORICAL_BROKER_DUST_QUARANTINED")
+
+    def test_existing_sell_intent_keeps_unmapped_dust_fail_closed(self):
+        engine, directory = self._engine()
+        self.addCleanup(directory.cleanup)
+        _insert_open_row(engine)
+        engine._runtime_state["paper_sell_order_intents"] = {
+            "sell-life-1": {"symbol": "PH", "position_id": "life-1", "status": "SELL_SUBMITTED"},
+        }
+
+        result = engine._reconcile_current_position_broker_dust_mismatches_v1(_dust_snapshot())
+
+        self.assertEqual(result["critical"], 1)
+        with engine._connect() as conn:
+            status = conn.execute("SELECT status FROM paper_positions WHERE position_id='life-1'").fetchone()[0]
+        self.assertEqual(status, "OPEN")
+        self.assertEqual(result["records"]["life-1"]["status"], "UNRESOLVED_CRITICAL")
+
+    def test_quarantine_survives_restart_and_does_not_create_strict_truth(self):
+        engine, directory = self._engine()
+        self.addCleanup(directory.cleanup)
+        _insert_open_row(engine)
+        engine._reconcile_current_position_broker_dust_mismatches_v1(_dust_snapshot())
+        engine._save_state_file()
+
+        restarted = PaperAutopilotEngine(db_path=engine.db_path, state_path=engine.state_path)
+        self.assertEqual(restarted._fetch_open_positions(), [])
+        self.assertIn("life-1", restarted._runtime_state["broker_dust_quarantine_v1"])
+        with restarted._connect() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM paper_positions WHERE status='CLOSED'").fetchone()[0], 0)
 
     def test_open_position_review_reuses_canonical_quote_evidence_before_provider_fallback(self):
         engine, directory = self._engine()

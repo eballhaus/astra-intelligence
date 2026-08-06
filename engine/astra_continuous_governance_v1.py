@@ -319,6 +319,37 @@ class ContinuousGovernanceV1:
         for position_id, native_raw in list(native_exits.items())[:100]:
             native = _dict(native_raw)
             blocker = _text(native.get("exact_blocker"))
+            # A microscopic broker residue can be visible without remaining
+            # an active lifecycle. The worker records this only after the
+            # canonical dust classifier rejects it as meaningful exposure and
+            # keeps its unresolved identity explicit for audit. It is never a
+            # broker-zero or strict-truth substitute, but it must not block a
+            # lane as if it were executable current exposure.
+            if (
+                _text(native.get("closure_state")) == "HISTORICAL_BROKER_DUST_QUARANTINED"
+                and blocker == "BROKER_DUST_RESIDUAL_UNMAPPED_TO_CANONICAL_LIFECYCLE"
+                and native.get("operational_lifecycle") is False
+                and native.get("strict_truth_eligible") is False
+            ):
+                invariants.append({
+                    "invariant_id": "HISTORICAL_BROKER_DUST_QUARANTINED",
+                    "owner": _text(native.get("blocker_owner"), "PaperAutopilot.broker_reconciliation"),
+                    "dependencies": [str(position_id)],
+                    "state": "LEGITIMATE_WAITING_STATE",
+                    "observed_value": {
+                        "position_id": native.get("position_id") or position_id,
+                        "lifecycle_id": native.get("lifecycle_id") or position_id,
+                        "symbol": native.get("symbol"), "lane": native.get("lane_id"),
+                        "broker_quantity": native.get("broker_quantity"),
+                        "broker_dust": native.get("broker_dust"),
+                    },
+                    "expected_value": "visible broker dust isolated from current lifecycle ownership",
+                    "first_failed_at": native.get("stage_entered_at") or _now(),
+                    "last_checked_at": _now(), "failure_count": 1, "severity": "WARN",
+                    "repairability": "DIAGNOSTIC", "exact_blocker": blocker,
+                    "allowed_remediations": [],
+                })
+                continue
             if _text(native.get("closure_state")) not in {"EXIT_BLOCKED_CRITICAL", "EXIT_BLOCKED_IDENTITY"} or blocker not in {
                 "BROKER_DUST_RESIDUAL_UNMAPPED_TO_CANONICAL_LIFECYCLE",
                 "BROKER_DUST_RESIDUAL_AMBIGUOUS_SAME_SYMBOL_LIFECYCLES",

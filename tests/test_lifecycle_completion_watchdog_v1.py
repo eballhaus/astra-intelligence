@@ -153,7 +153,7 @@ class LifecycleCompletionWatchdogTests(unittest.TestCase):
             )
         self.assertFalse(any(item["invariant_id"] == "EXIT_READY_NOT_SUBMITTED" for item in result["invariants"]))
 
-    def test_unmapped_broker_dust_is_critical_not_a_closed_lifecycle(self):
+    def test_unmapped_meaningful_broker_dust_is_critical_not_a_closed_lifecycle(self):
         runtime = {
             "native_lane_exit_lifecycle_v1": {
                 "life-1": {
@@ -173,6 +173,29 @@ class LifecycleCompletionWatchdogTests(unittest.TestCase):
         invariant = next(item for item in result["invariants"] if item["invariant_id"] == "BROKER_POSITION_QUANTITY_MISMATCH")
         self.assertEqual(invariant["state"], "FAIL")
         self.assertEqual(result["lane_closure_decision"], "LANE_CLOSURE_CRITICAL")
+
+    def test_identity_unmapped_microscopic_dust_is_visible_but_not_lane_critical(self):
+        runtime = {
+            "native_lane_exit_lifecycle_v1": {
+                "life-1": {
+                    "position_id": "life-1", "lifecycle_id": "life-1", "symbol": "PH", "lane_id": "DAY",
+                    "closure_state": "HISTORICAL_BROKER_DUST_QUARANTINED",
+                    "exact_blocker": "BROKER_DUST_RESIDUAL_UNMAPPED_TO_CANONICAL_LIFECYCLE",
+                    "operational_lifecycle": False, "strict_truth_eligible": False,
+                    "broker_quantity": 0.000000926,
+                },
+            },
+        }
+        healthy = {"CANONICAL_WORKER_ABSENT": {"state": "PASS", "observed_value": 1, "expected_value": "running"}}
+        with tempfile.TemporaryDirectory() as directory, patch("engine.astra_continuous_governance_v1.canonical_runtime_invariants", return_value=healthy), patch("engine.astra_continuous_governance_v1.canonical_worker_state", return_value={}):
+            result = ContinuousGovernanceV1(directory).run_worker_cycle(
+                worker_state={}, runtime_state=runtime,
+                safety={"paper_mode_verified": True, "broker_live_endpoint_allowed": False},
+            )
+        invariant = next(item for item in result["invariants"] if item["invariant_id"] == "HISTORICAL_BROKER_DUST_QUARANTINED")
+        self.assertEqual(invariant["state"], "LEGITIMATE_WAITING_STATE")
+        self.assertFalse(any(item["invariant_id"] == "BROKER_POSITION_QUANTITY_MISMATCH" for item in result["invariants"]))
+        self.assertNotEqual(result["lane_closure_decision"], "LANE_CLOSURE_CRITICAL")
 
 
 if __name__ == "__main__":

@@ -1709,6 +1709,10 @@ class PaperAutopilotEngine:
             # Lifecycle-keyed native exit transitions must survive a worker
             # restart so pending reconciliation cannot be mistaken for HOLD.
             "native_lane_exit_lifecycle_v1": {},
+            # A microscopic broker residual without identity-linked exit
+            # evidence remains broker truth, but it is not an active managed
+            # lifecycle. This ledger preserves that distinction across restarts.
+            "broker_dust_quarantine_v1": {},
             # Every paper sell owns one durable intent.  An intent remains
             # authoritative across worker restarts while broker submission is
             # ambiguous, so a retry cannot manufacture a second sell.
@@ -1898,6 +1902,8 @@ class PaperAutopilotEngine:
                     self._runtime_state["authorized_lane_exit_pending"] = dict(payload.get("authorized_lane_exit_pending") or {})
                 if isinstance(payload.get("native_lane_exit_lifecycle_v1"), dict):
                     self._runtime_state["native_lane_exit_lifecycle_v1"] = dict(payload.get("native_lane_exit_lifecycle_v1") or {})
+                if isinstance(payload.get("broker_dust_quarantine_v1"), dict):
+                    self._runtime_state["broker_dust_quarantine_v1"] = dict(payload.get("broker_dust_quarantine_v1") or {})
                 if isinstance(payload.get("paper_sell_order_intents"), dict):
                     self._runtime_state["paper_sell_order_intents"] = dict(payload.get("paper_sell_order_intents") or {})
                 if isinstance(payload.get("legacy_swing_fmp_evidence"), dict):
@@ -2030,6 +2036,7 @@ class PaperAutopilotEngine:
             "learned_exit_rollback": dict(self._runtime_state.get("learned_exit_rollback") or {}),
             "authorized_lane_exit_pending": dict(self._runtime_state.get("authorized_lane_exit_pending") or {}),
             "native_lane_exit_lifecycle_v1": dict(self._runtime_state.get("native_lane_exit_lifecycle_v1") or {}),
+            "broker_dust_quarantine_v1": dict(self._runtime_state.get("broker_dust_quarantine_v1") or {}),
             "paper_sell_order_intents": dict(self._runtime_state.get("paper_sell_order_intents") or {}),
             "legacy_swing_fmp_evidence": dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {}),
             "legacy_swing_fmp_activity": dict(self._runtime_state.get("legacy_swing_fmp_activity") or {}),
@@ -2088,6 +2095,7 @@ class PaperAutopilotEngine:
                     if isinstance(existing, dict):
                         for key in (
                             "paper_sell_order_intents",
+                            "broker_dust_quarantine_v1",
                             "legacy_retirement_owner_approval_v1",
                             "legacy_retirement_execution_v1",
                             "legacy_retirement_quote_evidence_v1",
@@ -5255,7 +5263,7 @@ class PaperAutopilotEngine:
                 by_symbol.setdefault(symbol, []).append(row)
 
         records: dict[str, Any] = {}
-        reviewed = critical = ambiguous = 0
+        reviewed = critical = ambiguous = quarantined = 0
         for symbol, rows in by_symbol.items():
             broker_row = dict(broker_rows.get(symbol) or {})
             if not broker_row:
@@ -5324,6 +5332,55 @@ class PaperAutopilotEngine:
                 continue
             broker_quantity = _to_float(broker_row.get("qty", broker_row.get("quantity")), 0.0)
             local_quantity = _to_float(row.get("quantity"), 0.0)
+            pending_sell, _pending_reference = self._position_pending_sell(symbol, position_id)
+            # A broker-held residue is not evidence that this local lifecycle
+            # received the sale.  It may nevertheless be safely removed from
+            # operational ownership when the canonical classifier proves it
+            # is microscopic, no unresolved sell exists, and the original
+            # lifecycle has no exit linkage.  This is an audit quarantine, not
+            # a closure: it preserves entry provenance and never emits truth.
+            if (
+                not pending_sell
+                and not str(row.get("exit_order_id") or "").strip()
+                and not str(row.get("exit_fill_id") or "").strip()
+                and self._quarantine_identity_unmapped_broker_dust_v1(
+                    row,
+                    broker_row=broker_row,
+                    dust=dust,
+                )
+            ):
+                quarantine = dict(self._runtime_state.get("broker_dust_quarantine_v1") or {}).get(position_id) or {}
+                records[position_id] = {
+                    "status": "HISTORICAL_BROKER_DUST_QUARANTINED",
+                    "symbol": symbol,
+                    "position_id": position_id,
+                    "lifecycle_id": position_id,
+                    "local_quantity": local_quantity,
+                    "broker_quantity": broker_quantity,
+                    "broker_dust": dust,
+                    "first_causal_blocker": "BROKER_DUST_RESIDUAL_UNMAPPED_TO_CANONICAL_LIFECYCLE",
+                    "identity_resolution": "IDENTITY_UNMAPPED_HISTORICAL_DUST_QUARANTINE",
+                    "operational_lifecycle": False,
+                    "updated_at": _now_iso(),
+                    **quarantine,
+                }
+                self._record_native_lane_exit_state(
+                    row,
+                    state="HISTORICAL_BROKER_DUST_QUARANTINED",
+                    decision="BROKER_DUST_QUARANTINED",
+                    reason="identity_unmapped_microscopic_broker_residual",
+                    blocker="BROKER_DUST_RESIDUAL_UNMAPPED_TO_CANONICAL_LIFECYCLE",
+                    next_reevaluation="periodic_broker_dust_reconciliation",
+                    blocker_owner="PaperAutopilot._quarantine_identity_unmapped_broker_dust_v1",
+                    broker_quantity=broker_quantity,
+                    local_quantity=local_quantity,
+                    broker_dust=dust,
+                    operational_lifecycle=False,
+                    strict_truth_eligible=False,
+                    new_entries_in_lane_safe=True,
+                )
+                quarantined += 1
+                continue
             record = {
                 "status": "UNRESOLVED_CRITICAL",
                 "symbol": symbol,
@@ -5356,9 +5413,96 @@ class PaperAutopilotEngine:
             "reviewed": reviewed,
             "critical": critical,
             "ambiguous": ambiguous,
+            "quarantined": quarantined,
             "records": records,
             "broker_actions_used": 0,
         }
+
+    def _quarantine_identity_unmapped_broker_dust_v1(
+        self,
+        row: Mapping[str, Any],
+        *,
+        broker_row: Mapping[str, Any],
+        dust: Mapping[str, Any],
+    ) -> bool:
+        """Archive a verified microscopic residual without claiming a sale.
+
+        Alpaca aggregates a symbol's residual quantity and does not identify a
+        historical lifecycle.  This method intentionally does *not* infer an
+        exit, broker-zero, or strict truth.  It only removes an otherwise
+        unexecutable microscopic residue from active ownership after a fresh
+        broker snapshot and retains the original local provenance for audit.
+        """
+        position_id = str(row.get("position_id") or "").strip()
+        if not position_id or not bool(dict(dust or {}).get("is_dust")):
+            return False
+        broker_quantity = _to_float(dict(broker_row or {}).get("qty", dict(broker_row or {}).get("quantity")), -1.0)
+        if broker_quantity <= 0.0:
+            return False
+        now = _now_iso()
+        with self._connect() as conn:
+            current_raw = conn.execute(
+                "SELECT * FROM paper_positions WHERE position_id=? AND status='OPEN'",
+                (position_id,),
+            ).fetchone()
+            if current_raw is None:
+                return False
+            current = dict(current_raw)
+            # The terminal transition is valid only for an original entry with
+            # no linked exit.  If an order/fill appears later, the ordinary
+            # canonical order reconciliation remains the only owner.
+            if str(current.get("exit_order_id") or "").strip() or str(current.get("exit_fill_id") or "").strip():
+                return False
+            notes = _safe_json_load(current.get("lifecycle_notes"))
+            notes["historical_broker_dust_quarantine_v1"] = {
+                "quarantined_at": now,
+                "reason": "IDENTITY_UNMAPPED_HISTORICAL_DUST_QUARANTINE",
+                "first_causal_blocker": "BROKER_DUST_RESIDUAL_UNMAPPED_TO_CANONICAL_LIFECYCLE",
+                "identity_resolution": "IDENTITY_UNMAPPED_FAIL_CLOSED",
+                "operational_lifecycle": False,
+                "strict_truth_eligible": False,
+                "broker_quantity": broker_quantity,
+                "broker_dust": dict(dust or {}),
+                "original_local_quantity": _to_float(current.get("quantity"), 0.0),
+                "original_lane_id": str(current.get("lane_id") or ""),
+                "original_position_owner": str(current.get("position_owner") or ""),
+                "original_exit_policy_owner": str(current.get("exit_policy_owner") or ""),
+                "entry_order_id": str(current.get("entry_order_id") or current.get("source_broker_order_id") or ""),
+                "entry_fill_id": str(current.get("entry_fill_id") or ""),
+                "no_broker_zero_claimed": True,
+                "no_exit_fill_linkage": True,
+            }
+            updated = conn.execute(
+                """UPDATE paper_positions
+                   SET status='BROKER_HELD_DUST', quantity=?, prior_status='OPEN',
+                       reconciliation_reason='IDENTITY_UNMAPPED_HISTORICAL_DUST_QUARANTINE',
+                       reconciliation_evidence_source='FRESH_ALPACA_BROKER_DUST_SNAPSHOT',
+                       reconciliation_lineage_resolution='IDENTITY_UNMAPPED_FAIL_CLOSED',
+                       lane_id='', capital_book_id='', position_owner='HISTORICAL_DUST',
+                       exit_policy_owner='HISTORICAL_DUST', lifecycle_notes=?,
+                       reconciled_at=?, updated_at=?
+                   WHERE position_id=? AND status='OPEN'""",
+                (broker_quantity, _safe_json(notes), now, now, position_id),
+            ).rowcount
+            conn.commit()
+        if not updated:
+            return False
+        quarantines = dict(self._runtime_state.get("broker_dust_quarantine_v1") or {})
+        quarantines[position_id] = {
+            "status": "HISTORICAL_BROKER_DUST_QUARANTINED",
+            "position_id": position_id,
+            "lifecycle_id": position_id,
+            "symbol": str(current.get("symbol") or "").upper().strip(),
+            "first_causal_blocker": "BROKER_DUST_RESIDUAL_UNMAPPED_TO_CANONICAL_LIFECYCLE",
+            "identity_resolution": "IDENTITY_UNMAPPED_FAIL_CLOSED",
+            "broker_quantity": broker_quantity,
+            "broker_dust": dict(dust or {}),
+            "operational_lifecycle": False,
+            "strict_truth_eligible": False,
+            "quarantined_at": now,
+        }
+        self._runtime_state["broker_dust_quarantine_v1"] = quarantines
+        return True
 
     def _run_due_day_lane_close_stage(
         self,

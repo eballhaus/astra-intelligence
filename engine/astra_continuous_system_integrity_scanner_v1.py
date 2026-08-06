@@ -193,12 +193,30 @@ class ContinuousSystemIntegrityScannerV1:
             "DAY_POSITION_HORIZON_BREACH", "LOSS_THRESHOLD_BREACH_NOT_EXIT_READY",
         }
         for invariant in list(governance.get("invariants") or [])[:max_rows]:
-            if not isinstance(invariant, dict) or str(invariant.get("state") or "") != "FAIL":
+            if not isinstance(invariant, dict):
                 continue
             invariant_id = str(invariant.get("invariant_id") or "")
+            observed = dict(invariant.get("observed_value") or {})
+            if (
+                invariant_id == "HISTORICAL_BROKER_DUST_QUARANTINED"
+                and str(invariant.get("state") or "") == "LEGITIMATE_WAITING_STATE"
+            ):
+                waiting.append({
+                    "state": "LEGITIMATE_WAITING_STATE",
+                    "reason": "BROKER_DUST_RESIDUAL_UNMAPPED_TO_CANONICAL_LIFECYCLE",
+                    "severity": "WARN",
+                    "symbol": observed.get("symbol"),
+                    "position_id": observed.get("position_id"),
+                    "lifecycle_id": observed.get("lifecycle_id"),
+                    "owner": str(invariant.get("owner") or "PaperAutopilot.broker_reconciliation"),
+                    "fail_closed": True,
+                    "operational_lifecycle": False,
+                })
+                continue
+            if str(invariant.get("state") or "") != "FAIL":
+                continue
             if invariant_id not in critical_invariants:
                 continue
-            observed = dict(invariant.get("observed_value") or {})
             signals.append({
                 "kind": invariant_id,
                 "severity": "CRITICAL",

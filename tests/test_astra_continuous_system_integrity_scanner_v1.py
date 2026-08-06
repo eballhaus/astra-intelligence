@@ -71,6 +71,17 @@ class ContinuousSystemIntegrityScannerTests(unittest.TestCase):
         self.assertFalse(any(root["category"] == "FIELD_DROPPED_DURING_TRANSFORMATION" for root in payload["active_root_causes"]))
         self.assertEqual(payload["legitimate_waiting_states"][0]["reason"], "provider_quote_absent")
 
+    def test_identity_unmapped_microscopic_dust_remains_visible_as_waiting(self):
+        payload = self._scan(continuous_governance={"invariants": [{
+            "invariant_id": "HISTORICAL_BROKER_DUST_QUARANTINED",
+            "state": "LEGITIMATE_WAITING_STATE",
+            "owner": "PaperAutopilot._quarantine_identity_unmapped_broker_dust_v1",
+            "observed_value": {"position_id": "dust-ph", "lifecycle_id": "dust-ph", "symbol": "PH"},
+        }]})
+        waiting = next(row for row in payload["legitimate_waiting_states"] if row["reason"] == "BROKER_DUST_RESIDUAL_UNMAPPED_TO_CANONICAL_LIFECYCLE")
+        self.assertEqual(waiting["position_id"], "dust-ph")
+        self.assertFalse(any(root["category"] == "BROKER_POSITION_QUANTITY_MISMATCH" for root in payload["active_root_causes"]))
+
     def test_current_market_evidence_blocker_does_not_become_horizon_root(self):
         payload = self._scan(
             crypto_integrity={"pair_eligibility": {"evaluated_candidates": [{
