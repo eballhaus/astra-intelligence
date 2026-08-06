@@ -10286,6 +10286,7 @@ class PaperAutopilotEngine:
                 self._runtime_state["legacy_retirement_owner_approval_v1"] = approval
         # Directly import approved broker positions into paper_sell_order_intents.
         # This bypasses the review-queue path when the reset boundary is inactive.
+        self._note_worker_progress("legacy_retirement_intent_refresh")
         self._import_approved_legacy_sell_intents(broker_position_by_symbol)
         retirement_review = self._legacy_retirement_review_phase(broker_position_by_symbol)
         self._legacy_retirement_execution_handoff_phase(broker_position_by_symbol, retirement_review)
@@ -10299,9 +10300,13 @@ class PaperAutopilotEngine:
         # This is the only worker-owned bridge from the approved Phase 1
         # legacy lifecycle into canonical paper submission.  API readers never
         # invoke it and a closed/stale session remains a durable wait state.
+        self._note_worker_progress("legacy_retirement_quote_refresh")
         self._runtime_state["legacy_retirement_quote_refresh_v1"] = self._refresh_legacy_retirement_quote_evidence()
+        self._note_worker_progress("legacy_retirement_submission_reconciliation")
         self._runtime_state["legacy_retirement_submission_phase_v2"] = self._process_legacy_retirement_sell_intents()
+        self._note_worker_progress("legacy_position_risk_triage")
         triage = self._legacy_position_risk_triage_phase(broker_position_by_symbol, position_evidence=evidence)
+        self._note_worker_progress("legacy_portfolio_resolution")
         resolution = build_legacy_portfolio_resolution_v1(
             broker_position_by_symbol,
             recovery,
@@ -10311,6 +10316,7 @@ class PaperAutopilotEngine:
         )
         save_legacy_portfolio_resolution_v1(resolution, os.path.dirname(self.state_path) or "state")
         self._runtime_state["legacy_portfolio_resolution_v1"] = resolution
+        self._note_worker_progress("position_exit_readiness")
         exit_readiness = build_position_exit_readiness_v1(
             broker_position_by_symbol,
             evidence=evidence,

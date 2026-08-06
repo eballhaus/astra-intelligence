@@ -11,6 +11,7 @@ import json
 import os
 import signal
 import sys
+import threading
 import time
 import urllib.request
 from typing import Any
@@ -42,6 +43,12 @@ from engine.astra_multilane_completion_matrix_v1 import AstraMultilaneCompletion
 from engine.astra_operating_health_contract_v1 import AstraOperatingHealthContractV1
 from engine.astra_evidence_accumulation_capacity_v1 import canonical_candidate_capacity_fact
 from engine.candidate_execution_integrity_v1 import derive_crypto_horizon_evidence_v1
+
+
+# A cycle may contain bounded local persistence work that lasts longer than
+# the nominal scan budget.  Publish liveness independently of that work so a
+# live canonical worker is never misreported as absent or stale.
+ACTIVE_CYCLE_HEARTBEAT_SECONDS = 5.0
 
 
 class PaperAutopilotWorker:
@@ -192,6 +199,40 @@ class PaperAutopilotWorker:
                 runtime["worker_cycle_started_at"] = cycle_started_at
             if cycle_completed_at:
                 runtime["worker_cycle_completed_at"] = cycle_completed_at
+
+    def _publish_active_cycle_heartbeat(
+        self,
+        *,
+        cycle_id: str,
+        cycle_started_monotonic: float,
+        stop_event: threading.Event,
+    ) -> None:
+        """Refresh only worker-control-plane liveness during a long cycle.
+
+        This thread never invokes the autopilot, broker, provider, or engine
+        state writer.  It owns only the already-canonical worker runtime
+        snapshot and exits before cycle completion can publish its final
+        state, preventing an old heartbeat from overwriting completion.
+        """
+        while not stop_event.wait(ACTIVE_CYCLE_HEARTBEAT_SECONDS):
+            current = read_snapshot()
+            if str(current.get("worker_generation_id") or "") != self.lease.generation_id:
+                return
+            runtime = getattr(self.autopilot, "_runtime_state", {})
+            phase = str(runtime.get("worker_cycle_phase") or "external_cycle_active") if isinstance(runtime, dict) else "external_cycle_active"
+            current.update({
+                "heartbeat_at": utc_now(),
+                "active_cycle_heartbeat_at": utc_now(),
+                "cycle_id": cycle_id,
+                "cycle_state": "ACTIVE_BOUNDED",
+                "cycle_heartbeat_phase": phase[:96],
+                "cycle_elapsed_seconds": round(time.monotonic() - cycle_started_monotonic, 3),
+                "active_worker_present": True,
+                "active_worker_pid": os.getpid(),
+                "active_worker_instance_id": self.lease.instance_id,
+                "active_worker_generation_id": self.lease.generation_id,
+            })
+            write_snapshot(current)
 
     def _backend_health_latency_ms(self) -> float | None:
         """Bounded internal health probe; never calls a provider or broker."""
@@ -734,6 +775,18 @@ class PaperAutopilotWorker:
         cycle_started_at = utc_now()
         self._sync_autopilot_progress("external_cycle_active", cycle_started_at=cycle_started_at, persist=True)
         self._publish(resource=before, resource_policy=policy, cycle_id=cycle_id, cycle_state="ACTIVE_BOUNDED", last_cycle_started_at=cycle_started_at, resource_pause_state=resource_state)
+        heartbeat_stop = threading.Event()
+        heartbeat_thread = threading.Thread(
+            target=self._publish_active_cycle_heartbeat,
+            kwargs={
+                "cycle_id": cycle_id,
+                "cycle_started_monotonic": started,
+                "stop_event": heartbeat_stop,
+            },
+            name="paper-autopilot-cycle-heartbeat",
+            daemon=True,
+        )
+        heartbeat_thread.start()
         try:
             result = dict(self.autopilot.run_cycle() or {})
             elapsed = time.monotonic() - started
@@ -785,6 +838,8 @@ class PaperAutopilotWorker:
             self._publish(resource=before, resource_policy=policy, cycle_id=cycle_id, cycle_state="FAILED_SAFE", cycle_stop_reason="worker_cycle_exception", last_error=str(exc)[:240], last_error_at=utc_now())
             self._run_continuous_governance()
         finally:
+            heartbeat_stop.set()
+            heartbeat_thread.join(timeout=ACTIVE_CYCLE_HEARTBEAT_SECONDS + 1.0)
             self.autopilot.max_stocks = original_max_stocks
 
     def run(self) -> int:
