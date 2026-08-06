@@ -197,6 +197,38 @@ class WorkerAndOversightTests(unittest.TestCase):
         self.assertEqual(invariant["state"], "PASS")
         self.assertEqual(result["lane_closure_decision"], "LANE_CLOSURE_GO")
 
+    def test_cortex_prioritizes_day_closure_failure_over_campaign(self):
+        runtime_state = {
+            "native_lane_exit_lifecycle_v1": {
+                "day-life": {
+                    "position_id": "day-life", "lifecycle_id": "day-life", "symbol": "PTON",
+                    "lane_id": "DAY", "reason": "day_lane_overnight_breach",
+                    "closure_state": "EXIT_BLOCKED_EXECUTION",
+                    "exact_blocker": "REGULAR_SESSION_REQUIRED:after_hours",
+                }
+            },
+        }
+        healthy_runtime = {"CANONICAL_WORKER_ABSENT": {
+            "state": "PASS", "observed_value": 1, "expected_value": "running",
+        }}
+        lower_priority_campaign = {
+            "first_causal_blocker": "MOMENTUM_IS_ACKNOWLEDGED",
+            "dependency_path": ["consumer.cortex"],
+            "selected_remediation": "RETRY_MISSING_CONSUMER_ACKNOWLEDGEMENT",
+            "remaining_downstream_failures": [],
+        }
+        with tempfile.TemporaryDirectory() as directory, patch("engine.astra_continuous_governance_v1.canonical_runtime_invariants", return_value=healthy_runtime), patch("engine.astra_continuous_governance_v1.canonical_worker_state", return_value={}), patch.object(ContinuousGovernanceV1, "_campaign_for", return_value=lower_priority_campaign):
+            result = ContinuousGovernanceV1(directory).run_worker_cycle(
+                worker_state={}, runtime_state=runtime_state,
+                safety={"paper_mode_verified": True, "broker_live_endpoint_allowed": False},
+            )
+        cortex = result["cortex_operational_diagnosis"]
+        self.assertEqual(cortex["root_cause"], "OVERNIGHT_HOLD_NOT_AUTHORIZED")
+        self.assertEqual(cortex["affected_chain"], ["day-life"])
+        self.assertEqual(cortex["selected_safe_remediation"], "PaperAutopilot._lane_forced_exit_reason")
+        self.assertEqual(cortex["execution_blocker"], "REGULAR_SESSION_REQUIRED:after_hours")
+        self.assertEqual(cortex["next_required_action"], "NEXT_REGULAR_SESSION_NATURAL_EXIT")
+
 
 if __name__ == "__main__":
     unittest.main()

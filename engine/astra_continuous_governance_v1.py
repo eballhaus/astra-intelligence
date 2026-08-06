@@ -342,7 +342,13 @@ class ContinuousGovernanceV1:
                 "invariant_id": "DAY_POSITION_HORIZON_BREACH",
                 "owner": "PaperAutopilot._lane_forced_exit_reason",
                 "dependencies": [str(position_id)], "state": "PASS" if terminal else "FAIL",
-                "observed_value": {"position_id": position_id, "symbol": native.get("symbol"), "reason": reason, "closure_state": closure_state},
+                "observed_value": {
+                    "position_id": position_id,
+                    "symbol": native.get("symbol"),
+                    "reason": reason,
+                    "closure_state": closure_state,
+                    "execution_blocker": native.get("exact_blocker"),
+                },
                 "expected_value": "broker-zero confirmed DAY closure after an unapproved horizon breach", "first_failed_at": None if terminal else _now(),
                 "last_checked_at": _now(), "failure_count": 0 if terminal else 1,
                 "severity": "INFO" if terminal else "HIGH", "repairability": "DIAGNOSTIC",
@@ -796,6 +802,15 @@ class ContinuousGovernanceV1:
         verification_rows = list(_dict(campaign).get("verification_results") or [])
         unknown_packages = [self._unknown_defect_package(row) for row in invariants if row.get("state") == "FAIL" and row.get("repairability") == "DIAGNOSTIC"][:3]
         first_failed = next((row for row in invariants if row.get("state") == "FAIL"), {})
+        diagnosis = first_failed if first_failed else _dict(campaign)
+        failed_observation = _dict(first_failed.get("observed_value"))
+        execution_blocker = _text(failed_observation.get("execution_blocker"))
+        next_required_action = (
+            "NEXT_REGULAR_SESSION_NATURAL_EXIT"
+            if _text(first_failed.get("invariant_id")) == "DAY_POSITION_HORIZON_BREACH"
+            and execution_blocker.startswith("REGULAR_SESSION_REQUIRED")
+            else "RESOLVE_FIRST_FAILED_INVARIANT" if first_failed else "CONTINUE_BOUNDED_CAMPAIGN" if campaign else "NONE"
+        )
         lane_closure_decision = "LANE_CLOSURE_CRITICAL" if any(
             _text(row.get("invariant_id")) in {"CANONICAL_WORKER_ABSENT", "WORKER_HEARTBEAT_STALE", "DAY_POSITION_HORIZON_BREACH", "LOSS_THRESHOLD_BREACH_NOT_EXIT_READY"}
             and row.get("state") == "FAIL" for row in invariants
@@ -807,7 +822,7 @@ class ContinuousGovernanceV1:
             "active_campaigns": sum(1 for item in campaigns if item.get("final_state") in {"AUTO_REPAIR_ACTIVE", "SAFE_BOUNDED_BACKLOG"}), "campaigns_repaired": sum(1 for item in campaigns if item.get("final_state") == "REPAIRED_AND_VERIFIED"), "campaigns_waiting": sum(1 for item in campaigns if item.get("final_state") == "LEGITIMATE_WAITING_STATE"), "campaigns_failed_closed": sum(1 for item in campaigns if item.get("final_state") == "UNSAFE_OR_AMBIGUOUS_FAIL_CLOSED"),
             "repairs_executed": repairs_executed, "repairs_verified": repairs_verified, "repairs_rolled_back": 0, "unknown_defects_packaged": len(unknown_packages), "unknown_defect_packages": unknown_packages,
             "repair_budgets": {"maximum_automatic_repairs_per_cycle": MAX_REPAIRS_PER_CYCLE, "maximum_provider_persistence_retries_per_record": MAX_PROVIDER_RETRIES_PER_RECORD, "maximum_lifecycle_requeues_per_symbol_per_cycle": MAX_LIFECYCLE_REQUEUES_PER_SYMBOL_PER_CYCLE, "maximum_consumer_retries_per_evidence": MAX_CONSUMER_RETRIES_PER_EVIDENCE, "maximum_concurrent_index_rebuilds": 1},
-            "current_campaign": campaign, "lane_closure_decision": lane_closure_decision, "cortex_operational_diagnosis": {"root_cause": campaign.get("first_causal_blocker") if campaign else first_failed.get("exact_blocker") or "none", "affected_chain": campaign.get("dependency_path") if campaign else list(first_failed.get("dependencies") or []), "selected_safe_remediation": campaign.get("selected_remediation") if campaign else first_failed.get("owner"), "why_safe": "allowlisted derived scheduling metadata only; no trading policy or broker action" if campaign else "diagnostic-only canonical invariant; no broker action", "verification_result": verification_rows[-1] if verification_rows else None, "decision_impact": "advisory/lifecycle evidence only", "canary_impact": "unchanged and separately gated", "remaining_risk": (campaign.get("remaining_downstream_failures") or []) if campaign else [first_failed.get("exact_blocker")] if first_failed else []},
+            "current_campaign": campaign, "lane_closure_decision": lane_closure_decision, "cortex_operational_diagnosis": {"root_cause": diagnosis.get("exact_blocker") or diagnosis.get("first_causal_blocker") or "none", "affected_chain": list(diagnosis.get("dependencies") or diagnosis.get("dependency_path") or []), "selected_safe_remediation": diagnosis.get("owner") or diagnosis.get("selected_remediation"), "why_safe": "diagnostic-only canonical invariant; no broker action" if first_failed else "allowlisted derived scheduling metadata only; no trading policy or broker action" if campaign else "diagnostic-only canonical invariant; no broker action", "verification_result": verification_rows[-1] if verification_rows else None, "decision_impact": "advisory/lifecycle evidence only", "canary_impact": "unchanged and separately gated", "remaining_risk": [first_failed.get("exact_blocker")] if first_failed else (campaign.get("remaining_downstream_failures") or []) if campaign else [], "execution_blocker": execution_blocker or None, "next_required_action": next_required_action},
             "proof_rows": [{"symbol": row["symbol"], "activation_id": row["activation_id"], "identity": row["identity"], "daily_evidence_sufficient": row["daily_sufficient"], "review_eligible": row["review_eligible"], "review_scheduled": row["review_scheduled"], "momentum_state": "CURRENT" if row["momentum_current"] else "NOT_CURRENT", "consumer_acknowledgements": row["acknowledgements"], "exact_exclusion_or_failure_reason": "no_current_eligible_broker_lifecycle_review" if row["daily_sufficient"] and not row["review"] else None} for row in rows[:20]],
             "canary_runtime_authorization": "UNCHANGED_SEPARATE_GATE", "proactive_scan_triggers": ["worker_startup", "after_bounded_worker_cycle", "after_provider_persistence", "after_evidence_consumption", "after_resource_recovery"],
             "unknown_defect_packaging": {"enabled": True, "fail_closed": True, "package_fields": ["first_failing_invariant", "reproduction_path", "affected_records", "smallest_recommended_code_repair", "tests", "runtime_validation"]},
