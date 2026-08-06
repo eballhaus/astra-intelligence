@@ -69,7 +69,7 @@ class BrokerDustLifecycleReconciliationTests(unittest.TestCase):
         self.assertFalse(state["strict_truth_eligible"])
         self.assertEqual(result["broker_actions_used"], 0)
 
-    def test_unverified_local_lineage_stays_fail_closed_without_exit_state(self):
+    def test_unverified_local_lineage_microscopic_dust_is_quarantined(self):
         engine, directory = self._engine()
         self.addCleanup(directory.cleanup)
         _insert_open_row(engine)
@@ -80,10 +80,10 @@ class BrokerDustLifecycleReconciliationTests(unittest.TestCase):
         result = engine._reconcile_current_position_broker_dust_mismatches_v1(_dust_snapshot())
 
         record = result["records"]["life-1"]
-        self.assertEqual(record["status"], "UNVERIFIED_LOCAL_LINEAGE")
+        self.assertEqual(record["status"], "HISTORICAL_BROKER_DUST_QUARANTINED")
         state = engine._runtime_state["native_lane_exit_lifecycle_v1"]["life-1"]
-        self.assertEqual(state["closure_state"], "EXIT_BLOCKED_IDENTITY")
-        self.assertEqual(state["exact_blocker"], "BROKER_DUST_RESIDUAL_LOCAL_LIFECYCLE_UNLINKED")
+        self.assertEqual(state["closure_state"], "HISTORICAL_BROKER_DUST_QUARANTINED")
+        self.assertFalse(state["operational_lifecycle"])
 
     def test_same_symbol_multi_lifecycle_dust_is_ambiguous_and_does_not_select_owner(self):
         engine, directory = self._engine()
@@ -104,6 +104,9 @@ class BrokerDustLifecycleReconciliationTests(unittest.TestCase):
         engine, directory = self._engine()
         self.addCleanup(directory.cleanup)
         _insert_open_row(engine)
+        with engine._connect() as conn:
+            conn.execute("UPDATE paper_positions SET entry_fill_id='' WHERE position_id='life-1'")
+            conn.commit()
         snapshot = _dust_snapshot(quantity="1.0")
         snapshot["broker_position_by_symbol"]["PH"]["market_value"] = "10.0"
 
@@ -112,6 +115,8 @@ class BrokerDustLifecycleReconciliationTests(unittest.TestCase):
         self.assertEqual(result["critical"], 0)
         self.assertFalse(result["records"])
         self.assertEqual(engine._runtime_state["native_lane_exit_lifecycle_v1"], {})
+        with engine._connect() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM paper_positions WHERE position_id='life-1'").fetchone()[0], "OPEN")
 
     def test_quarantined_dust_is_excluded_from_day_close_and_never_submits(self):
         engine, directory = self._engine()

@@ -5306,30 +5306,6 @@ class PaperAutopilotEngine:
                 continue
             row = meaningful_local[0]
             position_id = str(row.get("position_id") or "").strip()
-            # A non-linked local record has no authority to claim the broker
-            # aggregate.  Keep the existing fail-closed ownership result.
-            if not position_id or not str(row.get("entry_order_id") or row.get("source_broker_order_id") or "").strip() or not str(row.get("entry_fill_id") or "").strip():
-                record = {
-                    "status": "UNVERIFIED_LOCAL_LINEAGE",
-                    "symbol": symbol,
-                    "position_id": position_id,
-                    "first_causal_blocker": "BROKER_DUST_RESIDUAL_LOCAL_LIFECYCLE_UNLINKED",
-                    "broker_dust": dust,
-                    "updated_at": _now_iso(),
-                }
-                records[position_id or f"unlinked:{symbol}"] = record
-                if position_id:
-                    self._record_native_lane_exit_state(
-                        row,
-                        state="EXIT_BLOCKED_IDENTITY",
-                        decision="BROKER_RECONCILIATION_REQUIRED",
-                        reason="broker_position_quantity_mismatch",
-                        blocker=record["first_causal_blocker"],
-                        next_reevaluation="verify_local_entry_and_broker_residual_lineage",
-                        blocker_owner="PaperAutopilot._reconcile_current_position_broker_dust_mismatches_v1",
-                        broker_dust=dust,
-                    )
-                continue
             broker_quantity = _to_float(broker_row.get("qty", broker_row.get("quantity")), 0.0)
             local_quantity = _to_float(row.get("quantity"), 0.0)
             pending_sell, _pending_reference = self._position_pending_sell(symbol, position_id)
@@ -5380,6 +5356,32 @@ class PaperAutopilotEngine:
                     new_entries_in_lane_safe=True,
                 )
                 quarantined += 1
+                continue
+            # Missing local entry lineage remains fail closed whenever the
+            # broker position is meaningful.  A microscopic broker dust row
+            # reaches the quarantine branch above instead: it preserves the
+            # ambiguity without letting non-executable dust own a lane.
+            if not position_id or not str(row.get("entry_order_id") or row.get("source_broker_order_id") or "").strip() or not str(row.get("entry_fill_id") or "").strip():
+                record = {
+                    "status": "UNVERIFIED_LOCAL_LINEAGE",
+                    "symbol": symbol,
+                    "position_id": position_id,
+                    "first_causal_blocker": "BROKER_DUST_RESIDUAL_LOCAL_LIFECYCLE_UNLINKED",
+                    "broker_dust": dust,
+                    "updated_at": _now_iso(),
+                }
+                records[position_id or f"unlinked:{symbol}"] = record
+                if position_id:
+                    self._record_native_lane_exit_state(
+                        row,
+                        state="EXIT_BLOCKED_IDENTITY",
+                        decision="BROKER_RECONCILIATION_REQUIRED",
+                        reason="broker_position_quantity_mismatch",
+                        blocker=record["first_causal_blocker"],
+                        next_reevaluation="verify_local_entry_and_broker_residual_lineage",
+                        blocker_owner="PaperAutopilot._reconcile_current_position_broker_dust_mismatches_v1",
+                        broker_dust=dust,
+                    )
                 continue
             record = {
                 "status": "UNRESOLVED_CRITICAL",
