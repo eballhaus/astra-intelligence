@@ -5219,6 +5219,147 @@ class PaperAutopilotEngine:
         self._runtime_state["native_lane_exit_lifecycle_v1"] = rows
         return row
 
+    def _reconcile_current_position_broker_dust_mismatches_v1(
+        self,
+        broker_snapshot: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Fail closed when broker dust cannot be linked to an open lifecycle.
+
+        Alpaca aggregates holdings by asset.  A current broker dust residual
+        therefore cannot, by symbol alone, prove that a locally OPEN lifecycle
+        was closed.  In particular, a later same-symbol entry could share the
+        aggregate.  This worker-only guard records the discrepancy before the
+        DAY close writer runs, preserves the local lifecycle for audit, and
+        prevents an oversell attempt until canonical fill/exit linkage exists.
+        """
+        snapshot = dict(broker_snapshot or {})
+        if not bool(snapshot.get("broker_reconciliation_active")) or not bool(snapshot.get("broker_positions_fetch_ok")):
+            return {
+                "reviewed": 0,
+                "critical": 0,
+                "first_causal_blocker": "BROKER_POSITION_SNAPSHOT_UNAVAILABLE",
+                "broker_actions_used": 0,
+            }
+
+        broker_rows = {
+            str(symbol or "").upper().strip(): dict(row or {})
+            for symbol, row in dict(snapshot.get("broker_position_by_symbol") or {}).items()
+            if str(symbol or "").strip() and isinstance(row, Mapping)
+        }
+        open_rows = self._fetch_open_positions()
+        by_symbol: dict[str, list[dict[str, Any]]] = {}
+        for raw in open_rows:
+            row = dict(raw or {})
+            symbol = str(row.get("symbol") or "").upper().strip()
+            if symbol:
+                by_symbol.setdefault(symbol, []).append(row)
+
+        records: dict[str, Any] = {}
+        reviewed = critical = ambiguous = 0
+        for symbol, rows in by_symbol.items():
+            broker_row = dict(broker_rows.get(symbol) or {})
+            if not broker_row:
+                continue
+            dust = classify_dust_position_v1({**broker_row, "symbol": symbol})
+            if not bool(dust.get("is_dust")):
+                continue
+            meaningful_local = [
+                row for row in rows
+                if not bool(classify_dust_position_v1({**row, "symbol": symbol}).get("is_dust"))
+            ]
+            if not meaningful_local:
+                continue
+            reviewed += len(meaningful_local)
+            # A broker aggregate cannot select between two active lifecycles.
+            # Do not mutate either row or create an execution decision.
+            if len(rows) != 1:
+                ambiguous += len(meaningful_local)
+                for row in meaningful_local:
+                    position_id = str(row.get("position_id") or "")
+                    record = {
+                        "status": "AMBIGUOUS_FAIL_CLOSED",
+                        "symbol": symbol,
+                        "position_id": position_id,
+                        "first_causal_blocker": "BROKER_DUST_RESIDUAL_AMBIGUOUS_SAME_SYMBOL_LIFECYCLES",
+                        "broker_dust": dust,
+                        "updated_at": _now_iso(),
+                    }
+                    records[position_id] = record
+                    self._record_native_lane_exit_state(
+                        row,
+                        state="EXIT_BLOCKED_IDENTITY",
+                        decision="BROKER_RECONCILIATION_REQUIRED",
+                        reason="broker_position_quantity_mismatch",
+                        blocker=record["first_causal_blocker"],
+                        next_reevaluation="resolve_same_symbol_lifecycle_identity",
+                        blocker_owner="PaperAutopilot._reconcile_current_position_broker_dust_mismatches_v1",
+                        broker_dust=dust,
+                    )
+                continue
+            row = meaningful_local[0]
+            position_id = str(row.get("position_id") or "").strip()
+            # A non-linked local record has no authority to claim the broker
+            # aggregate.  Keep the existing fail-closed ownership result.
+            if not position_id or not str(row.get("entry_order_id") or row.get("source_broker_order_id") or "").strip() or not str(row.get("entry_fill_id") or "").strip():
+                record = {
+                    "status": "UNVERIFIED_LOCAL_LINEAGE",
+                    "symbol": symbol,
+                    "position_id": position_id,
+                    "first_causal_blocker": "BROKER_DUST_RESIDUAL_LOCAL_LIFECYCLE_UNLINKED",
+                    "broker_dust": dust,
+                    "updated_at": _now_iso(),
+                }
+                records[position_id or f"unlinked:{symbol}"] = record
+                if position_id:
+                    self._record_native_lane_exit_state(
+                        row,
+                        state="EXIT_BLOCKED_IDENTITY",
+                        decision="BROKER_RECONCILIATION_REQUIRED",
+                        reason="broker_position_quantity_mismatch",
+                        blocker=record["first_causal_blocker"],
+                        next_reevaluation="verify_local_entry_and_broker_residual_lineage",
+                        blocker_owner="PaperAutopilot._reconcile_current_position_broker_dust_mismatches_v1",
+                        broker_dust=dust,
+                    )
+                continue
+            broker_quantity = _to_float(broker_row.get("qty", broker_row.get("quantity")), 0.0)
+            local_quantity = _to_float(row.get("quantity"), 0.0)
+            record = {
+                "status": "UNRESOLVED_CRITICAL",
+                "symbol": symbol,
+                "position_id": position_id,
+                "lifecycle_id": position_id,
+                "entry_order_id": str(row.get("entry_order_id") or row.get("source_broker_order_id") or ""),
+                "entry_fill_id": str(row.get("entry_fill_id") or ""),
+                "local_quantity": local_quantity,
+                "broker_quantity": broker_quantity,
+                "broker_dust": dust,
+                "first_causal_blocker": "BROKER_DUST_RESIDUAL_UNMAPPED_TO_CANONICAL_LIFECYCLE",
+                "updated_at": _now_iso(),
+            }
+            records[position_id] = record
+            self._record_native_lane_exit_state(
+                row,
+                state="EXIT_BLOCKED_CRITICAL",
+                decision="BROKER_RECONCILIATION_REQUIRED",
+                reason="broker_position_quantity_mismatch",
+                blocker=record["first_causal_blocker"],
+                next_reevaluation="fresh_broker_position_and_order_reconciliation",
+                blocker_owner="PaperAutopilot._reconcile_current_position_broker_dust_mismatches_v1",
+                broker_quantity=broker_quantity,
+                local_quantity=local_quantity,
+                broker_dust=dust,
+            )
+            critical += 1
+        self._runtime_state["broker_position_dust_mismatch_v1"] = records
+        return {
+            "reviewed": reviewed,
+            "critical": critical,
+            "ambiguous": ambiguous,
+            "records": records,
+            "broker_actions_used": 0,
+        }
+
     def _run_due_day_lane_close_stage(
         self,
         broker_position_by_symbol: Mapping[str, Mapping[str, Any]],
@@ -5236,6 +5377,16 @@ class PaperAutopilotEngine:
         session = self._native_lane_exit_session_status()
         for row in rows:
             if str(row.get("lane_id") or "").upper().strip() != "DAY":
+                continue
+            position_id = str(row.get("position_id") or "").strip()
+            reconciliation = dict(self._runtime_state.get("broker_position_dust_mismatch_v1") or {}).get(position_id) or {}
+            if str(reconciliation.get("status") or "") in {
+                "UNRESOLVED_CRITICAL", "UNVERIFIED_LOCAL_LINEAGE", "AMBIGUOUS_FAIL_CLOSED",
+            }:
+                # The broker aggregate is dust but has not been proven to be
+                # this lifecycle's residual.  Never derive an executable sell
+                # quantity from the stale local row.
+                blocked += 1
                 continue
             reason = self._lane_forced_exit_reason(row)
             if not reason:
@@ -11161,6 +11312,12 @@ class PaperAutopilotEngine:
                 self._note_worker_progress("broker_position_snapshot")
                 preflight_broker_snapshot = self._broker_open_symbols_snapshot()
                 preflight_positions = dict(preflight_broker_snapshot.get("broker_position_by_symbol") or {})
+                # Resolve only the safe negative fact before an overdue DAY
+                # exit is considered: a broker dust aggregate cannot prove a
+                # local lifecycle close without fill/exit lineage.
+                broker_dust_mismatch = self._reconcile_current_position_broker_dust_mismatches_v1(
+                    preflight_broker_snapshot,
+                )
                 # Same-session DAY contracts get their close review before
                 # bounded evidence work.  This prevents a long scan or a
                 # partial-cycle return from silently rolling the position.
@@ -11172,6 +11329,7 @@ class PaperAutopilotEngine:
             except Exception as exc:
                 legacy_canary_refresh = {"observation_state": "FAILED", "error": str(exc)[:180]}
                 preclose_day_exit = {"reviewed": 0, "submitted": 0, "blocked": 0, "observation_state": "FAILED", "error": str(exc)[:180]}
+                broker_dust_mismatch = {"reviewed": 0, "critical": 0, "observation_state": "FAILED", "error": str(exc)[:180]}
             market_cycle = dict(legacy_canary_refresh.get("market_activity") or {})
             partial_legacy_cycle = str(market_cycle.get("cycle_state") or "").startswith("CYCLE_PARTIAL")
             prior_partial_streak = _to_int(self._runtime_state.get("partial_cycle_streak"), 0)
@@ -11472,6 +11630,7 @@ class PaperAutopilotEngine:
                     "ok": True, "orders_submitted": 0, "positions_closed": 0,
                     "cycle_reason": "legacy_market_evidence_bounded",
                     "legacy_swing_observation": legacy_canary_refresh,
+                    "broker_position_dust_mismatch_v1": broker_dust_mismatch,
                     "preclose_day_exit": preclose_day_exit,
                     "broker_reconciliation_active": bool(broker_snapshot.get("broker_reconciliation_active")),
                     "broker_positions_fetch_ok": bool(broker_snapshot.get("broker_positions_fetch_ok")),

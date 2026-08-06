@@ -316,6 +316,33 @@ class ContinuousGovernanceV1:
         # exit, substitutes a price, or treats a symbol as an identity.
         native_exits = _dict(runtime_state.get("native_lane_exit_lifecycle_v1"))
         loss_state = _dict(_dict(runtime_state.get("loss_containment_review_v1")).get("state"))
+        for position_id, native_raw in list(native_exits.items())[:100]:
+            native = _dict(native_raw)
+            blocker = _text(native.get("exact_blocker"))
+            if _text(native.get("closure_state")) not in {"EXIT_BLOCKED_CRITICAL", "EXIT_BLOCKED_IDENTITY"} or blocker not in {
+                "BROKER_DUST_RESIDUAL_UNMAPPED_TO_CANONICAL_LIFECYCLE",
+                "BROKER_DUST_RESIDUAL_AMBIGUOUS_SAME_SYMBOL_LIFECYCLES",
+                "BROKER_DUST_RESIDUAL_LOCAL_LIFECYCLE_UNLINKED",
+            }:
+                continue
+            invariants.append({
+                "invariant_id": "BROKER_POSITION_QUANTITY_MISMATCH",
+                "owner": _text(native.get("blocker_owner"), "PaperAutopilot.broker_reconciliation"),
+                "dependencies": [str(position_id)], "state": "FAIL",
+                "observed_value": {
+                    "position_id": native.get("position_id") or position_id,
+                    "lifecycle_id": native.get("lifecycle_id") or position_id,
+                    "symbol": native.get("symbol"), "lane": native.get("lane_id"),
+                    "local_quantity": native.get("local_quantity"),
+                    "broker_quantity": native.get("broker_quantity"),
+                    "broker_dust": native.get("broker_dust"),
+                },
+                "expected_value": "identity-linked broker residual or canonical broker-zero closure",
+                "first_failed_at": native.get("stage_entered_at") or _now(),
+                "last_checked_at": _now(), "failure_count": 1, "severity": "HIGH",
+                "repairability": "DIAGNOSTIC", "exact_blocker": blocker,
+                "allowed_remediations": [],
+            })
         for decision in list(_dict(loss_state.get("decisions")).values())[:100]:
             position_id = _text(decision.get("position_id"))
             lane = _text(decision.get("lane")).upper()
@@ -882,6 +909,7 @@ class ContinuousGovernanceV1:
             _text(row.get("invariant_id")) in {
                 "CANONICAL_WORKER_ABSENT", "WORKER_HEARTBEAT_STALE",
                 "DAY_POSITION_HORIZON_BREACH", "LOSS_THRESHOLD_BREACH_NOT_EXIT_READY",
+                "BROKER_POSITION_QUANTITY_MISMATCH",
                 "EXIT_READY_NOT_SUBMITTED", "SELL_SUBMITTED_NOT_ACKNOWLEDGED",
                 "PARTIAL_FILL_STALLED", "BROKER_ZERO_NOT_RECONCILED",
                 "CLOSED_POSITION_TRUTH_NOT_CREATED", "STRICT_TRUTH_NOT_LEARNING_ACKNOWLEDGED",

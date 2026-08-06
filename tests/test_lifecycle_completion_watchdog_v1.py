@@ -153,6 +153,27 @@ class LifecycleCompletionWatchdogTests(unittest.TestCase):
             )
         self.assertFalse(any(item["invariant_id"] == "EXIT_READY_NOT_SUBMITTED" for item in result["invariants"]))
 
+    def test_unmapped_broker_dust_is_critical_not_a_closed_lifecycle(self):
+        runtime = {
+            "native_lane_exit_lifecycle_v1": {
+                "life-1": {
+                    "position_id": "life-1", "lifecycle_id": "life-1", "symbol": "PH", "lane_id": "DAY",
+                    "closure_state": "EXIT_BLOCKED_CRITICAL",
+                    "exact_blocker": "BROKER_DUST_RESIDUAL_UNMAPPED_TO_CANONICAL_LIFECYCLE",
+                    "local_quantity": 1.0, "broker_quantity": 0.000000926,
+                },
+            },
+        }
+        healthy = {"CANONICAL_WORKER_ABSENT": {"state": "PASS", "observed_value": 1, "expected_value": "running"}}
+        with tempfile.TemporaryDirectory() as directory, patch("engine.astra_continuous_governance_v1.canonical_runtime_invariants", return_value=healthy), patch("engine.astra_continuous_governance_v1.canonical_worker_state", return_value={}):
+            result = ContinuousGovernanceV1(directory).run_worker_cycle(
+                worker_state={}, runtime_state=runtime,
+                safety={"paper_mode_verified": True, "broker_live_endpoint_allowed": False},
+            )
+        invariant = next(item for item in result["invariants"] if item["invariant_id"] == "BROKER_POSITION_QUANTITY_MISMATCH")
+        self.assertEqual(invariant["state"], "FAIL")
+        self.assertEqual(result["lane_closure_decision"], "LANE_CLOSURE_CRITICAL")
+
 
 if __name__ == "__main__":
     unittest.main()
