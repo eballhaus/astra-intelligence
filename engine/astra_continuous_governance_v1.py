@@ -333,16 +333,20 @@ class ContinuousGovernanceV1:
             if reason not in {"day_lane_overnight_breach", "day_lane_session_close_required"}:
                 continue
             closure_state = _text(native.get("closure_state"))
-            valid = closure_state in {"EXIT_READY", "SELL_SUBMITTED", "BROKER_ACKNOWLEDGED", "PARTIALLY_FILLED", "EXIT_BLOCKED_EVIDENCE", "EXIT_BLOCKED_EXECUTION", "EXIT_BLOCKED_CRITICAL", "BROKER_ZERO_CONFIRMED", "CLOSED"}
+            # An explicit blocked/submitted state preserves fail-closed
+            # execution, but it does not cure an unapproved DAY overnight
+            # breach.  Governance remains critical until broker-zero closure
+            # (or the canonical lifecycle closure) is recorded.
+            terminal = closure_state in {"BROKER_ZERO_CONFIRMED", "CLOSED"}
             invariants.append({
                 "invariant_id": "DAY_POSITION_HORIZON_BREACH",
                 "owner": "PaperAutopilot._lane_forced_exit_reason",
-                "dependencies": [str(position_id)], "state": "PASS" if valid else "FAIL",
+                "dependencies": [str(position_id)], "state": "PASS" if terminal else "FAIL",
                 "observed_value": {"position_id": position_id, "symbol": native.get("symbol"), "reason": reason, "closure_state": closure_state},
-                "expected_value": "explicit DAY closure state", "first_failed_at": None if valid else _now(),
-                "last_checked_at": _now(), "failure_count": 0 if valid else 1,
-                "severity": "INFO" if valid else "HIGH", "repairability": "DIAGNOSTIC",
-                "exact_blocker": "OVERNIGHT_HOLD_NOT_AUTHORIZED" if reason == "day_lane_overnight_breach" and not valid else ("DAY_POSITION_HORIZON_BREACH" if not valid else None),
+                "expected_value": "broker-zero confirmed DAY closure after an unapproved horizon breach", "first_failed_at": None if terminal else _now(),
+                "last_checked_at": _now(), "failure_count": 0 if terminal else 1,
+                "severity": "INFO" if terminal else "HIGH", "repairability": "DIAGNOSTIC",
+                "exact_blocker": "OVERNIGHT_HOLD_NOT_AUTHORIZED" if reason == "day_lane_overnight_breach" and not terminal else ("DAY_POSITION_HORIZON_BREACH" if not terminal else None),
                 "allowed_remediations": [],
             })
         records, reviews, activations = self._records(runtime_state)

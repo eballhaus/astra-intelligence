@@ -151,6 +151,52 @@ class WorkerAndOversightTests(unittest.TestCase):
         self.assertEqual(result["lane_closure_decision"], "LANE_CLOSURE_CRITICAL")
         self.assertEqual(result["cortex_operational_diagnosis"]["root_cause"], "CANONICAL_WORKER_ABSENT")
 
+    def test_day_overnight_breach_blocked_after_hours_is_not_go(self):
+        """A legitimate closed-session block is still a critical DAY closure wait."""
+        runtime_state = {
+            "native_lane_exit_lifecycle_v1": {
+                "day-life": {
+                    "position_id": "day-life", "lifecycle_id": "day-life", "symbol": "PTON",
+                    "lane_id": "DAY", "reason": "day_lane_overnight_breach",
+                    "decision": "EXIT_READY", "closure_state": "EXIT_BLOCKED_EXECUTION",
+                    "exact_blocker": "REGULAR_SESSION_REQUIRED:after_hours",
+                }
+            },
+        }
+        healthy_runtime = {"CANONICAL_WORKER_ABSENT": {
+            "state": "PASS", "observed_value": 1, "expected_value": "running",
+        }}
+        with tempfile.TemporaryDirectory() as directory, patch("engine.astra_continuous_governance_v1.canonical_runtime_invariants", return_value=healthy_runtime), patch("engine.astra_continuous_governance_v1.canonical_worker_state", return_value={}):
+            result = ContinuousGovernanceV1(directory).run_worker_cycle(
+                worker_state={}, runtime_state=runtime_state,
+                safety={"paper_mode_verified": True, "broker_live_endpoint_allowed": False},
+            )
+        self.assertEqual(result["status"], "NO_GO_RUNTIME_INVARIANTS_FAILED")
+        self.assertEqual(result["lane_closure_decision"], "LANE_CLOSURE_CRITICAL")
+        invariant = next(row for row in result["invariants"] if row["invariant_id"] == "DAY_POSITION_HORIZON_BREACH")
+        self.assertEqual(invariant["exact_blocker"], "OVERNIGHT_HOLD_NOT_AUTHORIZED")
+
+    def test_terminal_day_closure_clears_overnight_breach_invariant(self):
+        runtime_state = {
+            "native_lane_exit_lifecycle_v1": {
+                "day-life": {
+                    "position_id": "day-life", "symbol": "PTON", "lane_id": "DAY",
+                    "reason": "day_lane_overnight_breach", "closure_state": "BROKER_ZERO_CONFIRMED",
+                }
+            },
+        }
+        healthy_runtime = {"CANONICAL_WORKER_ABSENT": {
+            "state": "PASS", "observed_value": 1, "expected_value": "running",
+        }}
+        with tempfile.TemporaryDirectory() as directory, patch("engine.astra_continuous_governance_v1.canonical_runtime_invariants", return_value=healthy_runtime), patch("engine.astra_continuous_governance_v1.canonical_worker_state", return_value={}):
+            result = ContinuousGovernanceV1(directory).run_worker_cycle(
+                worker_state={}, runtime_state=runtime_state,
+                safety={"paper_mode_verified": True, "broker_live_endpoint_allowed": False},
+            )
+        invariant = next(row for row in result["invariants"] if row["invariant_id"] == "DAY_POSITION_HORIZON_BREACH")
+        self.assertEqual(invariant["state"], "PASS")
+        self.assertEqual(result["lane_closure_decision"], "LANE_CLOSURE_GO")
+
 
 if __name__ == "__main__":
     unittest.main()
