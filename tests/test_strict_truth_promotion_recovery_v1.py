@@ -93,6 +93,9 @@ class StrictTruthPromotionRecoveryTests(unittest.TestCase):
             self.assertEqual(records[0]["lane_id"], "SCALP")
             self.assertTrue(records[0]["broker_residual_zero_confirmed"])
             self.assertTrue(records[0]["current_logic_performance_eligible"])
+            self.assertTrue(records[0]["observational_learning_v1"]["observational_only"])
+            self.assertEqual(records[0]["observational_learning_v1"]["lifecycle_id"], "position-1")
+            self.assertTrue(intel.records[0]["risk_context_json"]["observational_learning_v1"]["observational_only"])
 
     def test_incomplete_exit_lineage_never_promotes_closed_position_to_learning(self):
         with tempfile.TemporaryDirectory() as directory, patch("engine.paper_autopilot.close_lifecycle_record", None):

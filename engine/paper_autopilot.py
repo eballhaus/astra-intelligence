@@ -100,6 +100,10 @@ from engine.astra_position_peak_memory_v1 import (
     load_peak_memory,
     save_peak_memory,
 )
+from engine.astra_truth_learning_enrichment_v1 import (
+    build_pretrade_truth_context_v1,
+    build_truth_learning_enrichment_v1,
+)
 from engine.astra_profit_protection_giveback_v1 import (
     load_profit_protection_state_v1,
     run_profit_protection_review_v1,
@@ -5587,6 +5591,9 @@ class PaperAutopilotEngine:
         lifecycle_id = str(open_row.get("position_id") or "").strip()
         entry_verified = bool(open_row.get("entry_price_verified"))
         broker_entry_price = _to_float(open_row.get("broker_filled_avg_price"), 0.0)
+        entry_payload = _safe_json_load(open_row.get("row_json"))
+        entry_contract = _safe_json_load(open_row.get("entry_metadata_json"))
+        lifecycle_notes = _safe_json_load(open_row.get("lifecycle_notes"))
         if not entry_verified or broker_entry_price <= 0.0 or not entry_order_id or not entry_fill_id:
             return {
                 "persisted": False,
@@ -5658,6 +5665,15 @@ class PaperAutopilotEngine:
             "current_logic_performance_eligible": True,
             "official_metric_eligible": True, "created_at": _now_iso(), "updated_at": _now_iso(),
         }
+        # This is a passive snapshot of evidence already present at entry.  It
+        # is intentionally outside the strict-truth eligibility predicate.
+        record["pretrade_context_v1"] = build_pretrade_truth_context_v1(entry_payload, entry_contract)
+        record["observational_learning_v1"] = build_truth_learning_enrichment_v1(
+            record,
+            pretrade_context=record["pretrade_context_v1"],
+            lifecycle_notes=lifecycle_notes,
+            learning_acknowledged=False,
+        )
         if not record["exit_time"]:
             return {"persisted": False, "reason": "EXIT_FILL_TIMESTAMP_REQUIRED"}
         record["natural_trade_label"] = natural_paper_trade_label(record)
@@ -5698,7 +5714,63 @@ class PaperAutopilotEngine:
             except Exception:
                 pass
             return {"persisted": False, "reason": f"registry_write_failed:{str(exc)[:100]}"}
-        return {"persisted": True, "stable_key": record["stable_key"], "strict_count": strict_count}
+        return {
+            "persisted": True,
+            "stable_key": record["stable_key"],
+            "strict_count": strict_count,
+            "observational_learning_v1": record["observational_learning_v1"],
+        }
+
+    def _annotate_strict_truth_learning_acknowledgement(
+        self,
+        *,
+        stable_key: str,
+        lifecycle_id: str,
+        learning_acknowledged: bool,
+    ) -> dict[str, Any]:
+        """Refresh only passive truth quality after learning consumes a truth.
+
+        This local registry update has no broker side effects and deliberately
+        fails independently of the already-durable learning acknowledgement.
+        """
+        if not stable_key or not lifecycle_id:
+            return {"updated": False, "reason": "strict_truth_identity_required"}
+        path = os.path.join(os.path.dirname(self.db_path) or "state", "broker_truth_records_v1.json")
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                registry = json.load(handle)
+            records = [dict(row) for row in (registry.get("records") or []) if isinstance(row, dict)]
+        except Exception as exc:
+            return {"updated": False, "reason": f"registry_read_failed:{type(exc).__name__}"}
+        updated = False
+        for record in records:
+            if str(record.get("stable_key") or "") != stable_key:
+                continue
+            if str(record.get("lifecycle_id") or "") != lifecycle_id:
+                return {"updated": False, "reason": "strict_truth_lifecycle_mismatch"}
+            record["learning_acknowledged"] = bool(learning_acknowledged)
+            record["observational_learning_v1"] = build_truth_learning_enrichment_v1(
+                record,
+                pretrade_context=record.get("pretrade_context_v1") or {},
+                learning_acknowledged=learning_acknowledged,
+            )
+            updated = True
+            break
+        if not updated:
+            return {"updated": False, "reason": "strict_truth_not_found"}
+        temp = f"{path}.tmp-{os.getpid()}"
+        try:
+            with open(temp, "w", encoding="utf-8") as handle:
+                json.dump({**dict(registry or {}), "records": records, "generated_at": _now_iso()}, handle, indent=2, sort_keys=True)
+            os.replace(temp, path)
+        except Exception as exc:
+            try:
+                if os.path.exists(temp):
+                    os.unlink(temp)
+            except Exception:
+                pass
+            return {"updated": False, "reason": f"registry_write_failed:{type(exc).__name__}"}
+        return {"updated": True, "stable_key": stable_key, "learning_acknowledged": bool(learning_acknowledged)}
 
     def _retry_pending_strict_truth_promotions(self, max_rows: int = 12) -> dict[str, Any]:
         """Retry only local strict-truth registry persistence after broker-zero close.
@@ -5813,6 +5885,12 @@ class PaperAutopilotEngine:
                 learning_acknowledged=ok,
                 strict_truth_created=True,
             )
+            if ok:
+                self._annotate_strict_truth_learning_acknowledgement(
+                    stable_key=str(payload.get("strict_truth_stable_key") or ""),
+                    lifecycle_id=str(row.get("position_id") or ""),
+                    learning_acknowledged=True,
+                )
         return {"reviewed": reviewed, "acknowledged": acknowledged, "still_pending": still_pending}
 
     def _execution_critical_reconciliation_phase(self) -> dict[str, dict[str, Any]]:
@@ -9624,6 +9702,8 @@ class PaperAutopilotEngine:
                 learning_payload = {
                         "trade_id": pid,
                         "lifecycle_id": pid,
+                        "strict_truth_stable_key": str(strict_truth_result.get("stable_key") or ""),
+                        "observational_learning_v1": dict(strict_truth_result.get("observational_learning_v1") or {}),
                         "symbol": symbol,
                         "asset_type": asset_type,
                         "lane_id": lane,
@@ -9689,6 +9769,7 @@ class PaperAutopilotEngine:
                             "continuation_flag": bool(notes.get("continuation_flag", False)),
                             "deterioration_flag": bool(notes.get("deterioration_flag", False)),
                             "exit_decision_reason": str(exit_reason or ""),
+                            "observational_learning_v1": dict(strict_truth_result.get("observational_learning_v1") or {}),
                         },
                     "trade_origin": "paper_autopilot",
                 }
@@ -9716,6 +9797,13 @@ class PaperAutopilotEngine:
                     conn.commit()
             except Exception:
                 learning_acknowledged = False
+
+        if bool(strict_truth_result.get("persisted")) and learning_acknowledged:
+            self._annotate_strict_truth_learning_acknowledgement(
+                stable_key=str(strict_truth_result.get("stable_key") or ""),
+                lifecycle_id=pid,
+                learning_acknowledged=True,
+            )
 
         close_map = dict(self._runtime_state.get("last_close_by_symbol") or {})
         close_map[symbol] = time.time()
