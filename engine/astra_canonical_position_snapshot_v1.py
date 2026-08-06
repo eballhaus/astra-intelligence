@@ -262,6 +262,9 @@ def snapshot_to_loss_containment_rows(snapshot: dict[str, Any]) -> list[dict[str
             "current_price": pos.get("current_price"),
             "market_value": pos.get("market_value"),
             "unrealized_pl": pos.get("unrealized_pl"),
+            # Alpaca's raw field is retained under an explicit fractional name.
+            # Consumers must prefer the canonical percentage-point fields below.
+            "broker_unrealized_plpc_fraction": pos.get("unrealized_pl_pct", 0) / 100.0,
             "unrealized_plpc": pos.get("unrealized_pl_pct", 0) / 100.0,
             "unrealized_pl_pct": pos.get("unrealized_pl_pct"),
             "unrealized_return_pct": pos.get("unrealized_pl_pct"),

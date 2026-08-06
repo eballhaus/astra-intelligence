@@ -117,6 +117,14 @@ def canonical_worker_state(path: Path = WORKER_STATE_PATH) -> dict[str, Any]:
     liveness = worker_liveness(state)
     state["worker_liveness"] = liveness
     state["active_worker_present"] = bool(liveness.get("active_worker_present"))
+    # A dead PID cannot write a final record itself. Preserve the last worker
+    # evidence and derive an explicit terminal cause for every read-only
+    # consumer instead of allowing stale state to look healthy.
+    state["worker_terminal_cause"] = str(
+        state.get("worker_terminal_cause")
+        or liveness.get("terminal_cause")
+        or ""
+    )
     state.setdefault("last_known_worker_pid", state.get("process_id"))
     state.setdefault("last_known_worker_instance_id", state.get("worker_instance_id"))
     state.setdefault("last_known_worker_generation_id", state.get("worker_generation_id"))
@@ -167,6 +175,8 @@ def canonical_runtime_invariants(state: dict[str, Any], *, backend_pid: int | No
             "safe_repair": repair,
         }
 
+    worker_absent = liveness.get("liveness_state") == "PROCESS_MISSING"
+    heartbeat_stale = liveness.get("liveness_state") == "STALE_HEARTBEAT"
     return {
         "ONE_CANONICAL_WORKER": result(role_ok and process_ok, "canonical isolated worker process", {"role": state.get("process_role"), "pid": worker_pid, "command": command, "liveness": liveness.get("liveness_state")}, "worker identity is absent, stale, or not the canonical entrypoint", "start exactly one engine.paper_autopilot_worker", inactive=intentionally_stopped),
         "ONE_ACTIVE_WORKER_GENERATION": result(bool(state.get("worker_instance_id") and state.get("worker_generation_id")), "instance and generation identity", {"worker_instance_id": state.get("worker_instance_id"), "worker_generation_id": state.get("worker_generation_id")}, "canonical generation is missing", "restart the isolated worker after releasing stale lease"),
@@ -191,6 +201,8 @@ def canonical_runtime_invariants(state: dict[str, Any], *, backend_pid: int | No
         "ACTIVE_WORKER_HEARTBEAT_CURRENT": result(bool(liveness.get("heartbeat_current")), "current canonical heartbeat", liveness.get("active_worker_heartbeat_age_seconds"), "active worker heartbeat is stale", "await bounded heartbeat or restart worker", inactive=intentionally_stopped),
         "STOPPED_WORKER_NOT_REPORTED_ACTIVE": result(not bool(liveness.get("active_worker_present")) if liveness.get("liveness_state") in {"STOPPED_CLEANLY", "PROCESS_MISSING", "STALE_HEARTBEAT", "PID_REUSED"} else True, "stopped worker is historical only", liveness.get("liveness_state"), "stopped worker is still reported active", "clear active worker fields on clean stop"),
         "LAST_KNOWN_WORKER_PRESERVED": result(bool(liveness.get("last_known_worker_pid")), "historical worker retained after stop", liveness.get("last_known_worker_pid"), "last-known worker identity missing", "preserve canonical historical state on shutdown"),
+        "CANONICAL_WORKER_ABSENT": result(not worker_absent, "canonical worker PID is running", liveness.get("last_known_worker_pid"), "CANONICAL_WORKER_ABSENT", "start exactly one engine.paper_autopilot_worker", inactive=intentionally_stopped),
+        "WORKER_HEARTBEAT_STALE": result(not heartbeat_stale, "canonical worker heartbeat is current", heartbeat_age, "WORKER_HEARTBEAT_STALE", "restart exactly one canonical worker after inspecting terminal cause", inactive=intentionally_stopped),
     }
 
 
@@ -461,10 +473,15 @@ def worker_liveness(state: dict[str, Any] | None = None, *, process: dict[str, A
     command = str(checked.get("command") or "").lower()
     command_matches = bool(checked.get("running")) and "engine.paper_autopilot_worker" in command
     active = bool(declared_active and active_pid and checked.get("running") and command_matches and heartbeat_current)
+    clean_stop = (
+        not declared_active
+        and str(state.get("last_known_worker_exit_reason") or state.get("worker_terminal_cause") or "")
+        in {"worker_stopped", "worker_signal_2", "worker_signal_15", "worker_signal_1"}
+    )
     if active:
         resource = str(state.get("resource_state") or "RESOURCE_NORMAL")
         liveness_state = "ACTIVE_RESOURCE_PAUSED" if resource in {"RESOURCE_HIGH_PAUSE", "RESOURCE_MEMORY_PAUSE", "RESOURCE_API_LATENCY_PAUSE", "RESOURCE_RECOVERY_COOLDOWN"} else "ACTIVE_RESOURCE_ELEVATED" if resource == "RESOURCE_ELEVATED" else "ACTIVE_HEALTHY"
-    elif not declared_active:
+    elif clean_stop:
         liveness_state = "STOPPED_CLEANLY"
     elif not checked.get("running"):
         liveness_state = "PROCESS_MISSING"
@@ -474,6 +491,13 @@ def worker_liveness(state: dict[str, Any] | None = None, *, process: dict[str, A
         liveness_state = "STALE_HEARTBEAT"
     else:
         liveness_state = "UNKNOWN_FAIL_CLOSED"
+    terminal_cause = str(state.get("worker_terminal_cause") or state.get("last_known_worker_exit_reason") or "")
+    if not terminal_cause and liveness_state == "PROCESS_MISSING":
+        terminal_cause = "CANONICAL_WORKER_ABSENT"
+    elif not terminal_cause and liveness_state == "STALE_HEARTBEAT":
+        terminal_cause = "WORKER_HEARTBEAT_STALE"
+    elif not terminal_cause and liveness_state == "PID_REUSED":
+        terminal_cause = "CANONICAL_WORKER_PID_REUSED"
     return {
         "liveness_state": liveness_state,
         "active_worker_present": active,
@@ -493,6 +517,9 @@ def worker_liveness(state: dict[str, Any] | None = None, *, process: dict[str, A
         "last_known_worker_cycle_id": state.get("last_known_worker_cycle_id") or state.get("cycle_id"),
         "last_known_worker_stopped_at": state.get("last_known_worker_stopped_at"),
         "last_known_worker_exit_reason": state.get("last_known_worker_exit_reason") or state.get("cycle_stop_reason"),
+        "terminal_cause": terminal_cause,
+        "incident_codes": [terminal_cause] if terminal_cause and liveness_state not in {"ACTIVE_HEALTHY", "ACTIVE_RESOURCE_ELEVATED", "ACTIVE_RESOURCE_PAUSED"} else [],
+        "incident_severity": "RED" if liveness_state in {"PROCESS_MISSING", "STALE_HEARTBEAT", "PID_REUSED", "UNKNOWN_FAIL_CLOSED"} else "INFO",
     }
 
 

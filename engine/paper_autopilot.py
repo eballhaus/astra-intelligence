@@ -2200,10 +2200,45 @@ class PaperAutopilotEngine:
         query = "SELECT * FROM paper_positions WHERE " + " AND ".join(where) + " ORDER BY entry_timestamp ASC"
         with self._connect() as conn:
             rows = conn.execute(query, params).fetchall()
-        records = [dict(r or {}) for r in rows]
+        records = [self._materialize_open_position_entry_contract(dict(r or {})) for r in rows]
         # Crypto simulated/shadow/no-broker-linkage rows must never become
         # broker-active merely because their historical status says OPEN.
         return [row for row in records if _norm_asset(row.get("asset_type") or "stock") != "crypto" or is_broker_linked_active_position(row, allow_dust=True)]
+
+    @staticmethod
+    def _materialize_open_position_entry_contract(row: Mapping[str, Any]) -> dict[str, Any]:
+        """Expose immutable entry terms needed by the active native exit path.
+
+        The database keeps entry contracts in JSON to preserve provenance across
+        schema revisions.  Exit ownership must consume those terms directly;
+        it must not infer a DAY-to-SWING conversion from a missing column.
+        Stored columns always win when present.
+        """
+        materialized = dict(row or {})
+        sources: list[dict[str, Any]] = []
+        for raw in (materialized.get("entry_metadata_json"), materialized.get("row_json")):
+            parsed = _safe_json_load(raw)
+            if parsed:
+                sources.append(parsed)
+                for nested_key in ("entry_lane_horizon_contract_v1", "entry_contract", "immutable_entry_contract"):
+                    nested = parsed.get(nested_key)
+                    if isinstance(nested, Mapping):
+                        sources.append(dict(nested))
+        immutable_fields = (
+            "same_session_exit_required", "overnight_allowed", "paper_entry_horizon_style",
+            "trade_horizon_style", "intended_horizon", "expected_max_hold",
+            "maximum_hold_minutes", "maximum_hold_seconds", "close_session_deadline",
+            "entry_contract_id", "entry_contract_identity", "authorization_timestamp",
+            "overnight_authorization_id", "overnight_authorization_timestamp",
+        )
+        for source in sources:
+            for key in immutable_fields:
+                if key not in source:
+                    continue
+                existing = materialized.get(key)
+                if existing is None or existing == "":
+                    materialized[key] = source[key]
+        return materialized
 
     def _count_open_position_rows(self) -> int:
         try:
@@ -9756,6 +9791,85 @@ class PaperAutopilotEngine:
         payload = dict(state or self._runtime_state.get("loss_containment_state_v1") or {})
         save_loss_containment_state_v1(self.loss_containment_state_path, payload)
 
+    def _loss_containment_quote_evidence(
+        self,
+        broker_position_by_symbol: Mapping[str, Mapping[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        """Return quote evidence for loss review without inventing market time.
+
+        A broker-position snapshot can provide a mark, but its retrieval time
+        is not an executable market observation.  Prefer the existing worker
+        quote producer and retain a broker mark only as a fail-closed fallback
+        when the provider-native timestamp is unavailable.
+        """
+        quotes: dict[str, dict[str, Any]] = {}
+        diagnostics: dict[str, dict[str, Any]] = {}
+        quote_budget = max(1, min(12, _to_int(os.getenv("ASTRA_LOSS_CONTAINMENT_QUOTES_PER_CYCLE"), 12)))
+        for index, (raw_symbol, raw_position) in enumerate(broker_position_by_symbol.items()):
+            symbol = str(raw_symbol or "").upper().strip()
+            broker_position = dict(raw_position or {})
+            if not symbol:
+                continue
+            asset_type = _norm_asset(broker_position.get("asset_type") or broker_position.get("asset_class") or "stock")
+            quote: dict[str, Any] = {}
+            if callable(self.get_latest_row_fn) and index < quote_budget:
+                try:
+                    quote = dict(self.get_latest_row_fn(symbol, asset_type) or {})
+                except Exception as exc:
+                    diagnostics[symbol] = {
+                        "status": "QUOTE_LOOKUP_FAILED",
+                        "first_causal_blocker": f"LOSS_CONTAINMENT_QUOTE_LOOKUP_FAILED:{type(exc).__name__}",
+                        "evaluated_at": _now_iso(),
+                    }
+            elif callable(self.get_latest_row_fn):
+                diagnostics[symbol] = {
+                    "status": "QUOTE_REFRESH_DEFERRED_BY_BUDGET",
+                    "first_causal_blocker": "LOSS_CONTAINMENT_QUOTE_REFRESH_DEFERRED_BY_BUDGET",
+                    "evaluated_at": _now_iso(),
+                }
+            if quote:
+                quoted_symbol = str(quote.get("symbol") or symbol).upper().strip()
+                if quoted_symbol != symbol:
+                    diagnostics[symbol] = {
+                        "status": "QUOTE_SYMBOL_MISMATCH",
+                        "first_causal_blocker": "LOSS_CONTAINMENT_QUOTE_SYMBOL_MISMATCH",
+                        "evaluated_at": _now_iso(),
+                    }
+                    quote = {}
+            if quote:
+                quote.setdefault("symbol", symbol)
+                quote.setdefault("retrieval_timestamp", _now_iso())
+                quotes[symbol] = quote
+                diagnostics[symbol] = {
+                    "status": "PROVIDER_QUOTE_AVAILABLE",
+                    "provider": str(quote.get("provider_used") or quote.get("provider_name") or quote.get("source") or ""),
+                    "provider_quote_timestamp": str(quote.get("provider_quote_timestamp") or quote.get("quote_timestamp") or quote.get("market_observation_timestamp") or ""),
+                    "evaluated_at": _now_iso(),
+                }
+                continue
+            price = _to_float(
+                broker_position.get("current_price"),
+                _to_float(broker_position.get("market_price"), _to_float(broker_position.get("lastday_price"), 0.0)),
+            )
+            if price > 0.0:
+                # Deliberately omit quote/market timestamps. The loss engine
+                # will surface MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE instead
+                # of treating this cycle's retrieval clock as provider truth.
+                quotes[symbol] = {
+                    "symbol": symbol,
+                    "price": price,
+                    "retrieval_timestamp": _now_iso(),
+                    "source": "alpaca_broker_position_mark",
+                    "provider_used": "alpaca_paper",
+                }
+                diagnostics.setdefault(symbol, {
+                    "status": "BROKER_MARK_ONLY",
+                    "first_causal_blocker": "MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE",
+                    "evaluated_at": _now_iso(),
+                })
+        self._runtime_state["loss_containment_quote_evidence_v1"] = diagnostics
+        return quotes
+
     def _loss_containment_review_phase(
         self,
         open_rows: list[dict[str, Any]] | None = None,
@@ -11356,21 +11470,9 @@ class PaperAutopilotEngine:
             loss_containment_review: dict[str, Any] = {}
             try:
                 self._note_worker_progress("loss_containment_review")
-                latest_price_by_symbol: dict[str, dict[str, Any]] = {}
-                for symbol, broker_pos in broker_position_by_symbol.items():
-                    bp = dict(broker_pos or {})
-                    price = _to_float(
-                        bp.get("current_price"),
-                        _to_float(bp.get("market_price"), _to_float(bp.get("lastday_price"), 0.0)),
-                    )
-                    if price > 0.0:
-                        latest_price_by_symbol[str(symbol).upper()] = {
-                            "symbol": str(symbol).upper(),
-                            "price": price,
-                            "timestamp": _now_iso(),
-                            "source": "alpaca_broker_positions",
-                            "provider_used": "alpaca_paper",
-                        }
+                latest_price_by_symbol = self._loss_containment_quote_evidence(
+                    broker_position_by_symbol,
+                )
                 loss_containment_review = self._loss_containment_review_phase(
                     open_rows=open_rows_initial,
                     broker_position_by_symbol=broker_position_by_symbol,

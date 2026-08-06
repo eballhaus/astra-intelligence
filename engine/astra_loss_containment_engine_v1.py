@@ -378,12 +378,30 @@ def _resolve_position_inputs(
         or (entry_price * quantity if entry_price > 0 and quantity > 0 else 0.0)
     )
 
-    # Unrealized return percentage: consume explicit field if present, otherwise compute.
-    unrealized_pl_pct = _num(
-        pos.get("unrealized_plpc")
-        or pos.get("unrealized_return_pct")
-        or pos.get("unrealized_pct")
-    )
+    # Canonical percent fields are percentage points (for example -16.667),
+    # while Alpaca's ``unrealized_plpc`` is a fraction (for example -0.16667).
+    # Never let a legacy fraction outrank a canonical percentage, and convert
+    # that fraction exactly once at this producer/consumer boundary.
+    unrealized_pl_pct = None
+    for value in (
+        pos.get("unrealized_pl_pct"),
+        pos.get("unrealized_return_pct"),
+        pos.get("unrealized_pct"),
+    ):
+        parsed = _num(value)
+        if parsed is not None:
+            unrealized_pl_pct = parsed
+            break
+    if unrealized_pl_pct is None:
+        for value in (broker.get("unrealized_plpc"), pos.get("unrealized_plpc")):
+            parsed = _num(value)
+            if parsed is not None:
+                # Historical fixtures stored percentage points under the raw
+                # Alpaca name. Real Alpaca fractions are bounded to [-1, 1],
+                # so retain that legacy compatibility without double-scaling
+                # an already-normalized value.
+                unrealized_pl_pct = parsed * 100.0 if abs(parsed) <= 1.0 else parsed
+                break
     if unrealized_pl_pct is None and cost_basis > 0 and market_value > 0:
         unrealized_pl_pct = ((market_value - cost_basis) / cost_basis) * 100.0
     if unrealized_pl_pct is None:

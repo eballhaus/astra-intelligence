@@ -203,6 +203,18 @@ class RuntimeResourceGovernanceTests(unittest.TestCase):
         self.assertIsNone(result["active_worker_pid"])
         self.assertEqual(result["last_known_worker_pid"], 8123)
 
+    def test_stale_inactive_error_cannot_hide_missing_worker(self):
+        state = {
+            "process_id": 8123,
+            "active_worker_present": False,
+            "ownership_state": "NO_WORKER_ACTIVE",
+            "worker_terminal_cause": "worker_terminal_exception:RuntimeError",
+            "heartbeat_at": (datetime.now(UTC) - timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
+        }
+        result = worker_liveness(state, process={"pid": 8123, "running": False, "command": ""})
+        self.assertEqual(result["liveness_state"], "PROCESS_MISSING")
+        self.assertFalse(result["active_worker_present"])
+
 
 if __name__ == "__main__":
     unittest.main()

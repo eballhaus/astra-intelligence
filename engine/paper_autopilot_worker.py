@@ -59,6 +59,7 @@ class PaperAutopilotWorker:
         self.limits = RuntimeLimits.from_env()
         self.lease = WorkerLease()
         self.stop_requested = False
+        self._terminal_exit_reason = ""
         self.cycle_count = int(read_snapshot().get("cycle_count") or 0)
         self.previous_cursor = str(read_snapshot().get("cursor") or "")
         self.resource_policy = dict(read_snapshot().get("resource_policy") or {})
@@ -337,6 +338,7 @@ class PaperAutopilotWorker:
         return projected or list(by_symbol.values())
 
     def _on_signal(self, _signum: int, _frame: Any) -> None:
+        self._terminal_exit_reason = f"worker_signal_{int(_signum)}"
         self.stop_requested = True
 
     def _run_continuous_governance(self) -> dict[str, Any]:
@@ -806,6 +808,22 @@ class PaperAutopilotWorker:
                 while not self.stop_requested and time.monotonic() < deadline:
                     self._publish(next_cycle_at=utc_now())
                     time.sleep(min(5.0, self.limits.minimum_sleep_between_cycles_seconds))
+        except BaseException as exc:
+            # This outer boundary covers failures before or between bounded
+            # cycles.  Record a sanitized durable cause before releasing the
+            # lease; it never changes broker or trading state.
+            self._terminal_exit_reason = f"worker_terminal_exception:{type(exc).__name__}"
+            try:
+                self._publish(
+                    cycle_state="FAILED_SAFE",
+                    cycle_stop_reason="worker_terminal_exception",
+                    last_error=str(exc)[:240],
+                    last_error_at=utc_now(),
+                    worker_terminal_cause=self._terminal_exit_reason,
+                )
+            except Exception:
+                pass
+            raise
         finally:
             self.stop_requested = True
             last_cycle = read_snapshot()
@@ -822,7 +840,8 @@ class PaperAutopilotWorker:
                 last_known_worker_generation_id=self.lease.generation_id,
                 last_known_worker_cycle_id=last_cycle.get("cycle_id"),
                 last_known_worker_stopped_at=utc_now(),
-                last_known_worker_exit_reason="worker_stopped",
+                last_known_worker_exit_reason=self._terminal_exit_reason or "worker_stopped",
+                worker_terminal_cause=self._terminal_exit_reason or "worker_stopped",
             )
             self.lease.release()
         return 0

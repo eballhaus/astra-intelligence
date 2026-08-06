@@ -295,7 +295,56 @@ class ContinuousGovernanceV1:
         runtime = canonical_runtime_invariants(canonical_worker_state())
         for invariant_id, row in runtime.items():
             state = _text(row.get("state"), "WARN")
-            invariants.append({"invariant_id": invariant_id, "owner": "astra_runtime_governance_v1", "dependencies": [], "state": state, "observed_value": row.get("observed_value"), "expected_value": row.get("expected_value"), "first_failed_at": row.get("first_failed_at"), "last_checked_at": _now(), "failure_count": 0 if state in {"PASS", "NOT_APPLICABLE"} else 1, "severity": "HIGH" if state == "FAIL" else "WARN" if state != "PASS" else "INFO", "repairability": "ALLOWLISTED" if invariant_id in {"RECOVERY_REQUIRES_HEALTHY_HYSTERESIS"} else "DIAGNOSTIC", "exact_blocker": row.get("blocker"), "allowed_remediations": []})
+            invariants.append({"invariant_id": invariant_id, "owner": "astra_runtime_governance_v1", "dependencies": [], "state": state, "observed_value": row.get("observed_value"), "expected_value": row.get("expected_value"), "first_failed_at": row.get("first_failed_at"), "last_checked_at": _now(), "failure_count": 0 if state in {"PASS", "NOT_APPLICABLE"} else 1, "severity": "HIGH" if state == "FAIL" else "WARN" if state != "PASS" else "INFO", "repairability": "ALLOWLISTED" if invariant_id in {"RECOVERY_REQUIRES_HEALTHY_HYSTERESIS"} else "DIAGNOSTIC", "exact_blocker": row.get("exact_blocker") or row.get("blocker"), "allowed_remediations": []})
+        # Loss and native DAY-close ledgers are worker-produced canonical facts.
+        # Governance observes them by lifecycle identity; it never creates an
+        # exit, substitutes a price, or treats a symbol as an identity.
+        native_exits = _dict(runtime_state.get("native_lane_exit_lifecycle_v1"))
+        loss_state = _dict(_dict(runtime_state.get("loss_containment_review_v1")).get("state"))
+        for decision in list(_dict(loss_state.get("decisions")).values())[:100]:
+            position_id = _text(decision.get("position_id"))
+            lane = _text(decision.get("lane")).upper()
+            threshold = _text(decision.get("threshold_state"))
+            if not position_id or lane != "DAY" or threshold != "HARD_BOUNDARY_BREACH":
+                continue
+            native = _dict(native_exits.get(position_id))
+            closure_state = _text(native.get("closure_state"))
+            explicit_exit_state = closure_state in {
+                "EXIT_READY", "SELL_SUBMITTED", "BROKER_ACKNOWLEDGED",
+                "PARTIALLY_FILLED", "EXIT_BLOCKED_EVIDENCE", "EXIT_BLOCKED_EXECUTION",
+                "EXIT_BLOCKED_CRITICAL", "BROKER_ZERO_CONFIRMED", "CLOSED",
+            }
+            invariants.append({
+                "invariant_id": "LOSS_THRESHOLD_BREACH_NOT_EXIT_READY",
+                "owner": "PaperAutopilot._loss_containment_review_phase",
+                "dependencies": [position_id], "state": "PASS" if explicit_exit_state else "FAIL",
+                "observed_value": {"position_id": position_id, "symbol": decision.get("symbol"), "threshold_state": threshold, "native_exit_state": closure_state},
+                "expected_value": "explicit native exit state", "first_failed_at": None if explicit_exit_state else _now(),
+                "last_checked_at": _now(), "failure_count": 0 if explicit_exit_state else 1,
+                "severity": "INFO" if explicit_exit_state else "HIGH", "repairability": "DIAGNOSTIC",
+                "exact_blocker": "LOSS_THRESHOLD_BREACH_NOT_EXIT_READY" if not explicit_exit_state else None,
+                "allowed_remediations": [],
+            })
+        for position_id, native in list(native_exits.items())[:100]:
+            native = _dict(native)
+            if _text(native.get("lane_id")).upper() != "DAY":
+                continue
+            reason = _text(native.get("reason"))
+            if reason not in {"day_lane_overnight_breach", "day_lane_session_close_required"}:
+                continue
+            closure_state = _text(native.get("closure_state"))
+            valid = closure_state in {"EXIT_READY", "SELL_SUBMITTED", "BROKER_ACKNOWLEDGED", "PARTIALLY_FILLED", "EXIT_BLOCKED_EVIDENCE", "EXIT_BLOCKED_EXECUTION", "EXIT_BLOCKED_CRITICAL", "BROKER_ZERO_CONFIRMED", "CLOSED"}
+            invariants.append({
+                "invariant_id": "DAY_POSITION_HORIZON_BREACH",
+                "owner": "PaperAutopilot._lane_forced_exit_reason",
+                "dependencies": [str(position_id)], "state": "PASS" if valid else "FAIL",
+                "observed_value": {"position_id": position_id, "symbol": native.get("symbol"), "reason": reason, "closure_state": closure_state},
+                "expected_value": "explicit DAY closure state", "first_failed_at": None if valid else _now(),
+                "last_checked_at": _now(), "failure_count": 0 if valid else 1,
+                "severity": "INFO" if valid else "HIGH", "repairability": "DIAGNOSTIC",
+                "exact_blocker": "OVERNIGHT_HOLD_NOT_AUTHORIZED" if reason == "day_lane_overnight_breach" and not valid else ("DAY_POSITION_HORIZON_BREACH" if not valid else None),
+                "allowed_remediations": [],
+            })
         records, reviews, activations = self._records(runtime_state)
         rows: list[dict[str, Any]] = []
         for activation_id, bundle_raw in list(records.items())[:50]:
@@ -742,14 +791,19 @@ class ContinuousGovernanceV1:
         counts = {state: sum(1 for row in invariants if row.get("state") == state) for state in ("PASS", "WARN", "FAIL", "LEGITIMATE_WAITING_STATE", "NOT_APPLICABLE")}
         verification_rows = list(_dict(campaign).get("verification_results") or [])
         unknown_packages = [self._unknown_defect_package(row) for row in invariants if row.get("state") == "FAIL" and row.get("repairability") == "DIAGNOSTIC"][:3]
+        first_failed = next((row for row in invariants if row.get("state") == "FAIL"), {})
+        lane_closure_decision = "LANE_CLOSURE_CRITICAL" if any(
+            _text(row.get("invariant_id")) in {"CANONICAL_WORKER_ABSENT", "WORKER_HEARTBEAT_STALE", "DAY_POSITION_HORIZON_BREACH", "LOSS_THRESHOLD_BREACH_NOT_EXIT_READY"}
+            and row.get("state") == "FAIL" for row in invariants
+        ) else "LANE_CLOSURE_GO"
         summary = {
-            "status": "PASS_AUTONOMOUS_REMEDIATION_WITH_BOUNDED_BACKLOG" if campaign and campaign.get("final_state") in {"SAFE_BOUNDED_BACKLOG", "LEGITIMATE_WAITING_STATE"} else "PASS_AUTONOMOUS_REMEDIATION_ACTIVE",
+            "status": "NO_GO_RUNTIME_INVARIANTS_FAILED" if counts["FAIL"] else ("PASS_AUTONOMOUS_REMEDIATION_WITH_BOUNDED_BACKLOG" if campaign and campaign.get("final_state") in {"SAFE_BOUNDED_BACKLOG", "LEGITIMATE_WAITING_STATE"} else "PASS_AUTONOMOUS_REMEDIATION_ACTIVE"),
             "scan_time": _now(), "scan_duration_ms": round((time.monotonic() - started) * 1000.0, 2), "scan_owner": "engine.paper_autopilot_worker",
             "authorization": authorization, "invariants": invariants, "invariants_passed": counts["PASS"], "invariants_warned": counts["WARN"] + counts["LEGITIMATE_WAITING_STATE"], "invariants_failed": counts["FAIL"],
             "active_campaigns": sum(1 for item in campaigns if item.get("final_state") in {"AUTO_REPAIR_ACTIVE", "SAFE_BOUNDED_BACKLOG"}), "campaigns_repaired": sum(1 for item in campaigns if item.get("final_state") == "REPAIRED_AND_VERIFIED"), "campaigns_waiting": sum(1 for item in campaigns if item.get("final_state") == "LEGITIMATE_WAITING_STATE"), "campaigns_failed_closed": sum(1 for item in campaigns if item.get("final_state") == "UNSAFE_OR_AMBIGUOUS_FAIL_CLOSED"),
             "repairs_executed": repairs_executed, "repairs_verified": repairs_verified, "repairs_rolled_back": 0, "unknown_defects_packaged": len(unknown_packages), "unknown_defect_packages": unknown_packages,
             "repair_budgets": {"maximum_automatic_repairs_per_cycle": MAX_REPAIRS_PER_CYCLE, "maximum_provider_persistence_retries_per_record": MAX_PROVIDER_RETRIES_PER_RECORD, "maximum_lifecycle_requeues_per_symbol_per_cycle": MAX_LIFECYCLE_REQUEUES_PER_SYMBOL_PER_CYCLE, "maximum_consumer_retries_per_evidence": MAX_CONSUMER_RETRIES_PER_EVIDENCE, "maximum_concurrent_index_rebuilds": 1},
-            "current_campaign": campaign, "cortex_operational_diagnosis": {"root_cause": campaign.get("first_causal_blocker") if campaign else "none", "affected_chain": campaign.get("dependency_path") if campaign else [], "selected_safe_remediation": campaign.get("selected_remediation") if campaign else None, "why_safe": "allowlisted derived scheduling metadata only; no trading policy or broker action" if campaign else "no active causal break", "verification_result": verification_rows[-1] if verification_rows else None, "decision_impact": "advisory/lifecycle evidence only", "canary_impact": "unchanged and separately gated", "remaining_risk": (campaign.get("remaining_downstream_failures") or []) if campaign else []},
+            "current_campaign": campaign, "lane_closure_decision": lane_closure_decision, "cortex_operational_diagnosis": {"root_cause": campaign.get("first_causal_blocker") if campaign else first_failed.get("exact_blocker") or "none", "affected_chain": campaign.get("dependency_path") if campaign else list(first_failed.get("dependencies") or []), "selected_safe_remediation": campaign.get("selected_remediation") if campaign else first_failed.get("owner"), "why_safe": "allowlisted derived scheduling metadata only; no trading policy or broker action" if campaign else "diagnostic-only canonical invariant; no broker action", "verification_result": verification_rows[-1] if verification_rows else None, "decision_impact": "advisory/lifecycle evidence only", "canary_impact": "unchanged and separately gated", "remaining_risk": (campaign.get("remaining_downstream_failures") or []) if campaign else [first_failed.get("exact_blocker")] if first_failed else []},
             "proof_rows": [{"symbol": row["symbol"], "activation_id": row["activation_id"], "identity": row["identity"], "daily_evidence_sufficient": row["daily_sufficient"], "review_eligible": row["review_eligible"], "review_scheduled": row["review_scheduled"], "momentum_state": "CURRENT" if row["momentum_current"] else "NOT_CURRENT", "consumer_acknowledgements": row["acknowledgements"], "exact_exclusion_or_failure_reason": "no_current_eligible_broker_lifecycle_review" if row["daily_sufficient"] and not row["review"] else None} for row in rows[:20]],
             "canary_runtime_authorization": "UNCHANGED_SEPARATE_GATE", "proactive_scan_triggers": ["worker_startup", "after_bounded_worker_cycle", "after_provider_persistence", "after_evidence_consumption", "after_resource_recovery"],
             "unknown_defect_packaging": {"enabled": True, "fail_closed": True, "package_fields": ["first_failing_invariant", "reproduction_path", "affected_records", "smallest_recommended_code_repair", "tests", "runtime_validation"]},
