@@ -270,7 +270,7 @@ if [[ "${START_COMPONENT}" == "all" || "${START_COMPONENT}" == "worker" ]]; then
     log_info "worker already supervised in session ${WORKER_SESSION}; skipping duplicate launch"
   else
     tmux new-session -d -s "${WORKER_SESSION}" \
-      "cd '${ROOT_DIR}' && ASTRA_PROCESS_ROLE=worker PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX='/tmp/astra_worker_pycache_$(date +%s)' '${ROOT_DIR}/venv/bin/python' -B -m engine.paper_autopilot_worker >> '${STATE_DIR}/worker.log' 2>&1"
+      "cd '${ROOT_DIR}' && env -u CODEX_SANDBOX_NETWORK_DISABLED ASTRA_PROCESS_ROLE=worker PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX='/tmp/astra_worker_pycache_$(date +%s)' '${ROOT_DIR}/venv/bin/python' -B -m engine.paper_autopilot_worker >> '${STATE_DIR}/worker.log' 2>&1"
     log_info "dedicated worker session launched: ${WORKER_SESSION}"
   fi
   local_worker_attempt=0

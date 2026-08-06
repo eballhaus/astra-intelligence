@@ -4,6 +4,7 @@ from __future__ import annotations
 import unittest
 import threading
 import time
+from pathlib import Path
 from unittest.mock import patch
 
 from engine.paper_autopilot_worker import PaperAutopilotWorker
@@ -99,6 +100,16 @@ class PaperAutopilotWorkerProgressTests(unittest.TestCase):
         self.assertTrue(all(item["cycle_state"] == "ACTIVE_BOUNDED" for item in writes))
         self.assertTrue(all(item["cycle_heartbeat_phase"] == "legacy_retirement_quote_refresh" for item in writes))
         self.assertEqual(autopilot.run_calls, 0)
+
+    def test_canonical_worker_launcher_clears_only_codex_sandbox_network_flag(self):
+        script = (Path(__file__).resolve().parents[1] / "start_astra_persistent.sh").read_text(encoding="utf-8")
+        worker_launch = next(
+            line for line in script.splitlines()
+            if "-B -m engine.paper_autopilot_worker" in line
+        )
+        self.assertIn("env -u CODEX_SANDBOX_NETWORK_DISABLED", worker_launch)
+        self.assertIn("ASTRA_PROCESS_ROLE=worker", worker_launch)
+        self.assertNotIn("APCA_API_BASE_URL=", worker_launch)
 
 
 if __name__ == "__main__":
