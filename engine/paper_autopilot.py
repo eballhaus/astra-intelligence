@@ -5668,12 +5668,24 @@ class PaperAutopilotEngine:
         # This is a passive snapshot of evidence already present at entry.  It
         # is intentionally outside the strict-truth eligibility predicate.
         record["pretrade_context_v1"] = build_pretrade_truth_context_v1(entry_payload, entry_contract)
-        record["observational_learning_v1"] = build_truth_learning_enrichment_v1(
-            record,
-            pretrade_context=record["pretrade_context_v1"],
-            lifecycle_notes=lifecycle_notes,
-            learning_acknowledged=False,
-        )
+        try:
+            record["observational_learning_v1"] = build_truth_learning_enrichment_v1(
+                record,
+                pretrade_context=record["pretrade_context_v1"],
+                lifecycle_notes=lifecycle_notes,
+                learning_acknowledged=False,
+            )
+        except Exception as exc:
+            # Observational learning is never allowed to strand a verified
+            # broker truth. Persist a durable, sanitized failure annotation
+            # and continue the existing truth and learning handoff.
+            record["observational_learning_v1"] = {
+                "version": "1.0.0",
+                "observational_only": True,
+                "status": "UNAVAILABLE_ENRICHMENT_FAILED",
+                "error_type": type(exc).__name__,
+                "lifecycle_id": lifecycle_id,
+            }
         if not record["exit_time"]:
             return {"persisted": False, "reason": "EXIT_FILL_TIMESTAMP_REQUIRED"}
         record["natural_trade_label"] = natural_paper_trade_label(record)
@@ -5749,11 +5761,20 @@ class PaperAutopilotEngine:
             if str(record.get("lifecycle_id") or "") != lifecycle_id:
                 return {"updated": False, "reason": "strict_truth_lifecycle_mismatch"}
             record["learning_acknowledged"] = bool(learning_acknowledged)
-            record["observational_learning_v1"] = build_truth_learning_enrichment_v1(
-                record,
-                pretrade_context=record.get("pretrade_context_v1") or {},
-                learning_acknowledged=learning_acknowledged,
-            )
+            try:
+                record["observational_learning_v1"] = build_truth_learning_enrichment_v1(
+                    record,
+                    pretrade_context=record.get("pretrade_context_v1") or {},
+                    learning_acknowledged=learning_acknowledged,
+                )
+            except Exception as exc:
+                record["observational_learning_v1"] = {
+                    "version": "1.0.0",
+                    "observational_only": True,
+                    "status": "UNAVAILABLE_ENRICHMENT_FAILED",
+                    "error_type": type(exc).__name__,
+                    "lifecycle_id": lifecycle_id,
+                }
             updated = True
             break
         if not updated:

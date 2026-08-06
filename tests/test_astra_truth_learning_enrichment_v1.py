@@ -4,6 +4,7 @@ import json
 import pathlib
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from engine.astra_truth_learning_enrichment_v1 import (
     build_pretrade_truth_context_v1,
@@ -93,6 +94,88 @@ class TruthLearningEnrichmentV1Tests(unittest.TestCase):
             updated = json.loads(path.read_text())["records"][0]
             self.assertTrue(updated["learning_acknowledged"])
             self.assertTrue(updated["observational_learning_v1"]["truth_quality_score_v1"]["components"]["learning_acknowledged"])
+
+    def test_enrichment_failure_never_blocks_strict_truth_or_learning_payload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "broker_truth_records_v1.json").write_text('{"records": []}', encoding="utf-8")
+            engine = PaperAutopilotEngine(db_path=str(root / "paper.db"), state_path=str(root / "state.json"))
+            row = {
+                "position_id": "life-1", "symbol": "AAPL", "asset_type": "stock", "lane_id": "DAY",
+                "quantity": 1.0, "entry_order_id": "entry", "entry_fill_id": "entry-fill",
+                "entry_timestamp": "2026-08-06T14:00:00Z", "broker_filled_avg_price": 100.0,
+                "entry_price_verified": True, "entry_price_source": "alpaca",
+                "entry_price_evidence_class": "BROKER_CONFIRMED_FILL", "row_json": "{}",
+                "entry_metadata_json": "{}", "lifecycle_notes": "{}",
+            }
+            fill = {
+                "exit_order_id": "exit", "exit_fill_id": "exit-fill",
+                "filled_at": "2026-08-06T15:00:00Z", "broker_residual_zero_confirmed": True,
+            }
+            with patch("engine.paper_autopilot.build_truth_learning_enrichment_v1", side_effect=RuntimeError("fixture")):
+                result = engine._persist_strict_lane_truth(
+                    row, fill, exit_price=101.0, return_percent=1.0, hold_seconds=3600.0, exit_reason="fixture",
+                )
+            self.assertTrue(result["persisted"])
+            self.assertEqual(result["observational_learning_v1"]["status"], "UNAVAILABLE_ENRICHMENT_FAILED")
+            record = json.loads((root / "broker_truth_records_v1.json").read_text(encoding="utf-8"))["records"][0]
+            self.assertEqual(record["observational_learning_v1"]["error_type"], "RuntimeError")
+
+    def test_enrichment_failure_does_not_block_core_learning_acknowledgement(self):
+        class Broker:
+            def positions(self):
+                return {"ok": True, "positions": []}
+
+        class Learning:
+            def __init__(self):
+                self.rows: list[dict] = []
+
+            def record_trade(self, row):
+                self.rows.append(dict(row))
+                return {"ok": True}
+
+        with tempfile.TemporaryDirectory() as directory, patch("engine.paper_autopilot.close_lifecycle_record", None):
+            root = pathlib.Path(directory)
+            (root / "broker_truth_records_v1.json").write_text('{"records": []}', encoding="utf-8")
+            learning = Learning()
+            engine = PaperAutopilotEngine(
+                db_path=str(root / "paper.db"), state_path=str(root / "state.json"),
+                alpaca_paper_broker=Broker(), trade_intel=learning,
+            )
+            row = {
+                "position_id": "life-ack", "symbol": "AAPL", "asset_type": "stock", "lane_id": "DAY",
+                "quantity": 1.0, "entry_price": 100.0, "entry_order_id": "entry", "entry_fill_id": "entry-fill",
+                "entry_timestamp": "2026-08-06T14:00:00Z", "broker_filled_avg_price": 100.0,
+                "entry_price_verified": True, "entry_price_source": "alpaca",
+                "entry_price_evidence_class": "BROKER_CONFIRMED_FILL", "row_json": "{}",
+                "entry_metadata_json": "{}", "lifecycle_notes": "{}", "source_bucket": "paper_autopilot_candidate",
+            }
+            fill = {
+                "exit_order_id": "exit", "exit_fill_id": "exit-fill", "filled_at": "2026-08-06T15:00:00Z", "filled_qty": 1.0,
+            }
+            with engine._connect() as conn:
+                conn.execute(
+                    """INSERT INTO paper_positions(position_id, symbol, asset_type, status, quantity, entry_price,
+                    entry_timestamp, lane_id, entry_order_id, entry_fill_id, broker_filled_avg_price,
+                    entry_price_verified, entry_price_source, entry_price_evidence_class, source_bucket,
+                    row_json, entry_metadata_json, lifecycle_notes, created_at, updated_at)
+                    VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        row["position_id"], row["symbol"], row["asset_type"], row["quantity"], row["entry_price"],
+                        row["entry_timestamp"], row["lane_id"], row["entry_order_id"], row["entry_fill_id"],
+                        row["broker_filled_avg_price"], row["entry_price_source"], row["entry_price_evidence_class"],
+                        row["source_bucket"], row["row_json"], row["entry_metadata_json"], row["lifecycle_notes"],
+                        row["entry_timestamp"], row["entry_timestamp"],
+                    ),
+                )
+                conn.commit()
+            with patch("engine.paper_autopilot.build_truth_learning_enrichment_v1", side_effect=RuntimeError("fixture")):
+                result = engine._close_position(row, {"symbol": "AAPL", "price": 101.0}, "fixture", broker_fill=fill)
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["strict_broker_truth_persistence"]["persisted"])
+            self.assertTrue(result["learning_acknowledged"])
+            self.assertEqual(len(learning.rows), 1)
+            self.assertEqual(learning.rows[0]["observational_learning_v1"]["status"], "UNAVAILABLE_ENRICHMENT_FAILED")
 
 
 if __name__ == "__main__":
