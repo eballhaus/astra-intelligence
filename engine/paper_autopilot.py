@@ -5172,23 +5172,47 @@ class PaperAutopilotEngine:
         rows = dict(self._runtime_state.get("native_lane_exit_lifecycle_v1") or {})
         previous = dict(rows.get(position_id) or {})
         entry_contract = _safe_json_load(open_row.get("entry_metadata_json"))
+        now = _now_iso()
+        previous_stage = str(previous.get("closure_state") or "").strip()
+        stage_changed = previous_stage != str(state or "").strip()
+        expected_next_transition = {
+            "ACTIVE_HOLD": "EXIT_REVIEW",
+            "EXIT_REVIEW": "EXIT_READY",
+            "EXIT_READY": "SELL_SUBMITTED",
+            "SELL_SUBMITTED": "BROKER_ACKNOWLEDGED_OR_ORDER_STATE",
+            "PARTIALLY_FILLED": "AWAITING_BROKER_ZERO",
+            "AWAITING_BROKER_ZERO": "BROKER_ZERO_CONFIRMED",
+            "BROKER_ZERO_CONFIRMED": "CLOSED_PENDING_TRUTH",
+            "CLOSED_PENDING_TRUTH": "STRICT_TRUTH_CREATED",
+            "STRICT_TRUTH_CREATED": "LEARNING_ACKNOWLEDGED",
+            "LEARNING_ACKNOWLEDGED": "NONE",
+        }.get(str(state or "").strip(), "RECONCILE_OR_REEVALUATE")
         row = {
             **previous,
             "position_id": position_id,
             "lifecycle_id": position_id,
             "symbol": str(open_row.get("symbol") or "").upper().strip(),
             "lane_id": str(open_row.get("lane_id") or "").upper().strip(),
+            "horizon": str(open_row.get("canonical_horizon") or open_row.get("horizon") or entry_contract.get("horizon") or ""),
             "candidate_id": str(open_row.get("source_candidate_id") or entry_contract.get("candidate_id") or ""),
             "entry_order_id": str(open_row.get("entry_order_id") or open_row.get("source_broker_order_id") or ""),
             "entry_fill_id": str(open_row.get("entry_fill_id") or ""),
             "exit_policy_owner": str(open_row.get("exit_policy_owner") or ""),
+            "entry_contract_id": str(open_row.get("entry_contract_id") or entry_contract.get("entry_contract_id") or entry_contract.get("lifecycle_id") or ""),
             "closure_state": state,
             "decision": decision,
             "reason": str(reason or ""),
             "exact_blocker": str(blocker or ""),
             "next_reevaluation": str(next_reevaluation or ""),
-            "new_entries_in_lane_safe": True,
-            "updated_at": _now_iso(),
+            # A lane with a non-terminal natural exit is not safe to accept
+            # another entry until its closure owner clears the backlog.
+            "new_entries_in_lane_safe": str(state or "") in {"ACTIVE_HOLD", "LEARNING_ACKNOWLEDGED"},
+            "previous_successful_transition": previous_stage,
+            "stage_entered_at": now if stage_changed else str(previous.get("stage_entered_at") or now),
+            "last_evaluated_at": now,
+            "expected_next_transition": expected_next_transition,
+            "blocker_owner": str(extra.get("blocker_owner") or "PaperAutopilot.native_lane_exit_lifecycle"),
+            "updated_at": now,
             **extra,
         }
         rows[position_id] = row
@@ -5433,6 +5457,67 @@ class PaperAutopilotEngine:
                 still_pending += 1
         return {"reviewed": reviewed, "persisted": persisted, "still_pending": still_pending}
 
+    def _retry_pending_learning_acknowledgements(self, max_rows: int = 12) -> dict[str, Any]:
+        """Retry only a durably pending, already-strict learning delivery.
+
+        This never performs broker work.  The trade id is the canonical
+        lifecycle id, so the learning writer can make restart retries exactly
+        once with ``INSERT OR IGNORE`` semantics.
+        """
+        if self.trade_intel is None or not hasattr(self.trade_intel, "record_trade"):
+            return {"reviewed": 0, "acknowledged": 0, "still_pending": 0, "reason": "learning_consumer_unavailable"}
+        with self._connect() as conn:
+            rows = [dict(row or {}) for row in conn.execute(
+                """SELECT * FROM paper_positions
+                   WHERE status='CLOSED' AND lifecycle_notes LIKE '%learning_acknowledgement_pending%'
+                   ORDER BY updated_at ASC LIMIT ?""",
+                (max(1, min(50, int(max_rows))),),
+            ).fetchall()]
+        reviewed = acknowledged = still_pending = 0
+        for row in rows:
+            notes = _safe_json_load(row.get("lifecycle_notes"))
+            if not bool(notes.get("learning_acknowledgement_pending")):
+                continue
+            reviewed += 1
+            payload = dict(notes.get("learning_acknowledgement_payload") or {})
+            if not payload or str(payload.get("trade_id") or "") != str(row.get("position_id") or ""):
+                result: dict[str, Any] = {"ok": False, "reason": "LEARNING_ACKNOWLEDGEMENT_PAYLOAD_INVALID"}
+            else:
+                try:
+                    result = self.trade_intel.record_trade(payload)
+                    result = dict(result) if isinstance(result, Mapping) else {"ok": True}
+                except Exception as exc:
+                    result = {"ok": False, "reason": f"learning_consumer_exception:{type(exc).__name__}"}
+            ok = bool(result.get("ok", True))
+            notes["learning_acknowledgement_pending"] = not ok
+            notes["learning_acknowledgement_result"] = result
+            notes["learning_acknowledgement_updated_at"] = _now_iso()
+            if ok:
+                notes["learning_acknowledged_at"] = _now_iso()
+                acknowledged += 1
+            else:
+                still_pending += 1
+            try:
+                with self._connect() as conn:
+                    conn.execute(
+                        "UPDATE paper_positions SET lifecycle_notes=?, updated_at=? WHERE position_id=?",
+                        (_safe_json(notes), _now_iso(), row.get("position_id")),
+                    )
+                    conn.commit()
+            except Exception:
+                still_pending += 1
+                continue
+            self._record_native_lane_exit_state(
+                row,
+                state="LEARNING_ACKNOWLEDGED" if ok else "STRICT_TRUTH_CREATED",
+                decision="CLOSED",
+                reason=str(notes.get("exit_reason") or "broker_confirmed_exit"),
+                blocker="" if ok else str(result.get("reason") or "STRICT_TRUTH_NOT_LEARNING_ACKNOWLEDGED"),
+                learning_acknowledged=ok,
+                strict_truth_created=True,
+            )
+        return {"reviewed": reviewed, "acknowledged": acknowledged, "still_pending": still_pending}
+
     def _execution_critical_reconciliation_phase(self) -> dict[str, dict[str, Any]]:
         """Advance already-submitted exits before advisory work can consume a cycle.
 
@@ -5446,6 +5531,7 @@ class PaperAutopilotEngine:
             ("learned_exit_refresh", "learned_exit_reconciliation", self._refresh_learned_exit_pending_sells),
             ("authorized_lane_exit_refresh", "authorized_lane_exit_reconciliation", self._refresh_authorized_lane_exit_pending),
             ("strict_truth_promotion_retry", "strict_truth_promotion_retry", self._retry_pending_strict_truth_promotions),
+            ("learning_acknowledgement_retry", "learning_acknowledgement_retry", self._retry_pending_learning_acknowledgements),
         )
         results: dict[str, dict[str, Any]] = {}
         for result_key, phase, operation in operations:
@@ -9234,13 +9320,17 @@ class PaperAutopilotEngine:
                 pass
 
         learning_acknowledged = False
+        learning_result: dict[str, Any] = {"ok": False, "reason": "LEARNING_CONSUMER_UNAVAILABLE"}
+        learning_payload: dict[str, Any] = {}
         if bool(strict_truth_result.get("persisted")) and self.trade_intel is not None and hasattr(self.trade_intel, "record_trade"):
             try:
-                self.trade_intel.record_trade(
-                    {
+                learning_payload = {
                         "trade_id": pid,
+                        "lifecycle_id": pid,
                         "symbol": symbol,
                         "asset_type": asset_type,
+                        "lane_id": lane,
+                        "candidate_id": entry_payload.get("candidate_id") or open_row.get("source_candidate_id") or "",
                         "mode": self.paper_mode,
                         "entry_timestamp": entry_ts,
                         "entry_price": entry_price,
@@ -9303,12 +9393,32 @@ class PaperAutopilotEngine:
                             "deterioration_flag": bool(notes.get("deterioration_flag", False)),
                             "exit_decision_reason": str(exit_reason or ""),
                         },
-                        "trade_origin": "paper_autopilot",
-                    }
-                )
-                learning_acknowledged = True
+                    "trade_origin": "paper_autopilot",
+                }
+                raw_learning_result = self.trade_intel.record_trade(learning_payload)
+                learning_result = dict(raw_learning_result) if isinstance(raw_learning_result, Mapping) else {"ok": True}
+                learning_acknowledged = bool(learning_result.get("ok", True))
+            except Exception as exc:
+                learning_result = {"ok": False, "reason": f"learning_consumer_exception:{type(exc).__name__}"}
+        if bool(strict_truth_result.get("persisted")):
+            try:
+                with self._connect() as conn:
+                    persisted_notes = _safe_json_load(
+                        conn.execute("SELECT lifecycle_notes FROM paper_positions WHERE position_id=?", (pid,)).fetchone()[0]
+                    )
+                    persisted_notes["learning_acknowledgement_pending"] = not learning_acknowledged
+                    persisted_notes["learning_acknowledgement_result"] = learning_result
+                    persisted_notes["learning_acknowledgement_payload"] = learning_payload
+                    persisted_notes["learning_acknowledgement_updated_at"] = _now_iso()
+                    if learning_acknowledged:
+                        persisted_notes["learning_acknowledged_at"] = _now_iso()
+                    conn.execute(
+                        "UPDATE paper_positions SET lifecycle_notes=?, updated_at=? WHERE position_id=?",
+                        (_safe_json(persisted_notes), _now_iso(), pid),
+                    )
+                    conn.commit()
             except Exception:
-                pass
+                learning_acknowledged = False
 
         close_map = dict(self._runtime_state.get("last_close_by_symbol") or {})
         close_map[symbol] = time.time()

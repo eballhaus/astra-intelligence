@@ -13,6 +13,7 @@ import os
 import time
 import uuid
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -25,6 +26,10 @@ MAX_PROVIDER_RETRIES_PER_RECORD = 2
 MAX_LIFECYCLE_REQUEUES_PER_SYMBOL_PER_CYCLE = 1
 MAX_CONSUMER_RETRIES_PER_EVIDENCE = 2
 CAMPAIGN_LIMIT = 100
+# The worker's normal cadence is 45 seconds. Four complete windows tolerate
+# bounded broker/API variance without silently stranding an exit-ready close.
+EXECUTION_TRANSITION_TIMEOUT_SECONDS = 180.0
+PARTIAL_FILL_STALL_TIMEOUT_SECONDS = 900.0
 PAUSED_RESOURCE_STATES = {
     "RESOURCE_HIGH_PAUSE", "RESOURCE_MEMORY_PAUSE", "RESOURCE_API_LATENCY_PAUSE",
     "RESOURCE_RECOVERY_COOLDOWN", "RESOURCE_UNKNOWN_FAIL_CLOSED",
@@ -56,6 +61,16 @@ def _to_float(value: Any, default: float = 0.0) -> float:
 
 def _now() -> str:
     return utc_now()
+
+
+def _age_seconds(value: Any) -> float | None:
+    raw = _text(value)
+    if not raw:
+        return None
+    try:
+        return max(0.0, (datetime.now(timezone.utc) - datetime.fromisoformat(raw.replace("Z", "+00:00"))).total_seconds())
+    except ValueError:
+        return None
 
 
 def _safe_flags() -> dict[str, Any]:
@@ -353,6 +368,58 @@ class ContinuousGovernanceV1:
                 "last_checked_at": _now(), "failure_count": 0 if terminal else 1,
                 "severity": "INFO" if terminal else "HIGH", "repairability": "DIAGNOSTIC",
                 "exact_blocker": "OVERNIGHT_HOLD_NOT_AUTHORIZED" if reason == "day_lane_overnight_breach" and not terminal else ("DAY_POSITION_HORIZON_BREACH" if not terminal else None),
+                "allowed_remediations": [],
+            })
+        # Closure transitions are emitted by the canonical worker-owned exit
+        # ledger. These watchdogs only classify persisted state; they cannot
+        # reserve, submit, cancel, or otherwise mutate a broker order.
+        for position_id, native_raw in list(native_exits.items())[:100]:
+            native = _dict(native_raw)
+            state = _text(native.get("closure_state"))
+            if not state:
+                continue
+            session = _dict(native.get("session_status"))
+            stage_age = _age_seconds(native.get("stage_entered_at"))
+            if stage_age is None:
+                stage_age = _age_seconds(native.get("updated_at"))
+            execution_session = bool(session.get("paper_order_submission_allowed"))
+            timeout = PARTIAL_FILL_STALL_TIMEOUT_SECONDS if state == "PARTIALLY_FILLED" else EXECUTION_TRANSITION_TIMEOUT_SECONDS
+            invariant_id = ""
+            expected = ""
+            should_fail = False
+            if state == "EXIT_READY" and execution_session and stage_age is not None and stage_age >= timeout:
+                invariant_id, expected, should_fail = "EXIT_READY_NOT_SUBMITTED", "SELL_SUBMITTED or explicit blocker", True
+            elif state == "SELL_SUBMITTED" and stage_age is not None and stage_age >= timeout:
+                invariant_id, expected, should_fail = "SELL_SUBMITTED_NOT_ACKNOWLEDGED", "broker order state acknowledged", True
+            elif state == "PARTIALLY_FILLED" and stage_age is not None and stage_age >= timeout:
+                invariant_id, expected, should_fail = "PARTIAL_FILL_STALLED", "updated broker fill or reconciliation state", True
+            elif state == "AWAITING_BROKER_ZERO" and stage_age is not None and stage_age >= timeout:
+                invariant_id, expected, should_fail = "BROKER_ZERO_NOT_RECONCILED", "broker-zero confirmation or explicit residual", True
+            elif state == "CLOSED_PENDING_TRUTH" and stage_age is not None and stage_age >= timeout:
+                invariant_id, expected, should_fail = "CLOSED_POSITION_TRUTH_NOT_CREATED", "strict truth persisted", True
+            elif state == "STRICT_TRUTH_CREATED" and stage_age is not None and stage_age >= timeout:
+                invariant_id, expected, should_fail = "STRICT_TRUTH_NOT_LEARNING_ACKNOWLEDGED", "learning acknowledgement persisted", True
+            if not invariant_id:
+                continue
+            invariants.append({
+                "invariant_id": invariant_id,
+                "owner": _text(native.get("blocker_owner"), "PaperAutopilot.native_lane_exit_lifecycle"),
+                "dependencies": [str(position_id)],
+                "state": "FAIL" if should_fail else "PASS",
+                "observed_value": {
+                    "position_id": native.get("position_id") or position_id,
+                    "lifecycle_id": native.get("lifecycle_id") or position_id,
+                    "symbol": native.get("symbol"), "lane": native.get("lane_id"),
+                    "closure_stage": state, "stage_age_seconds": stage_age,
+                    "previous_successful_transition": native.get("previous_successful_transition"),
+                    "expected_next_transition": native.get("expected_next_transition"),
+                    "execution_blocker": native.get("exact_blocker"),
+                },
+                "expected_value": expected,
+                "first_failed_at": _now() if should_fail else None,
+                "last_checked_at": _now(), "failure_count": 1 if should_fail else 0,
+                "severity": "HIGH" if should_fail else "INFO", "repairability": "DIAGNOSTIC",
+                "exact_blocker": invariant_id if should_fail else None,
                 "allowed_remediations": [],
             })
         records, reviews, activations = self._records(runtime_state)
@@ -812,7 +879,13 @@ class ContinuousGovernanceV1:
             else "RESOLVE_FIRST_FAILED_INVARIANT" if first_failed else "CONTINUE_BOUNDED_CAMPAIGN" if campaign else "NONE"
         )
         lane_closure_decision = "LANE_CLOSURE_CRITICAL" if any(
-            _text(row.get("invariant_id")) in {"CANONICAL_WORKER_ABSENT", "WORKER_HEARTBEAT_STALE", "DAY_POSITION_HORIZON_BREACH", "LOSS_THRESHOLD_BREACH_NOT_EXIT_READY"}
+            _text(row.get("invariant_id")) in {
+                "CANONICAL_WORKER_ABSENT", "WORKER_HEARTBEAT_STALE",
+                "DAY_POSITION_HORIZON_BREACH", "LOSS_THRESHOLD_BREACH_NOT_EXIT_READY",
+                "EXIT_READY_NOT_SUBMITTED", "SELL_SUBMITTED_NOT_ACKNOWLEDGED",
+                "PARTIAL_FILL_STALLED", "BROKER_ZERO_NOT_RECONCILED",
+                "CLOSED_POSITION_TRUTH_NOT_CREATED", "STRICT_TRUTH_NOT_LEARNING_ACKNOWLEDGED",
+            }
             and row.get("state") == "FAIL" for row in invariants
         ) else "LANE_CLOSURE_GO"
         summary = {

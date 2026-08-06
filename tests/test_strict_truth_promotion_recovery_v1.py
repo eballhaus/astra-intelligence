@@ -234,18 +234,23 @@ class StrictTruthPromotionRecoveryTests(unittest.TestCase):
                 calls.append("strict")
                 return {"persisted": 1}
 
+            def learning_retry() -> dict:
+                calls.append("learning")
+                return {"acknowledged": 1}
+
             engine._refresh_unresolved_sell_intents = failing_pending
             engine._refresh_learned_exit_pending_sells = learned
             engine._refresh_authorized_lane_exit_pending = authorized
             engine._retry_pending_strict_truth_promotions = strict_retry
+            engine._retry_pending_learning_acknowledgements = learning_retry
 
             result = engine._execution_critical_reconciliation_phase()
 
-            self.assertEqual(calls, ["pending", "learned", "authorized", "strict"])
+            self.assertEqual(calls, ["pending", "learned", "authorized", "strict", "learning"])
             self.assertEqual(result["sell_intent_reconciliation"]["observation_state"], "FAILED")
             self.assertEqual(result["strict_truth_promotion_retry"]["persisted"], 1)
             persisted = json.loads((root / "state.json").read_text(encoding="utf-8"))
-            self.assertEqual(persisted["worker_cycle_phase"], "strict_truth_promotion_retry")
+            self.assertEqual(persisted["worker_cycle_phase"], "learning_acknowledgement_retry")
             self.assertEqual(
                 engine._runtime_state["worker_last_suppressed_exception_v1"]["phase"],
                 "pending_exit_reconciliation",
