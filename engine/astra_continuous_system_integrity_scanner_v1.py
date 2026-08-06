@@ -184,6 +184,35 @@ class ContinuousSystemIntegrityScannerV1:
         signals: list[dict[str, Any]] = []
         waiting: list[dict[str, Any]] = []
         compliance: list[dict[str, Any]] = []
+        # Continuous Governance owns runtime and native-exit invariants.  The
+        # Sentinel scanner consumes its committed outcome so public Sentinel
+        # and Cortex cannot report a false pass for the same worker/lifecycle.
+        governance = dict(context.get("continuous_governance") or {})
+        critical_invariants = {
+            "CANONICAL_WORKER_ABSENT", "WORKER_HEARTBEAT_STALE",
+            "DAY_POSITION_HORIZON_BREACH", "LOSS_THRESHOLD_BREACH_NOT_EXIT_READY",
+        }
+        for invariant in list(governance.get("invariants") or [])[:max_rows]:
+            if not isinstance(invariant, dict) or str(invariant.get("state") or "") != "FAIL":
+                continue
+            invariant_id = str(invariant.get("invariant_id") or "")
+            if invariant_id not in critical_invariants:
+                continue
+            observed = dict(invariant.get("observed_value") or {})
+            signals.append({
+                "kind": invariant_id,
+                "severity": "CRITICAL",
+                "confidence": "VERIFIED",
+                "canonical_fact_ids": [invariant_id],
+                "affected_endpoints": ["Sentinel", "Governance", "Cortex"],
+                "affected_components": [str(invariant.get("owner") or "continuous governance")],
+                "first_bad_handoff": "continuous governance invariant -> sentinel/cortex diagnostic summary",
+                "owner": str(invariant.get("owner") or "continuous governance"),
+                "repair": str(invariant.get("safe_repair") or "restore the canonical runtime or native exit transition"),
+                "downstream_symptoms": [str(invariant.get("exact_blocker") or invariant_id)],
+                "affected_position_identity": observed.get("position_id"),
+                "safe_correction_available": False,
+            })
         truth = dict(context.get("truth_arbitration") or {})
         for contradiction in list(truth.get("contradictions") or [])[:max_rows]:
             if not isinstance(contradiction, dict):

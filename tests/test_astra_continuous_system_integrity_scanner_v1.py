@@ -45,6 +45,20 @@ class ContinuousSystemIntegrityScannerTests(unittest.TestCase):
         self.assertIn("Cortex", root["affected_endpoints"])
         self.assertTrue(root["human_repair_required"])
 
+    def test_governance_critical_worker_or_day_exit_invariant_blocks_sentinel_pass(self):
+        payload = self._scan(continuous_governance={"invariants": [{
+            "invariant_id": "LOSS_THRESHOLD_BREACH_NOT_EXIT_READY",
+            "state": "FAIL",
+            "owner": "PaperAutopilot._loss_containment_review_phase",
+            "exact_blocker": "LOSS_THRESHOLD_BREACH_NOT_EXIT_READY",
+            "observed_value": {"position_id": "pt-day", "symbol": "PTON"},
+        }]})
+        self.assertEqual(payload["status"], "CRITICAL")
+        root = payload["active_root_causes"][0]
+        self.assertEqual(root["category"], "LOSS_THRESHOLD_BREACH_NOT_EXIT_READY")
+        self.assertIn("Sentinel", root["affected_endpoints"])
+        self.assertIn("Cortex", root["affected_endpoints"])
+
     def test_unsafe_correction_is_rejected_without_mutation(self):
         registry = SafeCorrectionRegistryV1(self.temp.name)
         transaction = registry.prepare("root-1", "CLOSE_POSITION", target_component="position store", target_artifact="position", before_state={"status": "OPEN"}, after_state={"status": "CLOSED"})

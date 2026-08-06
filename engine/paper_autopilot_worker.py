@@ -600,6 +600,7 @@ class PaperAutopilotWorker:
             safety=safety,
             context={
                 "truth_arbitration": truth_arbitration,
+                "continuous_governance": result,
                 "crypto_integrity": crypto_integrity,
                 "shadow_protection": shadow_protection,
                 "quote_handoffs": list(getattr(self.autopilot, "_runtime_state", {}).get("crypto_quote_handoffs_v1") or (getattr(self.autopilot, "_runtime_state", {}).get("crypto_rankings_snapshot_v1") or {}).get("crypto_quote_handoffs_v1") or [])[:20],
