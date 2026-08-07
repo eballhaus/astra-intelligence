@@ -5,7 +5,7 @@ set -euo pipefail
 # a terminal multiplexer or a GUI login. The deployment manifest makes this runtime the one
 # canonical owner after an explicit controlled handoff.
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-STATE_DIR="${ROOT_DIR}/state"
+STATE_DIR="${ASTRA_STATE_ROOT:-${ROOT_DIR}/state}"
 LOG_DIR="${ROOT_DIR}/logs"
 PYTHON_BIN="${ROOT_DIR}/venv/bin/python"
 COMPONENT="${ASTRA_START_COMPONENT:-}"

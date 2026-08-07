@@ -21,8 +21,25 @@ START_SCRIPT = Path(os.getenv("ASTRA_START_SCRIPT", str(ROOT / "scripts" / "star
 STOP_SCRIPT = ROOT / "scripts" / "stop_astra.sh"
 BACKEND_URL = "http://127.0.0.1:8000/api/health"
 FRONTEND_URL = "http://127.0.0.1:5173"
-WORKER_STATE_PATH = ROOT / "state" / "astra_worker_runtime_state_v1.json"
-RECOVERY_STATE_PATH = ROOT / "state" / "astra_recovery_status_v1.json"
+STATE_ROOT = Path(os.getenv("ASTRA_STATE_ROOT", str(ROOT / "state"))).expanduser().resolve()
+WORKER_STATE_PATH = STATE_ROOT / "astra_worker_runtime_state_v1.json"
+RECOVERY_STATE_PATH = STATE_ROOT / "astra_recovery_status_v1.json"
+
+
+def _state_root_integrity() -> tuple[bool, dict[str, object]]:
+    """Require boot code and all relative state users to share one root."""
+    boot_state_path = ROOT / "state"
+    try:
+        boot_state_root = boot_state_path.resolve(strict=True)
+    except OSError:
+        boot_state_root = boot_state_path.resolve()
+    canonical = STATE_ROOT.resolve()
+    matches = boot_state_root == canonical
+    return matches, {
+        "canonical_state_root": str(canonical),
+        "boot_state_root": str(boot_state_root),
+        "state_root_matches": matches,
+    }
 
 
 def _managed_components() -> set[str]:
@@ -165,6 +182,7 @@ def check_once() -> dict[str, object]:
     frontend_port = _port_listening(5173) if "frontend" in components else False
     frontend_health = _http_ok(FRONTEND_URL, expect_html=True) if "frontend" in components else False
     worker_running, worker_heartbeat, worker = _worker_health() if "worker" in components else (False, False, {"reason": "WORKER_NOT_MANAGED"})
+    state_root_matches, state_root = _state_root_integrity()
     return {
         "managed_components": sorted(components),
         "backend_running": backend_port,
@@ -174,11 +192,26 @@ def check_once() -> dict[str, object]:
         "worker_running": worker_running,
         "worker_heartbeat": worker_heartbeat,
         "worker": worker,
+        "state_root": state_root,
+        "state_root_matches": state_root_matches,
     }
 
 
 def ensure_running(*, boot_recovery: bool = False) -> dict[str, object]:
     status = check_once()
+    # Older callers/tests may not include the new fact; only an explicit
+    # mismatch suppresses recovery.
+    if status.get("state_root_matches") is False:
+        # A mismatched root could be a stale copied state tree. Refuse recovery
+        # rather than stopping a healthy worker owned by the canonical root.
+        _write_recovery_state(
+            "RECOVERY_FAILED",
+            "CANONICAL_STATE_ROOT_MISMATCH",
+            state_root=status.get("state_root"),
+            worker=status.get("worker"),
+        )
+        _log("state_root_mismatch recovery_suppressed")
+        return status
     components = set(status["managed_components"])
     healthy = bool(
         ("backend" not in components or (status["backend_running"] and status["backend_health"]))
@@ -186,7 +219,7 @@ def ensure_running(*, boot_recovery: bool = False) -> dict[str, object]:
         and ("worker" not in components or (status["worker_running"] and status["worker_heartbeat"]))
     )
     if healthy:
-        _write_recovery_state("RECOVERY_READY", "healthy_runtime", worker=status["worker"])
+        _write_recovery_state("RECOVERY_READY", "healthy_runtime", worker=status["worker"], state_root=status.get("state_root"), recovery_actions_used=0)
         _log(
             "healthy backend_running=yes frontend_running=yes "
             "backend_health=ok frontend_health=ok"

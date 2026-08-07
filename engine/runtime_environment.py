@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-ENV_PATH = REPOSITORY_ROOT / ".env"
+ENV_PATH = Path(os.getenv("ASTRA_ENV_FILE", str(REPOSITORY_ROOT / ".env"))).expanduser()
 SUPPORTED_FMP_KEY_NAMES = (
     "FMP_API_KEY",
     "FINANCIALMODELINGPREP_API_KEY",

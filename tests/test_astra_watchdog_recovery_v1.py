@@ -83,15 +83,40 @@ class AstraWatchdogRecoveryTests(unittest.TestCase):
         self.assertEqual(status["managed_components"], ["backend", "worker"])
         self.assertFalse(status["frontend_running"])
 
-    def test_boot_runtime_sync_is_state_preserving_and_uses_shared_path(self):
+    def test_boot_runtime_sync_links_to_one_canonical_state_and_credential_source(self):
         scripts = WATCHDOG_PATH.parent
         sync = scripts / "sync_astra_boot_runtime.sh"
         content = sync.read_text(encoding="utf-8")
         self.assertIn('/Users/Shared/AstraRuntime', content)
-        self.assertIn('existing canonical boot state retained without overwrite', content)
-        self.assertIn('--exclude \'state/\'', content)
+        self.assertIn('CANONICAL_STATE_ROOT', content)
+        self.assertIn('symlink_to_canonical_state', content)
+        self.assertIn('split_state_', content)
+        self.assertIn('boot credential link points to an unexpected source', content)
+        self.assertIn("--exclude 'state'", content)
         result = subprocess.run(["bash", str(sync), "--dry-run", "--adopt-state"], capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_state_root_mismatch_suppresses_recovery(self):
+        status = {
+            "managed_components": ["backend", "worker"],
+            "backend_running": True,
+            "backend_health": True,
+            "worker_running": False,
+            "worker_heartbeat": False,
+            "worker": {"reason": "WORKER_STATE_MISSING"},
+            "state_root_matches": False,
+            "state_root": {"canonical_state_root": "/canonical", "boot_state_root": "/stale", "state_root_matches": False},
+        }
+        with tempfile.TemporaryDirectory() as directory, patch.object(watchdog, "RECOVERY_STATE_PATH", Path(directory) / "recovery.json"), patch.object(watchdog, "check_once", return_value=status), patch.object(watchdog, "_recover_component") as recover:
+            result = watchdog.ensure_running(boot_recovery=True)
+        self.assertFalse(result["state_root_matches"])
+        recover.assert_not_called()
+
+    def test_boot_daemon_declares_shared_canonical_state_and_env_paths(self):
+        template = (WATCHDOG_PATH.parent / "com.astra.boot-watchdog.plist").read_text(encoding="utf-8")
+        self.assertIn("ASTRA_STATE_ROOT", template)
+        self.assertIn("ASTRA_ENV_FILE", template)
+        self.assertIn("/Users/eric/Desktop/astra-intelligence-clean/state", template)
 
     def test_boot_launcher_does_not_depend_on_tmux_or_frontend(self):
         launcher = (WATCHDOG_PATH.parent / "astra_boot_start.sh").read_text(encoding="utf-8")
