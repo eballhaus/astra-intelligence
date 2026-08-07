@@ -17,6 +17,7 @@ from engine.astra_safe_correction_registry_v1 import SafeCorrectionRegistryV1
 VERSION = "1.1.0"
 ROOT_LIMIT = 100
 VERIFICATION_WINDOW = 3
+_SEVERITY_PRIORITY = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
 
 
 def _now() -> str:
@@ -45,6 +46,13 @@ def _number(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _root_priority(row: dict[str, Any]) -> tuple[int, int, str]:
+    """Keep lifecycle-bound critical blockers ahead of generic diagnostics."""
+    severity = _SEVERITY_PRIORITY.get(str(row.get("severity") or "").upper(), 5)
+    lifecycle_bound = 0 if row.get("affected_position_identity") else 1
+    return severity, lifecycle_bound, str(row.get("root_cause_id") or "")
 
 
 def _text(value: Any) -> str:
@@ -621,7 +629,10 @@ class ContinuousSystemIntegrityScannerV1:
             signals.extend(self._registry_failures(registry, limits["max_facts"]))
             roots = [root_cause_from_signal_v1(signal) for signal in signals[:limits["max_issues"]]]
             root_state = self._update_roots(roots)
-            active = [row for row in root_state.get("root_causes") or [] if row.get("state") not in {"RESOLVED"}]
+            active = sorted(
+                (row for row in root_state.get("root_causes") or [] if row.get("state") not in {"RESOLVED"}),
+                key=_root_priority,
+            )
             human = [self._repair_package(row) for row in active if row.get("human_repair_required")]
             corrections: list[dict[str, Any]] = []
             for root in active[:limits["max_corrections"]]:

@@ -85,7 +85,9 @@ def root_cause_from_signal_v1(signal: dict[str, Any]) -> dict[str, Any]:
         category, handoff = kind, str(signal.get("first_bad_handoff") or "unclassified critical handoff")
         symptoms, owner, repair = list(signal.get("downstream_symptoms") or []), str(signal.get("owner") or "unknown"), str(signal.get("repair") or "produce bounded human repair package")
     facts = sorted({str(item) for item in signal.get("canonical_fact_ids") or []})
-    root_id = _id(category, handoff, ",".join(facts))
+    # Position-bound invariants must not collapse distinct lifecycle failures.
+    position_identity = str(signal.get("affected_position_identity") or "")
+    root_id = _id(category, handoff, ",".join(facts), position_identity)
     severity = str(signal.get("severity") or "HIGH")
     finding_id = "finding-" + hashlib.sha256((root_id + "|" + kind).encode("utf-8")).hexdigest()[:16]
     return {"root_cause_id": root_id, "finding_id": finding_id, "governance_issue_id": root_id,
@@ -93,7 +95,7 @@ def root_cause_from_signal_v1(signal: dict[str, Any]) -> dict[str, Any]:
             "confidence": str(signal.get("confidence") or ("VERIFIED" if kind not in {"UNKNOWN_SYSTEM_DEFECT"} else "LOW")),
             "first_bad_handoff": handoff, "canonical_fact_ids": facts, "affected_components": list(signal.get("affected_components") or [owner]),
             "affected_endpoints": list(signal.get("affected_endpoints") or []), "downstream_symptoms": symptoms,
-            "affected_position_identity": signal.get("affected_position_identity"),
+            "affected_position_identity": position_identity or None,
             "likely_owner": owner, "smallest_safe_repair": repair,
             "safe_correction_available": bool(signal.get("safe_correction_available")),
             "human_repair_required": not bool(signal.get("safe_correction_available")),

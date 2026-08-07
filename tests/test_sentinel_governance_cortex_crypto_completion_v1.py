@@ -53,28 +53,36 @@ class SentinelGovernanceCortexCryptoCompletionTests(unittest.TestCase):
         self.assertEqual(roots[0]["governance_issue_id"], roots[0]["root_cause_id"])
 
     def test_scalar_governance_measurement_does_not_hide_day_horizon_breach(self):
+        day_invariants = [
+            {
+                "invariant_id": "DAY_POSITION_HORIZON_BREACH",
+                "state": "FAIL",
+                "owner": "PaperAutopilot._lane_forced_exit_reason",
+                "exact_blocker": "OVERNIGHT_HOLD_NOT_AUTHORIZED",
+                "observed_value": {"symbol": symbol, "position_id": position_id},
+            }
+            for symbol, position_id in (
+                ("SG", "lifecycle-sg-1"),
+                ("PTON", "lifecycle-pt-1"),
+                ("RIVN", "lifecycle-rivn-1"),
+            )
+        ]
         snapshot = self._scan(continuous_governance={"invariants": [
             {
                 "invariant_id": "HEARTBEAT_CURRENT",
                 "state": "PASS",
                 "observed_value": 0.25,
             },
-            {
-                "invariant_id": "DAY_POSITION_HORIZON_BREACH",
-                "state": "FAIL",
-                "owner": "PaperAutopilot._lane_forced_exit_reason",
-                "exact_blocker": "OVERNIGHT_HOLD_NOT_AUTHORIZED",
-                "observed_value": {
-                    "symbol": "PTON",
-                    "position_id": "lifecycle-pt-1",
-                },
-            },
-        ]})
+        ] + day_invariants})
         self.assertEqual(snapshot["status"], "CRITICAL")
-        self.assertEqual(len(snapshot["active_root_causes"]), 1)
-        root = snapshot["active_root_causes"][0]
-        self.assertEqual(root["category"], "DAY_POSITION_HORIZON_BREACH")
-        self.assertEqual(root["affected_position_identity"], "lifecycle-pt-1")
+        roots = snapshot["active_root_causes"]
+        self.assertEqual(len(roots), 3)
+        self.assertEqual([root["category"] for root in roots], ["DAY_POSITION_HORIZON_BREACH"] * 3)
+        self.assertEqual(
+            {root["affected_position_identity"] for root in roots},
+            {"lifecycle-sg-1", "lifecycle-pt-1", "lifecycle-rivn-1"},
+        )
+        self.assertEqual(snapshot["cortex_summary"]["highest_impact_root_causes"][0]["category"], "DAY_POSITION_HORIZON_BREACH")
 
     def test_guarded_level_two_requires_all_guards_and_rolls_back(self):
         registry = SafeCorrectionRegistryV1(self.temp.name)
