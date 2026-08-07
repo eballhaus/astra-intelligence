@@ -54,6 +54,7 @@ from engine.astra_premarket_certification_v1 import (
     deterministic_failure_injection_summary,
     enrich_candidate_for_pretrade_contract,
 )
+from engine.astra_trading_intelligence_improvement_v1 import build_trading_intelligence_improvement_suite_v1
 from engine.astra_runtime_governance_v1 import (
     WORKER_STATE_PATH,
     canonical_runtime_invariants as _canonical_runtime_invariants,
@@ -48730,6 +48731,12 @@ def astra_pre_market_trading_certification_v1(force: bool = False):
     return _astra_pre_market_trading_certification_payload_v1(force=bool(force))
 
 
+@router.get("/api/astra_trading_intelligence_improvement_suite_v1")
+def astra_trading_intelligence_improvement_suite_v1():
+    """Read cached intelligence continuity without provider or broker activity."""
+    return build_trading_intelligence_improvement_suite_v1(STATE)
+
+
 @router.get("/api/candidate_intelligence_enrichment_contract_diagnostic_v1")
 def candidate_intelligence_enrichment_contract_diagnostic_v1(force: bool = False):
     """Read-only candidate enrichment and contract parity diagnostic."""
@@ -78980,6 +78987,10 @@ def _learning_acceleration_status_bundle() -> dict:
         statuses["trade_thesis_validation_v1"] = TRADE_THESIS_VALIDATION.status(statuses=statuses, force=False)
     except Exception:
         statuses["trade_thesis_validation_v1"] = {}
+    try:
+        statuses["astra_trading_intelligence_improvement_suite_v1"] = build_trading_intelligence_improvement_suite_v1(STATE)
+    except Exception:
+        statuses["astra_trading_intelligence_improvement_suite_v1"] = {"status": "UNAVAILABLE", "provider_calls_used": 0, "llm_calls_used": 0, "broker_actions_used": 0}
     try:
         statuses["market_transition_detection_v1"] = MARKET_TRANSITION_DETECTION.status(statuses=statuses, force=False)
     except Exception:
