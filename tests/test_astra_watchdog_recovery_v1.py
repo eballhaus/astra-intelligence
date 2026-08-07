@@ -83,15 +83,16 @@ class AstraWatchdogRecoveryTests(unittest.TestCase):
         self.assertEqual(status["managed_components"], ["backend", "worker"])
         self.assertFalse(status["frontend_running"])
 
-    def test_boot_runtime_sync_links_to_one_canonical_state_and_credential_source(self):
+    def test_boot_runtime_sync_migrates_to_shared_canonical_state_and_credential_source(self):
         scripts = WATCHDOG_PATH.parent
         sync = scripts / "sync_astra_boot_runtime.sh"
         content = sync.read_text(encoding="utf-8")
         self.assertIn('/Users/Shared/AstraRuntime', content)
         self.assertIn('CANONICAL_STATE_ROOT', content)
-        self.assertIn('symlink_to_canonical_state', content)
-        self.assertIn('split_state_', content)
-        self.assertIn('boot credential link points to an unexpected source', content)
+        self.assertIn('desktop_state_pre_migration_', content)
+        self.assertIn('symlink_to_shared_canonical_state', content)
+        self.assertIn('credential migration verification failed', content)
+        self.assertIn('rsync -a --checksum --dry-run', content)
         self.assertIn("--exclude 'state'", content)
         result = subprocess.run(["bash", str(sync), "--dry-run", "--adopt-state"], capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -116,7 +117,8 @@ class AstraWatchdogRecoveryTests(unittest.TestCase):
         template = (WATCHDOG_PATH.parent / "com.astra.boot-watchdog.plist").read_text(encoding="utf-8")
         self.assertIn("ASTRA_STATE_ROOT", template)
         self.assertIn("ASTRA_ENV_FILE", template)
-        self.assertIn("/Users/eric/Desktop/astra-intelligence-clean/state", template)
+        self.assertIn("/Users/Shared/AstraRuntime/state", template)
+        self.assertNotIn("/Users/eric/Desktop/astra-intelligence-clean/state", template)
 
     def test_boot_launcher_does_not_depend_on_tmux_or_frontend(self):
         launcher = (WATCHDOG_PATH.parent / "astra_boot_start.sh").read_text(encoding="utf-8")

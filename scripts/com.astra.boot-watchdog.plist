@@ -40,9 +40,9 @@
     <key>ASTRA_ROOT</key>
     <string>/Users/Shared/AstraRuntime</string>
     <key>ASTRA_STATE_ROOT</key>
-    <string>/Users/eric/Desktop/astra-intelligence-clean/state</string>
+    <string>/Users/Shared/AstraRuntime/state</string>
     <key>ASTRA_ENV_FILE</key>
-    <string>/Users/eric/Desktop/astra-intelligence-clean/.env</string>
+    <string>/Users/Shared/AstraRuntime/.env</string>
     <key>ASTRA_START_SCRIPT</key>
     <string>/Users/Shared/AstraRuntime/scripts/astra_boot_start.sh</string>
     <key>ASTRA_WATCHDOG_COMPONENTS</key>
