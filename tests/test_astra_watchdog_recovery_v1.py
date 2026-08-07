@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -28,7 +29,7 @@ class AstraWatchdogRecoveryTests(unittest.TestCase):
             self.assertEqual(details["pid"], 123)
 
     def test_targeted_recovery_only_restarts_missing_worker(self):
-        healthy = {"backend_running": True, "backend_health": True, "frontend_running": True, "frontend_health": True, "worker_running": True, "worker_heartbeat": True, "worker": {"pid": 10}}
+        healthy = {"managed_components": ["backend", "worker", "frontend"], "backend_running": True, "backend_health": True, "frontend_running": True, "frontend_health": True, "worker_running": True, "worker_heartbeat": True, "worker": {"pid": 10}}
         initial = {**healthy, "worker_running": False, "worker_heartbeat": False, "worker": {"reason": "WORKER_STATE_MISSING"}}
         with tempfile.TemporaryDirectory() as directory, patch.object(watchdog, "RECOVERY_STATE_PATH", Path(directory) / "recovery.json"), patch.object(watchdog, "check_once", side_effect=[initial, initial, healthy]), patch.object(watchdog, "_recover_component", return_value=0) as recover, patch.object(watchdog.time, "sleep"):
             result = watchdog.ensure_running(boot_recovery=True)
@@ -37,7 +38,7 @@ class AstraWatchdogRecoveryTests(unittest.TestCase):
         self.assertEqual(len(recover.call_args_list), 1)
 
     def test_targeted_recovery_only_restarts_missing_backend(self):
-        healthy = {"backend_running": True, "backend_health": True, "frontend_running": True, "frontend_health": True, "worker_running": True, "worker_heartbeat": True, "worker": {"pid": 10}}
+        healthy = {"managed_components": ["backend", "worker", "frontend"], "backend_running": True, "backend_health": True, "frontend_running": True, "frontend_health": True, "worker_running": True, "worker_heartbeat": True, "worker": {"pid": 10}}
         initial = {**healthy, "backend_running": False, "backend_health": False}
         with tempfile.TemporaryDirectory() as directory, patch.object(watchdog, "RECOVERY_STATE_PATH", Path(directory) / "recovery.json"), patch.object(watchdog, "check_once", side_effect=[initial, healthy, healthy]), patch.object(watchdog, "_recover_component", return_value=0) as recover, patch.object(watchdog.time, "sleep"):
             result = watchdog.ensure_running()
@@ -45,7 +46,7 @@ class AstraWatchdogRecoveryTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in recover.call_args_list], ["backend"])
 
     def test_targeted_recovery_only_restarts_missing_frontend(self):
-        healthy = {"backend_running": True, "backend_health": True, "frontend_running": True, "frontend_health": True, "worker_running": True, "worker_heartbeat": True, "worker": {"pid": 10}}
+        healthy = {"managed_components": ["backend", "worker", "frontend"], "backend_running": True, "backend_health": True, "frontend_running": True, "frontend_health": True, "worker_running": True, "worker_heartbeat": True, "worker": {"pid": 10}}
         initial = {**healthy, "frontend_running": False, "frontend_health": False}
         with tempfile.TemporaryDirectory() as directory, patch.object(watchdog, "RECOVERY_STATE_PATH", Path(directory) / "recovery.json"), patch.object(watchdog, "check_once", side_effect=[initial, healthy, healthy]), patch.object(watchdog, "_recover_component", return_value=0) as recover, patch.object(watchdog.time, "sleep"):
             result = watchdog.ensure_running()
@@ -58,6 +59,45 @@ class AstraWatchdogRecoveryTests(unittest.TestCase):
         self.assertIn("--boot-recovery", template)
         self.assertIn("ThrottleInterval", template)
         self.assertIn("Library/Logs/Astra", template)
+
+    def test_boot_daemon_template_and_helpers_are_login_independent(self):
+        scripts = WATCHDOG_PATH.parent
+        template = (scripts / "com.astra.boot-watchdog.plist").read_text(encoding="utf-8")
+        self.assertIn("com.astra.boot-watchdog", template)
+        self.assertIn("<key>UserName</key>", template)
+        self.assertIn("<string>eric</string>", template)
+        self.assertIn("/venv/bin/python", template)
+        self.assertIn("--boot-recovery", template)
+        self.assertIn("/Library/Logs/Astra", template)
+        self.assertIn("<key>RunAtLoad</key>", template)
+        self.assertIn("<key>KeepAlive</key>", template)
+        install = scripts / "install_astra_launch_daemon.sh"
+        result = subprocess.run(["bash", str(install), "--dry-run"], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("GUI LaunchAgent is disabled", result.stdout)
+        self.assertIn("launchctl bootstrap system", install.read_text(encoding="utf-8"))
+
+    def test_boot_daemon_owns_only_backend_and_worker(self):
+        with patch.dict("os.environ", {"ASTRA_WATCHDOG_COMPONENTS": "backend,worker"}, clear=False), patch.object(watchdog, "_port_listening", return_value=True), patch.object(watchdog, "_http_ok", return_value=True), patch.object(watchdog, "_worker_health", return_value=(True, True, {"pid": 1})):
+            status = watchdog.check_once()
+        self.assertEqual(status["managed_components"], ["backend", "worker"])
+        self.assertFalse(status["frontend_running"])
+
+    def test_boot_runtime_sync_is_state_preserving_and_uses_shared_path(self):
+        scripts = WATCHDOG_PATH.parent
+        sync = scripts / "sync_astra_boot_runtime.sh"
+        content = sync.read_text(encoding="utf-8")
+        self.assertIn('/Users/Shared/AstraRuntime', content)
+        self.assertIn('existing canonical boot state retained without overwrite', content)
+        self.assertIn('--exclude \'state/\'', content)
+        result = subprocess.run(["bash", str(sync), "--dry-run", "--adopt-state"], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_boot_launcher_does_not_depend_on_tmux_or_frontend(self):
+        launcher = (WATCHDOG_PATH.parent / "astra_boot_start.sh").read_text(encoding="utf-8")
+        self.assertNotIn("tmux", launcher)
+        self.assertIn('COMPONENT="${ASTRA_START_COMPONENT:-}"', launcher)
+        self.assertIn('"${COMPONENT}" != "backend" && "${COMPONENT}" != "worker"', launcher)
 
 
 if __name__ == "__main__":

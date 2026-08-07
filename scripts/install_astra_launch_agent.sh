@@ -5,6 +5,7 @@ ROOT_DIR="/Users/eric/Desktop/astra-intelligence-clean"
 SOURCE_PLIST="${ROOT_DIR}/scripts/com.astra.watchdog.plist"
 TARGET_DIR="${HOME}/Library/LaunchAgents"
 TARGET_PLIST="${TARGET_DIR}/com.astra.watchdog.plist"
+BOOT_DAEMON_PLIST="/Library/LaunchDaemons/com.astra.boot-watchdog.plist"
 DRY_RUN=0
 
 if [[ "${1:-}" == "--dry-run" ]]; then
@@ -25,6 +26,11 @@ echo "[astra-launch-agent-install] target: ${TARGET_PLIST}"
 
 if [[ "${DRY_RUN}" == "1" ]]; then
   echo "[astra-launch-agent-install] dry-run only; no files copied or launchctl changes made"
+  exit 0
+fi
+
+if [[ -f "${BOOT_DAEMON_PLIST}" ]]; then
+  echo "[astra-launch-agent-install] boot LaunchDaemon is authoritative; refusing to create a competing GUI watchdog" >&2
   exit 0
 fi
 

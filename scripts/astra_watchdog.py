@@ -17,12 +17,19 @@ ROOT = Path(os.getenv("ASTRA_ROOT", str(Path(__file__).resolve().parents[1]))).r
 LOG_DIR = Path(os.getenv("ASTRA_RUNTIME_LOG_DIR", str(ROOT / "logs"))).expanduser()
 LOG_PATH = LOG_DIR / "astra_watchdog.log"
 RECOVERY_LOG_PATH = LOG_DIR / "astra_recovery.log"
-START_SCRIPT = ROOT / "scripts" / "start_astra.sh"
+START_SCRIPT = Path(os.getenv("ASTRA_START_SCRIPT", str(ROOT / "scripts" / "start_astra.sh"))).expanduser()
 STOP_SCRIPT = ROOT / "scripts" / "stop_astra.sh"
 BACKEND_URL = "http://127.0.0.1:8000/api/health"
 FRONTEND_URL = "http://127.0.0.1:5173"
 WORKER_STATE_PATH = ROOT / "state" / "astra_worker_runtime_state_v1.json"
 RECOVERY_STATE_PATH = ROOT / "state" / "astra_recovery_status_v1.json"
+
+
+def _managed_components() -> set[str]:
+    """Return the explicitly supervised components; boot mode omits the UI."""
+    raw = os.getenv("ASTRA_WATCHDOG_COMPONENTS", "backend,worker,frontend")
+    components = {part.strip().lower() for part in raw.split(",") if part.strip()}
+    return components & {"backend", "worker", "frontend"}
 
 
 def _now() -> str:
@@ -152,12 +159,14 @@ def _recover_component(component: str, reason: str) -> int:
 
 
 def check_once() -> dict[str, object]:
+    components = _managed_components()
     backend_port = _port_listening(8000)
-    frontend_port = _port_listening(5173)
     backend_health = _http_ok(BACKEND_URL)
-    frontend_health = _http_ok(FRONTEND_URL, expect_html=True)
-    worker_running, worker_heartbeat, worker = _worker_health()
+    frontend_port = _port_listening(5173) if "frontend" in components else False
+    frontend_health = _http_ok(FRONTEND_URL, expect_html=True) if "frontend" in components else False
+    worker_running, worker_heartbeat, worker = _worker_health() if "worker" in components else (False, False, {"reason": "WORKER_NOT_MANAGED"})
     return {
+        "managed_components": sorted(components),
         "backend_running": backend_port,
         "frontend_running": frontend_port,
         "backend_health": backend_health,
@@ -170,7 +179,12 @@ def check_once() -> dict[str, object]:
 
 def ensure_running(*, boot_recovery: bool = False) -> dict[str, object]:
     status = check_once()
-    healthy = bool(status["backend_running"] and status["frontend_running"] and status["backend_health"] and status["frontend_health"] and status["worker_running"] and status["worker_heartbeat"])
+    components = set(status["managed_components"])
+    healthy = bool(
+        ("backend" not in components or (status["backend_running"] and status["backend_health"]))
+        and ("frontend" not in components or (status["frontend_running"] and status["frontend_health"]))
+        and ("worker" not in components or (status["worker_running"] and status["worker_heartbeat"]))
+    )
     if healthy:
         _write_recovery_state("RECOVERY_READY", "healthy_runtime", worker=status["worker"])
         _log(
@@ -190,18 +204,23 @@ def ensure_running(*, boot_recovery: bool = False) -> dict[str, object]:
     )
     backend_ok = bool(status["backend_running"] and status["backend_health"])
     frontend_ok = bool(status["frontend_running"] and status["frontend_health"])
-    if not backend_ok:
+    if "backend" in components and not backend_ok:
         _write_recovery_state("BACKEND_RECOVERING", "backend_degraded", worker=status["worker"])
         _recover_component("backend", "backend_degraded")
     status = check_once()
-    if not bool(status["worker_running"] and status["worker_heartbeat"]):
+    if "worker" in components and not bool(status["worker_running"] and status["worker_heartbeat"]):
         _write_recovery_state("WORKER_RECOVERING", "worker_degraded_or_stale", worker=status["worker"])
         _recover_component("worker", "worker_degraded_or_stale")
-    if not frontend_ok:
+    if "frontend" in components and not frontend_ok:
         _recover_component("frontend", "frontend_degraded")
     time.sleep(4)
     recovered = check_once()
-    final_ok = bool(recovered["backend_running"] and recovered["backend_health"] and recovered["frontend_running"] and recovered["frontend_health"] and recovered["worker_running"] and recovered["worker_heartbeat"])
+    recovered_components = set(recovered["managed_components"])
+    final_ok = bool(
+        ("backend" not in recovered_components or (recovered["backend_running"] and recovered["backend_health"]))
+        and ("frontend" not in recovered_components or (recovered["frontend_running"] and recovered["frontend_health"]))
+        and ("worker" not in recovered_components or (recovered["worker_running"] and recovered["worker_heartbeat"]))
+    )
     _write_recovery_state("RECOVERY_READY" if final_ok else "RECOVERY_FAILED", "targeted_recovery_complete", worker=recovered["worker"])
     _log(
         "post_recovery "
@@ -246,7 +265,13 @@ def main(argv: list[str] | None = None) -> int:
         _write_recovery_state("SYSTEM_BOOT_RECOVERY" if args.boot_recovery else "BROKER_RECONCILIATION_REQUIRED", "watchdog_started")
         return run_loop(max(10.0, float(args.interval)))
     status = ensure_running(boot_recovery=args.boot_recovery)
-    return 0 if bool(status.get("backend_health") and status.get("frontend_health") and status.get("worker_running") and status.get("worker_heartbeat")) else 1
+    components = set(status.get("managed_components") or [])
+    ok = (
+        ("backend" not in components or bool(status.get("backend_health")))
+        and ("frontend" not in components or bool(status.get("frontend_health")))
+        and ("worker" not in components or bool(status.get("worker_running") and status.get("worker_heartbeat")))
+    )
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

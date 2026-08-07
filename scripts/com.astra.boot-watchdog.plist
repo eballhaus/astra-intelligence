@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.astra.boot-watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/Shared/AstraRuntime/venv/bin/python</string>
+    <string>/Users/Shared/AstraRuntime/scripts/astra_watchdog.py</string>
+    <string>--loop</string>
+    <string>--boot-recovery</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/Shared/AstraRuntime</string>
+  <key>UserName</key>
+  <string>eric</string>
+  <key>GroupName</key>
+  <string>staff</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>/Library/Logs/Astra/astra_boot_watchdog.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Library/Logs/Astra/astra_boot_watchdog.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/eric</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>ASTRA_REMOTE_MODE</key>
+    <string>1</string>
+    <key>ASTRA_ROOT</key>
+    <string>/Users/Shared/AstraRuntime</string>
+    <key>ASTRA_START_SCRIPT</key>
+    <string>/Users/Shared/AstraRuntime/scripts/astra_boot_start.sh</string>
+    <key>ASTRA_WATCHDOG_COMPONENTS</key>
+    <string>backend,worker</string>
+    <key>ASTRA_RUNTIME_LOG_DIR</key>
+    <string>/Users/Shared/AstraRuntime/logs</string>
+  </dict>
+</dict>
+</plist>
