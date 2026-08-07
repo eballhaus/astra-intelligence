@@ -410,7 +410,13 @@ class ContinuousGovernanceV1:
             # execution, but it does not cure an unapproved DAY overnight
             # breach.  Governance remains critical until broker-zero closure
             # (or the canonical lifecycle closure) is recorded.
-            terminal = closure_state in {"BROKER_ZERO_CONFIRMED", "CLOSED"}
+            # Native dust-safe reconciliation deliberately retains the
+            # broker's microscopic residual as nonzero.  Its terminal proof
+            # is therefore the worker-owned learning acknowledgement, which
+            # is emitted only after canonical closure and strict truth
+            # persistence.  Treating it as open would keep a resolved DAY
+            # horizon breach falsely critical forever.
+            terminal = closure_state in {"BROKER_ZERO_CONFIRMED", "CLOSED", "LEARNING_ACKNOWLEDGED"}
             invariants.append({
                 "invariant_id": "DAY_POSITION_HORIZON_BREACH",
                 "owner": "PaperAutopilot._lane_forced_exit_reason",

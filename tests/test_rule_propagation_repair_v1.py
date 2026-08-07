@@ -197,6 +197,48 @@ class WorkerAndOversightTests(unittest.TestCase):
         self.assertEqual(invariant["state"], "PASS")
         self.assertEqual(result["lane_closure_decision"], "LANE_CLOSURE_GO")
 
+    def test_dust_safe_learning_acknowledgement_clears_overnight_breach(self):
+        """A verified dust-safe closure clears only after learning acknowledges it."""
+        runtime_state = {
+            "native_lane_exit_lifecycle_v1": {
+                "day-life": {
+                    "position_id": "day-life", "lifecycle_id": "day-life", "symbol": "PTON", "lane_id": "DAY",
+                    "reason": "day_lane_overnight_breach", "closure_state": "LEARNING_ACKNOWLEDGED",
+                    "strict_truth_created": True, "learning_acknowledged": True,
+                }
+            },
+        }
+        healthy_runtime = {"CANONICAL_WORKER_ABSENT": {"state": "PASS", "observed_value": "running", "expected_value": "running"}}
+        with tempfile.TemporaryDirectory() as directory, patch("engine.astra_continuous_governance_v1.canonical_runtime_invariants", return_value=healthy_runtime), patch("engine.astra_continuous_governance_v1.canonical_worker_state", return_value={}):
+            result = ContinuousGovernanceV1(directory).run_worker_cycle(
+                worker_state={}, runtime_state=runtime_state,
+                safety={"paper_mode_verified": True, "broker_live_endpoint_allowed": False},
+            )
+        invariant = next(row for row in result["invariants"] if row["invariant_id"] == "DAY_POSITION_HORIZON_BREACH")
+        self.assertEqual(invariant["state"], "PASS")
+        self.assertEqual(result["lane_closure_decision"], "LANE_CLOSURE_GO")
+
+    def test_dust_safe_closure_without_learning_acknowledgement_remains_critical(self):
+        """Strict truth alone cannot clear a DAY breach before learning acknowledgement."""
+        runtime_state = {
+            "native_lane_exit_lifecycle_v1": {
+                "day-life": {
+                    "position_id": "day-life", "lifecycle_id": "day-life", "symbol": "PTON", "lane_id": "DAY",
+                    "reason": "day_lane_overnight_breach", "closure_state": "STRICT_TRUTH_CREATED",
+                    "strict_truth_created": True, "learning_acknowledged": False,
+                }
+            },
+        }
+        healthy_runtime = {"CANONICAL_WORKER_ABSENT": {"state": "PASS", "observed_value": "running", "expected_value": "running"}}
+        with tempfile.TemporaryDirectory() as directory, patch("engine.astra_continuous_governance_v1.canonical_runtime_invariants", return_value=healthy_runtime), patch("engine.astra_continuous_governance_v1.canonical_worker_state", return_value={}):
+            result = ContinuousGovernanceV1(directory).run_worker_cycle(
+                worker_state={}, runtime_state=runtime_state,
+                safety={"paper_mode_verified": True, "broker_live_endpoint_allowed": False},
+            )
+        invariant = next(row for row in result["invariants"] if row["invariant_id"] == "DAY_POSITION_HORIZON_BREACH")
+        self.assertEqual(invariant["state"], "FAIL")
+        self.assertEqual(invariant["exact_blocker"], "OVERNIGHT_HOLD_NOT_AUTHORIZED")
+
     def test_cortex_prioritizes_day_closure_failure_over_campaign(self):
         runtime_state = {
             "native_lane_exit_lifecycle_v1": {
