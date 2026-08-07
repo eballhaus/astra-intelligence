@@ -37,6 +37,43 @@ class DustClassificationTests(unittest.TestCase):
         self.assertFalse(result["is_dust"])
         self.assertEqual(result["dust_state"], "NOT_DUST")
 
+    def test_micro_fractional_crypto_residue_is_dust_below_canonical_notional_floor(self):
+        # A broker-held BTC residual at micro-fractional quantity (~5e-07) and
+        # notional ~$0.03 must be an untradable BROKER_DUST_MONITORED residual,
+        # not a meaningful exposure that consumes crypto capacity/reserve or
+        # claims an active broker position count.
+        result = classify_dust_position_v1({
+            "symbol": "BTC/USD",
+            "asset_type": "crypto",
+            "asset_class": "crypto",
+            "qty": "0.0000005",
+            "market_value": 0.03,
+        })
+        self.assertTrue(result["is_dust"])
+        self.assertEqual(result["dust_state"], "BROKER_DUST_MONITORED")
+        self.assertTrue(result["counts_toward_reconciliation"])
+        self.assertFalse(result["tradable"])
+        self.assertIn("market_value_below_notional_minimum", result["dust_reasons"])
+
+    def test_crypto_at_or_above_canonical_notional_floor_is_not_dust(self):
+        # A meaningful crypto position at or above the canonical minimum
+        # tradable notional (>= 1.0) remains an active exposure.
+        result = classify_dust_position_v1({
+            "symbol": "BTC/USD",
+            "asset_type": "crypto",
+            "qty": "0.0000005",
+            "market_value": 10.0,
+        })
+        self.assertFalse(result["is_dust"])
+        self.assertEqual(result["dust_state"], "NOT_DUST")
+
+    def test_equity_notional_dust_floor_is_unchanged(self):
+        # Equity notional dust floor stays at 0.01; a $0.005 equity residual is
+        # dust while a $0.05 equity residual is not automatically a dust row on
+        # the shared floor.
+        self.assertTrue(classify_dust_position_v1({"symbol": "AAPL", "quantity": 1.0, "market_value": 0.005})["is_dust"])
+        self.assertFalse(classify_dust_position_v1({"symbol": "AAPL", "quantity": 1.0, "market_value": 0.05})["is_dust"])
+
 
 class DustPersistenceTests(unittest.TestCase):
     def setUp(self):

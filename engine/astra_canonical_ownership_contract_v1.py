@@ -14,6 +14,17 @@ SCHEMA_VERSION = "astra_canonical_ownership_contract_v1"
 DEFAULT_STATE_DIR = "state"
 DUST_REGISTRY_FILE = "broker_dust_positions_v1.json"
 
+# Canonical minimum tradable notional for crypto.  Candidate execution gates
+# a crypto order at order_schema_min_notional (>= 1.0) in
+# candidate_execution_integrity_v1.  A broker crypto residue whose reported
+# notional sits below this floor is an untradable dust residual, not a
+# meaningful exposure that should consume strategy capacity or reserve.
+CANONICAL_CRYPTO_MIN_TRADABLE_NOTIONAL = 1.0
+
+# Equity residuals are denominated in whole/fractional shares, so the notional
+# never drops below a fully tradable unit except for microscopic holdings.
+CANONICAL_EQUITY_MIN_TRADABLE_NOTIONAL = 0.01
+
 OWNERSHIP_STATES = frozenset({
     "MANAGED",
     "LEGACY_MANAGED",
@@ -370,7 +381,8 @@ def classify_dust_position_v1(
     is_crypto = asset_type in {"crypto", "cryptocurrency"}
 
     is_dust = (not is_crypto) and 0.0 < abs(qty) < 0.001
-    is_below_notional = market_value > 0 and market_value < 0.01
+    notional_floor = CANONICAL_CRYPTO_MIN_TRADABLE_NOTIONAL if is_crypto else CANONICAL_EQUITY_MIN_TRADABLE_NOTIONAL
+    is_below_notional = market_value > 0 and market_value < notional_floor
 
     if not is_dust and not is_below_notional:
         return {

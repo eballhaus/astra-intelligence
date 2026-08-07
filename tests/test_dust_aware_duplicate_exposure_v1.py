@@ -81,6 +81,23 @@ class DustAwareDuplicateExposureTests(unittest.TestCase):
         self.assertNotIn("LEGACY", exposure["blocking_symbols"])
         self.assertIn("LEGACY", exposure["internal_dust_symbols"])
 
+    def test_crypto_notional_below_canonical_floor_is_dust_not_blocking(self):
+        # The ~$0.03 micro-fractional BTC residue is dust and must not block a
+        # new crypto entry nor consume strategy capacity as a meaningful row.
+        for current in (True, False):
+            with self.subTest(current=current):
+                exposure = self.engine._duplicate_exposure_snapshot(self._snapshot(current=current, positions={
+                    "BTC/USD": {
+                        "symbol": "BTC/USD",
+                        "asset_type": "crypto",
+                        "qty": "0.0000005",
+                        "market_value": "0.03",
+                        "lane_id": "CRYPTO",
+                    },
+                }), [])
+                self.assertNotIn("BTC/USD", exposure["blocking_symbols"])
+                self.assertIn("BTC/USD", exposure["broker_dust_symbols"])
+
     def test_open_buy_or_partial_buy_order_blocks_but_sell_does_not(self):
         for status in ("new", "partially_filled"):
             with self.subTest(status=status):
