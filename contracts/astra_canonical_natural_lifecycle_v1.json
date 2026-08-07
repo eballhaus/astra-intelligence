@@ -1,0 +1,22 @@
+{
+  "contract_name": "ASTRA_CANONICAL_NATURAL_LIFECYCLE_V1",
+  "version": "V1",
+  "status": "FROZEN_PROTECTED_RUNTIME_CERTIFIED",
+  "certified_baseline_commit": "e59e9f5c650a08705369c3977ceb911f54222b8d",
+  "certified_at": "2026-08-07T00:00:00Z",
+  "paper_only": true,
+  "live_trading_allowed": false,
+  "certified_lane_evidence": [
+    {"symbol": "SG", "lane": "DAY", "lifecycle_id": "ede52fee-62f7-42b1-8b09-1d9a03278884", "sell_order_id": "80e4f13c-d517-48c4-8076-39311e662f38", "strict_truth": true, "learning_acknowledged": true},
+    {"symbol": "PTON", "lane": "DAY", "lifecycle_id": "ce4ae3d4-bd01-47b8-9b3d-34c441b9d23d", "sell_order_id": "ba96f5bf-0579-4472-9270-e7173a722e18", "strict_truth": true, "learning_acknowledged": true},
+    {"symbol": "RIVN", "lane": "DAY", "lifecycle_id": "e677346b-4129-4ffa-8651-d27aa6b9e84f", "sell_order_id": "3fc41edb-a961-42a0-9226-39570c1c06e6", "strict_truth": true, "learning_acknowledged": true}
+  ],
+  "protected_contracts": [
+    "canonical candidate/lifecycle/position identity", "lane and horizon ownership", "immutable entry contract and thesis provenance", "risk/capital/quantity/duplicate/reserve ORDER_READY gates", "paper-only broker submission and entry fill lineage", "native lane exit authority and sell-intent idempotency", "partial-fill and meaningful-residual fail-closed handling", "canonical dust-safe reconciliation without false broker-zero claims", "canonical closure", "strict-truth and learning-payload idempotency", "restart-state persistence", "capacity release", "Sentinel/Governance/Cortex terminal lifecycle handling"
+  ],
+  "dust_safe_closure_semantics": "VERIFIED_CANONICAL_DUST_SAFE_CLOSURE is never broker zero; meaningful residuals remain open and fail closed.",
+  "idempotency_requirements": ["one sell intent per lifecycle", "one strict truth per entry/exit fill pair", "one learning payload and acknowledgement per lifecycle"],
+  "allowed_modification_conditions": ["CONFIRMED_RUNTIME_DEFECT", "EXPLICIT_VERSIONED_LIFECYCLE_UPGRADE", "EXPLICIT_OWNER_AUTHORIZATION"],
+  "required_regression_suites": ["tests.test_native_lane_exit_closure_v1", "tests.test_native_swing_crypto_exit_closure_v1", "tests.test_strict_truth_promotion_recovery_v1", "tests.test_rule_propagation_repair_v1", "tests.test_broker_dust_lifecycle_reconciliation_v1", "tests.test_sentinel_governance_cortex_crypto_completion_v1"],
+  "notes": "This source certificate references certified runtime evidence but contains no volatile runtime snapshot, credential, or account state."
+}

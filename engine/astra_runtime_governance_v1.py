@@ -25,6 +25,15 @@ ROOT = Path(__file__).resolve().parents[1]
 STATE = ROOT / "state"
 WORKER_STATE_PATH = STATE / "astra_worker_runtime_state_v1.json"
 WORKER_LOCK_PATH = STATE / "astra_worker_runtime_v1.lock"
+RECOVERY_STATE_PATH = STATE / "astra_recovery_status_v1.json"
+RECOVERY_STATUSES = {
+    "SYSTEM_BOOT_RECOVERY",
+    "BACKEND_RECOVERING",
+    "WORKER_RECOVERING",
+    "BROKER_RECONCILIATION_REQUIRED",
+    "RECOVERY_READY",
+    "RECOVERY_FAILED",
+}
 
 
 def utc_now() -> str:
@@ -92,6 +101,25 @@ def read_snapshot(path: Path = WORKER_STATE_PATH) -> dict[str, Any]:
         return dict(value) if isinstance(value, dict) else {}
     except (FileNotFoundError, OSError, ValueError, TypeError):
         return {}
+
+
+def recovery_status_snapshot(path: Path = RECOVERY_STATE_PATH) -> dict[str, Any]:
+    """Read watchdog recovery state without becoming a recovery authority."""
+    payload = read_snapshot(path)
+    status = str(payload.get("status") or "BROKER_RECONCILIATION_REQUIRED")
+    if status not in RECOVERY_STATUSES:
+        status = "RECOVERY_FAILED"
+    return {
+        "status": status,
+        "reason": str(payload.get("reason") or "recovery_status_unavailable"),
+        "updated_at": payload.get("updated_at"),
+        "worker": dict(payload.get("worker") or {}),
+        "recovery_state_available": bool(payload),
+        "get_route_read_only": True,
+        "provider_calls_used": 0,
+        "broker_actions_used": 0,
+        "llm_calls_used": 0,
+    }
 
 
 def canonical_worker_state(path: Path = WORKER_STATE_PATH) -> dict[str, Any]:

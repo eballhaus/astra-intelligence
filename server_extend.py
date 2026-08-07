@@ -62,6 +62,7 @@ from engine.astra_runtime_governance_v1 import (
     process_info as _runtime_process_info,
     read_snapshot as _runtime_read_snapshot,
     resource_snapshot as _runtime_resource_snapshot,
+    recovery_status_snapshot as _runtime_recovery_status_snapshot,
     snapshot_age_seconds as _runtime_snapshot_age_seconds,
     worker_liveness as _runtime_worker_liveness,
 )
@@ -71,6 +72,7 @@ from engine.astra_provider_consumption_telemetry_v1 import (
     load_fmp_production_verification_v1,
     load_provider_consumption_telemetry_v1,
 )
+from engine.astra_canonical_natural_lifecycle_v1 import canonical_natural_lifecycle_contract_v1
 
 load_runtime_environment()
 
@@ -49439,6 +49441,7 @@ def astra_runtime_worker_reliability_audit_v1():
 def _astra_runtime_resource_governance_payload_v1() -> dict:
     """Fast snapshot-only runtime view.  This must not touch providers or broker APIs."""
     state = _canonical_worker_state()
+    recovery = _runtime_recovery_status_snapshot()
     liveness = _runtime_worker_liveness(state)
     worker = _paper_worker_status_payload()
     worker_pid = liveness.get("active_worker_pid")
@@ -49514,6 +49517,8 @@ def _astra_runtime_resource_governance_payload_v1() -> dict:
         "last_known_worker_cycle_id": liveness.get("last_known_worker_cycle_id"),
         "last_known_worker_stopped_at": liveness.get("last_known_worker_stopped_at"),
         "last_known_worker_exit_reason": liveness.get("last_known_worker_exit_reason"),
+        "recovery_status": recovery,
+        "recovery_ready": recovery.get("status") == "RECOVERY_READY",
         "large_store_reads_active": False,
         "full_scan_detected": False,
         "log_sizes": _runtime_log_sizes(),
@@ -49534,6 +49539,12 @@ def _astra_runtime_resource_governance_payload_v1() -> dict:
 @router.get("/api/astra_runtime_resource_governance_v1")
 def astra_runtime_resource_governance_v1():
     return _astra_runtime_resource_governance_payload_v1()
+
+
+@router.get("/api/astra_canonical_natural_lifecycle_v1")
+def astra_canonical_natural_lifecycle_v1():
+    """Expose the source-controlled lifecycle freeze certificate only."""
+    return canonical_natural_lifecycle_contract_v1()
 
 
 @router.get("/api/astra_operational_preflight_v1")
@@ -71007,6 +71018,9 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
         {"consumer": "PAPER_AUTOPILOT.paper_positions compatibility adapter", "fact_id": "LOCAL_OPEN_CRYPTO_POSITION_COUNT", "source_used": "diagnostic-only broad adapter", "canonical_source_required": False, "source_compliant": True, "scope_compliant": False, "freshness_compliant": False, "fallback_used": False, "rejected_claim_count": len(active), "publication_allowed": False},
     ]
     scanner_roots = [dict(row) for row in (scanner.get("active_root_causes") or []) if isinstance(row, dict) and row.get("state") != "RESOLVED"]
+    recovery_status = _runtime_recovery_status_snapshot()
+    cortex["recovery_status"] = recovery_status
+    cortex["recovery_ready"] = recovery_status.get("status") == "RECOVERY_READY"
     completion_warning = str(completion.get("status") or "").upper() == "WARNING"
     endpoint_status = "WARNING" if active or scanner_roots or completion_warning else "PASS" if worker_facts else arbitration.get("status", "PENDING_WORKER_FACT_SNAPSHOT")
     return {"endpoint": "/api/astra_canonical_truth_governance_v1", "status": endpoint_status,
@@ -71017,6 +71031,8 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
             "cortex_truth_summary": cortex, "consumer_source_compliance": compliance,
             "system_integrity_summary": {"status": scanner.get("status"), "last_scan_at": scanner.get("last_scan_at"),
                 "active_root_cause_count": len(scanner.get("active_root_causes") or []), "human_repair_required_count": len(scanner.get("human_repairs_required") or [])},
+            "recovery_status": recovery_status,
+            "recovery_ready": recovery_status.get("status") == "RECOVERY_READY",
             "governance_issue_classifications": ([{"root_cause_id": row.get("root_cause_id"), "category": row.get("category"), "severity": row.get("severity"), "state": row.get("state"), "first_bad_handoff": row.get("first_bad_handoff")} for row in scanner_roots[:20]] + ([{"root_cause_id": "CURRENT_MULTILANE_MATRIX_WARNING", "category": "MONITORING_COVERAGE_GAP", "severity": "HIGH", "state": "OPEN", "first_bad_handoff": "multilane completion matrix -> sentinel/governance summary"}] if completion_warning and not any(str(row.get("category")) == "MONITORING_COVERAGE_GAP" for row in scanner_roots) else [])),
             "crypto_market_data_capability_matrix_summary": dict(matrix.get("summary") or {}),
             "multilane_completion_matrix_summary": {"status": completion.get("status"), "lanes": {lane: dict(row).get("first_blocker") for lane, row in (completion.get("lanes") or {}).items() if isinstance(row, dict)}},
@@ -71052,6 +71068,8 @@ def _astra_sentinel_integrity_v1_payload() -> dict:
     scanner = _astra_system_integrity_scanner_v1_payload()
     if callable(sentinel_integrity_payload_v1):
         payload = sentinel_integrity_payload_v1(scanner)
+        payload["recovery_status"] = _runtime_recovery_status_snapshot()
+        payload["recovery_ready"] = payload["recovery_status"].get("status") == "RECOVERY_READY"
         matrix = CryptoMarketDataCapabilityMatrixV1(STATE).snapshot() if CryptoMarketDataCapabilityMatrixV1 is not None else {}
         payload["crypto_market_data"]["capability_matrix_summary"] = dict(matrix.get("summary") or {})
         completion = AstraMultilaneCompletionMatrixV1(STATE).snapshot() if AstraMultilaneCompletionMatrixV1 is not None else {}

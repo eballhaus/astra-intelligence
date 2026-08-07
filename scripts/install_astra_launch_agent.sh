@@ -29,6 +29,7 @@ if [[ "${DRY_RUN}" == "1" ]]; then
 fi
 
 mkdir -p "${TARGET_DIR}"
+mkdir -p "${HOME}/Library/Logs/Astra"
 if [[ -f "${TARGET_PLIST}" ]]; then
   BACKUP="${TARGET_PLIST}.backup.$(date +%Y%m%d%H%M%S)"
   cp "${TARGET_PLIST}" "${BACKUP}"
@@ -38,8 +39,9 @@ fi
 cp "${SOURCE_PLIST}" "${TARGET_PLIST}"
 chmod 644 "${TARGET_PLIST}"
 
-launchctl unload "${TARGET_PLIST}" >/dev/null 2>&1 || true
-launchctl load "${TARGET_PLIST}"
+UID_VALUE="$(id -u)"
+launchctl bootout "gui/${UID_VALUE}/com.astra.watchdog" >/dev/null 2>&1 || true
+launchctl bootstrap "gui/${UID_VALUE}" "${TARGET_PLIST}"
 
 echo "[astra-launch-agent-install] installed and loaded"
-launchctl list | grep -F "com.astra.watchdog" || true
+launchctl print "gui/${UID_VALUE}/com.astra.watchdog" >/dev/null && echo "[astra-launch-agent-install] service is registered"
