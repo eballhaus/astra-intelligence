@@ -52,6 +52,30 @@ class SentinelGovernanceCortexCryptoCompletionTests(unittest.TestCase):
         self.assertEqual(roots[0]["finding_id"].split("-", 1)[0], "finding")
         self.assertEqual(roots[0]["governance_issue_id"], roots[0]["root_cause_id"])
 
+    def test_scalar_governance_measurement_does_not_hide_day_horizon_breach(self):
+        snapshot = self._scan(continuous_governance={"invariants": [
+            {
+                "invariant_id": "HEARTBEAT_CURRENT",
+                "state": "PASS",
+                "observed_value": 0.25,
+            },
+            {
+                "invariant_id": "DAY_POSITION_HORIZON_BREACH",
+                "state": "FAIL",
+                "owner": "PaperAutopilot._lane_forced_exit_reason",
+                "exact_blocker": "OVERNIGHT_HOLD_NOT_AUTHORIZED",
+                "observed_value": {
+                    "symbol": "PTON",
+                    "position_id": "lifecycle-pt-1",
+                },
+            },
+        ]})
+        self.assertEqual(snapshot["status"], "CRITICAL")
+        self.assertEqual(len(snapshot["active_root_causes"]), 1)
+        root = snapshot["active_root_causes"][0]
+        self.assertEqual(root["category"], "DAY_POSITION_HORIZON_BREACH")
+        self.assertEqual(root["affected_position_identity"], "lifecycle-pt-1")
+
     def test_guarded_level_two_requires_all_guards_and_rolls_back(self):
         registry = SafeCorrectionRegistryV1(self.temp.name)
         state = {"reader": "adapter"}

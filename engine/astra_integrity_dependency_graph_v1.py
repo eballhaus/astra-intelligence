@@ -93,6 +93,7 @@ def root_cause_from_signal_v1(signal: dict[str, Any]) -> dict[str, Any]:
             "confidence": str(signal.get("confidence") or ("VERIFIED" if kind not in {"UNKNOWN_SYSTEM_DEFECT"} else "LOW")),
             "first_bad_handoff": handoff, "canonical_fact_ids": facts, "affected_components": list(signal.get("affected_components") or [owner]),
             "affected_endpoints": list(signal.get("affected_endpoints") or []), "downstream_symptoms": symptoms,
+            "affected_position_identity": signal.get("affected_position_identity"),
             "likely_owner": owner, "smallest_safe_repair": repair,
             "safe_correction_available": bool(signal.get("safe_correction_available")),
             "human_repair_required": not bool(signal.get("safe_correction_available")),

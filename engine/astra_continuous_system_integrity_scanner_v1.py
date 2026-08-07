@@ -51,6 +51,10 @@ def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
 class ContinuousSystemIntegrityScannerV1:
     """Bounded scanner run by PaperAutopilotWorker only.
 
@@ -196,7 +200,10 @@ class ContinuousSystemIntegrityScannerV1:
             if not isinstance(invariant, dict):
                 continue
             invariant_id = str(invariant.get("invariant_id") or "")
-            observed = dict(invariant.get("observed_value") or {})
+            # Runtime invariants may report either a lifecycle envelope or a
+            # scalar measurement such as heartbeat age. Only envelopes carry
+            # position identity; scalar facts must not abort the whole scan.
+            observed = _dict(invariant.get("observed_value"))
             if (
                 invariant_id == "HISTORICAL_BROKER_DUST_QUARANTINED"
                 and str(invariant.get("state") or "") == "LEGITIMATE_WAITING_STATE"
