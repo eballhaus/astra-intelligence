@@ -257,7 +257,20 @@ def _shadow_validation(shadow: Mapping[str, Any], shadow_perf: Mapping[str, Any]
     pf = _number(shadow.get("crypto_profit_factor") or shadow.get("shadow_profit_factor"))
     if pf is None:
         pf = _number(shadow_perf.get("lifetime_shadow_pf") or shadow_perf.get("shadow_profit_factor_verified"))
-    human_review_candidate = sample >= 50 and pf is not None and pf > 1.0
+    paper_pf = _number(shadow_perf.get("canonical_profit_factor") or shadow_perf.get("lifetime_paper_pf"))
+    quality = _number(shadow.get("evidence_quality_score")) or 0.0
+    consistency = _number(shadow.get("consensus_confidence_score")) or 0.0
+    outperforms_paper = pf is not None and paper_pf is not None and pf > paper_pf
+    human_review_candidate = sample >= 50 and quality >= 70 and consistency >= 70 and outperforms_paper
+    blockers = []
+    if sample < 50:
+        blockers.append("SHADOW_SAMPLE_BELOW_50")
+    if quality < 70:
+        blockers.append("SHADOW_EVIDENCE_QUALITY_BELOW_70")
+    if consistency < 70:
+        blockers.append("SHADOW_REPEATABILITY_BELOW_70")
+    if not outperforms_paper:
+        blockers.append("SHADOW_OUTPERFORMANCE_NOT_VERIFIED_AGAINST_PAPER")
     return {
         "evidence_tier": "SHADOW_COUNTERFACTUAL_DISTINCT_FROM_BROKER_TRUTH",
         "shadow_sample_size": sample,
@@ -270,10 +283,17 @@ def _shadow_validation(shadow: Mapping[str, Any], shadow_perf: Mapping[str, Any]
         "promotion_status": "HUMAN_REVIEW_ONLY" if human_review_candidate else "COLLECT_MORE_SHADOW_EVIDENCE",
         "promotion_gate": {
             "minimum_shadow_sample": 50,
-            "positive_profit_factor_required": True,
+            "minimum_evidence_quality": 70,
+            "minimum_repeatability": 70,
+            "paper_outperformance_required": True,
+            "paper_profit_factor": paper_pf,
+            "shadow_evidence_quality": quality,
+            "shadow_repeatability": consistency,
+            "shadow_outperforms_paper": outperforms_paper,
             "passed": human_review_candidate,
             "automatic_promotion_disabled": True,
         },
+        "promotion_blockers": blockers,
         "automatic_promotion_authority": False,
         "shadow_may_count_as_strict_truth": False,
     }

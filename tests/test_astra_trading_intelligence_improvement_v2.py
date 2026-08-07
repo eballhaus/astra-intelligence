@@ -36,8 +36,9 @@ class TradingIntelligenceImprovementV2Tests(unittest.TestCase):
         }]}))
         (root / "dashboard_cache" / "realistic_shadow_evidence_learning_lab_v1.json").write_text(json.dumps({
             "completed_shadow_lifecycles": 80, "shadow_profit_factor": 9.0,
+            "evidence_quality_score": 80, "consensus_confidence_score": 80,
         }))
-        (root / "dashboard_cache" / "shadow_vs_paper_performance_attribution_v1.json").write_text(json.dumps({}))
+        (root / "dashboard_cache" / "shadow_vs_paper_performance_attribution_v1.json").write_text(json.dumps({"canonical_profit_factor": 1.2}))
         for name in ("market_context_learning_suite_v1.jsonl.summary_index.json", "opportunity_cost_learning_v1.jsonl.summary_index.json"):
             (root / "storage_summary_indexes" / name).write_text(json.dumps({"dimension_counts": {"regime": {"RISK_ON": 7}}}))
         return root
@@ -56,7 +57,7 @@ class TradingIntelligenceImprovementV2Tests(unittest.TestCase):
         self.assertTrue(result["shadow_validation_and_evidence_promotion"]["promotion_gate"]["passed"])
 
         shadow_path = self._state() / "dashboard_cache" / "realistic_shadow_evidence_learning_lab_v1.json"
-        shadow_path.write_text(json.dumps({"completed_shadow_lifecycles": 49, "shadow_profit_factor": 9.0}))
+        shadow_path.write_text(json.dumps({"completed_shadow_lifecycles": 49, "shadow_profit_factor": 9.0, "evidence_quality_score": 80, "consensus_confidence_score": 80}))
         gated = build_trading_intelligence_improvement_suite_v2(str(shadow_path.parent.parent))
         self.assertEqual(gated["shadow_validation_and_evidence_promotion"]["promotion_status"], "COLLECT_MORE_SHADOW_EVIDENCE")
 
