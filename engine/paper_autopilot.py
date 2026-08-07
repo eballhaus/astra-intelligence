@@ -3922,6 +3922,16 @@ class PaperAutopilotEngine:
                 )
                 remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": order.get("status")}
                 continue
+            expected_client_order_id = str(item.get("client_order_id") or "").strip()
+            broker_client_order_id = str(order.get("client_order_id") or "").strip()
+            if expected_client_order_id and broker_client_order_id and expected_client_order_id != broker_client_order_id:
+                self._record_native_lane_exit_state(
+                    item, state="EXIT_BLOCKED_IDENTITY", decision="EXIT_READY",
+                    reason=str(item.get("exit_reason") or ""), blocker="BROKER_ORDER_CLIENT_ID_MISMATCH",
+                    next_reevaluation="broker_order_reconciliation",
+                )
+                remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": "client_order_id_mismatch"}
+                continue
             rows = [r for r in self._fetch_open_positions() if str(r.get("position_id") or "") == str(item.get("position_id") or "")]
             if not rows:
                 continue
@@ -3937,14 +3947,38 @@ class PaperAutopilotEngine:
                 remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": "filled_missing_fill_lineage"}
                 continue
             latest = {"symbol": item.get("symbol"), "price": _to_float(order.get("filled_avg_price"), 0.0), "timestamp": _now_iso(), "source": "alpaca_paper_order_fill"}
+            filled_qty = _to_float(order.get("filled_qty") or order.get("filled_quantity"), 0.0)
+            submitted_qty = _to_float(item.get("normalized_sell_qty") or item.get("submitted_quantity") or item.get("original_requested_qty"), 0.0)
+            self._persist_sell_intent(
+                str(item.get("client_order_id") or key), status="SUBMITTED",
+                reconciliation_status="BROKER_FILLED_AWAITING_CLOSURE", broker_order_id=exit_order_id,
+                broker_order_status="FILLED", filled_quantity=filled_qty,
+                average_fill_price=_to_float(order.get("filled_avg_price"), 0.0),
+                exit_fill_id=exit_fill_id, filled_at=filled_at,
+            )
             closed = self._close_position(rows[0], latest, str(item.get("exit_reason") or "lane_exit"), broker_fill={
                 "exit_order_id": exit_order_id,
                 "exit_fill_id": exit_fill_id,
                 "exit_fill_identifier_type": "BROKER_EXECUTION_ID" if explicit_fill_id else "BROKER_ORDER_ID_FILLED_EVIDENCE",
                 "filled_at": filled_at,
+                "filled_qty": filled_qty, "submitted_qty": submitted_qty,
+                "position_id": str(item.get("position_id") or ""),
+                "client_order_id": expected_client_order_id,
+                "broker_client_order_id": broker_client_order_id,
             })
             if closed.get("ok"):
                 strict = dict(closed.get("strict_broker_truth_persistence") or {})
+                dust_safe = bool(dict(closed.get("canonical_dust_safe_closure") or {}).get("status") == "VERIFIED_CANONICAL_DUST_SAFE_CLOSURE")
+                self._persist_sell_intent(
+                    str(item.get("client_order_id") or key),
+                    status="CLOSED_DUST_SAFE_RECONCILED" if dust_safe else "CLOSED_BROKER_ZERO_RECONCILED",
+                    reconciliation_status="CANONICAL_DUST_SAFE_CLOSURE" if dust_safe else "BROKER_ZERO_CONFIRMED",
+                    broker_order_id=exit_order_id, broker_order_status="FILLED", filled_quantity=filled_qty,
+                    average_fill_price=_to_float(order.get("filled_avg_price"), 0.0), exit_fill_id=exit_fill_id,
+                    broker_zero_confirmed=not dust_safe,
+                    canonical_dust_safe_closure=dict(closed.get("canonical_dust_safe_closure") or {}),
+                    retry_eligible=False,
+                )
                 self._record_native_lane_exit_state(
                     rows[0],
                     state=(
@@ -5612,13 +5646,20 @@ class PaperAutopilotEngine:
             }
         residual_raw = broker_fill.get("remaining_qty") or broker_fill.get("residual_qty")
         residual_qty = _to_float(residual_raw, 0.0) if residual_raw is not None else None
-        if residual_qty is not None and residual_qty > 0.0:
+        dust_safe_closure = dict(broker_fill.get("canonical_dust_safe_closure") or {})
+        dust_safe = bool(
+            dust_safe_closure.get("status") == "VERIFIED_CANONICAL_DUST_SAFE_CLOSURE"
+            and dust_safe_closure.get("identity_verified") is True
+            and dust_safe_closure.get("full_exit_fill_verified") is True
+            and bool(dict(dust_safe_closure.get("dust_classification") or {}).get("is_dust"))
+        )
+        if residual_qty is not None and residual_qty > 0.0 and not dust_safe:
             return {
                 "persisted": False,
                 "reason": "BROKER_RESIDUAL_NONZERO",
                 "residual_qty": residual_qty,
             }
-        if not bool(broker_fill.get("broker_residual_zero_confirmed")):
+        if not bool(broker_fill.get("broker_residual_zero_confirmed")) and not dust_safe:
             return {"persisted": False, "reason": "BROKER_ZERO_CONFIRMATION_REQUIRED"}
         if not exit_fill_id or not exit_order_id:
             return {
@@ -5650,7 +5691,13 @@ class PaperAutopilotEngine:
             "entry_price_source": str(open_row.get("entry_price_source") or ""),
             "entry_price_evidence_class": str(open_row.get("entry_price_evidence_class") or ""),
             "entry_price_verified": True,
-            "exit_price": float(exit_price), "quantity": _to_float(open_row.get("quantity"), 0.0),
+            "exit_price": float(exit_price),
+            # The exit fill remains the executed economic quantity. Any
+            # separately retained dust is recorded below and never becomes a
+            # second trade or a false broker-zero claim.
+            "quantity": _to_float(broker_fill.get("filled_qty"), _to_float(open_row.get("quantity"), 0.0)),
+            "entry_quantity": _to_float(open_row.get("quantity"), 0.0),
+            "exit_filled_quantity": _to_float(broker_fill.get("filled_qty"), 0.0),
             "realized_return": round(float(return_percent), 6), "hold_duration": round(float(hold_seconds), 3),
             "return_per_hour": round(float(return_percent) / max(hold_seconds / 3600.0, 1e-9), 6),
             # These fields are carried only when the live lifecycle has
@@ -5660,7 +5707,9 @@ class PaperAutopilotEngine:
             "time_to_peak": _safe_json_load(open_row.get("row_json")).get("time_to_peak"),
             "profit_giveback": _safe_json_load(open_row.get("row_json")).get("profit_giveback_pct"),
             "exit_reason": str(exit_reason or ""), "paper_mode_verified": True,
-            "broker_residual_zero_confirmed": True,
+            "broker_residual_zero_confirmed": bool(broker_fill.get("broker_residual_zero_confirmed")),
+            "canonical_dust_safe_closure": dust_safe_closure,
+            "broker_residual_quantity": residual_qty,
             "broker_residual_lookup_status": str(broker_fill.get("broker_residual_lookup_status") or ""),
             "current_logic_performance_eligible": True,
             "official_metric_eligible": True, "created_at": _now_iso(), "updated_at": _now_iso(),
@@ -9548,22 +9597,51 @@ class PaperAutopilotEngine:
                 open_row,
                 broker_lookup=lambda checked_symbol, checked_position_id: self._independent_broker_residual_lookup(checked_symbol, checked_position_id),
             )
-            if not residual.get("exit_allowed"):
+            filled_qty = _to_float(broker_fill.get("filled_qty") or broker_fill.get("quantity"), 0.0)
+            submitted_qty = _to_float(broker_fill.get("submitted_qty"), 0.0)
+            dust = dict(residual.get("dust_classification") or {})
+            identity_verified = (
+                str(broker_fill.get("position_id") or "") == pid
+                and bool(str(broker_fill.get("exit_order_id") or ""))
+                and bool(str(broker_fill.get("exit_fill_id") or ""))
+                and (not str(broker_fill.get("client_order_id") or "")
+                     or str(broker_fill.get("client_order_id") or "") == str(broker_fill.get("broker_client_order_id") or ""))
+            )
+            dust_safe_closure = bool(
+                str(residual.get("lookup_status") or "") == "DUST_RESIDUAL"
+                and bool(dust.get("is_dust"))
+                and identity_verified
+                and submitted_qty > 0.0
+                and filled_qty + 1e-9 >= submitted_qty
+            )
+            if not residual.get("exit_allowed") and not dust_safe_closure:
                 return {
                     "ok": False,
                     "error": f"broker_residual_lookup_blocks_close:{residual.get('lookup_status')}",
                     "broker_residual_lookup": residual,
                     "remaining_qty": residual.get("broker_residual_quantity"),
                 }
-            filled_qty = _to_float(broker_fill.get("filled_qty") or broker_fill.get("quantity"), 0.0)
             remaining_qty = residual.get("broker_residual_quantity")
-            if remaining_qty is not None and remaining_qty > 0.0:
+            if remaining_qty is not None and remaining_qty > 0.0 and not dust_safe_closure:
                 return {"ok": False, "error": "broker_residual_quantity_nonzero", "remaining_qty": remaining_qty, "filled_qty": filled_qty}
+            canonical_dust_safe_closure = {
+                "status": "VERIFIED_CANONICAL_DUST_SAFE_CLOSURE",
+                "position_id": pid, "lifecycle_id": pid,
+                "exit_order_id": str(broker_fill.get("exit_order_id") or ""),
+                "exit_fill_id": str(broker_fill.get("exit_fill_id") or ""),
+                "identity_verified": identity_verified,
+                "full_exit_fill_verified": True,
+                "filled_quantity": filled_qty,
+                "submitted_quantity": submitted_qty,
+                "broker_residual_quantity": remaining_qty,
+                "dust_classification": dust,
+            } if dust_safe_closure else {}
             broker_fill = {
                 **broker_fill,
                 "remaining_qty": remaining_qty,
-                "broker_residual_zero_confirmed": True,
+                "broker_residual_zero_confirmed": bool(residual.get("exit_allowed")),
                 "broker_residual_lookup_status": str(residual.get("lookup_status") or ""),
+                "canonical_dust_safe_closure": canonical_dust_safe_closure,
             }
 
         entry_price = _to_float(open_row.get("entry_price"), 0.0)
@@ -9618,6 +9696,7 @@ class PaperAutopilotEngine:
                             "continuation_flag": bool(_to_float(notes.get("peak_unrealized_pnl_percent"), max(ret, 0.0)) >= 1.0 and ret > 0),
                             "deterioration_flag": bool(_to_float(notes.get("drawdown_from_peak_percent"), 0.0) >= 1.6),
                             "broker_residual_zero_confirmed": bool((broker_fill or {}).get("broker_residual_zero_confirmed")),
+                            "canonical_dust_safe_closure": dict((broker_fill or {}).get("canonical_dust_safe_closure") or {}),
                             "broker_residual_lookup_status": str((broker_fill or {}).get("broker_residual_lookup_status") or ""),
                             "exit_filled_at": str((broker_fill or {}).get("filled_at") or ""),
                             "exit_fill_identifier_type": str((broker_fill or {}).get("exit_fill_identifier_type") or ""),
@@ -9841,6 +9920,7 @@ class PaperAutopilotEngine:
             "strict_exit_fill_linked": bool(lane in {"DAY", "SCALP", "SWING", "CRYPTO"} and broker_fill),
             "strict_broker_truth_persistence": strict_truth_result,
             "learning_acknowledged": learning_acknowledged,
+            "canonical_dust_safe_closure": dict((broker_fill or {}).get("canonical_dust_safe_closure") or {}),
         }
 
     def _evaluate_exit(self, open_row: dict[str, Any], latest_row: dict[str, Any]) -> tuple[bool, str]:

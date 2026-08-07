@@ -87,6 +87,24 @@ class _Broker:
         return {"ok": True, "positions": []}
 
 
+class _ResidualBroker(_Broker):
+    def __init__(self, *, quantity: str, market_value: str) -> None:
+        super().__init__(order_status="filled", symbol="SWING")
+        self.quantity = quantity
+        self.market_value = market_value
+
+    def positions(self):
+        return {"ok": True, "positions": [{
+            "symbol": "SWING", "qty": self.quantity, "qty_available": self.quantity,
+            "market_value": self.market_value, "asset_class": "us_equity",
+        }]}
+
+    def order(self, order_id):
+        payload = super().order(order_id)
+        payload["order"]["client_order_id"] = "swing-exit"
+        return payload
+
+
 class _TradeIntel:
     def __init__(self) -> None:
         self.records: list[dict] = []
@@ -251,6 +269,61 @@ class NativeSwingCryptoExitClosureTests(unittest.TestCase):
             self.assertEqual(engine._refresh_authorized_lane_exit_pending()["filled"], 1)
             self.assertEqual(engine._runtime_state["native_lane_exit_lifecycle_v1"][row["position_id"]]["closure_state"], "LEARNING_ACKNOWLEDGED")
             self.assertEqual(len(intel.records), 1)
+
+    def test_identity_linked_full_fill_with_broker_dust_closes_once_and_learns(self):
+        with tempfile.TemporaryDirectory() as directory, patch("engine.paper_autopilot.close_lifecycle_record", None):
+            root = pathlib.Path(directory)
+            (root / "broker_truth_records_v1.json").write_text('{"records": []}', encoding="utf-8")
+            broker = _ResidualBroker(quantity="0.0000003", market_value="0.00001")
+            intel = _TradeIntel()
+            engine = self._engine(root, broker, intel)
+            row = _row("SWING")
+            row["quantity"] = 1.2345673
+            with engine._connect() as conn:
+                columns = ", ".join(row)
+                placeholders = ", ".join("?" for _ in row)
+                conn.execute(f"INSERT INTO paper_positions ({columns}, created_at, updated_at) VALUES ({placeholders}, ?, ?)", (*row.values(), _now(), _now()))
+                conn.commit()
+            engine._runtime_state["authorized_lane_exit_pending"] = {
+                "exit-1": {"position_id": row["position_id"], "symbol": row["symbol"], "lane_id": "SWING", "order_id": "exit-1", "client_order_id": "swing-exit", "exit_reason": "holding_window_expired", "normalized_sell_qty": 1.234567}
+            }
+
+            result = engine._refresh_authorized_lane_exit_pending()
+
+            self.assertEqual(result["filled"], 1)
+            self.assertFalse(engine._runtime_state["authorized_lane_exit_pending"])
+            self.assertEqual(engine._runtime_state["paper_sell_order_intents"]["swing-exit"]["status"], "CLOSED_DUST_SAFE_RECONCILED")
+            state = engine._runtime_state["native_lane_exit_lifecycle_v1"][row["position_id"]]
+            self.assertEqual(state["closure_state"], "LEARNING_ACKNOWLEDGED")
+            records = json.loads((root / "broker_truth_records_v1.json").read_text(encoding="utf-8"))["records"]
+            self.assertEqual(len(records), 1)
+            self.assertFalse(records[0]["broker_residual_zero_confirmed"])
+            self.assertEqual(records[0]["canonical_dust_safe_closure"]["status"], "VERIFIED_CANONICAL_DUST_SAFE_CLOSURE")
+            self.assertEqual(len(intel.records), 1)
+
+    def test_meaningful_residual_cannot_use_dust_safe_closure(self):
+        with tempfile.TemporaryDirectory() as directory, patch("engine.paper_autopilot.close_lifecycle_record", None):
+            root = pathlib.Path(directory)
+            broker = _ResidualBroker(quantity="0.01", market_value="0.1")
+            engine = self._engine(root, broker, _TradeIntel())
+            row = _row("SWING")
+            row["quantity"] = 1.234567
+            with engine._connect() as conn:
+                columns = ", ".join(row)
+                placeholders = ", ".join("?" for _ in row)
+                conn.execute(f"INSERT INTO paper_positions ({columns}, created_at, updated_at) VALUES ({placeholders}, ?, ?)", (*row.values(), _now(), _now()))
+                conn.commit()
+            engine._runtime_state["authorized_lane_exit_pending"] = {
+                "exit-1": {"position_id": row["position_id"], "symbol": row["symbol"], "lane_id": "SWING", "order_id": "exit-1", "client_order_id": "swing-exit", "exit_reason": "holding_window_expired", "normalized_sell_qty": 1.234567}
+            }
+
+            result = engine._refresh_authorized_lane_exit_pending()
+
+            self.assertEqual(result["filled"], 0)
+            self.assertEqual(result["pending"], 1)
+            self.assertFalse((root / "broker_truth_records_v1.json").exists())
+            state = engine._runtime_state["native_lane_exit_lifecycle_v1"][row["position_id"]]
+            self.assertEqual(state["closure_state"], "AWAITING_BROKER_ZERO")
 
     def test_mismatched_broker_order_cannot_close_same_lifecycle(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -654,7 +654,13 @@ def broker_residual_lookup(
     if abs(residual) <= tolerance:
         return _residual_result(position_id, symbol, residual, source, "ZERO_CONFIRMED", row, response, exit_allowed=True, tolerance=tolerance)
     dust = bool(response.get("is_dust")) or (abs(residual) < 0.001)
-    return _residual_result(position_id, symbol, residual, source, "DUST_RESIDUAL" if dust else "NONZERO_CONFIRMED", row, response, tolerance=tolerance)
+    result = _residual_result(position_id, symbol, residual, source, "DUST_RESIDUAL" if dust else "NONZERO_CONFIRMED", row, response, tolerance=tolerance)
+    if dust:
+        result["dust_classification"] = classify_dust_position_v1({
+            **dict(response), "symbol": symbol, "qty": residual,
+            "asset_type": row.get("asset_type") or row.get("asset_class"),
+        })
+    return result
 
 
 def _residual_result(position_id: str, symbol: str, residual: float | None, source: str, status: str, row: Mapping[str, Any], response: Mapping[str, Any], *, exit_allowed: bool = False, tolerance: float | None = None) -> dict[str, Any]:

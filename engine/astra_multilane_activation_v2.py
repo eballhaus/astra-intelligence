@@ -449,8 +449,15 @@ def lane_handoff_proof(
 
 
 def strict_broker_truth(row: Mapping[str, Any]) -> bool:
-    """Strict truth requires paired fills, a closed lifecycle, and broker-zero proof."""
+    """Strict truth requires paired fills and broker-zero or verified dust-safe closure."""
     evidence = _text(row.get("evidence_class") or row.get("truth_quality")).upper()
+    dust_safe = dict(row.get("canonical_dust_safe_closure") or {})
+    closure_proven = bool(row.get("broker_residual_zero_confirmed") or row.get("broker_zero_confirmed")) or bool(
+        dust_safe.get("status") == "VERIFIED_CANONICAL_DUST_SAFE_CLOSURE"
+        and dust_safe.get("identity_verified") is True
+        and dust_safe.get("full_exit_fill_verified") is True
+        and bool(dict(dust_safe.get("dust_classification") or {}).get("is_dust"))
+    )
     return bool(
         evidence == TRUTH_CLASS
         and _text(row.get("entry_fill_id") or row.get("entry_order_fill_id"))
@@ -458,7 +465,7 @@ def strict_broker_truth(row: Mapping[str, Any]) -> bool:
         and _text(row.get("entry_order_id") or row.get("broker_order_id"))
         and _text(row.get("exit_order_id"))
         and _text(row.get("lifecycle_id"))
-        and bool(row.get("broker_residual_zero_confirmed") or row.get("broker_zero_confirmed"))
+        and closure_proven
     )
 
 
