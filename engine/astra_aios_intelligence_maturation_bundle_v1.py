@@ -127,7 +127,10 @@ def _evidence(payload: dict[str, Any]) -> int:
 
 
 def _status(payload: dict[str, Any]) -> str:
-    return text(first(payload.get("status"), payload.get("health"), payload.get("maturity"), default="warming_up"), "warming_up")
+    status = text(first(payload.get("status"), payload.get("health"), payload.get("maturity"), default="warming_up"), "warming_up")
+    if status == "warming_up" and bool(payload.get("ok")):
+        return "ok"
+    return status
 
 
 def _summary_for(name: str, sources: list[tuple[str, dict[str, Any]]]) -> str:

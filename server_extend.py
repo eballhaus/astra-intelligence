@@ -34538,6 +34538,8 @@ def candidate_ranking_attribution_promotion_intelligence_v1(force: bool = False)
 def _intelligence_quality_endpoint(module_obj, marker: str, force: bool = False):
     try:
         statuses = _learning_acceleration_status_bundle()
+        if getattr(module_obj, "module_name", None) == "astra_aios_intelligence_maturation_bundle_v1":
+            statuses = _attach_aios_upstream_facts(statuses)
         out = dict(module_obj.status(statuses=statuses, force=bool(force)) or {})
         out[marker] = True
         out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
@@ -34771,7 +34773,7 @@ def astra_aios_intelligence_maturation_bundle_v1(force: bool = False):
 @router.get("/api/astra_aios_throughput_institutional_memory_optimization_v1")
 def astra_aios_throughput_institutional_memory_optimization_v1(force: bool = False):
     try:
-        payload = dict(ASTRA_AIOS_INTELLIGENCE_MATURATION_BUNDLE.status(statuses=_learning_acceleration_status_bundle(), force=bool(force)) or {})
+        payload = dict(ASTRA_AIOS_INTELLIGENCE_MATURATION_BUNDLE.status(statuses=_attach_aios_upstream_facts(_learning_acceleration_status_bundle()), force=bool(force)) or {})
         out = dict(payload.get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
         out["astra_aios_throughput_institutional_memory_optimization_v1"] = True
         out["source_aios_status"] = payload.get("status")
@@ -45647,6 +45649,26 @@ def _astra_intelligence_governance_v1(payload=None):
         **_governance_safety_flags(),
         "generated_at": _now_utc_iso(),
     }
+
+
+def _attach_aios_upstream_facts(statuses: dict) -> dict:
+    """Attach canonical Governance/Consensus/Knowledge Graph facts into a statuses map BEFORE the AIC coordinator runs.
+
+    The AIC (AIOS Intelligence Core) at engine/astra_aios_intelligence_maturation_bundle_v1.py
+    consumes `astra_intelligence_governance_v1`, `consensus_engine_v1`, and
+    `knowledge_graph_foundation_v1` directly. Reusing the canonical builders ensures the
+    upstream facts are available ahead of AIC computation with no duplicated architecture.
+    """
+    statuses = dict(statuses or {})
+    governance = _astra_intelligence_governance_v1(statuses)
+    statuses.update({
+        "astra_intelligence_governance_v1": governance,
+        "consensus_engine_v1": governance.get("consensus_engine_v1") or {},
+        "knowledge_graph_foundation_v1": governance.get("knowledge_graph_foundation_v1") or {},
+        "data_freshness_trust_engine_v1": governance.get("data_freshness_trust_engine_v1") or {},
+        "data_coverage_engine_v1": governance.get("data_coverage_engine_v1") or {},
+    })
+    return statuses
 
 
 def _astra_executive_summary_v1(unified_payload=None, copilot_payload=None):
@@ -89896,6 +89918,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
         _safe_status("astra_intelligence_maturation_suite_v1", lambda: ASTRA_INTELLIGENCE_MATURATION_SUITE.status(statuses=statuses, force=False))
         _safe_status("astra_adaptive_occupancy_evolution_suite_v1", lambda: ASTRA_ADAPTIVE_OCCUPANCY_EVOLUTION_SUITE.status(statuses=statuses, force=False))
         _safe_status("astra_provider_orchestration_data_governance_v1", lambda: _provider_orchestration_data_governance_v1(force=False, statuses=statuses))
+        statuses.update(_attach_aios_upstream_facts(statuses))
         _safe_status("astra_aios_intelligence_maturation_bundle_v1", lambda: ASTRA_AIOS_INTELLIGENCE_MATURATION_BUNDLE.status(statuses=statuses, force=False))
         statuses["astra_aios_throughput_institutional_memory_optimization_v1"] = dict((statuses.get("astra_aios_intelligence_maturation_bundle_v1") or {}).get("astra_aios_throughput_institutional_memory_optimization_v1") or {})
 

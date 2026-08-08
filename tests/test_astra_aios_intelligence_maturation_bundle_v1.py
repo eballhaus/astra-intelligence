@@ -198,5 +198,94 @@ class AstraAiosControlPlaneMetricIntegrityTests(unittest.TestCase):
         self.assertEqual(out["exit_intelligence_maturity"], 71.0)
 
 
+def aic(statuses: dict):
+    with tempfile.TemporaryDirectory() as state_dir:
+        return AstraAiosIntelligenceMaturationBundleV1(state_dir=state_dir)._aic(
+            statuses,
+            {"average_satellite_confidence": 80.0, "satellites_registered": 5},
+            {"confidence": 75.0, "status": "ok"},
+            {"status": "ok"},
+            {"status": "ok", "successful_retrievals": 12},
+        )
+
+
+GOVERNANCE = {
+    "status": "ok",
+    "consensus_score": 83.0,
+    "knowledge_graph_score": 70.0,
+}
+
+CONSENSUS = {
+    "ok": True,
+    "suite": "Consensus Engine V1",
+    "consensus_score": 83.0,
+}
+
+KNOWLEDGE_GRAPH = {
+    "ok": True,
+    "suite": "Knowledge Graph Foundation V1",
+    "graph_confidence": 70.0,
+}
+
+
+class AstraAiosAicUpstreamFactOrderingTests(unittest.TestCase):
+    def test_upstream_facts_are_consumed_when_present(self):
+        out = aic({
+            "astra_intelligence_governance_v1": GOVERNANCE,
+            "consensus_engine_v1": CONSENSUS,
+            "knowledge_graph_foundation_v1": KNOWLEDGE_GRAPH,
+        })
+        self.assertEqual(out["governance_status"], "ok")
+        self.assertEqual(out["consensus_status"], "ok")
+        self.assertEqual(out["knowledge_graph_status"], "ok")
+        self.assertEqual(out["consensus_items"], 1)
+        self.assertEqual(out["priorities_by_domain"]["governance"], 1)
+        self.assertEqual(out["priorities_by_domain"]["consensus"], 1)
+        self.assertEqual(out["priorities_by_domain"]["knowledge_graph"], 1)
+        self.assertAlmostEqual(out["aic_coordination_score"], (80.0 + 75.0 + 83.0 + 70.0 + 70.0) / 5.0, delta=0.01)
+
+    def test_missing_facts_stay_warming_up_and_not_fabricated(self):
+        out = aic({})
+        self.assertEqual(out["governance_status"], "warming_up")
+        self.assertEqual(out["consensus_status"], "warming_up")
+        self.assertEqual(out["knowledge_graph_status"], "warming_up")
+        self.assertEqual(out["consensus_items"], 0)
+        self.assertEqual(out["priorities_by_domain"]["governance"], 0)
+        self.assertEqual(out["priorities_by_domain"]["consensus"], 0)
+        self.assertEqual(out["priorities_by_domain"]["knowledge_graph"], 0)
+        self.assertEqual(out["aic_coordination_score"], (80.0 + 75.0 + 0.0 + 0.0 + 70.0) / 5.0)
+
+    def test_canonical_ok_flag_is_recognized_as_healthy_not_warming(self):
+        out = aic({
+            "astra_intelligence_governance_v1": {"status": "ok", "consensus_score": 83.0, "knowledge_graph_score": 70.0},
+            "consensus_engine_v1": {"ok": True, "consensus_score": 83.0},
+            "knowledge_graph_foundation_v1": {"ok": True, "graph_confidence": 70.0},
+        })
+        self.assertEqual(out["consensus_status"], "ok")
+        self.assertEqual(out["knowledge_graph_status"], "ok")
+
+    def test_false_ok_flag_keeps_warming_up(self):
+        out = aic({
+            "astra_intelligence_governance_v1": {"status": "ok", "consensus_score": 83.0, "knowledge_graph_score": 70.0},
+            "consensus_engine_v1": {"ok": False},
+            "knowledge_graph_foundation_v1": {"ok": False},
+        })
+        self.assertEqual(out["consensus_status"], "warming_up")
+        self.assertEqual(out["knowledge_graph_status"], "warming_up")
+
+    def test_aic_adds_no_provider_or_broker_calls(self):
+        out = aic({
+            "astra_intelligence_governance_v1": GOVERNANCE,
+            "consensus_engine_v1": CONSENSUS,
+            "knowledge_graph_foundation_v1": KNOWLEDGE_GRAPH,
+        })
+        self.assertEqual(out["provider_calls_used"], 0)
+        self.assertEqual(out["llm_calls_used"], 0)
+        self.assertEqual(out["api_calls_used"], 0)
+        self.assertEqual(out["broker_execution_added"], False)
+        self.assertEqual(out["live_trading_changed"], False)
+        self.assertEqual(out["behavior_safe_to_apply"], False)
+
+
 if __name__ == "__main__":
     unittest.main()
