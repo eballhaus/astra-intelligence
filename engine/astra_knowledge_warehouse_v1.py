@@ -104,6 +104,25 @@ class AstraKnowledgeWarehouseV1(CachedDiagnosticModule):
         ranked.sort(key=lambda pair: (-pair[0], str(pair[1].get("store"))))
         return [row for _, row in ranked[: max(1, min(MAX_FILES, int(max_files or MAX_FILES)))]]
 
+    def source_references(self, allowed_paths: set[str] | None = None, max_sources: int = MAX_FILES) -> list[dict[str, Any]]:
+        """Return bounded manifest references without opening raw evidence."""
+        allowed = {str(path) for path in (allowed_paths or set())}
+        rows = []
+        for source in self._catalog():
+            path = str(source.get("path") or "")
+            if allowed and path not in allowed:
+                continue
+            if not source.get("exists") or not path.endswith(".jsonl"):
+                continue
+            rows.append({
+                "source_identity": source.get("store"), "path": path, "index": source.get("index"),
+                "owner": source.get("owner"), "evidence_class": source.get("evidence_class"),
+                "authority": source.get("authority"), "size_bytes": source.get("size_bytes", 0),
+                "record_count_estimate": source.get("record_count_estimate"),
+                "index_generation": source.get("index_generation"), "index_available": source.get("index_available", False),
+            })
+        return sorted(rows, key=lambda row: str(row["path"]))[:max(1, min(MAX_FILES, int(max_sources or MAX_FILES)))]
+
     def query(self, query: dict[str, Any] | None = None) -> dict[str, Any]:
         started = time.perf_counter()
         requested = dict(query or {})

@@ -21,6 +21,12 @@ from engine.astra_evidence_utilization_information_value_v1 import (
 from engine.astra_historical_evidence_mining_knowledge_distillation_v1 import (
     build_historical_evidence_mining_knowledge_distillation_v1,
 )
+from engine.astra_historical_learning_compression_helpers_v1 import (
+    THROUGHPUT,
+    adaptive_throughput_v1,
+    profile_and_compress_partition_v1,
+    warehouse_partition_references_v1,
+)
 from engine.astra_storage_cache_attribution_learning_efficiency_v1 import (
     INDEX_DIMENSIONS,
     OUTCOME_INTERACTION_PAIRS,
@@ -35,9 +41,12 @@ from engine.astra_storage_cache_attribution_learning_efficiency_v1 import (
 VERSION = "1.0.0"
 CHECKPOINT_FILE = "astra_incremental_historical_learning_governor_v1.json"
 DELTA_INDEX_FILE = "incremental_historical_learning_governor_v1.summary_index.json"
+PACKET_REGISTRY_FILE = "historical_learning_compressed_packets_v1.json"
 MAX_PARTITIONS_PER_CYCLE = 1
 MAX_ROWS_PER_PARTITION = 240
 MAX_BYTES_PER_PARTITION = 64 * 1024
+MAX_ROWS_PER_PARTITION_HARD = int(THROUGHPUT["ACCELERATED"]["rows"])
+MAX_BYTES_PER_PARTITION_HARD = int(THROUGHPUT["ACCELERATED"]["bytes"])
 MAX_AGGREGATE_UPDATES_PER_PARTITION = 3_840
 MAX_BUCKETS_PER_DIMENSION = 40
 MAX_V8_PATTERNS_PER_UPDATE = 64
@@ -118,6 +127,16 @@ def _resource_decision(state: Path, facts: Mapping[str, Any] | None = None) -> d
     return {"decision": "RUN", "reason": "BOUNDED_BACKGROUND_WINDOW"}
 
 
+def _warehouse_sources(state: Path) -> dict[str, dict[str, Any]]:
+    """Use the Warehouse Manager manifest, never a V10 filesystem discovery pass."""
+    references = warehouse_partition_references_v1(str(state), set(TARGET_COLD_FILES))
+    return {str(item.get("path")): dict(item) for item in references if item.get("path")}
+
+
+def _work_budget(checkpoint: Mapping[str, Any], resource_facts: Mapping[str, Any] | None) -> dict[str, Any]:
+    return adaptive_throughput_v1((checkpoint.get("throughput") or {}), resource_facts)
+
+
 def _source_state(checkpoint: dict[str, Any], name: str, snapshot: Mapping[str, Any]) -> dict[str, Any]:
     sources = checkpoint.setdefault("sources", {})
     previous = dict(sources.get(name) or {})
@@ -152,10 +171,15 @@ def _priority(name: str, summary: Mapping[str, Any]) -> int:
     return base
 
 
-def _candidates(state: Path, checkpoint: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, int]]:
+def _candidates(
+    state: Path, checkpoint: dict[str, Any], allowed_sources: set[str] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
     candidates, counts = [], Counter()
     index_dir = state / "storage_summary_indexes"
     for name in TARGET_COLD_FILES:
+        if allowed_sources is not None and name not in allowed_sources:
+            counts["warehouse_unavailable"] += 1
+            continue
         snapshot = _snapshot(state / name)
         if not snapshot:
             continue
@@ -229,26 +253,27 @@ def _bucket(summary: dict[str, Any], kind: str, key: str, value: str, tier: str)
 
 
 def _accumulate(bucket: dict[str, Any], row: Mapping[str, Any]) -> None:
+    weight = max(1, int(row.get("_v10_compression_weight") or 1))
     value = _outcome_value(dict(row))
-    bucket["observation_count"] += 1
+    bucket["observation_count"] += weight
     timestamp = _outcome_timestamp(dict(row))
     if timestamp:
         first, last = bucket.get("first_observation_timestamp"), bucket.get("last_observation_timestamp")
         bucket["first_observation_timestamp"] = timestamp if first in (None, "UNAVAILABLE") or timestamp < first else first
         bucket["last_observation_timestamp"] = timestamp if last in (None, "UNAVAILABLE") or timestamp > last else last
     if value is None:
-        bucket["unknown_outcome_count"] += 1
+        bucket["unknown_outcome_count"] += weight
         return
-    bucket["outcome_count"] += 1
-    bucket["return_sum"] += value
+    bucket["outcome_count"] += weight
+    bucket["return_sum"] += value * weight
     if value > 0:
-        bucket["wins"] += 1
-        bucket["positive_return_sum"] += value
+        bucket["wins"] += weight
+        bucket["positive_return_sum"] += value * weight
     elif value < 0:
-        bucket["losses"] += 1
-        bucket["negative_return_abs_sum"] += abs(value)
+        bucket["losses"] += weight
+        bucket["negative_return_abs_sum"] += abs(value) * weight
     else:
-        bucket["neutral_count"] += 1
+        bucket["neutral_count"] += weight
 
 
 def _materialize(summary: dict[str, Any]) -> None:
@@ -269,7 +294,7 @@ def _materialize(summary: dict[str, Any]) -> None:
 
 
 def _merge_partition(delta: dict[str, Any], source: str, rows: list[dict[str, Any]]) -> dict[str, int]:
-    counters = Counter(rows_examined=len(rows), outcome_linked=0, aggregate_updates=0)
+    counters = Counter(rows_examined=sum(max(1, int(row.get("_v10_compression_weight") or 1)) for row in rows), outcome_linked=0, aggregate_updates=0)
     for row in rows:
         outcome = _outcome_value(row)
         label = str(row.get("outcome_label") or row.get("outcome") or row.get("result") or "unknown").strip().lower()
@@ -280,8 +305,9 @@ def _merge_partition(delta: dict[str, Any], source: str, rows: list[dict[str, An
         if not eligible:
             continue
         tier = _outcome_tier(row, source)
-        counters["outcome_linked"] += 1
-        delta.setdefault("evidence_tier_counts", {})[tier] = int(delta.setdefault("evidence_tier_counts", {}).get(tier) or 0) + 1
+        weight = max(1, int(row.get("_v10_compression_weight") or 1))
+        counters["outcome_linked"] += weight
+        delta.setdefault("evidence_tier_counts", {})[tier] = int(delta.setdefault("evidence_tier_counts", {}).get(tier) or 0) + weight
         for key, value in eligible.items():
             _accumulate(_bucket(delta, "outcome_by_dimension", key, value, tier), row)
             counters["aggregate_updates"] += 1
@@ -318,11 +344,14 @@ def _delta_index(delta: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _coverage(state: Path, checkpoint: Mapping[str, Any]) -> dict[str, Any]:
+def _coverage(
+    state: Path, checkpoint: Mapping[str, Any], allowed_sources: set[str] | None = None,
+) -> dict[str, Any]:
     v8 = build_historical_evidence_mining_knowledge_distillation_v1(str(state))
     v9 = build_evidence_utilization_information_value_v1(str(state))
-    candidates, complete = _candidates(state, dict(checkpoint))
+    candidates, complete = _candidates(state, dict(checkpoint), allowed_sources)
     sources = checkpoint.get("sources") or {}
+    packets = _read(state / PACKET_REGISTRY_FILE)
     completed = sum(int(item.get("partitions_completed") or 0) for item in sources.values() if isinstance(item, Mapping))
     return {
         "indexed_record_equivalents": (v8.get("learning_coverage") or {}).get("indexed_historical_observations_available", 0),
@@ -333,6 +362,8 @@ def _coverage(state: Path, checkpoint: Mapping[str, Any]) -> dict[str, Any]:
         "partition_errors": int(complete.get("error") or 0),
         "partitions_deferred": int((checkpoint.get("velocity") or {}).get("deferred_cycles") or 0),
         "partitions_no_outcome_data": int((checkpoint.get("velocity") or {}).get("no_outcome_partitions") or 0),
+        "compressed_packet_count": len(packets.get("packets") or {}),
+        "pending_outcome_count": len(packets.get("pending_outcomes") or {}),
         "outcome_aggregates": (v8.get("learning_coverage") or {}).get("outcome_aggregate_count", 0),
         "v8_patterns": (v8.get("learning_coverage") or {}).get("pattern_count", 0),
         "v8_interactions": (v8.get("learning_coverage") or {}).get("interaction_count", 0),
@@ -351,15 +382,19 @@ def build_incremental_historical_learning_governor_v1(
     """Read-only V10 status.  It never starts a mining partition."""
     state = Path(state_dir)
     checkpoint = _read(state / CHECKPOINT_FILE)
-    candidates, partition_counts = _candidates(state, checkpoint)
+    warehouse_sources = _warehouse_sources(state)
+    candidates, partition_counts = _candidates(state, checkpoint, set(warehouse_sources))
+    throughput = _work_budget(checkpoint, resource_facts)
     return {
         "suite": "ASTRA Incremental Historical Learning & Coverage Governor V10", "version": VERSION,
         "enabled": True, "current_status": "ERROR" if partition_counts.get("error") else "READY" if candidates else "IDLE_OR_COMPLETE",
         "resource_decision": _resource_decision(state, resource_facts),
         "current_priority_partition": candidates[0] if candidates else None,
         "partition_contract": {"states": ["PENDING", "READY", "PROCESSING", "COMPLETE", "DEFERRED_RESOURCE_PRESSURE", "NO_OUTCOME_DATA", "UNCHANGED", "ERROR"], "checkpoint_file": CHECKPOINT_FILE},
-        "work_budget": {"max_partitions_per_cycle": MAX_PARTITIONS_PER_CYCLE, "max_rows_per_partition": MAX_ROWS_PER_PARTITION, "max_bytes_per_partition": MAX_BYTES_PER_PARTITION, "max_aggregate_updates": MAX_AGGREGATE_UPDATES_PER_PARTITION, "max_v8_patterns_updated": MAX_V8_PATTERNS_PER_UPDATE, "max_v8_interactions_updated": MAX_V8_INTERACTIONS_PER_UPDATE},
-        "coverage_funnel": _coverage(state, checkpoint), "last_checkpoint": checkpoint.get("last_checkpoint"),
+        "work_budget": {"default": {"max_partitions_per_cycle": MAX_PARTITIONS_PER_CYCLE, "max_rows_per_partition": MAX_ROWS_PER_PARTITION, "max_bytes_per_partition": MAX_BYTES_PER_PARTITION}, "recommended": throughput.get("budget"), "hard_max": {"max_rows_per_partition": MAX_ROWS_PER_PARTITION_HARD, "max_bytes_per_partition": MAX_BYTES_PER_PARTITION_HARD}, "max_aggregate_updates": MAX_AGGREGATE_UPDATES_PER_PARTITION, "max_v8_patterns_updated": MAX_V8_PATTERNS_PER_UPDATE, "max_v8_interactions_updated": MAX_V8_INTERACTIONS_PER_UPDATE},
+        "warehouse_manager": {"owner": "AstraKnowledgeWarehouseV1", "source_references_available": len(warehouse_sources), "unavailable_target_sources": partition_counts.get("warehouse_unavailable", 0)},
+        "canonical_ownership": {"warehouse_manager": "AstraKnowledgeWarehouseV1", "compression": "Knowledge Compression Engine V1", "teacher": "Teacher Layer V1", "v8": "Historical Evidence Mining & Knowledge Distillation V1", "v9": "Evidence Utilization & Information Value V1", "v10": "Incremental Historical Learning Governor V1", "v10_1": "Historical Learning Compression Helpers V1", "adaptation": "V7/Cortex"},
+        "throughput": throughput, "coverage_funnel": _coverage(state, checkpoint, set(warehouse_sources)), "last_checkpoint": checkpoint.get("last_checkpoint"),
         "learning_velocity": dict(checkpoint.get("velocity") or {}), "explicit_cycle_required": True,
         **SAFETY,
     }
@@ -367,16 +402,18 @@ def build_incremental_historical_learning_governor_v1(
 
 def run_incremental_historical_learning_cycle_v1(
     state_dir: str = "state", *, resource_facts: Mapping[str, Any] | None = None,
-    max_partitions: int = MAX_PARTITIONS_PER_CYCLE, max_rows: int = MAX_ROWS_PER_PARTITION,
-    max_bytes: int = MAX_BYTES_PER_PARTITION,
+    max_partitions: int = MAX_PARTITIONS_PER_CYCLE, max_rows: int | None = None,
+    max_bytes: int | None = None,
 ) -> dict[str, Any]:
     """Run at most one safe bounded partition; callers must schedule explicitly."""
     state, started = Path(state_dir), time.monotonic()
-    max_partitions = min(MAX_PARTITIONS_PER_CYCLE, max(0, int(max_partitions)))
-    max_rows = min(MAX_ROWS_PER_PARTITION, max(1, int(max_rows)))
-    max_bytes = min(MAX_BYTES_PER_PARTITION, max(1, int(max_bytes)))
     checkpoint_path = state / CHECKPOINT_FILE
     checkpoint = _read(checkpoint_path)
+    throughput = _work_budget(checkpoint, resource_facts)
+    recommended = dict(throughput.get("budget") or {})
+    max_partitions = min(MAX_PARTITIONS_PER_CYCLE, max(0, int(max_partitions)))
+    max_rows = min(MAX_ROWS_PER_PARTITION_HARD, max(1, int(max_rows if max_rows is not None else recommended.get("rows", MAX_ROWS_PER_PARTITION))))
+    max_bytes = min(MAX_BYTES_PER_PARTITION_HARD, max(1, int(max_bytes if max_bytes is not None else recommended.get("bytes", MAX_BYTES_PER_PARTITION))))
     decision = _resource_decision(state, resource_facts)
     if decision["decision"] != "RUN":
         velocity = checkpoint.setdefault("velocity", {})
@@ -384,7 +421,8 @@ def run_incremental_historical_learning_cycle_v1(
         checkpoint["last_checkpoint"] = {"status": "DEFERRED_RESOURCE_PRESSURE", "reason": decision["reason"], "at": _now()}
         _atomic_write(checkpoint_path, checkpoint)
         return {"status": "DEFERRED_RESOURCE_PRESSURE", "resource_decision": decision, "partitions_processed": [], **SAFETY}
-    candidates, _ = _candidates(state, checkpoint)
+    warehouse_sources = _warehouse_sources(state)
+    candidates, _ = _candidates(state, checkpoint, set(warehouse_sources))
     if not candidates or max_partitions <= 0:
         return {"status": "UNCHANGED", "resource_decision": decision, "partitions_processed": [], **SAFETY}
     candidate = candidates[0]
@@ -396,9 +434,15 @@ def run_incremental_historical_learning_cycle_v1(
         checkpoint["last_checkpoint"] = {"status": "ERROR", "partition_id": candidate["partition_id"], "reason": error, "at": _now()}
         _atomic_write(checkpoint_path, checkpoint)
         return {"status": "ERROR", "resource_decision": decision, "partitions_processed": [{**candidate, "status": "ERROR", "error": error}], **SAFETY}
+    compression = profile_and_compress_partition_v1(
+        {**warehouse_sources[candidate["source"]], "source_snapshot": candidate["source_snapshot"]}, candidate["partition_id"], rows,
+        _read(state / PACKET_REGISTRY_FILE),
+    )
+    _atomic_write(state / PACKET_REGISTRY_FILE, compression["updated_registry"])
+    representative_rows = list(compression.get("representative_rows") or rows)
     delta_path = state / "storage_summary_indexes" / DELTA_INDEX_FILE
     delta = _read(delta_path) or _empty_delta()
-    counters = _merge_partition(delta, candidate["source"], rows)
+    counters = _merge_partition(delta, candidate["source"], representative_rows)
     if counters["aggregate_updates"] > MAX_AGGREGATE_UPDATES_PER_PARTITION:
         raise RuntimeError("bounded aggregate update contract exceeded")
     _atomic_write(delta_path, _delta_index(delta))
@@ -406,13 +450,18 @@ def run_incremental_historical_learning_cycle_v1(
     partition_status = "NO_OUTCOME_DATA" if not counters["outcome_linked"] else "COMPLETE" if next_offset >= source_size else "READY"
     source_state.update({"next_offset": next_offset, "last_status": partition_status, "last_partition_id": candidate["partition_id"], "last_processed_at": _now()})
     source_state["partitions_completed"] = int(source_state.get("partitions_completed") or 0) + 1
+    source_state["packets_compressed"] = int(source_state.get("packets_compressed") or 0) + len(compression.get("packets") or [])
+    source_state["raw_records_represented"] = int(source_state.get("raw_records_represented") or 0) + len(rows)
     elapsed = round(time.monotonic() - started, 6)
     velocity = checkpoint.setdefault("velocity", {})
-    velocity.update({"last_cycle_outcome_links_added": counters["outcome_linked"], "last_cycle_aggregate_updates": counters["aggregate_updates"], "last_cycle_rows_examined": counters["rows_examined"], "last_cycle_duration_seconds": elapsed, "evidence_rows_per_second": round(counters["rows_examined"] / elapsed, 3) if elapsed else None})
+    throughput_state = checkpoint.setdefault("throughput", {})
+    throughput_state["healthy_successful_cycles"] = int(throughput_state.get("healthy_successful_cycles") or 0) + 1
+    throughput_state["last_mode"] = throughput.get("mode")
+    velocity.update({"last_cycle_outcome_links_added": counters["outcome_linked"], "last_cycle_aggregate_updates": counters["aggregate_updates"], "last_cycle_rows_examined": len(rows), "last_cycle_representative_rows": counters["rows_examined"], "last_cycle_compression_ratio": compression.get("compression_ratio"), "last_cycle_learning_yield_per_1000_records": round(counters["outcome_linked"] * 1000 / len(rows), 3) if rows else 0.0, "last_cycle_duration_seconds": elapsed, "evidence_rows_per_second": round(len(rows) / elapsed, 3) if elapsed else None})
     if not counters["outcome_linked"]:
         velocity["no_outcome_partitions"] = int(velocity.get("no_outcome_partitions") or 0) + 1
-    checkpoint["last_checkpoint"] = {"status": partition_status, "partition_id": candidate["partition_id"], "next_cursor": next_offset, "at": _now()}
+    checkpoint["last_checkpoint"] = {"status": partition_status, "partition_id": candidate["partition_id"], "next_cursor": next_offset, "compression_profile": (compression.get("partition_profile") or {}).get("profile_state"), "at": _now()}
     _atomic_write(checkpoint_path, checkpoint)
     v8 = build_historical_evidence_mining_knowledge_distillation_v1(str(state))
     v9 = build_evidence_utilization_information_value_v1(str(state))
-    return {"status": partition_status, "resource_decision": decision, "partitions_processed": [{**candidate, "status": partition_status, "next_cursor": next_offset, "rows_examined": counters["rows_examined"], "outcome_linked_count": counters["outcome_linked"], "aggregate_updates": counters["aggregate_updates"], "bytes_read": bytes_read, "duration_seconds": elapsed}], "v8_bounded_snapshot": {"patterns": (v8.get("learning_coverage") or {}).get("pattern_count"), "interactions": (v8.get("learning_coverage") or {}).get("interaction_count"), "lessons": (v8.get("learning_coverage") or {}).get("distilled_lesson_count")}, "v9_bounded_snapshot": {"validation_priorities": sum(item.get("teaching_priority") == "VALIDATION_PRIORITY" for item in ((v9.get("learning_teaching_priority") or {}).get("items") or [])), "v7_candidates": len((v9.get("v7_cortex_handoff") or {}).get("candidates") or [])}, **SAFETY}
+    return {"status": partition_status, "resource_decision": decision, "throughput": throughput, "partitions_processed": [{**candidate, "status": partition_status, "next_cursor": next_offset, "rows_examined": len(rows), "representative_rows": counters["rows_examined"], "outcome_linked_count": counters["outcome_linked"], "aggregate_updates": counters["aggregate_updates"], "bytes_read": bytes_read, "duration_seconds": elapsed, "compression_profile": compression.get("partition_profile"), "compression_ratio": compression.get("compression_ratio")}], "canonical_handoffs": {"compression": compression.get("canonical_compression_handoff"), "teacher": compression.get("canonical_teacher_handoff")}, "v8_bounded_snapshot": {"patterns": (v8.get("learning_coverage") or {}).get("pattern_count"), "interactions": (v8.get("learning_coverage") or {}).get("interaction_count"), "lessons": (v8.get("learning_coverage") or {}).get("distilled_lesson_count")}, "v9_bounded_snapshot": {"validation_priorities": sum(item.get("teaching_priority") == "VALIDATION_PRIORITY" for item in ((v9.get("learning_teaching_priority") or {}).get("items") or [])), "v7_candidates": len((v9.get("v7_cortex_handoff") or {}).get("candidates") or [])}, **SAFETY}

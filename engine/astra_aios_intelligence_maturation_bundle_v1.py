@@ -1282,3 +1282,19 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             **_safe_flags(),
         }
         return with_safety(out)
+
+
+def build_teacher_handoff_from_compressed_lessons_v1(lessons: list[dict[str, Any]]) -> dict[str, Any]:
+    """Run the existing Teacher Layer against canonical compressed lessons only."""
+    accepted = [{
+        "importance": item.get("priority", "MEDIUM"),
+        "source": item.get("source_system", "knowledge_compression_engine_v1"),
+        "summary": item.get("compressed_summary", "compressed historical evidence"),
+        "confidence": item.get("confidence", 0.0),
+        "retention_score": item.get("confidence", 0.0),
+        "symbol": "MULTI", "sector": "unknown", "regime": "source_declared", "horizon": "source_declared",
+        "outcome": "observational_historical_packet",
+    } for item in lessons[:MEMORY_BUDGETS["daily_max_lessons"]] if isinstance(item, dict)]
+    teacher = AstraAiosIntelligenceMaturationBundleV1()._teacher_layer(accepted)
+    teacher.update({"owner": "Teacher Layer V1", "persisted": False, "handoff_only": True, "full_history_scan_count": 0})
+    return teacher

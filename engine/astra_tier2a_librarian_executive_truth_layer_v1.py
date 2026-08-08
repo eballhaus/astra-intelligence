@@ -557,3 +557,31 @@ class AstraTier2aLibrarianExecutiveTruthLayerV1(CachedDiagnosticModule):
             **_safe_flags(),
         }
         return with_safety(out)
+
+
+def compress_historical_packet_handoffs_v1(packets: list[dict[str, Any]]) -> dict[str, Any]:
+    """Use the canonical Librarian compression contract for V10 packet handoffs.
+
+    This is deliberately pure: it returns a handoff preview and never writes a
+    cache, lesson registry, or authoritative truth.
+    """
+    compact = [dict(packet) for packet in packets[:MAX_LESSONS] if isinstance(packet, dict)]
+    payload = {
+        "historical_packet_handoffs": compact,
+        "evidence_count": sum(to_int(item.get("raw_equivalent_count"), 0) for item in compact),
+        "compression_status": "v10_handoff_preview",
+        "source_packet_ids": [item.get("packet_id") for item in compact if item.get("packet_id")],
+    }
+    lessons = AstraTier2aLibrarianExecutiveTruthLayerV1()._build_lessons([
+        ("astra_incremental_historical_learning_governor_v1", payload),
+    ])
+    return {
+        "owner": "Knowledge Compression Engine V1",
+        "status": "READY_FOR_TEACHER" if lessons else "INSUFFICIENT_EVIDENCE",
+        "compressed_lessons": lessons,
+        "source_packet_ids": payload["source_packet_ids"],
+        "deduplication_owner": "Astra Librarian V1",
+        "persisted": False,
+        "full_history_scan_count": 0,
+        **_safe_flags(),
+    }
