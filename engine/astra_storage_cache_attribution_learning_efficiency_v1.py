@@ -220,6 +220,27 @@ def _outcome_timestamp(row: dict[str, Any]) -> str:
     return ""
 
 
+def outcome_dimensions_for_row(row: dict[str, Any], source_name: str = "") -> dict[str, str]:
+    """Canonical bounded outcome dimensions shared by summary consumers."""
+    confidence = first(row.get("confidence"), row.get("confidence_score"), row.get("score"), row.get("rank_score"), default=0)
+    capture = first(row.get("capture_ratio"), row.get("profit_capture"), row.get("average_capture_ratio"), row.get("return_pct"), row.get("pnl_pct"), default=0)
+    outcome_raw = first(row.get("outcome_label"), row.get("outcome"), row.get("result"), row.get("status"), default="unknown")
+    source_defaults = _source_dimension_defaults(source_name)
+    return {
+        "symbol": _first_from(row, ("symbol", "ticker", "asset", "asset_symbol")),
+        "horizon": _first_from(row, ("horizon", "best_horizon", "horizon_style", "paper_entry_horizon_style", "hold_horizon")),
+        "regime": _first_from(row, ("regime", "market_regime", "condition", "market_condition")),
+        "catalyst": _first_from(row, ("catalyst", "catalyst_type", "theme", "narrative")),
+        "archetype": _first_from(row, ("archetype", "setup", "trade_archetype", "pattern")),
+        "exit_type": _first_from(row, ("exit_type", "exit_policy", "best_exit_policy", "policy", "exit_style"), source_defaults["exit_type"]),
+        "trade_family": _first_from(row, ("trade_family", "family", "peer_group", "sector_family"), source_defaults["trade_family"]),
+        "profit_capture_bucket": _bucket(capture, "low_capture", "medium_capture", "high_capture"),
+        "ranking_factor": _first_from(row, ("ranking_factor", "most_predictive_ranking_factor", "factor", "dominant_factor"), source_defaults["ranking_factor"]),
+        "outcome_label": _normal_text(outcome_raw, source_defaults["outcome_label"]),
+        "confidence_bucket": _bucket(confidence, "low_confidence", "medium_confidence", "high_confidence"),
+    }
+
+
 def _outcome_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     returns = [value for value in (_outcome_value(row) for row in rows) if value is not None]
     wins, losses, neutral = sum(value > 0 for value in returns), sum(value < 0 for value in returns), sum(value == 0 for value in returns)
@@ -292,23 +313,7 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
         }
 
     def _dimensions_for_row(self, row: dict[str, Any], source_name: str = "") -> dict[str, str]:
-        confidence = first(row.get("confidence"), row.get("confidence_score"), row.get("score"), row.get("rank_score"), default=0)
-        capture = first(row.get("capture_ratio"), row.get("profit_capture"), row.get("average_capture_ratio"), row.get("return_pct"), row.get("pnl_pct"), default=0)
-        outcome_raw = first(row.get("outcome_label"), row.get("outcome"), row.get("result"), row.get("status"), default="unknown")
-        source_defaults = _source_dimension_defaults(source_name)
-        return {
-            "symbol": _first_from(row, ("symbol", "ticker", "asset", "asset_symbol")),
-            "horizon": _first_from(row, ("horizon", "best_horizon", "horizon_style", "paper_entry_horizon_style", "hold_horizon")),
-            "regime": _first_from(row, ("regime", "market_regime", "condition", "market_condition")),
-            "catalyst": _first_from(row, ("catalyst", "catalyst_type", "theme", "narrative")),
-            "archetype": _first_from(row, ("archetype", "setup", "trade_archetype", "pattern")),
-            "exit_type": _first_from(row, ("exit_type", "exit_policy", "best_exit_policy", "policy", "exit_style"), source_defaults["exit_type"]),
-            "trade_family": _first_from(row, ("trade_family", "family", "peer_group", "sector_family"), source_defaults["trade_family"]),
-            "profit_capture_bucket": _bucket(capture, "low_capture", "medium_capture", "high_capture"),
-            "ranking_factor": _first_from(row, ("ranking_factor", "most_predictive_ranking_factor", "factor", "dominant_factor"), source_defaults["ranking_factor"]),
-            "outcome_label": _normal_text(outcome_raw, source_defaults["outcome_label"]),
-            "confidence_bucket": _bucket(confidence, "low_confidence", "medium_confidence", "high_confidence"),
-        }
+        return outcome_dimensions_for_row(row, source_name)
 
     def _outcome_linked_aggregates(self, rows: list[dict[str, Any]], source_name: str) -> dict[str, Any]:
         """Aggregate only the already bounded source sample, separated by evidence tier."""

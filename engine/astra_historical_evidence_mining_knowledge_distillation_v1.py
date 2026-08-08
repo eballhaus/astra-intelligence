@@ -27,6 +27,7 @@ MIN_PATTERN_SAMPLE = 5
 REPEATABLE_SAMPLE = 12
 LESSON_REGISTRY = "historical_evidence_distilled_lessons_v1.json"
 INDEX_NAMES = (
+    "incremental_historical_learning_governor_v1.summary_index.json",
     "candidate_decision_ledger_v1.jsonl.summary_index.json",
     "outcome_labels_v1.jsonl.summary_index.json",
     "trade_archetype_regime_intelligence_v1.jsonl.summary_index.json",
