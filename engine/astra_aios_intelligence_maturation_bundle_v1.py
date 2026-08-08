@@ -763,17 +763,57 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
         }
 
     def _symbol_behavioral_memory_expansion_v1(self, statuses: dict[str, Any]) -> dict[str, Any]:
+        symbol_sources = {
+            "long_term_memory_symbol_retrieval_suite_v1": ("symbol_memory_quality_score",),
+            "accelerated_learning_symbol_intelligence_suite_v1": (
+                "current_behavior_confidence",
+                "symbol_exit_confidence",
+                "horizon_confidence",
+                "regime_symbol_confidence",
+                "transferable_learning_confidence",
+                "transferable_pattern_confidence",
+                "symbol_personality_quality_score",
+            ),
+            "trade_family_intelligence_v1": ("family_transfer_confidence",),
+            "astra_tier3_historical_satellite_shadow_acceleration_v1": ("confidence",),
+        }
+
+        def _symbol_source_confidence(source_key: str, payload: dict[str, Any]) -> float | None:
+            if not payload:
+                return None
+            marker = text(first(
+                payload.get("cache_freshness"), payload.get("cache_status"), payload.get("freshness"),
+                default="",
+            ), default="").strip().lower()
+            if source_key == "astra_tier3_historical_satellite_shadow_acceleration_v1":
+                if marker not in {"live", "current", "fresh", "rebuilt", "cached_current"}:
+                    return None
+            elif marker in {"stale", "expired", "stale_cache", "missing"}:
+                return None
+            fields = symbol_sources[source_key]
+            values = [clamp(payload.get(field)) for field in fields if payload.get(field) is not None]
+            unique = sorted({round(value, 3) for value in values})
+            if not unique:
+                return None
+            return rounded(sum(unique) / len(unique), 3)
+
         long_memory = self._source(statuses, "long_term_memory_symbol_retrieval_suite_v1")
         accelerated = self._source(statuses, "accelerated_learning_symbol_intelligence_suite_v1")
         family = self._source(statuses, "trade_family_intelligence_v1")
         tier3 = self._source(statuses, "astra_tier3_historical_satellite_shadow_acceleration_v1")
         sources = [p for p in (long_memory, accelerated, family, tier3) if p]
         profile_count = max([to_int(p.get("symbol_profiles_tracked"), 0) for p in sources] + [0])
+        symbol_confidences = {
+            "long_term_memory_symbol_retrieval_suite_v1": _symbol_source_confidence("long_term_memory_symbol_retrieval_suite_v1", long_memory),
+            "accelerated_learning_symbol_intelligence_suite_v1": _symbol_source_confidence("accelerated_learning_symbol_intelligence_suite_v1", accelerated),
+            "trade_family_intelligence_v1": _symbol_source_confidence("trade_family_intelligence_v1", family),
+            "astra_tier3_historical_satellite_shadow_acceleration_v1": _symbol_source_confidence("astra_tier3_historical_satellite_shadow_acceleration_v1", tier3),
+        }
         maturity = _avg([
-            _confidence(long_memory, 0.0) if long_memory else None,
-            _confidence(accelerated, 0.0) if accelerated else None,
-            _confidence(family, 0.0) if family else None,
-            _confidence(tier3, 0.0) if tier3 else None,
+            symbol_confidences["long_term_memory_symbol_retrieval_suite_v1"],
+            symbol_confidences["accelerated_learning_symbol_intelligence_suite_v1"],
+            symbol_confidences["trade_family_intelligence_v1"],
+            symbol_confidences["astra_tier3_historical_satellite_shadow_acceleration_v1"],
         ], 0.0)
         labels = [
             "Momentum Leader",
@@ -788,6 +828,10 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             "system": "Symbol Behavioral Memory Expansion V1",
             "status": "ok" if sources else "insufficient_evidence",
             "symbol_behavioral_memory_maturity": rounded(maturity, 3),
+            "symbol_behavioral_memory_source_confidence": {
+                source_key: rounded(confidence, 3) if confidence is not None else None
+                for source_key, confidence in symbol_confidences.items()
+            },
             "symbol_profiles_tracked": profile_count,
             "tracks_best_horizon": True,
             "tracks_worst_horizon": True,
