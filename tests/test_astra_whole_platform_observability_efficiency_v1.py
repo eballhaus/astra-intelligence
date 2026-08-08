@@ -88,5 +88,70 @@ class WholePlatformObservabilityTests(unittest.TestCase):
         self.assertFalse(payload["v10_status_source_discrepancy"]["automatic_repair_attempted"])
 
 
+    def test_reconciliation_reuses_already_loaded_trace_payload_fresh(self):
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        statuses = {
+            "paper_autopilot_last_trace_v1": {
+                "paper_worker_running": True,
+                "candidates_seen": 4,
+                "evidence_accumulation_capacity_v1": {
+                    "generated_at": now,
+                    "broker_reconciliation_status": "FRESH",
+                    "capacity_authority_owner": "PaperAutopilot._evidence_capacity_snapshot_v1",
+                },
+            }
+        }
+        payload = build_astra_whole_platform_observability_efficiency_v1(statuses)
+        row = next(item for item in payload["domains"] if item["domain"] == "reconciliation")
+        self.assertEqual(row["monitored"], "YES")
+        self.assertEqual(row["evidence_source"], "paper_autopilot_last_trace_v1")
+        self.assertEqual(row["fact_summary"]["reconciliation_status"], "FRESH")
+        self.assertEqual(row["health"], "HEALTHY")
+        self.assertEqual(row["freshness"], "CURRENT")
+        self.assertEqual(payload["provider_calls_added"], 0)
+        self.assertEqual(payload["broker_calls_added"], 0)
+        self.assertEqual(payload["broker_actions_added"], 0)
+        self.assertEqual(payload["llm_calls_added"], 0)
+        self.assertFalse(payload["execution_behavior_changed"])
+        self.assertFalse(payload["frozen_lifecycle_modified"])
+
+    def test_reconciliation_reuses_already_loaded_trace_payload_stale(self):
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        statuses = {
+            "paper_autopilot_last_trace_v1": {
+                "evidence_accumulation_capacity_v1": {
+                    "generated_at": now,
+                    "broker_reconciliation_status": "STALE_OR_UNAVAILABLE",
+                },
+            }
+        }
+        payload = build_astra_whole_platform_observability_efficiency_v1(statuses)
+        row = next(item for item in payload["domains"] if item["domain"] == "reconciliation")
+        self.assertEqual(row["monitored"], "YES")
+        self.assertEqual(row["fact_summary"]["reconciliation_status"], "STALE_OR_UNAVAILABLE")
+        self.assertEqual(row["health"], "FAIL")
+        self.assertEqual(payload["provider_calls_added"], 0)
+        self.assertEqual(payload["broker_actions_added"], 0)
+
+    def test_reconciliation_without_loaded_trace_stays_explicit_gap(self):
+        payload = build_astra_whole_platform_observability_efficiency_v1(self._statuses())
+        row = next(item for item in payload["domains"] if item["domain"] == "reconciliation")
+        self.assertEqual(row["monitored"], "NO")
+        self.assertEqual(row["evidence_source"], None)
+        self.assertIn("reconciliation", payload["monitoring_gaps"])
+
+    def test_dedicated_reconciliation_source_still_wins_over_trace(self):
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        statuses = {
+            "astra_trade_state_reconciliation_v1": {"status": "PASS", "mirror_gap_remaining": 0, "generated_at": now},
+            "paper_autopilot_last_trace_v1": {"evidence_accumulation_capacity_v1": {"generated_at": now, "broker_reconciliation_status": "STALE_OR_UNAVAILABLE"}},
+        }
+        payload = build_astra_whole_platform_observability_efficiency_v1(statuses)
+        row = next(item for item in payload["domains"] if item["domain"] == "reconciliation")
+        self.assertEqual(row["evidence_source"], "astra_trade_state_reconciliation_v1")
+        self.assertEqual(row["fact_summary"]["mirror_gap_remaining"], 0)
+        self.assertEqual(row["health"], "HEALTHY")
+
+
 if __name__ == "__main__":
     unittest.main()

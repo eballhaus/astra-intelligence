@@ -41,7 +41,7 @@ DOMAIN_SPECS = (
     ("candidate_trading_pipeline", "Candidate decision ledger", ("candidate_lineage_governance_v2", "paper_execution_trace", "paper_autopilot_last_trace_v1")),
     ("lane_capacity", "Canonical lane capacity", ("astra_learning_preservation_capacity_v1", "astra_broker_truth_throughput_v1")),
     ("broker", "Broker truth", ("alpaca_paper_status_v1", "astra_broker_truth_throughput_v1")),
-    ("reconciliation", "Broker reconciliation", ("astra_trade_state_reconciliation_v1", "astra_broker_truth_all_in_one_audit_v1")),
+    ("reconciliation", "Broker reconciliation", ("astra_trade_state_reconciliation_v1", "astra_broker_truth_all_in_one_audit_v1", "paper_autopilot_last_trace_v1")),
     ("strict_truth", "Canonical lifecycle truth", ("cortex_lifecycle_evidence_master_truth_v1", "astra_post_reset_truth_v1")),
     ("learning", "Unified learning diagnostics", ("astra_evidence_consumption_teacher_shadow_v1", "astra_trading_intelligence_improvement_suite_v6")),
     ("historical_mining", "Historical Evidence Mining V8", ("astra_historical_evidence_mining_knowledge_distillation_v1",)),
@@ -93,6 +93,18 @@ def _timestamp_age_seconds(source: Mapping[str, Any], now: datetime) -> float | 
             return max(0.0, (now - parsed.astimezone(timezone.utc)).total_seconds())
         except ValueError:
             continue
+    capacity = _mapping(source.get("evidence_accumulation_capacity_v1"))
+    for key in ("generated_at", "updated_at", "last_updated", "snapshot_at", "timestamp"):
+        value = capacity.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return max(0.0, (now - parsed.astimezone(timezone.utc)).total_seconds())
+        except ValueError:
+            continue
     value = _number(source.get("snapshot_age_seconds") or source.get("age_seconds"))
     return value if value is not None and value >= 0 else None
 
@@ -106,12 +118,13 @@ def _source_for(statuses: Mapping[str, Any], keys: tuple[str, ...]) -> tuple[str
 
 
 def _health(source: Mapping[str, Any]) -> str:
-    status = _text(source.get("status") or source.get("current_status") or source.get("health") or source.get("governance_status") or source.get("safety_status"))
+    capacity = _mapping(source.get("evidence_accumulation_capacity_v1"))
+    status = _text(source.get("status") or source.get("current_status") or source.get("health") or source.get("governance_status") or source.get("safety_status") or source.get("broker_reconciliation_status") or _first(capacity, "broker_reconciliation_status"))
     if any(token in status for token in ("FAIL", "ERROR", "UNAVAILABLE", "CRITICAL")):
         return "FAIL"
     if any(token in status for token in ("WARNING", "DEGRADED", "BLOCKED", "DEFERRED", "STALE")):
         return "DEGRADED"
-    if status.startswith("PASS") or status in {"OK", "READY", "HEALTHY", "OBSERVATIONAL_READY", "SHADOW_PRACTICE", "IDLE_OR_COMPLETE", "UNCHANGED"}:
+    if status.startswith("PASS") or status in {"OK", "READY", "HEALTHY", "FRESH", "OBSERVATIONAL_READY", "SHADOW_PRACTICE", "IDLE_OR_COMPLETE", "UNCHANGED"}:
         return "HEALTHY"
     if status in {"INSUFFICIENT_EVIDENCE", "WARMING_UP", "UNKNOWN"}:
         return "WARMING_UP" if status != "UNKNOWN" else "UNKNOWN"
@@ -160,7 +173,9 @@ def _facts(domain: str, source: Mapping[str, Any]) -> dict[str, Any]:
         return {"paper_mode_verified": _first(source, "paper_mode_verified"), "broker_readiness": _first(source, "broker_execution_ready", "broker_execution_enabled", "safety_status"), "live_endpoint_rejected": live_rejected if "live_endpoint_rejected" in source or "broker_live_endpoint_allowed" in source else "UNKNOWN", "open_positions_count": _first(source, "open_positions_count", "broker_confirmed_open_positions"), "open_orders_count": _first(source, "open_orders_count"), "first_existing_blocker": _blocker(source)}
     if domain == "reconciliation":
         audit = _mapping(source.get("reconciliation_validation_audit_v1"))
-        return {"readiness": _first(source, "status", "reconciliation_health"), "pending_or_unreconciled_count": _first(source, "unreconciled_count", "pending_count", "mirror_gap_remaining"), "mirror_gap_remaining": _first(source, "mirror_gap_remaining") if source.get("mirror_gap_remaining") is not None else _first(audit, "mirror_gap_remaining"), "first_existing_blocker": _blocker(source)}
+        capacity = _mapping(source.get("evidence_accumulation_capacity_v1"))
+        reconciliation_status = _first(capacity, "broker_reconciliation_status", "status") if capacity else _first(source, "broker_reconciliation_status", "status", "reconciliation_health")
+        return {"reconciliation_status": reconciliation_status, "readiness": _first(source, "status", "reconciliation_health"), "pending_or_unreconciled_count": _first(source, "unreconciled_count", "pending_count", "mirror_gap_remaining"), "mirror_gap_remaining": _first(source, "mirror_gap_remaining") if source.get("mirror_gap_remaining") is not None else _first(audit, "mirror_gap_remaining"), "first_existing_blocker": _blocker(source)}
     if domain == "strict_truth":
         lessons = _mapping(source.get("canonical_lifecycle_lesson_store_v1"))
         return {"strict_truth_count": _first(source, "strict_truth_count", "broker_confirmed_complete_records", "complete_records"), "newest_truth_timestamp": _first(source, "newest_truth_timestamp", "latest_truth_at", "generated_at"), "learning_consumption_status": _first(source, "learning_consumption_status", "status", "cortex_consumption_status"), "complete_lesson_count": _first(lessons, "complete_lesson_count", "fully_complete_lesson_count"), "first_existing_blocker": _blocker(source)}
