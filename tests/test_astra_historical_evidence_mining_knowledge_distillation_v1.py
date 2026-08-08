@@ -9,6 +9,7 @@ from engine.astra_historical_evidence_mining_knowledge_distillation_v1 import (
     LESSON_REGISTRY,
     build_historical_evidence_mining_knowledge_distillation_v1,
 )
+from engine.astra_storage_cache_attribution_learning_efficiency_v1 import AstraStorageCacheAttributionLearningEfficiencyV1
 
 
 class HistoricalEvidenceMiningKnowledgeDistillationV1Tests(unittest.TestCase):
@@ -131,6 +132,49 @@ class HistoricalEvidenceMiningKnowledgeDistillationV1Tests(unittest.TestCase):
         self.assertEqual(result["broker_calls_added"], 0)
         self.assertEqual(result["broker_actions_added"], 0)
         self.assertEqual(result["llm_calls_added"], 0)
+
+    def _producer_index(self, rows):
+        root = self._root()
+        source = root / "candidate_decision_ledger_v1.jsonl"
+        source.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+        producer = AstraStorageCacheAttributionLearningEfficiencyV1(state_dir=str(root))
+        producer._build_summary_indexes()
+        return root, json.loads((root / "storage_summary_indexes" / "candidate_decision_ledger_v1.jsonl.summary_index.json").read_text())
+
+    def test_bounded_producer_links_dimensions_to_tier_separated_outcomes(self):
+        rows = [
+            {"symbol": "ABC", "horizon": "DAY", "regime": "RISK_ON", "outcome": "WIN", "realized_return_pct": 1.2, "truth_state": "STRICT_TRUTH"},
+            {"symbol": "ABC", "horizon": "DAY", "regime": "RISK_ON", "outcome": "LOSS", "realized_return_pct": -0.4, "shadow": True},
+            {"symbol": "ABC", "horizon": "DAY", "regime": "RISK_ON", "outcome": "WIN", "realized_return_pct": 0.5, "validated": True},
+        ]
+        _, index = self._producer_index(rows)
+        bucket = index["outcome_by_dimension"]["symbol"]["abc"]
+        self.assertEqual(index["outcome_linked_observations"], 3)
+        self.assertIn("BROKER_CONFIRMED_NATURAL_STRICT_TRUTH", bucket)
+        self.assertIn("SHADOW_COUNTERFACTUAL", bucket)
+        self.assertIn("VALIDATED_OPERATIONAL_EVIDENCE", bucket)
+        self.assertEqual(bucket["BROKER_CONFIRMED_NATURAL_STRICT_TRUTH"]["average_return_pct"], 1.2)
+
+    def test_missing_or_unit_ambiguous_outcome_is_not_converted_into_profitability_evidence(self):
+        _, index = self._producer_index([{"symbol": "ABC", "horizon": "DAY", "regime": "RISK_ON", "realized_return": 1.5}])
+        self.assertEqual(index["outcome_linkable_observations"], 0)
+        self.assertEqual(index["outcome_linked_observations"], 0)
+        self.assertEqual(index["outcome_by_dimension"], {})
+
+    def test_v8_consumes_bounded_outcome_aggregate_with_provenance(self):
+        rows = [
+            {"symbol": "ABC", "horizon": "DAY", "regime": "RISK_ON", "outcome": "WIN", "realized_return_pct": 1.0, "validated": True}
+            for _ in range(5)
+        ]
+        root, _ = self._producer_index(rows)
+        result = build_historical_evidence_mining_knowledge_distillation_v1(str(root))
+        coverage = result["learning_coverage"]
+        patterns = result["historical_pattern_mining"]["patterns"]
+        self.assertEqual(coverage["outcome_linked_observations"], 5)
+        self.assertGreater(coverage["outcome_linkage_coverage_pct"], 0)
+        self.assertTrue(any(row["source"] == "candidate_decision_ledger_v1.jsonl.summary_index.json" for row in patterns))
+        self.assertTrue(any(row["evidence_tier"] == "VALIDATED_OPERATIONAL_EVIDENCE" for row in patterns))
+        self.assertEqual(result["full_history_scan_count"], 0)
 
 
 if __name__ == "__main__":

@@ -53,6 +53,11 @@ INDEX_DIMENSIONS = (
     "outcome_label",
     "confidence_bucket",
 )
+OUTCOME_INTERACTION_PAIRS = (
+    ("horizon", "regime"),
+    ("archetype", "regime"),
+    ("confidence_bucket", "horizon"),
+)
 
 HOT_KEYWORDS = (
     "alpaca", "broker", "paper_position", "positions", "portfolio", "top_buys", "copilot", "alerts", "exit_review", "sell", "session", "health"
@@ -183,6 +188,57 @@ def _source_dimension_defaults(source_name: str) -> dict[str, str]:
     return defaults
 
 
+def _outcome_value(row: dict[str, Any]) -> float | None:
+    """Use only source-reported realized/outcome return fields; no inference."""
+    for key in ("realized_return_pct", "return_pct", "pnl_pct", "friction_adjusted_return_pct", "actual_return_pct"):
+        value = row.get(key)
+        if value not in (None, ""):
+            try:
+                return float(str(value).replace("%", "").strip())
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _outcome_tier(row: dict[str, Any], source_name: str) -> str:
+    truth = _normal_text(first(row.get("truth_state"), row.get("evidence_tier"), row.get("evidence_class"), default=""), "")
+    if truth in {"strict_truth", "broker_truth_confirmed", "broker_confirmed_complete", "complete"}:
+        return "BROKER_CONFIRMED_NATURAL_STRICT_TRUTH"
+    source = str(source_name or "").lower()
+    if "shadow" in source or "replay" in source or bool(row.get("shadow") or row.get("counterfactual")):
+        return "SHADOW_COUNTERFACTUAL"
+    if truth in {"validated_operational", "operational_verified", "validated"} or bool(row.get("validated") or row.get("operational_verified")):
+        return "VALIDATED_OPERATIONAL_EVIDENCE"
+    return "ADVISORY_RECONSTRUCTED_EVIDENCE"
+
+
+def _outcome_timestamp(row: dict[str, Any]) -> str:
+    for key in ("exit_timestamp", "outcome_timestamp", "timestamp", "created_at", "updated_at"):
+        value = row.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return ""
+
+
+def _outcome_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    returns = [value for value in (_outcome_value(row) for row in rows) if value is not None]
+    wins, losses, neutral = sum(value > 0 for value in returns), sum(value < 0 for value in returns), sum(value == 0 for value in returns)
+    positive, negative = sum(value for value in returns if value > 0), abs(sum(value for value in returns if value < 0))
+    timestamps = sorted(value for value in (_outcome_timestamp(row) for row in rows) if value)
+    labels = [_normal_text(first(row.get("outcome_label"), row.get("outcome"), row.get("result"), default="unknown")) for row in rows]
+    return {
+        "observation_count": len(rows), "outcome_count": len(returns), "wins": wins, "losses": losses,
+        "neutral_count": neutral, "unknown_outcome_count": sum(label == "unknown" for label in labels),
+        "win_rate_pct": rounded((wins * 100 / len(returns)), 3) if returns else None,
+        "average_return_pct": rounded(sum(returns) / len(returns), 5) if returns else None,
+        "expectancy_pct": rounded(sum(returns) / len(returns), 5) if returns else None,
+        "profit_factor": rounded(positive / negative, 5) if positive and negative else None,
+        "first_observation_timestamp": timestamps[0] if timestamps else "UNAVAILABLE",
+        "last_observation_timestamp": timestamps[-1] if timestamps else "UNAVAILABLE",
+        "return_scale": "SOURCE_REPORTED_PERCENT_POINTS",
+    }
+
+
 class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
     module_name = "astra_storage_cache_attribution_learning_efficiency_v1"
     mode = "storage_cache_attribution_learning_efficiency_advisory"
@@ -254,6 +310,59 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
             "confidence_bucket": _bucket(confidence, "low_confidence", "medium_confidence", "high_confidence"),
         }
 
+    def _outcome_linked_aggregates(self, rows: list[dict[str, Any]], source_name: str) -> dict[str, Any]:
+        """Aggregate only the already bounded source sample, separated by evidence tier."""
+        dimensions: dict[str, dict[str, dict[str, list[dict[str, Any]]]]] = {}
+        interactions: dict[str, dict[str, dict[str, list[dict[str, Any]]]]] = {}
+        linkable = linked = 0
+        tier_counts: Counter[str] = Counter()
+        linked_dimensions: set[str] = set()
+        for row in rows:
+            outcome = _outcome_value(row)
+            label = _normal_text(first(row.get("outcome_label"), row.get("outcome"), row.get("result"), default="unknown"))
+            if outcome is not None or label != "unknown":
+                linkable += 1
+            else:
+                continue
+            values = self._dimensions_for_row(row, source_name=source_name)
+            tier = _outcome_tier(row, source_name)
+            eligible = {key: value for key, value in values.items() if value and value != "unknown"}
+            if not eligible:
+                continue
+            linked += 1
+            tier_counts[tier] += 1
+            for dimension, value in eligible.items():
+                linked_dimensions.add(dimension)
+                dimensions.setdefault(dimension, {}).setdefault(value, {}).setdefault(tier, []).append(row)
+            for left, right in OUTCOME_INTERACTION_PAIRS:
+                if left in eligible and right in eligible:
+                    key, value = f"{left}×{right}", f"{eligible[left]}×{eligible[right]}"
+                    interactions.setdefault(key, {}).setdefault(value, {}).setdefault(tier, []).append(row)
+
+        def compact(groups: dict[str, dict[str, dict[str, list[dict[str, Any]]]]]) -> dict[str, Any]:
+            output: dict[str, Any] = {}
+            for dimension, buckets in groups.items():
+                ranked = sorted(buckets.items(), key=lambda item: -sum(len(items) for items in item[1].values()))[:40]
+                output[dimension] = {
+                    value: {tier: _outcome_summary(items) for tier, items in sorted(by_tier.items())}
+                    for value, by_tier in ranked
+                }
+            return output
+
+        return {
+            "aggregate_version": "1.0.0", "source_snapshot": source_name,
+            "last_updated": now_iso(), "bounded_sample_only": True,
+            "observations_sampled": len(rows), "outcome_linkable_observations": linkable,
+            "outcome_linked_observations": linked, "outcome_unavailable_observations": len(rows) - linkable,
+            "outcome_linkage_coverage_pct": rounded((linked * 100 / len(rows)), 3) if rows else 0.0,
+            "evidence_tier_counts": dict(sorted(tier_counts.items())),
+            "dimensions_linked": sorted(linked_dimensions),
+            "dimensions_without_outcomes": [dimension for dimension in INDEX_DIMENSIONS if dimension not in linked_dimensions],
+            "outcome_by_dimension": compact(dimensions), "outcome_by_interaction": compact(interactions),
+            "aggregate_count": sum(len(values) for values in dimensions.values()),
+            "interaction_aggregate_count": sum(len(values) for values in interactions.values()),
+        }
+
     def _build_summary_indexes(self) -> dict[str, Any]:
         start = time.perf_counter()
         index_dir = os.path.join(self.state_dir, "storage_summary_indexes")
@@ -276,6 +385,7 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
                 for dimension, counter in dimension_counts.items()
             }
             indexed_items = sum(sum(counter.values()) for counter in dimension_counts.values())
+            outcome_aggregates = self._outcome_linked_aggregates(rows, name)
             total_index_items += indexed_items
             summary = {
                 "source_file": name,
@@ -296,6 +406,7 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
                 "raw_source_modified": False,
                 "bounded_sample_only": True,
                 "source_available": bool(meta.get("source_available")),
+                **outcome_aggregates,
             }
             out_path = os.path.join(index_dir, f"{name}.summary_index.json")
             try:
@@ -315,6 +426,8 @@ class AstraStorageCacheAttributionLearningEfficiencyV1(CachedDiagnosticModule):
                 "mtime_marker": meta.get("mtime_marker"),
                 "indexed_dimensions": list(INDEX_DIMENSIONS),
                 "index_item_count": indexed_items,
+                "outcome_linked_observations": outcome_aggregates["outcome_linked_observations"],
+                "outcome_aggregate_count": outcome_aggregates["aggregate_count"],
                 "freshness_status": "fresh" if index_written else "unavailable",
             })
         available = [row for row in inventory if row.get("source_available")]

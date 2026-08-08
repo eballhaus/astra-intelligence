@@ -171,9 +171,37 @@ def _indexed_patterns(indexes: list[tuple[str, Mapping[str, Any]]]) -> list[dict
             if not isinstance(buckets, Mapping):
                 continue
             for value, raw in list(sorted(buckets.items(), key=lambda item: str(item[0])))[:MAX_BUCKETS_PER_DIMENSION]:
-                metrics = _bucket_metrics(raw)
-                if metrics:
-                    output.append(_pattern([str(dimension)], {str(dimension): _text(value)}, metrics, _tier_for_index(name), name, coverage))
+                # V8.1 aggregates are tier-separated.  Continue accepting the
+                # original flat contract for backwards-compatible snapshots.
+                tiers = raw if isinstance(raw, Mapping) and any(str(key).startswith(("BROKER_", "VALIDATED_", "SHADOW_", "ADVISORY_")) for key in raw) else {_tier_for_index(name): raw}
+                for tier, aggregate in tiers.items():
+                    metrics = _bucket_metrics(aggregate)
+                    if metrics:
+                        output.append(_pattern([str(dimension)], {str(dimension): _text(value)}, metrics, str(tier), name, coverage))
+    return output
+
+
+def _indexed_interactions(indexes: list[tuple[str, Mapping[str, Any]]]) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for name, index in indexes:
+        for dimensions, buckets in (index.get("outcome_by_interaction") or {}).items():
+            if not isinstance(buckets, Mapping):
+                continue
+            split_dimensions = [part for part in str(dimensions).split("×") if part][:MAX_DIMENSIONS_PER_INTERACTION]
+            if len(split_dimensions) < 2:
+                continue
+            for value, tiered in list(sorted(buckets.items(), key=lambda item: str(item[0])))[:MAX_BUCKETS_PER_DIMENSION]:
+                values = str(value).split("×")
+                context = {dimension: _text(values[index]) for index, dimension in enumerate(split_dimensions) if index < len(values)}
+                for tier, aggregate in (tiered.items() if isinstance(tiered, Mapping) else []):
+                    metrics = _bucket_metrics(aggregate)
+                    if not metrics:
+                        continue
+                    item = _pattern(split_dimensions, context, metrics, str(tier), name)
+                    item.update({"interaction_state": "POSSIBLE_INTERACTION" if item["confidence_state"] != "INSUFFICIENT_EVIDENCE" else "INSUFFICIENT_EVIDENCE", "max_dimensions": MAX_DIMENSIONS_PER_INTERACTION})
+                    output.append(item)
+                    if len(output) >= MAX_INTERACTIONS:
+                        return output
     return output
 
 
@@ -286,12 +314,27 @@ def build_historical_evidence_mining_knowledge_distillation_v1(
     v4 = build_trading_intelligence_improvement_suite_v4(state_dir, query)
     drift = dict(drift_override or (v4.get("learning_consistency_and_drift") or {}))
     patterns = (_strict_patterns(strict_rows) + _indexed_patterns(indexes))[:MAX_PATTERN_CANDIDATES]
-    interactions = _interactions(strict_rows, [item for item in patterns if item.get("evidence_tier") == "BROKER_CONFIRMED_NATURAL_STRICT_TRUTH"])
+    interactions = (_interactions(strict_rows, [item for item in patterns if item.get("evidence_tier") == "BROKER_CONFIRMED_NATURAL_STRICT_TRUTH"]) + _indexed_interactions(indexes))[:MAX_INTERACTIONS]
     lessons = _lessons(patterns, drift)
     persisted = _persist_registry(state, lessons) if persist_lessons else False
     indexed_count = sum(_coverage_count(index) for _, index in indexes)
+    outcome_linkable = sum(int(_number(index.get("outcome_linkable_observations")) or 0) for _, index in indexes)
+    outcome_linked = sum(int(_number(index.get("outcome_linked_observations")) or 0) for _, index in indexes)
+    tier_counts: dict[str, int] = defaultdict(int)
+    for _, index in indexes:
+        for tier, count in (index.get("evidence_tier_counts") or {}).items():
+            tier_counts[str(tier)] += int(_number(count) or 0)
+    linked_dimensions = sorted({str(dimension) for _, index in indexes for dimension in (index.get("dimensions_linked") or [])})
+    missing_dimensions = sorted({str(dimension) for _, index in indexes for dimension in (index.get("dimensions_without_outcomes") or [])} - set(linked_dimensions))
+    linkage_pct = round(outcome_linked * 100 / indexed_count, 5) if indexed_count else 0.0
+    linkage_status = "STRONG_COVERAGE" if linkage_pct >= 50 else "PARTIAL_COVERAGE" if linkage_pct >= 10 else "LOW_COVERAGE" if outcome_linked else "INSUFFICIENT_EVIDENCE"
     coverage = {
         "indexed_historical_observations_available": indexed_count,
+        "outcome_linkable_observations": outcome_linkable, "outcome_linked_observations": outcome_linked,
+        "outcome_linkage_coverage_pct": linkage_pct, "learning_utilization_status": linkage_status,
+        "evidence_tier_coverage": dict(sorted(tier_counts.items())), "dimensions_outcome_linked": linked_dimensions,
+        "dimensions_outcome_unavailable": missing_dimensions,
+        "outcome_aggregate_count": sum(int(_number(index.get("aggregate_count")) or 0) for _, index in indexes),
         "summary_indexes_mined": [name for name, _ in indexes], "evidence_domains_mined": sorted({dimension for pattern in patterns for dimension in pattern.get("dimensions", [])}),
         "unused_indexed_evidence_domains": [name for name, _ in indexes if not _outcome_dimensions(_)],
         "pattern_count": len(patterns), "interaction_count": len(interactions), "distilled_lesson_count": len(lessons),
