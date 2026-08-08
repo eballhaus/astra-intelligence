@@ -61,6 +61,7 @@ from engine.astra_trading_intelligence_improvement_v4 import build_trading_intel
 from engine.astra_trading_intelligence_improvement_v5 import build_trading_intelligence_improvement_suite_v5
 from engine.astra_trading_intelligence_improvement_v6 import build_trading_intelligence_improvement_suite_v6
 from engine.astra_autonomous_learning_safe_adaptation_v1 import build_autonomous_learning_safe_adaptation_v1
+from engine.astra_historical_evidence_mining_knowledge_distillation_v1 import build_historical_evidence_mining_knowledge_distillation_v1
 from engine.astra_runtime_governance_v1 import (
     WORKER_STATE_PATH,
     canonical_runtime_invariants as _canonical_runtime_invariants,
@@ -48812,6 +48813,12 @@ def astra_trading_intelligence_improvement_suite_v6(
 def astra_autonomous_learning_safe_adaptation_v1(domain: str | None = None):
     """Read V7 adaptation proposals; this route cannot apply policy changes."""
     return build_autonomous_learning_safe_adaptation_v1(STATE, {"domain": domain})
+
+
+@router.get("/api/astra_historical_evidence_mining_knowledge_distillation_v1")
+def astra_historical_evidence_mining_knowledge_distillation_v1():
+    """Read bounded summary-index hypotheses and lessons; never writes or adapts policy."""
+    return build_historical_evidence_mining_knowledge_distillation_v1(STATE)
 
 
 @router.get("/api/candidate_intelligence_enrichment_contract_diagnostic_v1")
