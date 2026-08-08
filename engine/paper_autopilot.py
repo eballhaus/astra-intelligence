@@ -103,6 +103,7 @@ from engine.astra_position_peak_memory_v1 import (
 from engine.astra_truth_learning_enrichment_v1 import (
     build_pretrade_truth_context_v1,
     build_truth_learning_enrichment_v1,
+    merge_passive_excursion_evidence_v1,
 )
 from engine.astra_profit_protection_giveback_v1 import (
     load_profit_protection_state_v1,
@@ -5705,6 +5706,12 @@ class PaperAutopilotEngine:
             "mfe": _safe_json_load(open_row.get("row_json")).get("max_favorable_excursion_pct"),
             "mae": _safe_json_load(open_row.get("row_json")).get("max_adverse_excursion_pct"),
             "time_to_peak": _safe_json_load(open_row.get("row_json")).get("time_to_peak"),
+            "time_to_trough": _safe_json_load(open_row.get("row_json")).get("time_to_trough"),
+            "peak_price": _safe_json_load(open_row.get("row_json")).get("peak_price"),
+            "trough_price": _safe_json_load(open_row.get("row_json")).get("trough_price"),
+            "excursion_observation_count": _safe_json_load(open_row.get("row_json")).get("excursion_observation_count"),
+            "first_excursion_observation_at": _safe_json_load(open_row.get("row_json")).get("first_excursion_observation_at"),
+            "last_excursion_observation_at": _safe_json_load(open_row.get("row_json")).get("last_excursion_observation_at"),
             "profit_giveback": _safe_json_load(open_row.get("row_json")).get("profit_giveback_pct"),
             "exit_reason": str(exit_reason or ""), "paper_mode_verified": True,
             "broker_residual_zero_confirmed": bool(broker_fill.get("broker_residual_zero_confirmed")),
@@ -10020,10 +10027,11 @@ class PaperAutopilotEngine:
             return
 
         ret = ((current - entry) / entry) * 100.0
-        peak = max(_to_float(open_row.get("peak_unrealized_pnl_percent"), ret), ret)
+        prior_row_json = _safe_json_load(open_row.get("row_json"))
+        peak = max(_to_float(open_row.get("peak_unrealized_pnl_percent"), _to_float(prior_row_json.get("max_favorable_excursion_pct"), ret)), ret)
         drawdown = max(0.0, peak - ret)
-        mae = min(_to_float(open_row.get("max_adverse_excursion"), ret), ret)
-        mfe = max(_to_float(open_row.get("max_favorable_excursion"), ret), ret)
+        mae = min(_to_float(open_row.get("max_adverse_excursion"), _to_float(prior_row_json.get("max_adverse_excursion_pct"), ret)), ret)
+        mfe = max(_to_float(open_row.get("max_favorable_excursion"), _to_float(prior_row_json.get("max_favorable_excursion_pct"), ret)), ret)
         now_iso = _now_iso()
         hold_seconds = 0.0
         try:
@@ -10047,14 +10055,22 @@ class PaperAutopilotEngine:
         elif continuation_flag:
             review_state = "continuation"
 
+        excursion_row_json = merge_passive_excursion_evidence_v1(
+            prior_row_json,
+            current_return_pct=ret,
+            current_price=current,
+            observed_at=now_iso,
+            hold_seconds=hold_seconds,
+        )
         with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE paper_positions
-                SET lifecycle_notes=?, updated_at=?
+                SET row_json=?, lifecycle_notes=?, updated_at=?
                 WHERE position_id=?
                 """,
                 (
+                    _safe_json(excursion_row_json),
                     _safe_json(
                         {
                             "current_price": current,

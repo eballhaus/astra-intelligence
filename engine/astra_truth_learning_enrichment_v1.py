@@ -6,6 +6,7 @@ execution, ranking, sizing, or policy decisions.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Mapping
 
 
@@ -61,6 +62,45 @@ def _range_from_context(context: Mapping[str, Any]) -> dict[str, float] | None:
     return {"low_pct": round(float(low), 6), "high_pct": round(float(high), 6)}
 
 
+def merge_passive_excursion_evidence_v1(
+    existing: Mapping[str, Any] | None,
+    *,
+    current_return_pct: float,
+    current_price: float,
+    observed_at: str,
+    hold_seconds: float,
+) -> dict[str, Any]:
+    """Monotonically retain observed excursion facts without inventing bars.
+
+    This is passive lifecycle evidence only. It records the observed quote path
+    and never changes an exit, risk, or broker decision.
+    """
+    prior = dict(existing or {})
+    old_mfe = _number(_first(prior, "max_favorable_excursion_pct", "max_favorable_excursion"))
+    old_mae = _number(_first(prior, "max_adverse_excursion_pct", "max_adverse_excursion"))
+    mfe = max(old_mfe, current_return_pct) if old_mfe is not None else current_return_pct
+    mae = min(old_mae, current_return_pct) if old_mae is not None else current_return_pct
+    peak_advanced = old_mfe is None or current_return_pct > old_mfe
+    trough_advanced = old_mae is None or current_return_pct < old_mae
+    count = int(_number(prior.get("excursion_observation_count")) or 0) + 1
+    return {
+        **prior,
+        "max_favorable_excursion_pct": round(mfe, 6),
+        "max_adverse_excursion_pct": round(mae, 6),
+        "max_favorable_excursion": round(mfe, 6),
+        "max_adverse_excursion": round(mae, 6),
+        "peak_price": current_price if peak_advanced else prior.get("peak_price"),
+        "trough_price": current_price if trough_advanced else prior.get("trough_price"),
+        "time_to_peak": round(hold_seconds, 3) if peak_advanced else prior.get("time_to_peak"),
+        "time_to_trough": round(hold_seconds, 3) if trough_advanced else prior.get("time_to_trough"),
+        "profit_giveback_pct": round(max(0.0, mfe - current_return_pct), 6),
+        "excursion_observation_count": count,
+        "first_excursion_observation_at": prior.get("first_excursion_observation_at") or observed_at,
+        "last_excursion_observation_at": observed_at,
+        "excursion_evidence_source": "observed_paper_position_quote",
+    }
+
+
 def build_pretrade_truth_context_v1(
     entry_payload: Mapping[str, Any] | None,
     entry_contract: Mapping[str, Any] | None,
@@ -81,8 +121,21 @@ def build_pretrade_truth_context_v1(
         "thesis_invalidation_conditions", "profit_objective", "expected_target_high", "target_1",
         "same_session_exit_required", "overnight_allowed", "weekend_allowed", "exit_conditions",
         "loss_thresholds", "entry_contract_id",
+        # Passive provenance copied from existing certification context only.
+        "contract_id", "decision_id", "asset_class", "symbol", "lane", "strategy_archetype",
+        "trade_style", "expected_hold_window", "ranking_score", "ranking_factors",
+        "thesis_supporting_conditions", "regime_fit", "sector_fit", "catalyst_state",
+        "fundamental_state", "momentum_state", "liquidity_state", "risk_envelope",
+        "candidate_risk_envelope_v1", "expected_outcome_envelope_v1", "field_provenance_v1",
+        "source_inputs", "source_provenance", "certification_snapshot_id", "observation_timestamp",
+        "market_data_timestamp", "forecast_timestamp", "valid_until", "factor_contributions",
+        "evidence_factors", "confidence_attribution",
+        "trend_state", "volume_state", "volatility_context", "supporting_evidence",
+        "opposing_evidence", "evidence_freshness", "expected_exit_behavior",
     )
-    context = {key: merged[key] for key in keys if merged.get(key) not in (None, "", [], {})}
+    # Preserve original pre-decision evidence as an immutable snapshot. Nested
+    # attribution maps remain owned by their producers after entry processing.
+    context = {key: deepcopy(merged[key]) for key in keys if merged.get(key) not in (None, "", [], {})}
     expected_range = _range_from_context(merged)
     if expected_range is not None:
         context["expected_return_range"] = expected_range
