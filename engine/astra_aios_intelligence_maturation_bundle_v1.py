@@ -711,12 +711,28 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
         horizon = self._source(statuses, "astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1")
         sources = [p for p in (exit_suite, profit_pilot, exit_v3, lifecycle, horizon) if p]
         evidence = max([_evidence(payload) for payload in sources] + [0])
+
+        def _exit_fixed_contribution(payload: dict[str, Any], fixed: float) -> float | None:
+            if not payload:
+                return None
+            status = text(first(payload.get("status"), payload.get("health"), default=""), default="").strip().lower()
+            if status in {"insufficient_evidence", "warming_up", "degraded"}:
+                return None
+            marker = text(first(
+                payload.get("session_is_stale"), payload.get("cache_freshness"), payload.get("cache_status"),
+                payload.get("freshness"), payload.get("session_refresh_status"),
+                default="",
+            ), default="").strip().lower()
+            if marker in {"true", "stale", "expired", "stale_cache", "stale_cache_detected_waiting_rebuild"} or "stale" in marker:
+                return None
+            return fixed
+
         maturity = _avg([
             _confidence(exit_suite, 0.0) if exit_suite else None,
             _confidence(profit_pilot, 0.0) if profit_pilot else None,
             _confidence(exit_v3, 0.0) if exit_v3 else None,
-            72.0 if lifecycle else None,
-            70.0 if horizon else None,
+            _exit_fixed_contribution(lifecycle, 72.0),
+            _exit_fixed_contribution(horizon, 70.0),
         ], 0.0)
         giveback = first(
             exit_suite.get("average_giveback"),
@@ -942,7 +958,14 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
         copilot = self._source(statuses, "astra_copilot_suite_v1")
         dashboard_provider_calls = max(to_int(provider.get("dashboard_provider_calls_used"), 0), 0)
         dashboard_llm_calls = max(to_int(provider.get("dashboard_llm_calls_used"), 0), 0)
-        storage_pressure = to_float(memory.get("storage_health_score"), 0.0)
+        canonical_storage_pressure = first(
+            memory.get("storage_pressure_score"), memory.get("storage_pressure"), default=None,
+        )
+        if canonical_storage_pressure is not None:
+            storage_pressure = clamp(canonical_storage_pressure, 0.0, 100.0)
+        else:
+            storage_health = to_float(memory.get("storage_health_score"), 0.0)
+            storage_pressure = clamp(100.0 - storage_health, 0.0, 100.0)
         memory_pressure = to_float(memory.get("memory_pressure_score"), 0.0)
 
         def layer(name: str, current: Any, target: Any, confidence: Any, quality: Any, duplicate_rate: Any = 0.0, pass_rate: Any = 0.0, action: str = "monitor") -> dict[str, Any]:
@@ -978,7 +1001,7 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             layer("Satellites", request_manager.get("raw_observations_today"), CAPACITY_TARGETS["satellites"], request_manager.get("average_satellite_confidence"), request_manager.get("average_satellite_confidence"), 0.0, request_manager.get("utilization_percent")),
             layer("IHIE Collector", 0, CAPACITY_TARGETS["ihie_collector"], ihie.get("confidence"), ihie.get("ihie_maturity_score"), 0.0, 0.0, "stage_incremental_ingestion_only"),
             layer("IHIE Analyst", ihie_analyst.get("enrichments_today"), CAPACITY_TARGETS["ihie_analyst"], ihie.get("confidence"), ihie.get("ihie_maturity_score"), 0.0, _pct(ihie_analyst.get("enrichments_today"), CAPACITY_TARGETS["ihie_analyst"])),
-            layer("Shadow Lab", shadow.get("experiments_today"), CAPACITY_TARGETS["shadow_lab"], shadow.get("experiment_confidence_average"), 0.0, 0.0, shadow.get("shadow_pass_through_rate"), "measure_shadow_throughput_before_scaling"),
+            layer("Shadow Lab", shadow.get("experiments_today"), CAPACITY_TARGETS["shadow_lab"], shadow.get("experiment_confidence_average"), first(shadow.get("experiment_quality_score"), shadow.get("experiment_confidence_average"), default=0.0), 0.0, shadow.get("shadow_pass_through_rate"), "measure_shadow_throughput_before_scaling"),
             layer("Triage", triage.get("incoming_packets"), CAPACITY_TARGETS["triage"], triage.get("average_confidence"), triage.get("average_confidence"), triage.get("duplicate_rate"), triage.get("pass_through_rate")),
             layer("Compression", compression.get("compressed_findings"), CAPACITY_TARGETS["compression"], compression.get("retained_information_quality"), compression.get("compression_efficiency"), compression.get("duplicate_lessons_removed"), compression.get("compression_ratio")),
             layer("Teacher", teacher.get("lessons_created_today"), CAPACITY_TARGETS["teacher"], teacher.get("lesson_quality_score"), teacher.get("lesson_quality_score"), 0.0, teacher.get("teacher_utilization_percent")),

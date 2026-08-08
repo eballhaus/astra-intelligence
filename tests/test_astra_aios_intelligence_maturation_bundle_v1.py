@@ -11,6 +11,19 @@ def bundle(statuses: dict):
         return AstraAiosIntelligenceMaturationBundleV1(state_dir=state_dir)._symbol_behavioral_memory_expansion_v1(statuses)
 
 
+def capacity_layers(shadow: dict | None = None, memory: dict | None = None):
+    with tempfile.TemporaryDirectory() as state_dir:
+        bundle_obj = AstraAiosIntelligenceMaturationBundleV1(state_dir=state_dir)
+        return bundle_obj._aios_capacity_manager_v1(
+            {}, {}, shadow or {}, {}, {}, {}, memory or {}, {}, {}, {}
+        )["layers"]
+
+
+def exit_maturity(statuses: dict):
+    with tempfile.TemporaryDirectory() as state_dir:
+        return AstraAiosIntelligenceMaturationBundleV1(state_dir=state_dir)._exit_intelligence_maturation_v2(statuses)
+
+
 ACCELERATED = {
     "cache_freshness": "live",
     "current_behavior_confidence": 71.25,
@@ -127,6 +140,62 @@ class AstraAiosSymbolBehavioralMemoryHandoffTests(unittest.TestCase):
         self.assertEqual(flagged_behavior, [])
         self.assertIs(True, out["advisory_only"])
         self.assertIs(True, out["shadow_analysis_mode"])
+
+
+class AstraAiosControlPlaneMetricIntegrityTests(unittest.TestCase):
+    def test_shadow_lab_quality_no_longer_hardcoded_to_zero(self):
+        layers = capacity_layers(shadow={"experiments_today": 50, "experiment_confidence_average": 56.095, "experiment_quality_score": 56.095})
+        lab = next(row for row in layers if row["layer"] == "Shadow Lab")
+        self.assertEqual(lab["quality_score"], 56.095)
+
+    def test_shadow_quality_falls_back_to_existing_confidence(self):
+        layers = capacity_layers(shadow={"experiments_today": 50, "experiment_confidence_average": 48.0})
+        lab = next(row for row in layers if row["layer"] == "Shadow Lab")
+        self.assertEqual(lab["quality_score"], 48.0)
+
+    def test_shadow_quality_unmodified_when_missing(self):
+        layers = capacity_layers(shadow={"experiments_today": 10})
+        lab = next(row for row in layers if row["layer"] == "Shadow Lab")
+        self.assertEqual(lab["quality_score"], 0.0)
+
+    def test_high_storage_health_produces_low_storage_pressure(self):
+        layers = capacity_layers(memory={"storage_health_score": 99.0, "memory_pressure_score": 12.0})
+        self.assertEqual(layers[0]["storage_pressure"], 1.0)
+        self.assertEqual(layers[0]["memory_pressure"], 12.0)
+
+    def test_low_storage_health_produces_higher_storage_pressure(self):
+        layers = capacity_layers(memory={"storage_health_score": 30.0, "memory_pressure_score": 12.0})
+        self.assertEqual(layers[0]["storage_pressure"], 70.0)
+
+    def test_explicit_storage_pressure_field_is_preferred(self):
+        layers = capacity_layers(memory={"storage_health_score": 99.0, "storage_pressure_score": 55.0})
+        self.assertEqual(layers[0]["storage_pressure"], 55.0)
+
+    def test_memory_pressure_behavior_unchanged(self):
+        layers = capacity_layers(memory={"storage_health_score": 50.0, "memory_pressure_score": 88.0})
+        self.assertEqual(layers[0]["storage_pressure"], 50.0)
+        self.assertEqual(layers[0]["memory_pressure"], 88.0)
+
+    def test_stale_lifecycle_source_does_not_inflate_exit_maturity(self):
+        stale = exit_maturity({
+            "trade_lifecycle_audit_truth_horizon_integrity_suite_v1": {"status": "ok", "generated_at": "2026-06-15T00:00:00Z", "session_refresh_status": "stale_cache_detected_waiting_rebuild"},
+            "astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1": {"status": "ok", "session_is_stale": True},
+        })
+        self.assertEqual(stale["exit_intelligence_maturity"], 0.0)
+
+    def test_insufficient_evidence_lifecycle_receives_no_fixed_mature_contribution(self):
+        out = exit_maturity({
+            "trade_lifecycle_audit_truth_horizon_integrity_suite_v1": {"status": "insufficient_evidence"},
+            "astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1": {"status": "ok"},
+        })
+        self.assertEqual(out["exit_intelligence_maturity"], 70.0)
+
+    def test_fresh_valid_lifecycle_and_horizon_remain_supported(self):
+        out = exit_maturity({
+            "trade_lifecycle_audit_truth_horizon_integrity_suite_v1": {"status": "ok", "cache_freshness": "current"},
+            "astra_horizon_lifecycle_capacity_promotion_readiness_bundle_v1": {"status": "ok", "cache_freshness": "current"},
+        })
+        self.assertEqual(out["exit_intelligence_maturity"], 71.0)
 
 
 if __name__ == "__main__":
