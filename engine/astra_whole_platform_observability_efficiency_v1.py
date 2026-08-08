@@ -36,9 +36,9 @@ SAFETY = {
 # visible as a gap instead of being silently inferred by this adapter.
 DOMAIN_SPECS = (
     ("backend", "Backend health contract", ("astra_operating_health_contract_v1", "health")),
-    ("paper_autopilot_worker", "PaperAutopilot worker", ("paper_autopilot_status", "paper_autopilot_throughput")),
+    ("paper_autopilot_worker", "PaperAutopilot worker", ("paper_autopilot_status", "canonical_worker_state", "paper_autopilot_throughput")),
     ("frontend", "Dashboard data wiring", ("dashboard_data_wiring_v1",)),
-    ("candidate_trading_pipeline", "Candidate decision ledger", ("candidate_lineage_governance_v2", "paper_execution_trace")),
+    ("candidate_trading_pipeline", "Candidate decision ledger", ("candidate_lineage_governance_v2", "paper_execution_trace", "paper_autopilot_last_trace_v1")),
     ("lane_capacity", "Canonical lane capacity", ("astra_learning_preservation_capacity_v1", "astra_broker_truth_throughput_v1")),
     ("broker", "Broker truth", ("alpaca_paper_status_v1", "astra_broker_truth_throughput_v1")),
     ("reconciliation", "Broker reconciliation", ("astra_trade_state_reconciliation_v1", "astra_broker_truth_all_in_one_audit_v1")),
@@ -106,7 +106,7 @@ def _source_for(statuses: Mapping[str, Any], keys: tuple[str, ...]) -> tuple[str
 
 
 def _health(source: Mapping[str, Any]) -> str:
-    status = _text(source.get("status") or source.get("current_status") or source.get("health") or source.get("governance_status"))
+    status = _text(source.get("status") or source.get("current_status") or source.get("health") or source.get("governance_status") or source.get("safety_status"))
     if any(token in status for token in ("FAIL", "ERROR", "UNAVAILABLE", "CRITICAL")):
         return "FAIL"
     if any(token in status for token in ("WARNING", "DEGRADED", "BLOCKED", "DEFERRED", "STALE")):
@@ -141,6 +141,32 @@ def _efficiency(source: Mapping[str, Any]) -> str:
     return "CACHE_FIRST_OR_UNKNOWN"
 
 
+def _first(source: Mapping[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = source.get(key)
+        if value is not None:
+            return value
+    return "UNKNOWN"
+
+
+def _facts(domain: str, source: Mapping[str, Any]) -> dict[str, Any]:
+    """Expose only fields already owned by the selected canonical fact."""
+    if domain == "paper_autopilot_worker":
+        return {"health": _first(source, "worker_health", "health", "state"), "heartbeat": _first(source, "last_heartbeat", "heartbeat_at", "heartbeat_timestamp"), "process_id": _first(source, "process_id", "pid"), "generation": _first(source, "generation", "worker_generation"), "cycle_state": _first(source, "cycle_state", "last_cycle_state", "state"), "cycle_count": _first(source, "cycle_count", "cycles_completed"), "first_existing_blocker": _blocker(source)}
+    if domain == "candidate_trading_pipeline":
+        return {"candidate_count": _first(source, "candidates_seen", "candidate_count", "raw_candidate_count"), "eligible_count": _first(source, "eligible_candidates", "eligible_count"), "selected_count": _first(source, "selected_candidates", "selected_count"), "lane_readiness": _first(source, "lane_readiness", "lane_summary", "horizon_summary"), "first_existing_blocker": _blocker(source)}
+    if domain == "broker":
+        live_rejected = source.get("live_endpoint_rejected") is True or source.get("broker_live_endpoint_allowed") is False
+        return {"paper_mode_verified": _first(source, "paper_mode_verified"), "broker_readiness": _first(source, "broker_execution_ready", "broker_execution_enabled", "safety_status"), "live_endpoint_rejected": live_rejected if "live_endpoint_rejected" in source or "broker_live_endpoint_allowed" in source else "UNKNOWN", "open_positions_count": _first(source, "open_positions_count", "broker_confirmed_open_positions"), "open_orders_count": _first(source, "open_orders_count"), "first_existing_blocker": _blocker(source)}
+    if domain == "reconciliation":
+        audit = _mapping(source.get("reconciliation_validation_audit_v1"))
+        return {"readiness": _first(source, "status", "reconciliation_health"), "pending_or_unreconciled_count": _first(source, "unreconciled_count", "pending_count", "mirror_gap_remaining"), "mirror_gap_remaining": _first(source, "mirror_gap_remaining") if source.get("mirror_gap_remaining") is not None else _first(audit, "mirror_gap_remaining"), "first_existing_blocker": _blocker(source)}
+    if domain == "strict_truth":
+        lessons = _mapping(source.get("canonical_lifecycle_lesson_store_v1"))
+        return {"strict_truth_count": _first(source, "strict_truth_count", "broker_confirmed_complete_records", "complete_records"), "newest_truth_timestamp": _first(source, "newest_truth_timestamp", "latest_truth_at", "generated_at"), "learning_consumption_status": _first(source, "learning_consumption_status", "status", "cortex_consumption_status"), "complete_lesson_count": _first(lessons, "complete_lesson_count", "fully_complete_lesson_count"), "first_existing_blocker": _blocker(source)}
+    return {}
+
+
 def _domain_rows(statuses: Mapping[str, Any], now: datetime) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for domain, owner, keys in DOMAIN_SPECS:
@@ -154,7 +180,7 @@ def _domain_rows(statuses: Mapping[str, Any], now: datetime) -> list[dict[str, A
         source_health = _health(source)
         if stale and source_health == "HEALTHY":
             source_health = "STALE_HEALTH_UNVERIFIED"
-        rows.append({"domain": domain, "canonical_owner": owner, "monitored": "YES", "sentinel_visibility": "VISIBLE" if domain != "sentinel" else "SELF_REPORTED", "governance_visibility": "VISIBLE" if domain not in {"governance", "sentinel"} else "SELF_REPORTED", "cortex_visibility": "VISIBLE" if domain not in {"cortex", "sentinel", "governance"} else "SELF_REPORTED", "health": source_health, "freshness": freshness, "freshness_age_seconds": round(age, 3) if age is not None else None, "efficiency_state": _efficiency(source), "first_causal_blocker": _blocker(source), "evidence_source": source_key})
+        rows.append({"domain": domain, "canonical_owner": owner, "monitored": "YES", "sentinel_visibility": "VISIBLE" if domain != "sentinel" else "SELF_REPORTED", "governance_visibility": "VISIBLE" if domain not in {"governance", "sentinel"} else "SELF_REPORTED", "cortex_visibility": "VISIBLE" if domain not in {"cortex", "sentinel", "governance"} else "SELF_REPORTED", "health": source_health, "freshness": freshness, "freshness_age_seconds": round(age, 3) if age is not None else None, "efficiency_state": _efficiency(source), "first_causal_blocker": _blocker(source), "evidence_source": source_key, "fact_summary": _facts(domain, source)})
     return rows
 
 
@@ -240,6 +266,9 @@ def build_astra_whole_platform_observability_efficiency_v1(statuses: Mapping[str
     degraded = [row for row in domains if row["health"] in {"FAIL", "UNAVAILABLE", "STALE_HEALTH_UNVERIFIED", "STALE_PASS_NOT_CURRENT"}]
     resource = _mapping(statuses.get("astra_runtime_resource_governance_v1"))
     adaptation = _mapping(statuses.get("astra_autonomous_learning_safe_adaptation_v1"))
+    v10 = _mapping(statuses.get("astra_incremental_historical_learning_governor_v1"))
+    checkpoint = _mapping(v10.get("last_checkpoint"))
+    v10_discrepancy = _text(v10.get("current_status")) == "ERROR" and _text(checkpoint.get("status")) in {"READY", "COMPLETE"} and _text(_mapping(v10.get("resource_decision")).get("decision")) == "RUN"
     ready = bool(adaptation) and adaptation.get("behavior_safe_to_apply") is False and control["governance"]["health"] == "HEALTHY"
     return {
         "suite": "ASTRA Whole-Platform Observability, Efficiency & Control-Plane Integrity V1", "version": VERSION,
@@ -253,6 +282,7 @@ def build_astra_whole_platform_observability_efficiency_v1(statuses: Mapping[str
         "control_plane_health": control,
         "first_causal_blocker": (priorities[0].get("first_causal_blocker") if priorities else "CAUSAL_BLOCKER_UNCERTAIN"),
         "top_priorities": priorities, "monitoring_gaps": gaps,
+        "v10_status_source_discrepancy": {"observed": v10_discrepancy, "status": "V10_STATUS_SOURCE_DISCREPANCY" if v10_discrepancy else "NOT_OBSERVED", "owner": "Incremental Historical Learning Governor V10", "automatic_repair_attempted": False},
         "efficiency_adaptation_readiness": {"status": "EFFICIENCY_ADAPTATION_READY" if ready else "EFFICIENCY_ADAPTATION_NOT_READY", "reason": "existing V7 and current Governance pass can govern a future human-reviewed shadow efficiency proposal" if ready else "existing V7/Governance facts are unavailable, stale, or not currently passing", "automatic_remediation_implemented": False, "protected_domains_preserved": True},
         "generated_at": now.isoformat().replace("+00:00", "Z"), **SAFETY,
     }

@@ -63,6 +63,30 @@ class WholePlatformObservabilityTests(unittest.TestCase):
         row = next(item for item in payload["domains"] if item["domain"] == "v10_runner")
         self.assertEqual(row["first_causal_blocker"], "STATUS_REPORTED_WITHOUT_DETAILED_BLOCKER:ERROR")
 
+    def test_publishes_existing_critical_fact_fields_without_new_owner(self):
+        statuses = self._statuses()
+        statuses.update({
+            "canonical_worker_state": {"worker_health": "HEALTHY", "heartbeat_at": "2026-08-08T15:00:00Z", "process_id": 7, "generation": 2, "cycle_count": 12},
+            "paper_autopilot_last_trace_v1": {"candidates_seen": 9, "eligible_candidates": 3, "selected_candidates": 1, "final_blocker_reason": "CAPACITY_RESERVED"},
+            "alpaca_paper_status_v1": {"safety_status": "PASS", "paper_mode_verified": True, "broker_execution_ready": True, "live_endpoint_rejected": True, "open_positions_count": 2, "open_orders_count": 1},
+            "astra_trade_state_reconciliation_v1": {"status": "PASS", "mirror_gap_remaining": 0},
+            "cortex_lifecycle_evidence_master_truth_v1": {"status": "PASS", "strict_truth_count": 3, "latest_truth_at": "2026-08-08T14:00:00Z"},
+        })
+        payload = build_astra_whole_platform_observability_efficiency_v1(statuses)
+        rows = {row["domain"]: row for row in payload["domains"]}
+        self.assertEqual(rows["paper_autopilot_worker"]["fact_summary"]["process_id"], 7)
+        self.assertEqual(rows["candidate_trading_pipeline"]["fact_summary"]["eligible_count"], 3)
+        self.assertTrue(rows["broker"]["fact_summary"]["paper_mode_verified"])
+        self.assertEqual(rows["broker"]["health"], "HEALTHY")
+        self.assertTrue(rows["broker"]["fact_summary"]["live_endpoint_rejected"])
+        self.assertEqual(rows["reconciliation"]["fact_summary"]["mirror_gap_remaining"], 0)
+        self.assertEqual(rows["strict_truth"]["fact_summary"]["strict_truth_count"], 3)
+
+    def test_v10_discrepancy_is_reported_without_repair(self):
+        payload = build_astra_whole_platform_observability_efficiency_v1({"astra_incremental_historical_learning_governor_v1": {"current_status": "ERROR", "resource_decision": {"decision": "RUN"}, "last_checkpoint": {"status": "READY"}}})
+        self.assertEqual(payload["v10_status_source_discrepancy"]["status"], "V10_STATUS_SOURCE_DISCREPANCY")
+        self.assertFalse(payload["v10_status_source_discrepancy"]["automatic_repair_attempted"])
+
 
 if __name__ == "__main__":
     unittest.main()

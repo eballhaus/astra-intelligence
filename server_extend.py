@@ -48823,6 +48823,19 @@ def astra_whole_platform_observability_efficiency_v1():
     """Read cache plus existing bounded facts; never starts operational work."""
     cached = _CACHE.get("unified_learning_diagnostics_v1") if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
     statuses = dict(cached.get("data") or {}) if isinstance(cached.get("data"), dict) else {}
+    # Publish the existing execution-plane snapshots without asking their
+    # owners to run a cycle, decorate candidates, or refresh the broker.
+    if not isinstance(statuses.get("canonical_worker_state"), dict) or not statuses.get("canonical_worker_state"):
+        statuses["canonical_worker_state"] = dict(_canonical_worker_state() or {})
+    if not isinstance(statuses.get("paper_autopilot_last_trace_v1"), dict) or not statuses.get("paper_autopilot_last_trace_v1"):
+        statuses["paper_autopilot_last_trace_v1"] = _paper_autopilot_last_trace_v1()
+    cached_broker = ((_CACHE.get("alpaca_paper_status_v1") or {}).get("data") or {}) if isinstance(_CACHE.get("alpaca_paper_status_v1"), dict) else {}
+    if not isinstance(statuses.get("alpaca_paper_status_v1"), dict) or not statuses.get("alpaca_paper_status_v1") or "paper_mode_verified" not in statuses.get("alpaca_paper_status_v1", {}):
+        statuses["alpaca_paper_status_v1"] = dict(cached_broker or _alpaca_paper_status_fast_fallback_v1("whole_platform_cache_only"))
+    if not isinstance(statuses.get("astra_trade_state_reconciliation_v1"), dict) or not statuses.get("astra_trade_state_reconciliation_v1"):
+        statuses["astra_trade_state_reconciliation_v1"] = _astra_evidence_state_json("dashboard_cache/astra_trade_state_reconciliation_v1.json")
+    if not isinstance(statuses.get("cortex_lifecycle_evidence_master_truth_v1"), dict) or not statuses.get("cortex_lifecycle_evidence_master_truth_v1"):
+        statuses["cortex_lifecycle_evidence_master_truth_v1"] = _astra_evidence_state_json("dashboard_cache/cortex_lifecycle_evidence_master_truth_v1.json")
     # A cold backend cache must not turn an existing worker-owned control-plane
     # fact into UNKNOWN. These are the established snapshot/status readers;
     # none starts a worker, refreshes a provider, or mutates state.
