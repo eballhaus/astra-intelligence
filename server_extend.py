@@ -34541,6 +34541,8 @@ def _intelligence_quality_endpoint(module_obj, marker: str, force: bool = False)
         if getattr(module_obj, "module_name", None) == "astra_aios_intelligence_maturation_bundle_v1":
             statuses = _attach_aios_upstream_facts(statuses)
         out = dict(module_obj.status(statuses=statuses, force=bool(force)) or {})
+        if getattr(module_obj, "module_name", None) == "astra_aios_intelligence_maturation_bundle_v1":
+            out["astra_copilot_suite_v1"] = dict(statuses.get("astra_copilot_suite_v1") or {})
         out[marker] = True
         out["api_calls_used"] = int(_to_float(out.get("api_calls_used"), 0.0))
         out["provider_calls_used"] = int(_to_float(out.get("provider_calls_used"), 0.0))
@@ -45668,6 +45670,13 @@ def _attach_aios_upstream_facts(statuses: dict) -> dict:
         "data_freshness_trust_engine_v1": governance.get("data_freshness_trust_engine_v1") or {},
         "data_coverage_engine_v1": governance.get("data_coverage_engine_v1") or {},
     })
+    copilot = statuses.get("astra_copilot_suite_v1")
+    if not isinstance(copilot, dict) or not copilot:
+        try:
+            copilot = _astra_copilot_suite_v1(limit=12, force=False)
+        except Exception:
+            copilot = {}
+    statuses["astra_copilot_suite_v1"] = copilot if isinstance(copilot, dict) else {}
     return statuses
 
 

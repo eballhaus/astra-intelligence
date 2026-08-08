@@ -352,5 +352,53 @@ class AstraAiosSatelliteConfidenceHandoffTests(unittest.TestCase):
         self.assertIs(False, out["direct_trade_influence_enabled"])
 
 
+def copilot_capacity(statuses: dict | None = None):
+    with tempfile.TemporaryDirectory() as state_dir:
+        bundle_obj = AstraAiosIntelligenceMaturationBundleV1(state_dir=state_dir)
+        out = bundle_obj._aios_capacity_manager_v1(
+            {}, {}, {}, {}, {}, {}, {}, {}, {}, statuses or {}
+        )
+        return next(row for row in out["layers"] if row["layer"] == "Copilot")
+
+
+CANONICAL_COPILOT = {
+    "ok": True,
+    "status": "ok",
+    "top_actions": [{"action": "EXIT_REVIEW", "symbol": "AAA", "confidence": "HIGH"}] * 5,
+    "recommendations": [{"action": "EXIT_REVIEW", "symbol": "AAA", "confidence": "HIGH"}] * 12,
+    "generated_at": "2026-08-08T12:00:00Z",
+}
+
+
+class AstraAiosCopilotFactHandoffTests(unittest.TestCase):
+    def test_copilot_top_action_count_reaches_capacity_manager(self):
+        out = copilot_capacity({"astra_copilot_suite_v1": CANONICAL_COPILOT})
+        self.assertEqual(out["current_utilization"], 5)
+        self.assertEqual(out["throughput_today"], 5)
+
+    def test_missing_copilot_remains_zero_not_fabricated(self):
+        out = copilot_capacity({})
+        self.assertEqual(out["current_utilization"], 0)
+        self.assertEqual(out["throughput_today"], 0)
+
+    def test_no_actions_is_not_healthy_evidence(self):
+        out = copilot_capacity({"astra_copilot_suite_v1": {"ok": True, "status": "warming_up", "top_actions": []}})
+        self.assertEqual(out["current_utilization"], 0)
+        self.assertEqual(out["throughput_today"], 0)
+
+    def test_server_attach_aios_upstream_facts_exposes_canonical_copilot(self):
+        import server_extend
+        out = server_extend._attach_aios_upstream_facts({})
+        copilot = out.get("astra_copilot_suite_v1")
+        self.assertIsInstance(copilot, dict)
+        self.assertTrue(copilot.get("canonical_recommendation_contract_v1"))
+
+    def test_server_attach_reuses_existing_copilot_payload(self):
+        import server_extend
+        statuses = server_extend._attach_aios_upstream_facts({"astra_copilot_suite_v1": CANONICAL_COPILOT})
+        self.assertEqual(statuses["astra_copilot_suite_v1"]["top_actions"], CANONICAL_COPILOT["top_actions"])
+        self.assertEqual(statuses["astra_copilot_suite_v1"]["ok"], True)
+
+
 if __name__ == "__main__":
     unittest.main()
