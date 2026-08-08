@@ -7488,6 +7488,7 @@ class PaperAutopilotEngine:
         )
         if bool(evidence.get("executable_freshness")):
             submit_row["quote_timestamp"] = evidence.get("market_observation_timestamp")
+            submit_row["provider_quote_timestamp"] = evidence.get("market_observation_timestamp")
             submit_row["market_observation_timestamp"] = evidence.get("market_observation_timestamp")
             submit_row["quote_age_seconds"] = round(_to_float(evidence.get("age_seconds"), 0.0), 3)
             submit_row["freshness_seconds"] = submit_row["quote_age_seconds"]
@@ -7495,7 +7496,9 @@ class PaperAutopilotEngine:
             submit_row["trusted_quote_for_buys"] = True
         else:
             # A current local retrieval does not make a quote current market
-            # evidence. Preserve the explicit blocker for broker preflight.
+            # evidence. Preserve the explicit blocker for broker preflight and
+            # never let a prior stale cached provider timestamp (e.g. from the
+            # rotation/ranking row) masquerade as the freshly fetched quote.
             submit_row["valid_quote"] = False
             submit_row["trusted_quote_for_buys"] = False
             submit_row["quote_age_seconds"] = None
@@ -7503,9 +7506,32 @@ class PaperAutopilotEngine:
             submit_row["quote_assignment_blocker"] = str(
                 evidence.get("first_causal_blocker") or "TRUSTED_EXECUTABLE_QUOTE_UNAVAILABLE"
             )
+            if _text(submit_row.get("provider_quote_timestamp")):
+                submit_row.pop("provider_quote_timestamp", None)
+            if _text(submit_row.get("quote_timestamp")):
+                submit_row.pop("quote_timestamp", None)
+            if _text(submit_row.get("market_observation_timestamp")):
+                submit_row.pop("market_observation_timestamp", None)
 
         submit_row["latest_quote_preflight_used"] = bool(q)
         submit_row["latest_quote_preflight_at"] = _now_iso()
+        executable_freshness = bool(submit_row.get("valid_quote")) and bool(submit_row.get("trusted_quote_for_buys"))
+        submit_row["final_candidate_refresh_attempted"] = bool(q)
+        submit_row["final_candidate_refresh_succeeded"] = bool(q) and executable_freshness
+        submit_row["quote_age_at_submission"] = round(
+            _to_float(submit_row.get("quote_age_seconds"), -1.0), 3
+        ) if submit_row.get("quote_age_seconds") is not None else None
+        submit_row["freshness_result"] = str(
+            evidence.get("freshness_status") or submit_row.get("quote_assignment_blocker") or "UNAVAILABLE"
+        )
+        if executable_freshness:
+            submit_row["freshness_result"] = "FRESH"
+        submit_row["provider_calls_added"] = 0
+        submit_row["submission_reason"] = (
+            "final_candidate_fresh_provider_quote_promoted"
+            if executable_freshness
+            else str(submit_row.get("quote_assignment_blocker") or "TRUSTED_EXECUTABLE_QUOTE_UNAVAILABLE")
+        )
         return submit_row
 
     def update_adaptive_learning_capacity_policy(self, policy: dict[str, Any] | None) -> dict[str, Any]:
