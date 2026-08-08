@@ -61,6 +61,7 @@ from engine.astra_trading_intelligence_improvement_v4 import build_trading_intel
 from engine.astra_trading_intelligence_improvement_v5 import build_trading_intelligence_improvement_suite_v5
 from engine.astra_trading_intelligence_improvement_v6 import build_trading_intelligence_improvement_suite_v6
 from engine.astra_autonomous_learning_safe_adaptation_v1 import build_autonomous_learning_safe_adaptation_v1
+from engine.astra_whole_platform_observability_efficiency_v1 import build_astra_whole_platform_observability_efficiency_v1
 from engine.astra_historical_evidence_mining_knowledge_distillation_v1 import build_historical_evidence_mining_knowledge_distillation_v1
 from engine.astra_evidence_utilization_information_value_v1 import build_evidence_utilization_information_value_v1
 from engine.astra_incremental_historical_learning_governor_v1 import build_incremental_historical_learning_governor_v1
@@ -48817,6 +48818,34 @@ def astra_autonomous_learning_safe_adaptation_v1(domain: str | None = None):
     return build_autonomous_learning_safe_adaptation_v1(STATE, {"domain": domain})
 
 
+@router.get("/api/astra_whole_platform_observability_efficiency_v1")
+def astra_whole_platform_observability_efficiency_v1():
+    """Read cache plus existing bounded facts; never starts operational work."""
+    cached = _CACHE.get("unified_learning_diagnostics_v1") if isinstance(_CACHE.get("unified_learning_diagnostics_v1"), dict) else {}
+    statuses = dict(cached.get("data") or {}) if isinstance(cached.get("data"), dict) else {}
+    # A cold backend cache must not turn an existing worker-owned control-plane
+    # fact into UNKNOWN. These are the established snapshot/status readers;
+    # none starts a worker, refreshes a provider, or mutates state.
+    for key, builder in (
+        ("astra_operating_health_contract_v1", _astra_operating_health_contract_snapshot_v1),
+        ("astra_continuous_governance_v1", _astra_continuous_governance_snapshot_v1),
+        ("astra_governance_coverage_consolidation_v1", _astra_governance_coverage_snapshot_v1),
+        ("astra_sentinel_integrity_v1", _astra_sentinel_integrity_v1_payload),
+        ("astra_runtime_resource_governance_v1", _astra_runtime_resource_governance_payload_v1),
+        ("astra_trading_intelligence_improvement_suite_v6", lambda: build_trading_intelligence_improvement_suite_v6(STATE)),
+        ("astra_autonomous_learning_safe_adaptation_v1", lambda: build_autonomous_learning_safe_adaptation_v1(STATE)),
+        ("astra_historical_evidence_mining_knowledge_distillation_v1", lambda: build_historical_evidence_mining_knowledge_distillation_v1(STATE)),
+        ("astra_evidence_utilization_information_value_v1", lambda: build_evidence_utilization_information_value_v1(STATE)),
+        ("astra_incremental_historical_learning_governor_v1", lambda: build_incremental_historical_learning_governor_v1(STATE)),
+    ):
+        if not isinstance(statuses.get(key), dict) or not statuses.get(key):
+            try:
+                statuses[key] = dict(builder() or {})
+            except Exception:
+                statuses[key] = {}
+    return build_astra_whole_platform_observability_efficiency_v1(statuses)
+
+
 @router.get("/api/astra_historical_evidence_mining_knowledge_distillation_v1")
 def astra_historical_evidence_mining_knowledge_distillation_v1():
     """Read bounded summary-index hypotheses and lessons; never writes or adapts policy."""
@@ -89239,6 +89268,13 @@ def unified_learning_diagnostics_v1(force: bool = False):
             build_autonomous_learning_safe_adaptation_v1(STATE)
         )
 
+    def _attach_whole_platform_observability(payload: dict, statuses: dict | None = None) -> None:
+        # This is an adapter over already collected compact facts.  It is not a
+        # second Sentinel/Governance/Cortex authority and never refreshes work.
+        payload["astra_whole_platform_observability_efficiency_v1"] = (
+            build_astra_whole_platform_observability_efficiency_v1({**(statuses or {}), **payload})
+        )
+
     if force:
         try:
             disk_cache_path = os.path.join(STATE, "dashboard_cache", "unified_learning_diagnostics_v1.json")
@@ -89320,6 +89356,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             _attach_trading_intelligence_v5(force_cached)
             _attach_trading_intelligence_v6(force_cached)
             _attach_autonomous_learning_safe_adaptation(force_cached)
+            _attach_whole_platform_observability(force_cached)
             force_cached["astra_post_reset_truth_v1"] = _astra_post_reset_truth_payload_v1(
                 force_broker_snapshot=False
             )
@@ -89363,6 +89400,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             _attach_trading_intelligence_v5(fast)
             _attach_trading_intelligence_v6(fast)
             _attach_autonomous_learning_safe_adaptation(fast)
+            _attach_whole_platform_observability(fast)
             fast["astra_post_reset_truth_v1"] = _astra_post_reset_truth_payload_v1(
                 force_broker_snapshot=False
             )
@@ -89476,6 +89514,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             _attach_trading_intelligence_v5(disk_cached)
             _attach_trading_intelligence_v6(disk_cached)
             _attach_autonomous_learning_safe_adaptation(disk_cached)
+            _attach_whole_platform_observability(disk_cached)
             disk_cached["cache_hit"] = True
             disk_cached["cache_source"] = "dashboard_cache_disk"
             _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(disk_cached), "ts": time.time()}
@@ -89735,6 +89774,18 @@ def unified_learning_diagnostics_v1(force: bool = False):
             "astra_autonomous_learning_safe_adaptation_v1",
             lambda: build_autonomous_learning_safe_adaptation_v1(STATE),
         )
+        _safe_status(
+            "astra_historical_evidence_mining_knowledge_distillation_v1",
+            lambda: build_historical_evidence_mining_knowledge_distillation_v1(STATE),
+        )
+        _safe_status(
+            "astra_evidence_utilization_information_value_v1",
+            lambda: build_evidence_utilization_information_value_v1(STATE),
+        )
+        _safe_status(
+            "astra_incremental_historical_learning_governor_v1",
+            lambda: build_incremental_historical_learning_governor_v1(STATE),
+        )
         _safe_status("market_breadth_index_intelligence_v1", lambda: MARKET_BREADTH_INDEX_INTELLIGENCE.status(statuses=statuses, force=False))
         _safe_status("etf_sector_rotation_intelligence_v1", lambda: ETF_SECTOR_ROTATION_INTELLIGENCE.status(statuses=statuses, force=False))
         _safe_status("crypto_shadow_learning_v1", lambda: CRYPTO_SHADOW_LEARNING.status(statuses=statuses, force=False))
@@ -89855,6 +89906,15 @@ def unified_learning_diagnostics_v1(force: bool = False):
             )
             out["astra_autonomous_learning_safe_adaptation_v1"] = dict(
                 statuses.get("astra_autonomous_learning_safe_adaptation_v1") or {}
+            )
+            out["astra_historical_evidence_mining_knowledge_distillation_v1"] = dict(
+                statuses.get("astra_historical_evidence_mining_knowledge_distillation_v1") or {}
+            )
+            out["astra_evidence_utilization_information_value_v1"] = dict(
+                statuses.get("astra_evidence_utilization_information_value_v1") or {}
+            )
+            out["astra_incremental_historical_learning_governor_v1"] = dict(
+                statuses.get("astra_incremental_historical_learning_governor_v1") or {}
             )
             out["astra_adaptive_learning_v1"] = dict(statuses.get("astra_adaptive_learning_v1") or {})
             out["astra_learning_preservation_capacity_v1"] = dict(statuses.get("astra_learning_preservation_capacity_v1") or {})
@@ -90195,6 +90255,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             out["astra_post_reset_truth_v1"] = _astra_post_reset_truth_payload_v1(
                 force_broker_snapshot=False
             )
+            _attach_whole_platform_observability(out, statuses)
             out["cache_hit"] = False
             out["cache_age_seconds"] = 0.0
             _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(out), "ts": time.time()}
