@@ -60,6 +60,7 @@ from engine.astra_trading_intelligence_improvement_v3 import build_trading_intel
 from engine.astra_trading_intelligence_improvement_v4 import build_trading_intelligence_improvement_suite_v4
 from engine.astra_trading_intelligence_improvement_v5 import build_trading_intelligence_improvement_suite_v5
 from engine.astra_trading_intelligence_improvement_v6 import build_trading_intelligence_improvement_suite_v6
+from engine.astra_autonomous_learning_safe_adaptation_v1 import build_autonomous_learning_safe_adaptation_v1
 from engine.astra_runtime_governance_v1 import (
     WORKER_STATE_PATH,
     canonical_runtime_invariants as _canonical_runtime_invariants,
@@ -48807,6 +48808,12 @@ def astra_trading_intelligence_improvement_suite_v6(
     )
 
 
+@router.get("/api/astra_autonomous_learning_safe_adaptation_v1")
+def astra_autonomous_learning_safe_adaptation_v1(domain: str | None = None):
+    """Read V7 adaptation proposals; this route cannot apply policy changes."""
+    return build_autonomous_learning_safe_adaptation_v1(STATE, {"domain": domain})
+
+
 @router.get("/api/candidate_intelligence_enrichment_contract_diagnostic_v1")
 def candidate_intelligence_enrichment_contract_diagnostic_v1(force: bool = False):
     """Read-only candidate enrichment and contract parity diagnostic."""
@@ -79082,6 +79089,10 @@ def _learning_acceleration_status_bundle() -> dict:
     except Exception:
         statuses["astra_trading_intelligence_improvement_suite_v6"] = {"status": "UNAVAILABLE", "provider_calls_used": 0, "llm_calls_used": 0, "broker_actions_used": 0}
     try:
+        statuses["astra_autonomous_learning_safe_adaptation_v1"] = build_autonomous_learning_safe_adaptation_v1(STATE)
+    except Exception:
+        statuses["astra_autonomous_learning_safe_adaptation_v1"] = {"status": "UNAVAILABLE", "provider_calls_used": 0, "llm_calls_used": 0, "broker_actions_used": 0}
+    try:
         statuses["market_transition_detection_v1"] = MARKET_TRANSITION_DETECTION.status(statuses=statuses, force=False)
     except Exception:
         statuses["market_transition_detection_v1"] = {}
@@ -89201,6 +89212,12 @@ def unified_learning_diagnostics_v1(force: bool = False):
             build_trading_intelligence_improvement_suite_v6(STATE)
         )
 
+    def _attach_autonomous_learning_safe_adaptation(payload: dict) -> None:
+        # V7 stays a cache-safe preview; it cannot dispatch or mutate policy.
+        payload["astra_autonomous_learning_safe_adaptation_v1"] = (
+            build_autonomous_learning_safe_adaptation_v1(STATE)
+        )
+
     if force:
         try:
             disk_cache_path = os.path.join(STATE, "dashboard_cache", "unified_learning_diagnostics_v1.json")
@@ -89281,6 +89298,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             _attach_shadow_exit_summaries(force_cached)
             _attach_trading_intelligence_v5(force_cached)
             _attach_trading_intelligence_v6(force_cached)
+            _attach_autonomous_learning_safe_adaptation(force_cached)
             force_cached["astra_post_reset_truth_v1"] = _astra_post_reset_truth_payload_v1(
                 force_broker_snapshot=False
             )
@@ -89323,6 +89341,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             _attach_shadow_exit_summaries(fast)
             _attach_trading_intelligence_v5(fast)
             _attach_trading_intelligence_v6(fast)
+            _attach_autonomous_learning_safe_adaptation(fast)
             fast["astra_post_reset_truth_v1"] = _astra_post_reset_truth_payload_v1(
                 force_broker_snapshot=False
             )
@@ -89435,6 +89454,7 @@ def unified_learning_diagnostics_v1(force: bool = False):
             _apply_broker_truth_unification_fast_overlays_v1(disk_cached, compact=True)
             _attach_trading_intelligence_v5(disk_cached)
             _attach_trading_intelligence_v6(disk_cached)
+            _attach_autonomous_learning_safe_adaptation(disk_cached)
             disk_cached["cache_hit"] = True
             disk_cached["cache_source"] = "dashboard_cache_disk"
             _CACHE["unified_learning_diagnostics_v1"] = {"data": dict(disk_cached), "ts": time.time()}
@@ -89690,6 +89710,10 @@ def unified_learning_diagnostics_v1(force: bool = False):
             "astra_trading_intelligence_improvement_suite_v6",
             lambda: build_trading_intelligence_improvement_suite_v6(STATE),
         )
+        _safe_status(
+            "astra_autonomous_learning_safe_adaptation_v1",
+            lambda: build_autonomous_learning_safe_adaptation_v1(STATE),
+        )
         _safe_status("market_breadth_index_intelligence_v1", lambda: MARKET_BREADTH_INDEX_INTELLIGENCE.status(statuses=statuses, force=False))
         _safe_status("etf_sector_rotation_intelligence_v1", lambda: ETF_SECTOR_ROTATION_INTELLIGENCE.status(statuses=statuses, force=False))
         _safe_status("crypto_shadow_learning_v1", lambda: CRYPTO_SHADOW_LEARNING.status(statuses=statuses, force=False))
@@ -89807,6 +89831,9 @@ def unified_learning_diagnostics_v1(force: bool = False):
             )
             out["astra_trading_intelligence_improvement_suite_v6"] = dict(
                 statuses.get("astra_trading_intelligence_improvement_suite_v6") or {}
+            )
+            out["astra_autonomous_learning_safe_adaptation_v1"] = dict(
+                statuses.get("astra_autonomous_learning_safe_adaptation_v1") or {}
             )
             out["astra_adaptive_learning_v1"] = dict(statuses.get("astra_adaptive_learning_v1") or {})
             out["astra_learning_preservation_capacity_v1"] = dict(statuses.get("astra_learning_preservation_capacity_v1") or {})
