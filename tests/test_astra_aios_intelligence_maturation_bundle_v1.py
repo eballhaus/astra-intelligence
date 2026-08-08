@@ -24,6 +24,12 @@ def exit_maturity(statuses: dict):
         return AstraAiosIntelligenceMaturationBundleV1(state_dir=state_dir)._exit_intelligence_maturation_v2(statuses)
 
 
+def satellite(statuses: dict, satellite_key: str = "market_breadth_satellite"):
+    with tempfile.TemporaryDirectory() as state_dir:
+        out = AstraAiosIntelligenceMaturationBundleV1(state_dir=state_dir)._satellite_request_manager(statuses)
+        return next(row for row in out["satellites"] if row["satellite_key"] == satellite_key)
+
+
 ACCELERATED = {
     "cache_freshness": "live",
     "current_behavior_confidence": 71.25,
@@ -285,6 +291,65 @@ class AstraAiosAicUpstreamFactOrderingTests(unittest.TestCase):
         self.assertEqual(out["broker_execution_added"], False)
         self.assertEqual(out["live_trading_changed"], False)
         self.assertEqual(out["behavior_safe_to_apply"], False)
+
+
+class AstraAiosSatelliteConfidenceHandoffTests(unittest.TestCase):
+    def test_specialized_source_confidence_fields_are_recognized(self):
+        out = satellite({
+            "market_breadth_index_intelligence_v1": {
+                "cache_freshness": "current",
+                "index_confidence_score": 62.0,
+            },
+        })
+        self.assertEqual(out["status"], "ok")
+        self.assertAlmostEqual(out["confidence_budget"], 62.0, delta=0.01)
+        self.assertAlmostEqual(out["average_confidence"], 62.0, delta=0.01)
+
+    def test_generic_canonical_confidence_still_works(self):
+        out = satellite({
+            "astra_satellite_network_v1": {
+                "cache_freshness": "current",
+                "confidence": 78.0,
+            },
+        })
+        self.assertAlmostEqual(out["confidence_budget"], 78.0, delta=0.01)
+
+    def test_missing_source_remains_missing_not_fabricated(self):
+        out = satellite({})
+        self.assertEqual(out["status"], "insufficient_evidence")
+        self.assertEqual(out["health"], "insufficient_evidence")
+        self.assertEqual(out["confidence_budget"], 0.0)
+
+    def test_cio_insufficient_when_no_canonical_payload(self):
+        out = satellite({}, satellite_key="cio_satellite")
+        self.assertEqual(out["status"], "insufficient_evidence")
+        self.assertEqual(out["confidence_budget"], 0.0)
+
+    def test_stale_source_cannot_inflate_confidence(self):
+        out = satellite({
+            "market_breadth_index_intelligence_v1": {
+                "cache_freshness": "stale",
+                "index_confidence_score": 90.0,
+            },
+        })
+        self.assertEqual(out["status"], "insufficient_evidence")
+        self.assertEqual(out["confidence_budget"], 0.0)
+
+    def test_fresh_source_confidence_is_averaged_across_present_sources(self):
+        out = satellite({
+            "astra_satellite_network_v1": {"cache_freshness": "current", "confidence": 70.0},
+            "market_breadth_index_intelligence_v1": {"cache_freshness": "current", "index_confidence_score": 90.0},
+            "market_transition_detection_v1": {"cache_freshness": "stale", "transition_confidence": 99.0},
+        }, satellite_key="market_satellite")
+        self.assertEqual(out["status"], "ok")
+        self.assertAlmostEqual(out["confidence_budget"], (70.0 + 90.0) / 2.0, delta=0.01)
+
+    def test_no_provider_calls_or_behavior_changes(self):
+        out = satellite({
+            "astra_satellite_network_v1": {"cache_freshness": "current", "confidence": 78.0},
+        })
+        self.assertEqual(out["provider_calls_used"], 0)
+        self.assertIs(False, out["direct_trade_influence_enabled"])
 
 
 if __name__ == "__main__":

@@ -32,6 +32,45 @@ SATELLITE_DEFINITIONS = [
     ("cio_satellite", "CIO Satellite", ["astra_cio_intelligence_v1", "astra_provider_orchestration_data_governance_v1", "astra_executive_polish_v1"]),
 ]
 
+SATELLITE_SOURCE_CONFIDENCE_FIELDS = {
+    "astra_satellite_network_v1": ("confidence",),
+    "market_breadth_index_intelligence_v1": ("index_confidence_score",),
+    "market_transition_detection_v1": ("transition_confidence",),
+    "etf_sector_rotation_intelligence_v1": ("sector_rotation_confidence",),
+    "cross_sector_capital_flow_memory_v1": ("sector_flow_confidence", "rotation_confidence", "flow_persistence"),
+    "market_regime_similarity_engine_v1": ("confidence", "similarity_score"),
+    "astra_tier3_historical_satellite_shadow_acceleration_v1": ("confidence", "reliability_score"),
+    "long_term_memory_symbol_retrieval_suite_v1": ("symbol_memory_quality_score",),
+    "accelerated_learning_symbol_intelligence_suite_v1": (
+        "current_behavior_confidence",
+        "symbol_exit_confidence",
+        "horizon_confidence",
+        "regime_symbol_confidence",
+        "transferable_learning_confidence",
+        "transferable_pattern_confidence",
+        "symbol_personality_quality_score",
+    ),
+    "trade_family_intelligence_v1": ("family_transfer_confidence", "family_learning_score"),
+    "profit_capture_peak_decay_exit_validation_suite_v1": ("readiness_score", "capture_quality_score", "policy_confidence", "hold_duration_quality_score"),
+    "controlled_paper_profit_protection_pilot_v1": ("profit_capture_score", "shadow_validation_confidence"),
+    "adaptive_execution_exit_intelligence_v3": ("exit_quality",),
+    "intelligence_quality_learning_efficiency_suite_v1": ("conviction_calibration_score",),
+    "catalyst_lifecycle_intelligence_v1": ("catalyst_lifecycle_confidence",),
+    "catalyst_persistence_decay_curves_v2": ("catalyst_decay_confidence",),
+    "astra_provider_orchestration_data_governance_v1": ("confidence_score", "provider_health_score"),
+}
+
+SATELLITE_GENERIC_CONFIDENCE_FIELDS = (
+    "confidence",
+    "confidence_score",
+    "readiness_score",
+    "institutional_intelligence_score",
+    "overall_cio_intelligence_score",
+    "market_intelligence_score",
+    "consensus_score",
+    "graph_confidence",
+)
+
 MEMORY_BUDGETS = {
     "daily_max_lessons": 300,
     "weekly_max_lessons": 500,
@@ -117,6 +156,24 @@ def _confidence(payload: dict[str, Any], default: float = 50.0) -> float:
     return rounded(sum(nums) / max(1, len(nums)), 3) if nums else default
 
 
+def _satellite_source_confidence(source_key: str, payload: dict[str, Any]) -> float | None:
+    if not payload:
+        return None
+    marker = text(first(
+        payload.get("session_is_stale"), payload.get("cache_freshness"), payload.get("cache_status"),
+        payload.get("freshness"), payload.get("session_refresh_status"),
+        default="",
+    ), default="").strip().lower()
+    if marker in {"true", "stale", "expired", "stale_cache", "missing"} or "stale" in marker:
+        return None
+    fields = SATELLITE_SOURCE_CONFIDENCE_FIELDS.get(source_key, SATELLITE_GENERIC_CONFIDENCE_FIELDS)
+    values = [clamp(payload.get(field)) for field in fields if payload.get(field) is not None]
+    unique = sorted({round(value, 3) for value in values})
+    if not unique:
+        return None
+    return rounded(sum(unique) / len(unique), 3)
+
+
 def _evidence(payload: dict[str, Any]) -> int:
     fields = (
         "evidence_count", "lesson_count", "lessons_organized", "master_truths_created",
@@ -197,7 +254,12 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
         for satellite_key, satellite_name, source_keys in SATELLITE_DEFINITIONS:
             sources = [(key, self._source(statuses, key)) for key in source_keys]
             sources = [(key, payload) for key, payload in sources if payload]
-            conf = rounded(sum(_confidence(payload) for _, payload in sources) / max(1, len(sources)), 3)
+            present_confs = []
+            for source_key, payload in sources:
+                value = _satellite_source_confidence(source_key, payload)
+                if value is not None:
+                    present_confs.append(value)
+            conf = rounded(sum(present_confs) / max(1, len(present_confs)), 3) if present_confs else 0.0
             evidence = max([_evidence(payload) for _, payload in sources] + [0])
             raw_observations = min(130, max(len(sources) * 16, evidence // 3, 1 if sources else 0))
             useful_findings = int(raw_observations * (conf / 100.0)) if raw_observations else 0
@@ -206,7 +268,8 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             lessons_discarded = max(0, useful_findings - lessons_created)
             duplicate_rate = rounded(max(0.0, 100.0 - (compressed_findings / max(1.0, useful_findings) * 100.0)) if useful_findings else 0.0, 3)
             target_capacity = max(1, CAPACITY_TARGETS["satellites"] // max(1, len(SATELLITE_DEFINITIONS)))
-            health = "healthy" if sources and conf >= 65 else "monitoring" if sources else "insufficient_evidence"
+            health = "healthy" if present_confs and conf >= 65 else "monitoring" if present_confs else "insufficient_evidence"
+            satellite_responsive = bool(present_confs)
             observation_packets = []
             for idx in range(min(compressed_findings, 12)):
                 source_name = sources[idx % len(sources)][0] if sources else satellite_key
@@ -222,7 +285,7 @@ class AstraAiosIntelligenceMaturationBundleV1(CachedDiagnosticModule):
             satellites.append({
                 "satellite_key": satellite_key,
                 "satellite_name": satellite_name,
-                "status": "ok" if sources else "insufficient_evidence",
+                "status": "ok" if present_confs else "insufficient_evidence",
                 "health": health,
                 "source_systems": [key for key, _ in sources] or source_keys,
                 "data_budget": "cache_only_existing_provider_owners",
