@@ -58,6 +58,11 @@ class WholePlatformObservabilityTests(unittest.TestCase):
         self.assertEqual(payload["learning_funnel"]["first_measurable_bottleneck"]["blocker"], "OUTCOME_LINKAGE_SPARSE")
         self.assertEqual(payload["autonomy_funnel"]["stages"][0]["evidence_source"], "astra_trading_intelligence_improvement_suite_v6")
 
+    def test_error_without_owner_detail_remains_truthful(self):
+        payload = build_astra_whole_platform_observability_efficiency_v1({"astra_incremental_historical_learning_governor_v1": {"current_status": "ERROR"}})
+        row = next(item for item in payload["domains"] if item["domain"] == "v10_runner")
+        self.assertEqual(row["first_causal_blocker"], "STATUS_REPORTED_WITHOUT_DETAILED_BLOCKER:ERROR")
+
 
 if __name__ == "__main__":
     unittest.main()

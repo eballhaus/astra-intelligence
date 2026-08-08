@@ -126,6 +126,9 @@ def _blocker(source: Mapping[str, Any]) -> str:
     blockers = source.get("blockers") or source.get("remaining_blockers") or source.get("activation_blockers")
     if isinstance(blockers, list) and blockers:
         return str(blockers[0])
+    status = _text(source.get("status") or source.get("current_status"))
+    if "ERROR" in status or "FAIL" in status or "DEFER" in status or "BLOCKED" in status:
+        return f"STATUS_REPORTED_WITHOUT_DETAILED_BLOCKER:{status}"
     return "NONE_OBSERVED"
 
 
