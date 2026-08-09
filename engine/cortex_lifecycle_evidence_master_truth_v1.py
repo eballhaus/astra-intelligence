@@ -27,6 +27,7 @@ MAX_ROWS_PER_SOURCE = 900
 MAX_CANONICAL_LESSONS = 1500
 CANONICAL_STORE = "canonical_lifecycle_lessons_v1.jsonl"
 CANONICAL_SUMMARY = "canonical_lifecycle_lessons_summary_v1.json"
+STRICT_TRUTH_REGISTRY = "broker_truth_records_v1.json"
 
 
 FIELD_ALIAS_REGISTRY: dict[str, tuple[str, ...]] = {
@@ -140,6 +141,16 @@ def _norm_text(value: Any, default: str = "unknown") -> str:
     return str(value).strip().lower().replace(" ", "_")[:120]
 
 
+def _same_evidence_value(left: Any, right: Any) -> bool:
+    """Compare evidence values without flattening meaningful numeric deltas."""
+    if left == right:
+        return True
+    try:
+        return abs(float(left) - float(right)) <= 0.01
+    except (TypeError, ValueError):
+        return _norm_text(left) == _norm_text(right)
+
+
 def _row_ref(source: str, row: dict[str, Any], offset: int) -> str:
     raw = f"{source}:{row.get('lifecycle_id') or row.get('ledger_id') or row.get('symbol') or 'row'}:{row.get('timestamp') or row.get('generated_at') or row.get('updated_at') or offset}"
     return hashlib.sha1(raw.encode("utf-8", errors="ignore")).hexdigest()[:16]
@@ -218,6 +229,33 @@ class CortexLifecycleEvidenceMasterTruthV1(CachedDiagnosticModule):
                     indexed[str(lifecycle_id)][source] = row
         return indexed
 
+    def _strict_truth_index(self) -> dict[str, dict[str, Any]]:
+        """Index only exact, complete broker truth by immutable lifecycle ID."""
+        path = os.path.join(self.state_dir, STRICT_TRUTH_REGISTRY)
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                registry = json.load(handle)
+            rows = list(registry.get("records") or []) if isinstance(registry, dict) else []
+        except Exception:
+            return {}
+        indexed: dict[str, dict[str, Any]] = {}
+        for row in rows[-MAX_CANONICAL_LESSONS:]:
+            if not isinstance(row, dict):
+                continue
+            quality = str(row.get("evidence_class") or row.get("truth_quality") or "").upper()
+            lifecycle_id = str(row.get("lifecycle_id") or "").strip()
+            complete = (
+                quality == "BROKER_CONFIRMED_COMPLETE"
+                and bool(str(row.get("entry_fill_id") or "").strip())
+                and bool(str(row.get("exit_fill_id") or "").strip())
+                and bool(lifecycle_id)
+            )
+            source = str(row.get("source") or row.get("source_bucket") or "").upper()
+            if not complete or any(token in source for token in ("LEGACY", "RECONSTRUCT", "HISTORICAL", "SHADOW", "REPLAY")):
+                continue
+            indexed[lifecycle_id] = dict(row)
+        return indexed
+
     def _record_is_closed(self, row: dict[str, Any]) -> bool:
         if row.get("closed") is True:
             return True
@@ -248,7 +286,13 @@ class CortexLifecycleEvidenceMasterTruthV1(CachedDiagnosticModule):
             out[f"original_{field}_count"] = count
         return out
 
-    def _merged_lesson(self, base: dict[str, Any], matched: dict[str, dict[str, Any]], source_refs: dict[str, str]) -> dict[str, Any]:
+    def _merged_lesson(
+        self,
+        base: dict[str, Any],
+        matched: dict[str, dict[str, Any]],
+        source_refs: dict[str, str],
+        strict_truth: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         sources = {"trade_lifecycle_excursion_v2.jsonl": base}
         sources.update(matched)
         merged: dict[str, Any] = {}
@@ -264,8 +308,14 @@ class CortexLifecycleEvidenceMasterTruthV1(CachedDiagnosticModule):
         )
         reconstructed: list[str] = []
         missing: list[str] = []
+        contradictions: list[dict[str, Any]] = []
         for field in canonical_fields:
-            value = first(*(_pick(row, field) for row in sources.values()), default=None)
+            source_values = [
+                {"source": source, "source_record_ref": source_refs.get(source), "value": _pick(row, field),
+                 "evidence_class": row.get("evidence_class") or row.get("truth_quality")}
+                for source, row in sources.items() if _is_present(_pick(row, field))
+            ]
+            value = first(*(item["value"] for item in source_values), default=None)
             if _is_present(value):
                 merged[field] = value
                 if field not in base or not _is_present(base.get(field)):
@@ -273,6 +323,16 @@ class CortexLifecycleEvidenceMasterTruthV1(CachedDiagnosticModule):
             else:
                 merged[field] = None
                 missing.append(field)
+            conflicting = [item for item in source_values[1:] if not _same_evidence_value(value, item["value"])]
+            if conflicting:
+                contradictions.append({
+                    "field": field,
+                    "selected_value": value,
+                    "selected_source": source_values[0]["source"],
+                    "minority_evidence": conflicting,
+                    "source_count": len(source_values),
+                    "preserved": True,
+                })
         confidence = to_float(merged.get("confidence_score"), 0.0)
         merged["confidence_bucket"] = "high" if confidence >= 75 else "medium" if confidence >= 55 else "low" if confidence > 0 else "unknown"
         used = list(sources.keys())
@@ -280,14 +340,28 @@ class CortexLifecycleEvidenceMasterTruthV1(CachedDiagnosticModule):
         present = sum(1 for field in required if _is_present(merged.get(field)))
         reconstruction_confidence = clamp((present / len(required)) * 100.0 + min(15.0, (len(used) - 1) * 4.0))
         lesson_id_seed = f"{merged.get('lifecycle_id') or ''}:{merged.get('symbol') or ''}:{merged.get('entry_timestamp') or ''}:{merged.get('exit_timestamp') or ''}"
+        strict = dict(strict_truth or {})
+        strict_truth_id = str(strict.get("stable_key") or strict.get("truth_id") or "").strip()
+        strict_linked = bool(strict_truth_id and str(strict.get("lifecycle_id") or "").strip() == str(merged.get("lifecycle_id") or "").strip())
+        if strict_linked:
+            source_refs[STRICT_TRUTH_REGISTRY] = strict_truth_id
+            used.append(STRICT_TRUTH_REGISTRY)
+        prior_evidence_class = base.get("evidence_class") or base.get("truth_quality")
         return {
             "lesson_id": hashlib.sha1(lesson_id_seed.encode("utf-8", errors="ignore")).hexdigest()[:20],
             **merged,
+            "broker_truth_id": strict_truth_id if strict_linked else None,
+            "broker_truth_linkage_status": "PROVEN_STRICT_BROKER_TRUTH" if strict_linked else "UNLINKED_OR_NON_STRICT",
+            "evidence_class": "BROKER_CONFIRMED_COMPLETE" if strict_linked else prior_evidence_class,
+            "prior_evidence_class": prior_evidence_class,
             "source_files_used": used,
             "source_record_refs": source_refs,
+            "contradictory_evidence": contradictions,
+            "contradiction_count": len(contradictions),
+            "contradiction_preservation_status": "PRESERVED" if contradictions else "NO_MATERIAL_DISAGREEMENT",
             "fields_reconstructed": sorted(set(reconstructed)),
             "fields_missing": sorted(set(missing)),
-            "match_method": "lifecycle_id" if matched else "base_record_only",
+            "match_method": "lifecycle_id+strict_broker_truth" if strict_linked else "lifecycle_id" if matched else "base_record_only",
             "match_risk": "low" if matched else "medium_missing_cross_file_join",
             "reconstruction_confidence": rounded(reconstruction_confidence, 3),
             "canonical_truth_preserved": True,
@@ -458,6 +532,7 @@ class CortexLifecycleEvidenceMasterTruthV1(CachedDiagnosticModule):
         closed_base_rows = closed_base_rows[:MAX_CANONICAL_LESSONS]
         original = self._original_coverage(base_rows)
         lifecycle_index = self._index_by_lifecycle_id(source_rows)
+        strict_truth_index = self._strict_truth_index()
 
         lessons: list[dict[str, Any]] = []
         join_failures = Counter()
@@ -471,7 +546,8 @@ class CortexLifecycleEvidenceMasterTruthV1(CachedDiagnosticModule):
             for source, row in matched.items():
                 refs[source] = _row_ref(source, row, offset)
                 source_join_counts[source] += 1
-            lessons.append(self._merged_lesson(base, matched, refs))
+            strict_truth = strict_truth_index.get(str(lifecycle_id)) if _is_present(lifecycle_id) else None
+            lessons.append(self._merged_lesson(base, matched, refs, strict_truth=strict_truth))
 
         coverage = self._canonical_coverage(lessons)
         joined_count = sum(1 for row in lessons if len(row.get("source_files_used") or []) > 1)
@@ -495,6 +571,8 @@ class CortexLifecycleEvidenceMasterTruthV1(CachedDiagnosticModule):
             + to_float(coverage.get("canonical_lesson_giveback_pct"), 0.0)
         ) / 4.0, 3)
         top_missing_fields = Counter(field for row in lessons for field in (row.get("fields_missing") or [])).most_common(10)
+        strict_truth_linked_count = sum(1 for row in lessons if row.get("broker_truth_linkage_status") == "PROVEN_STRICT_BROKER_TRUTH")
+        preserved_contradiction_count = sum(to_int(row.get("contradiction_count"), 0) for row in lessons)
 
         summary = {
             "generated_at": generated_at,
@@ -510,6 +588,9 @@ class CortexLifecycleEvidenceMasterTruthV1(CachedDiagnosticModule):
             "join_coverage_score": join_coverage_score,
             "join_quality_score": join_quality_score,
             "evidence_reconstructability_score": reconstructability,
+            "strict_broker_truth_linked_lesson_count": strict_truth_linked_count,
+            "strict_broker_truth_linkage_status": "AVAILABLE" if strict_truth_linked_count else "NO_PROVEN_LIFECYCLE_MATCHES",
+            "preserved_lesson_contradiction_count": preserved_contradiction_count,
             "raw_source_modified": False,
         }
         self._write_canonical_lessons(lessons, summary)
