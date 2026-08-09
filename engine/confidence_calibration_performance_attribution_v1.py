@@ -275,6 +275,23 @@ def _normalized_trade(row: dict[str, Any], source: str) -> dict[str, Any] | None
     return out
 
 
+def _strict_broker_truth(row: dict[str, Any]) -> bool:
+    """Return only complete, current broker truths for calibration.
+
+    Calibration must never promote replay, shadow, or legacy reconstruction
+    outcomes into the broker-confirmed sample simply because they have a
+    confidence-shaped field.
+    """
+    quality = _text(row.get("evidence_class") or row.get("truth_quality")).upper()
+    source = _text(row.get("source") or row.get("source_bucket") or row.get("ownership_status")).upper()
+    return (
+        quality == "BROKER_CONFIRMED_COMPLETE"
+        and bool(_text(row.get("entry_fill_id")))
+        and bool(_text(row.get("exit_fill_id")))
+        and not any(token in source for token in ("LEGACY", "RECONSTRUCT", "HISTORICAL", "SHADOW", "REPLAY"))
+    )
+
+
 def _dedupe(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     best: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -384,6 +401,83 @@ class ConfidenceCalibrationPerformanceAttributionV1:
 
     def _rows(self, name: str, limit: int = MAX_ROWS) -> list[dict[str, Any]]:
         return _tail_jsonl(os.path.join(self.state_dir, name), max_rows=limit)
+
+    def _strict_truth_calibration_rows(self) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Join completed broker truth to its immutable entry-time confidence.
+
+        The strict registry is the canonical owner of complete paper outcomes.
+        We deliberately reject a record without pretrade confidence instead of
+        deriving confidence from its closed result.
+        """
+        path = os.path.join(self.state_dir, "broker_truth_records_v1.json")
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                registry = json.load(handle)
+            records = list(registry.get("records") or []) if isinstance(registry, dict) else []
+        except Exception:
+            records = []
+
+        rows: list[dict[str, Any]] = []
+        strict_seen = linked = missing_prediction = missing_outcome = 0
+        unlinked_ids: list[str] = []
+        for raw in records[-MAX_ROWS:]:
+            if not isinstance(raw, dict) or not _strict_broker_truth(raw):
+                continue
+            strict_seen += 1
+            context = raw.get("pretrade_context_v1")
+            context = dict(context) if isinstance(context, dict) else {}
+            confidence = _confidence(context)
+            outcome = raw.get("realized_return")
+            if outcome in (None, ""):
+                outcome = raw.get("return_percent")
+            truth_id = _text(raw.get("stable_key") or raw.get("lifecycle_id"))
+            prediction_id = _text(
+                context.get("candidate_id") or context.get("recommendation_id")
+                or context.get("selection_id") or context.get("decision_id")
+                or context.get("entry_contract_id") or raw.get("candidate_id")
+                or raw.get("recommendation_id") or raw.get("selection_id")
+            )
+            if confidence is None or not prediction_id:
+                missing_prediction += 1
+                if truth_id:
+                    unlinked_ids.append(truth_id)
+                continue
+            if outcome in (None, ""):
+                missing_outcome += 1
+                if truth_id:
+                    unlinked_ids.append(truth_id)
+                continue
+            normalized = _normalized_trade({
+                **raw,
+                **context,
+                "confidence": confidence,
+                "realized_return_pct": outcome,
+                "timestamp": raw.get("exit_time") or raw.get("created_at"),
+            }, "strict_broker_truth")
+            if normalized is None:
+                missing_outcome += 1
+                continue
+            normalized.update({
+                "truth_id": truth_id,
+                "prediction_id": prediction_id,
+                "prediction_timestamp": context.get("observation_timestamp") or context.get("forecast_timestamp") or context.get("market_data_timestamp"),
+                "outcome_timestamp": raw.get("exit_time") or raw.get("created_at"),
+                "linkage_status": "LINKED_PRE_OUTCOME_PREDICTION_TO_STRICT_BROKER_TRUTH",
+            })
+            rows.append(normalized)
+            linked += 1
+        return rows, {
+            "calibration_evidence_source": "broker_truth_records_v1.strict_broker_confirmed_complete",
+            "strict_truth_records_seen": strict_seen,
+            "strict_truth_records_linked": linked,
+            "strict_truth_records_missing_pre_outcome_prediction": missing_prediction,
+            "strict_truth_records_missing_closed_outcome": missing_outcome,
+            "unlinked_truth_ids": unlinked_ids[:20],
+            "closed_outcome_linkage_status": (
+                "LINKED" if linked else "INSUFFICIENT_EVIDENCE" if strict_seen == 0 else "PARTIAL"
+            ),
+            "closed_outcome_linkage_fail_closed": True,
+        }
 
     def _collect_trades(self) -> list[dict[str, Any]]:
         sources = {
@@ -545,7 +639,10 @@ class ConfidenceCalibrationPerformanceAttributionV1:
 
     def _build(self, statuses: dict[str, dict[str, Any]]) -> dict[str, Any]:
         started = time.perf_counter()
-        rows = self._collect_trades()
+        # Broker-confirmed, entry-time-linked outcomes are the calibration
+        # sample. Mixed lifecycle/replay rows remain a diagnostic context only.
+        rows, linkage = self._strict_truth_calibration_rows()
+        diagnostic_context_rows = self._collect_trades()
         confidence_summary = _group(rows, "confidence_bucket", CONFIDENCE_BUCKETS)
         grade_summary = _group(rows, "grade", GRADE_BUCKETS)
         best_conf_bucket, worst_conf_bucket = _best_worst(confidence_summary, "avg_return")
@@ -576,9 +673,13 @@ class ConfidenceCalibrationPerformanceAttributionV1:
         out = {
             "enabled": True,
             "version": VERSION,
+            "status": "ok" if rows else "insufficient_evidence",
             "mode": "paper_only_confidence_calibration_performance_attribution",
             "generated_at": _now_iso(),
             "evidence_count": len(rows),
+            "diagnostic_context_evidence_count": len(diagnostic_context_rows),
+            "diagnostic_context_sources": "lifecycle_profit_capture_archetype_replay_paper_journal_non_authoritative",
+            **linkage,
             "confidence_bucket_stats": confidence_summary,
             "grade_bucket_stats": grade_summary,
             "best_confidence_bucket": best_conf_bucket,
@@ -610,7 +711,7 @@ class ConfidenceCalibrationPerformanceAttributionV1:
             "concentration_warning": "profit_concentrated_in_one_symbol" if concentration >= 45.0 else "no_major_profit_concentration_detected",
             **daily,
             "shadow_recommendation": recommendation,
-            "summary": "Astra is measuring whether confidence, grades, horizons, archetypes, sectors, and daily account performance actually explain returns. No sizing or trading behavior is changed.",
+            "summary": "Astra calibrates entry-time confidence only against linked, broker-confirmed completed paper truths. Unlinked or non-broker evidence remains diagnostic context and cannot grade calibration.",
             "behavior_safe_to_apply": False,
             "auto_apply_allowed": False,
             "human_review_required": True,
@@ -661,8 +762,18 @@ class ConfidenceCalibrationPerformanceAttributionV1:
             return {
                 "enabled": False,
                 "version": VERSION,
+                "status": "insufficient_evidence",
                 "mode": "paper_only_confidence_calibration_performance_attribution",
                 "evidence_count": 0,
+                "diagnostic_context_evidence_count": 0,
+                "calibration_evidence_source": "broker_truth_records_v1.strict_broker_confirmed_complete",
+                "strict_truth_records_seen": 0,
+                "strict_truth_records_linked": 0,
+                "strict_truth_records_missing_pre_outcome_prediction": 0,
+                "strict_truth_records_missing_closed_outcome": 0,
+                "unlinked_truth_ids": [],
+                "closed_outcome_linkage_status": "INSUFFICIENT_EVIDENCE",
+                "closed_outcome_linkage_fail_closed": True,
                 "best_confidence_bucket": "insufficient_data",
                 "worst_confidence_bucket": "insufficient_data",
                 "confidence_calibration_score": 0.0,

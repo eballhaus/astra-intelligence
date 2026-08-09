@@ -17,6 +17,7 @@ from typing import Any
 VERSION = "1.0.0"
 LANES = ("DAY", "SWING", "CRYPTO")
 MAX_LEDGER_ROWS = 200
+LATENCY_DELAY_SECONDS = 300.0
 
 
 def _now() -> str:
@@ -36,6 +37,38 @@ def _number(value: Any) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _timestamp(value: Any) -> str | None:
+    text = _text(value)
+    return text or None
+
+
+def _epoch(value: Any) -> float | None:
+    stamp = _timestamp(value)
+    if not stamp:
+        return None
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _record_identity(row: dict[str, Any]) -> set[str]:
+    return {
+        value for value in (
+            _text(row.get("truth_id")), _text(row.get("broker_truth_id")),
+            _text(row.get("lifecycle_id")), _text(row.get("stable_key")),
+        ) if value
+    }
+
+
+def _first_timestamp(row: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = _timestamp(row.get(key))
+        if value:
+            return value
+    return None
 
 
 def _safety() -> dict[str, Any]:
@@ -79,8 +112,73 @@ class AstraOperatingHealthContractV1:
 
     @staticmethod
     def _strict_truths(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        required = ("lifecycle_id", "entry_fill_id", "exit_fill_id", "symbol", "lane")
-        return [row for row in records if bool(row.get("strict_broker_truth")) or all(_text(row.get(key)) for key in required)]
+        required = ("lifecycle_id", "entry_fill_id", "exit_fill_id", "symbol")
+        return [
+            row for row in records
+            if bool(row.get("strict_broker_truth")) or (
+                _text(row.get("evidence_class") or row.get("truth_quality")).upper() == "BROKER_CONFIRMED_COMPLETE"
+                and all(_text(row.get(key)) for key in required)
+                and bool(_text(row.get("lane") or row.get("lane_id")))
+            )
+        ]
+
+    @staticmethod
+    def _handoff_ledger_row(truth: dict[str, Any], learning: list[dict[str, Any]]) -> dict[str, Any]:
+        """Expose observed handoffs without turning missing timestamps into facts."""
+        truth_ids = _record_identity(truth)
+        related = [row for row in learning if truth_ids & _record_identity(row)]
+        related.sort(key=lambda row: _epoch(_first_timestamp(row, "created_at", "timestamp", "recorded_at")) or float("inf"))
+        learned = related[0] if related else {}
+        persisted_at = _first_timestamp(truth, "persisted_at", "created_at", "updated_at")
+        acknowledgement_at = _first_timestamp(
+            truth, "learning_acknowledged_at"
+        ) or _first_timestamp(learned, "learning_acknowledged_at", "acknowledged_at", "recorded_at")
+        lesson_at = _first_timestamp(learned, "canonical_lesson_created_at", "lesson_created_at", "created_at") if learned.get("lesson_id") else None
+        teacher_at = _first_timestamp(learned, "teacher_handoff_at", "teacher_acknowledged_at", "taught_at")
+        memory_at = _first_timestamp(learned, "memory_indexed_at", "indexed_at", "memory_available_at")
+        cortex_at = _first_timestamp(truth, "cortex_acknowledged_at") or _first_timestamp(learned, "cortex_acknowledged_at")
+        stage_defs = (
+            ("strict_truth_persisted", persisted_at, True),
+            ("learning_acknowledged", acknowledgement_at, bool(truth.get("learning_acknowledged") or related)),
+            ("canonical_lesson_compressed", lesson_at, bool(learned.get("lesson_id"))),
+            ("teacher_handoff", teacher_at, bool(learned.get("teacher_handoff_complete"))),
+            ("memory_index_available", memory_at, bool(learned.get("memory_index_available"))),
+            ("cortex_acknowledged", cortex_at, bool(truth.get("cortex_acknowledged") or learned.get("cortex_acknowledged"))),
+        )
+        stages: list[dict[str, Any]] = []
+        previous_epoch = _epoch(persisted_at)
+        first_gap = None
+        last_observed_epoch = previous_epoch
+        for name, stamp, known_complete in stage_defs:
+            current_epoch = _epoch(stamp)
+            if stamp and current_epoch is not None:
+                latency = None if name == "strict_truth_persisted" or previous_epoch is None else round(max(0.0, current_epoch - previous_epoch), 3)
+                state = "OBSERVED_DELAYED" if latency is not None and latency > LATENCY_DELAY_SECONDS else "OBSERVED"
+                if state == "OBSERVED_DELAYED" and first_gap is None:
+                    first_gap = name
+                stages.append({"stage": name, "status": state, "timestamp": stamp, "latency_from_previous_seconds": latency})
+                previous_epoch = current_epoch
+                last_observed_epoch = current_epoch
+            else:
+                state = "ACKNOWLEDGED_TIMESTAMP_UNOBSERVED" if known_complete else "UNKNOWN_UNOBSERVED"
+                stages.append({"stage": name, "status": state, "timestamp": None, "latency_from_previous_seconds": None})
+                if first_gap is None:
+                    first_gap = name
+        total_latency = None
+        if _epoch(persisted_at) is not None and last_observed_epoch is not None and last_observed_epoch >= _epoch(persisted_at):
+            total_latency = round(last_observed_epoch - _epoch(persisted_at), 3)
+        truth_id = _text(truth.get("truth_id") or truth.get("stable_key") or truth.get("lifecycle_id"))
+        return {
+            "truth_id": truth_id,
+            "lane": _text(truth.get("lane") or truth.get("lane_id")).upper(),
+            "symbol": _text(truth.get("symbol")).upper(),
+            "lifecycle_id": truth.get("lifecycle_id"),
+            "stages": stages,
+            "related_learning_record_count": len(related),
+            "first_delayed_or_unobserved_handoff": first_gap or "NONE_OBSERVED",
+            "total_observed_latency_seconds": total_latency,
+            "latency_observability": "PARTIAL" if first_gap else "COMPLETE",
+        }
 
     def build(
         self,
@@ -96,15 +194,12 @@ class AstraOperatingHealthContractV1:
         matrix = _dict(multilane)
         truths = self._strict_truths([_dict(row) for row in (truth_records or [])])
         learning = [_dict(row) for row in (learning_records or [])]
-        learned_ids = {
-            _text(row.get("truth_id") or row.get("broker_truth_id") or row.get("lifecycle_id"))
-            for row in learning if _text(row.get("truth_id") or row.get("broker_truth_id") or row.get("lifecycle_id"))
-        }
+        learned_ids = set().union(*(_record_identity(row) for row in learning)) if learning else set()
         lanes: dict[str, Any] = {}
         for lane in LANES:
             row = _dict(_dict(matrix.get("lanes")).get(lane))
-            lane_truths = [truth for truth in truths if _text(truth.get("lane")).upper() == lane]
-            consumed = [truth for truth in lane_truths if _text(truth.get("truth_id") or truth.get("lifecycle_id")) in learned_ids]
+            lane_truths = [truth for truth in truths if _text(truth.get("lane") or truth.get("lane_id")).upper() == lane]
+            consumed = [truth for truth in lane_truths if _record_identity(truth) & learned_ids]
             blocker = _text(row.get("first_blocker"), "CANDIDATE_OBSERVATION_PENDING")
             valid_wait = blocker in {
                 "CANDIDATE_OBSERVATION_PENDING", "NO_CURRENT_MARKET_OPPORTUNITY", "MARKET_CLOSED",
@@ -134,23 +229,26 @@ class AstraOperatingHealthContractV1:
         status = "PASS" if control_agree else "WARNING"
         ledger = []
         for truth in truths[-MAX_LEDGER_ROWS:]:
-            truth_id = _text(truth.get("truth_id") or truth.get("lifecycle_id"))
-            consumed = truth_id in learned_ids
-            ledger.append({
-                "truth_id": truth_id, "lane": _text(truth.get("lane")).upper(), "symbol": _text(truth.get("symbol")).upper(),
-                "lifecycle_id": truth.get("lifecycle_id"), "persisted_at": truth.get("persisted_at") or truth.get("created_at"),
-                "evidence_registration_time": truth.get("evidence_registered_at"), "consumer": "canonical_lifecycle_learning",
+            truth_id = _text(truth.get("truth_id") or truth.get("stable_key") or truth.get("lifecycle_id"))
+            consumed = bool(_record_identity(truth) & learned_ids)
+            handoff = self._handoff_ledger_row(truth, learning)
+            handoff_times = {row["stage"]: row.get("timestamp") for row in handoff.get("stages", [])}
+            handoff.update({
+                "evidence_registration_time": truth.get("evidence_registered_at"),
+                "consumer": "canonical_lifecycle_learning",
                 "consumption_result": "CONSUMED" if consumed else "AWAITING_LEARNING",
-                "learning_acknowledgement_time": truth.get("learning_acknowledged_at") if consumed else None,
-                "cortex_acknowledgement_time": truth.get("cortex_acknowledged_at") if consumed else None,
+                "learning_acknowledgement_time": handoff_times.get("learning_acknowledged") if consumed else None,
+                "cortex_acknowledgement_time": handoff_times.get("cortex_acknowledged") if consumed else None,
                 "governance_acknowledgement_time": truth.get("governance_acknowledged_at") if consumed else None,
-                "failure_reason": None if consumed else "awaiting_authoritative_learning_consumer", "retry_status": "NO_AUTOMATIC_RETRY",
+                "failure_reason": None if consumed else "awaiting_authoritative_learning_consumer",
+                "retry_status": "NO_AUTOMATIC_RETRY",
                 "final_state": "CONSUMED" if consumed else "PERSISTED_AWAITING_CONSUMPTION",
             })
+            ledger.append(handoff)
         return {
             "endpoint": "/api/astra_operating_health_contract_v1", "suite": "Astra Operating Health Contract V1",
             "version": VERSION, "generated_at": _now(), "status": status, "lanes": lanes,
-            "strict_truth_total": len(truths), "truths_consumed_by_learning_total": len(learned_ids & {_text(t.get("truth_id") or t.get("lifecycle_id")) for t in truths}),
+            "strict_truth_total": len(truths), "truths_consumed_by_learning_total": sum(1 for truth in truths if _record_identity(truth) & learned_ids),
             "truth_to_learning_ledger": ledger, "truth_to_learning_ledger_bounded": True,
             "sentinel_status": _dict(sentinel).get("status"), "governance_status": _dict(continuous).get("status"),
             "cortex_status": _dict(cortex).get("status"), "control_plane_agreement": control_agree,

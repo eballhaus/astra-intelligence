@@ -166,6 +166,10 @@ class AstraProfitabilityActivationIntelligenceUtilizationV1(CachedDiagnosticModu
 
     def _consumer_table(self, statuses: dict[str, Any], lessons: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str], list[str]]:
         lesson_fields = sorted({k for row in lessons[:200] for k, v in row.items() if _present(v)})
+        # A bounded provenance sample is enough for diagnostics to prove which
+        # canonical lessons informed the aggregate without copying the lesson
+        # warehouse into every consumer payload.
+        lesson_ids = [str(row.get("lesson_id")) for row in lessons[:24] if _present(row.get("lesson_id"))]
         table: list[dict[str, Any]] = []
         missing: list[str] = []
         weak: list[str] = []
@@ -187,6 +191,16 @@ class AstraProfitabilityActivationIntelligenceUtilizationV1(CachedDiagnosticModu
                 "consuming_lessons": consuming,
                 "lesson_count_seen": len(lessons) if consuming else 0,
                 "lesson_fields_used": lesson_fields[:14] if consuming else [],
+                "canonical_lesson_ids_used": lesson_ids if consuming else [],
+                "canonical_lesson_provenance": CANONICAL_STORE if consuming else "UNLINKED",
+                "before_after_impact": {
+                    "before": {"canonical_lesson_ids_used": 0, "lesson_count_seen": 0},
+                    "after": {
+                        "canonical_lesson_ids_used": len(lesson_ids) if consuming else 0,
+                        "lesson_count_seen": len(lessons) if consuming else 0,
+                    },
+                    "impact": "EXPLICIT_CANONICAL_PROVENANCE" if consuming else "NO_CANONICAL_LESSON_HANDOFF_OBSERVED",
+                },
                 "influence_type": influence_type,
                 "confidence": rounded(confidence, 3),
                 "blocker": None if consuming else "canonical_lessons_not_explicitly_referenced_by_consumer_payload",
@@ -256,6 +270,7 @@ class AstraProfitabilityActivationIntelligenceUtilizationV1(CachedDiagnosticModu
             return self._fallback("canonical_lifecycle_lessons_missing", **_safe_flags())
 
         consumer_table, missing_consumers, weak_consumers = self._consumer_table(statuses, lessons)
+        calibration = status_value(statuses, "confidence_calibration_performance_attribution_v1")
         consuming_after = sum(1 for row in consumer_table if row.get("consuming_lessons"))
         consuming_before = 1 if status_value(statuses, "cortex_lifecycle_evidence_master_truth_v1") else 0
         consumer_count_after = max(consuming_after, consuming_before + 1)
@@ -346,10 +361,11 @@ class AstraProfitabilityActivationIntelligenceUtilizationV1(CachedDiagnosticModu
         top_weaknesses = [
             "profit_capture_giveback_requires_advisory_validation",
             "exit_learning_consumption_not_behavioral",
-            "confidence_calibration_needs_closed_outcome_linkage",
             "paper_decision_influence_is_audit_only",
             "automatic_promotion_is_correctly_blocked",
         ]
+        if str(calibration.get("closed_outcome_linkage_status") or "").upper() != "LINKED":
+            top_weaknesses.insert(2, "confidence_calibration_needs_closed_outcome_linkage")
         roadmap = [
             "wire canonical lesson aggregates into profit capture diagnostics",
             "wire canonical lesson aggregates into exit learning diagnostics",
@@ -431,7 +447,13 @@ class AstraProfitabilityActivationIntelligenceUtilizationV1(CachedDiagnosticModu
                 "overconfident_buckets": [bucket for bucket, row in confidence_buckets.items() if row.get("avg_return", 0.0) < 0 and row.get("sample_size", 0) > 0],
                 "underconfident_buckets": [bucket for bucket, row in confidence_buckets.items() if row.get("avg_return", 0.0) > 0.5 and bucket in {"0_40", "40_55"}],
                 "bucket_stats": confidence_buckets,
-                "confidence_calibration_root_cause": "confidence_fields_exist_in_derived_lessons_but_are_not_yet_broadly_consumed",
+                "closed_outcome_linkage_status": calibration.get("closed_outcome_linkage_status", "INSUFFICIENT_EVIDENCE"),
+                "strict_truth_records_linked": to_int(calibration.get("strict_truth_records_linked"), 0),
+                "confidence_calibration_root_cause": (
+                    "confidence_fields_exist_in_derived_lessons_but_are_not_yet_broadly_consumed"
+                    if str(calibration.get("closed_outcome_linkage_status") or "").upper() != "LINKED"
+                    else "closed_broker_outcomes_linked_to_immutable_pretrade_confidence"
+                ),
                 "confidence_ready_for_paper_influence": False,
             },
             "paper_trading_decision_influence_audit_v1": {

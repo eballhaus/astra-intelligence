@@ -47,6 +47,33 @@ class OperatingHealthContractTests(unittest.TestCase):
             self.assertEqual(payload["provider_calls_used"], 0)
             self.assertFalse(payload["behavior_safe_to_apply"])
 
+    def test_handoff_ledger_uses_existing_timestamps_and_marks_missing_stages_unobserved(self):
+        with tempfile.TemporaryDirectory() as root:
+            truth = {
+                "evidence_class": "BROKER_CONFIRMED_COMPLETE", "stable_key": "strict:in:out",
+                "lifecycle_id": "life-1", "lane_id": "DAY", "symbol": "AAPL",
+                "entry_fill_id": "in", "exit_fill_id": "out", "created_at": "2026-08-09T12:00:00Z",
+                "learning_acknowledged": True,
+            }
+            learning = {
+                "lifecycle_id": "life-1", "lesson_id": "lesson-1",
+                "acknowledged_at": "2026-08-09T12:00:10Z",
+                "created_at": "2026-08-09T12:00:20Z",
+                "teacher_handoff_complete": True,
+            }
+            payload = AstraOperatingHealthContractV1(root).build(
+                multilane={"lanes": {}}, worker_state={}, continuous={}, sentinel={},
+                truth_records=[truth], learning_records=[learning],
+            )
+            ledger = payload["truth_to_learning_ledger"][0]
+            stages = {row["stage"]: row for row in ledger["stages"]}
+            self.assertEqual(payload["lanes"]["DAY"]["strict_truth_count"], 1)
+            self.assertEqual(stages["learning_acknowledged"]["latency_from_previous_seconds"], 10.0)
+            self.assertEqual(stages["canonical_lesson_compressed"]["latency_from_previous_seconds"], 10.0)
+            self.assertEqual(stages["teacher_handoff"]["status"], "ACKNOWLEDGED_TIMESTAMP_UNOBSERVED")
+            self.assertEqual(ledger["first_delayed_or_unobserved_handoff"], "teacher_handoff")
+            self.assertEqual(stages["memory_index_available"]["status"], "UNKNOWN_UNOBSERVED")
+
 
 if __name__ == "__main__":
     unittest.main()
