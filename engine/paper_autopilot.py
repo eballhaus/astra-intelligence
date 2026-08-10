@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
+from decimal import Decimal, InvalidOperation
 from datetime import UTC, datetime, timedelta, time as datetime_time
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
@@ -1718,6 +1719,9 @@ class PaperAutopilotEngine:
             # evidence remains broker truth, but it is not an active managed
             # lifecycle. This ledger preserves that distinction across restarts.
             "broker_dust_quarantine_v1": {},
+            # Explicit operator-approved dust cleanup is separate from natural
+            # exits. It preserves each broker result without claiming closure.
+            "broker_dust_cleanup_v1": {},
             # Every paper sell owns one durable intent.  An intent remains
             # authoritative across worker restarts while broker submission is
             # ambiguous, so a retry cannot manufacture a second sell.
@@ -1909,6 +1913,8 @@ class PaperAutopilotEngine:
                     self._runtime_state["native_lane_exit_lifecycle_v1"] = dict(payload.get("native_lane_exit_lifecycle_v1") or {})
                 if isinstance(payload.get("broker_dust_quarantine_v1"), dict):
                     self._runtime_state["broker_dust_quarantine_v1"] = dict(payload.get("broker_dust_quarantine_v1") or {})
+                if isinstance(payload.get("broker_dust_cleanup_v1"), dict):
+                    self._runtime_state["broker_dust_cleanup_v1"] = dict(payload.get("broker_dust_cleanup_v1") or {})
                 if isinstance(payload.get("paper_sell_order_intents"), dict):
                     self._runtime_state["paper_sell_order_intents"] = dict(payload.get("paper_sell_order_intents") or {})
                 if isinstance(payload.get("legacy_swing_fmp_evidence"), dict):
@@ -2042,6 +2048,7 @@ class PaperAutopilotEngine:
             "authorized_lane_exit_pending": dict(self._runtime_state.get("authorized_lane_exit_pending") or {}),
             "native_lane_exit_lifecycle_v1": dict(self._runtime_state.get("native_lane_exit_lifecycle_v1") or {}),
             "broker_dust_quarantine_v1": dict(self._runtime_state.get("broker_dust_quarantine_v1") or {}),
+            "broker_dust_cleanup_v1": dict(self._runtime_state.get("broker_dust_cleanup_v1") or {}),
             "paper_sell_order_intents": dict(self._runtime_state.get("paper_sell_order_intents") or {}),
             "legacy_swing_fmp_evidence": dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {}),
             "legacy_swing_fmp_activity": dict(self._runtime_state.get("legacy_swing_fmp_activity") or {}),
@@ -5459,6 +5466,185 @@ class PaperAutopilotEngine:
             "broker_actions_used": 0,
         }
 
+    def cleanup_verified_broker_dust_v1(self) -> dict[str, Any]:
+        """Perform one explicit, PAPER-only cleanup pass for broker dust.
+
+        This method is deliberately not called by a worker cycle or a GET
+        route.  It consumes a fresh broker position and open-order snapshot,
+        submits only canonical dust quantities representable *exactly* by the
+        existing adapter, and never claims a position is closed until a later
+        broker snapshot proves its absence.
+        """
+        safety = self._alpaca_safety_snapshot()
+        base = {
+            "owner": "PaperAutopilot.cleanup_verified_broker_dust_v1",
+            "paper_only": True,
+            "paper_mode_verified": bool(safety.get("paper_mode_verified")),
+            "live_endpoint_rejected": bool(safety.get("live_endpoint_rejected")),
+            "live_endpoint_access_rejected": not bool(safety.get("live_endpoint_detected")),
+            "broker_actions_used": 0,
+            "provider_calls_used": 0,
+            "submitted": [],
+            "removed": [],
+            "unclosable": [],
+            "meaningful_untouched": [],
+            "blocked": [],
+        }
+        if (
+            not bool(safety.get("paper_mode_verified"))
+            or bool(safety.get("live_endpoint_detected"))
+            or not bool(safety.get("broker_execution_enabled"))
+        ):
+            return {**base, "ok": False, "status": "PAPER_ONLY_BROKER_BOUNDARY_REQUIRED", "safety_reasons": safety.get("safety_reasons") or []}
+
+        broker = self.alpaca_paper_broker
+        if broker is None or not hasattr(broker, "positions") or not hasattr(broker, "orders") or not hasattr(broker, "submit_paper_order"):
+            return {**base, "ok": False, "status": "BROKER_DUST_CLEANUP_ADAPTER_UNAVAILABLE"}
+        try:
+            positions_payload = dict(broker.positions() or {})
+            orders_payload = dict(broker.orders(status="open", limit=100) or {})
+        except Exception as exc:
+            return {**base, "ok": False, "status": "BROKER_DUST_CLEANUP_PREFLIGHT_FAILED", "error": str(exc)[:160]}
+        if not bool(positions_payload.get("ok")):
+            return {**base, "ok": False, "status": "BROKER_DUST_CLEANUP_POSITIONS_UNAVAILABLE", "error": str(positions_payload.get("error") or "positions_fetch_failed")[:160]}
+        if not bool(orders_payload.get("ok")):
+            return {**base, "ok": False, "status": "BROKER_DUST_CLEANUP_OPEN_ORDERS_UNAVAILABLE", "error": str(orders_payload.get("error") or "orders_fetch_failed")[:160]}
+
+        pending_symbols = {
+            str(dict(order or {}).get("symbol") or "").upper().strip()
+            for order in list(orders_payload.get("orders") or [])
+            if isinstance(order, Mapping)
+            and str(dict(order or {}).get("status") or dict(order or {}).get("order_status") or "").lower()
+            in {"new", "accepted", "pending_new", "accepted_for_bidding", "partially_filled", "pending_replace"}
+        }
+        cleanup_records = dict(self._runtime_state.get("broker_dust_cleanup_v1") or {})
+        quarantines = dict(self._runtime_state.get("broker_dust_quarantine_v1") or {})
+        submitted_symbols: set[str] = set()
+        for raw in list(positions_payload.get("positions") or []):
+            if not isinstance(raw, Mapping):
+                continue
+            position = dict(raw)
+            symbol = str(position.get("symbol") or "").upper().strip()
+            dust = classify_dust_position_v1(position)
+            if not bool(dust.get("is_dust")):
+                if symbol:
+                    base["meaningful_untouched"].append(symbol)
+                continue
+            quantity_text = str(position.get("qty") if position.get("qty") not in (None, "") else position.get("quantity") or "").strip()
+            record = {
+                "symbol": symbol,
+                "broker_quantity": quantity_text,
+                "broker_market_value": position.get("market_value"),
+                "dust_classification": dust,
+                "updated_at": _now_iso(),
+                "paper_only": True,
+                "live_endpoint_rejected": bool(safety.get("live_endpoint_rejected")),
+            }
+            asset_class = str(position.get("asset_class") or position.get("asset_type") or "us_equity").lower()
+            if asset_class in {"crypto", "cryptocurrency"}:
+                # Generic residual cleanup cannot satisfy the native crypto
+                # exit contract. Preserve and quarantine rather than bypass it.
+                record.update({
+                    "status": "BROKER_UNCLOSABLE_DUST",
+                    "first_causal_blocker": "NATIVE_CRYPTO_EXIT_CONTRACT_REQUIRED",
+                    "retries_allowed": False,
+                })
+                cleanup_records[symbol or f"unknown:{len(cleanup_records)}"] = record
+                quarantines[f"broker:{symbol or 'unknown'}"] = {**record, "operational_lifecycle": False, "strict_truth_eligible": False}
+                base["unclosable"].append(symbol)
+                continue
+            try:
+                quantity = Decimal(quantity_text)
+                adapter_quantity = quantity.quantize(Decimal("0.000001"))
+            except (InvalidOperation, ValueError):
+                quantity = Decimal("0")
+                adapter_quantity = Decimal("-1")
+            if not symbol or quantity <= 0 or adapter_quantity != quantity:
+                record.update({
+                    "status": "BROKER_UNCLOSABLE_DUST",
+                    "first_causal_blocker": "DUST_QUANTITY_NOT_EXACTLY_REPRESENTABLE_BY_CANONICAL_ADAPTER",
+                    "retries_allowed": False,
+                })
+                cleanup_records[symbol or f"unknown:{len(cleanup_records)}"] = record
+                quarantines[f"broker:{symbol or 'unknown'}"] = {**record, "operational_lifecycle": False, "strict_truth_eligible": False}
+                base["unclosable"].append(symbol)
+                continue
+            if symbol in pending_symbols:
+                record.update({
+                    "status": "BROKER_DUST_CLEANUP_BLOCKED",
+                    "first_causal_blocker": "OPEN_BROKER_ORDER_FOR_SYMBOL",
+                    "retries_allowed": False,
+                })
+                cleanup_records[symbol] = record
+                base["blocked"].append(symbol)
+                continue
+            exact_quantity = format(adapter_quantity, "f")
+            intent_id = f"dust-cleanup-v1:{symbol}:{exact_quantity}"[:96]
+            order = {
+                "symbol": symbol,
+                "side": "sell",
+                "type": "market",
+                "time_in_force": "gtc",
+                "qty": float(adapter_quantity),
+                "asset_class": asset_class,
+                # The adapter requires its existing durable sell boundary.
+                "existing_exit_signal_verified": True,
+                "paper_sell_approval_intent_id": intent_id,
+                "client_order_id": hashlib.sha256(intent_id.encode("utf-8")).hexdigest()[:48],
+                "dust_cleanup_v1": True,
+                "broker_reconciliation_ok": True,
+            }
+            try:
+                result = dict(broker.submit_paper_order(order) or {})
+            except Exception as exc:
+                result = {"ok": False, "error": f"submit_exception:{str(exc)[:120]}"}
+            record.update({
+                "submitted_quantity": exact_quantity,
+                "approval_intent_id": intent_id,
+                "broker_result": result,
+                "status": "SUBMITTED_PENDING_BROKER_RECONCILIATION" if bool(result.get("ok")) else "BROKER_DUST_CLEANUP_REJECTED",
+                "retries_allowed": False,
+            })
+            cleanup_records[symbol] = record
+            if bool(result.get("ok")):
+                base["broker_actions_used"] += 1
+                base["submitted"].append(symbol)
+                submitted_symbols.add(symbol)
+            else:
+                base["blocked"].append(symbol)
+
+        self._runtime_state["broker_dust_cleanup_v1"] = cleanup_records
+        self._runtime_state["broker_dust_quarantine_v1"] = quarantines
+        if submitted_symbols:
+            # A second broker snapshot is reconciliation, not a fill claim.
+            try:
+                post_payload = dict(broker.positions() or {})
+            except Exception:
+                post_payload = {"ok": False}
+            if bool(post_payload.get("ok")):
+                remaining = {
+                    str(dict(row or {}).get("symbol") or "").upper().strip()
+                    for row in list(post_payload.get("positions") or []) if isinstance(row, Mapping)
+                }
+                for symbol in submitted_symbols:
+                    record = dict(cleanup_records.get(symbol) or {})
+                    if symbol not in remaining:
+                        record["status"] = "BROKER_ZERO_CONFIRMED"
+                        base["removed"].append(symbol)
+                    cleanup_records[symbol] = record
+                self._runtime_state["broker_dust_cleanup_v1"] = cleanup_records
+        # The operator action is retained for restart-safe reconciliation, but
+        # does not mark a submitted residual as closed or produce trade truth.
+        self._save_state_file()
+        return {
+            **base,
+            "ok": True,
+            "status": "BROKER_DUST_CLEANUP_COMPLETED",
+            "positions_reviewed": len(list(positions_payload.get("positions") or [])),
+            "dust_reviewed": len(base["submitted"]) + len(base["unclosable"]) + len(base["blocked"]),
+            "reconciliation_required": [symbol for symbol in base["submitted"] if symbol not in base["removed"]],
+        }
+
     def _quarantine_identity_unmapped_broker_dust_v1(
         self,
         row: Mapping[str, Any],
@@ -6585,6 +6771,25 @@ class PaperAutopilotEngine:
                 return dedup
         return dedup
 
+    def _publish_equity_risk_candidate_handoff_v1(self) -> list[dict[str, Any]]:
+        """Give the existing risk observer the same cached equity slice.
+
+        This is a bounded handoff, not a second scanner or ranking source.  It
+        lets the worker observe volatility for candidates it will actually
+        evaluate in the current cycle.
+        """
+        rows = [dict(row) for row in self._collect_candidate_rows()
+                if isinstance(row, Mapping)
+                and _norm_asset(row.get("asset_type") or row.get("asset_class") or "stock") != "crypto"][:12]
+        self._runtime_state["equity_risk_candidate_handoff_v1"] = {
+            "rows": rows,
+            "generated_at": _now_iso(),
+            "owner": "PaperAutopilot._collect_candidate_rows",
+            "bounded": True,
+            "provider_calls_used": 0,
+        }
+        return rows
+
     def _assign_trusted_quote_to_candidate(self, row: Mapping[str, Any] | None) -> dict[str, Any]:
         """Attach worker-owned quote evidence before candidate qualification.
 
@@ -6667,6 +6872,48 @@ class PaperAutopilotEngine:
             "quote_assignment_at": _now_iso(),
             "quote_assignment_blocker": "",
         })
+        return candidate
+
+    def _attach_current_equity_risk_evidence_v1(self, row: Mapping[str, Any] | None) -> dict[str, Any]:
+        """Join the worker's bounded risk observation to its current candidate.
+
+        The observer owns quote/bar collection; this consumer only joins a
+        current, symbol-matched cached observation.  It cannot manufacture a
+        downside or drawdown when the observer has no current evidence.
+        """
+        candidate = dict(row or {})
+        if _norm_asset(candidate.get("asset_type") or candidate.get("asset_class") or "stock") == "crypto":
+            return candidate
+        snapshot = dict(self._runtime_state.get("equity_risk_envelopes_snapshot_v1") or {})
+        if str(snapshot.get("status") or "") not in {"CURRENT", "PARTIAL_FAIL_CLOSED"}:
+            return candidate
+        try:
+            if time.time() > float(snapshot.get("valid_until_epoch") or 0.0):
+                return candidate
+        except (TypeError, ValueError):
+            return candidate
+        symbol = str(candidate.get("symbol") or candidate.get("ticker") or "").upper().strip()
+        evidence = next((dict(item) for item in list(snapshot.get("rows") or [])
+                         if isinstance(item, Mapping) and str(item.get("symbol") or "").upper().strip() == symbol), {})
+        if not evidence or not bool(evidence.get("quote_execution_eligible")):
+            return candidate
+        # Current candidate facts always win; the observer only fills the
+        # missing volatility inputs consumed by the canonical envelope owner.
+        for field in (
+            "atr_pct", "volatility_pct", "downside_range_pct", "completed_bar_timestamp",
+            "bar_evidence", "risk_evidence_generated_at", "risk_evidence_valid_until",
+            "risk_evidence_source", "freshness_state",
+        ):
+            if candidate.get(field) in (None, "", [], {}) and evidence.get(field) not in (None, "", [], {}):
+                candidate[field] = evidence[field]
+        candidate["equity_risk_evidence_join_v1"] = {
+            "status": "CURRENT_SYMBOL_MATCHED",
+            "owner": "worker_only_equity_risk_observer",
+            "symbol": symbol,
+            "source_timestamp": evidence.get("quote_timestamp") or evidence.get("completed_bar_timestamp"),
+            "provider_calls_used": 0,
+            "broker_actions_used": 0,
+        }
         return candidate
 
     def _crypto_paper_activation_status(self) -> dict[str, Any]:
@@ -8454,6 +8701,7 @@ class PaperAutopilotEngine:
         current_candidates: list[dict[str, Any]] | None = None,
     ) -> tuple[dict[str, Any], bool, str, dict[str, Any]]:
         r = self._assign_trusted_quote_to_candidate(_normalize_paper_entry_bridge(row))
+        r = self._attach_current_equity_risk_evidence_v1(r)
         r = enrich_candidate_for_pretrade_contract(r, current_candidates=current_candidates)
         certification = dict(self._runtime_state.get("pre_market_certification_v1") or {})
         r["pretrade_decision_contract_v1"] = build_pretrade_decision_contract(
@@ -11840,6 +12088,7 @@ class PaperAutopilotEngine:
                 if callable(self.refresh_equity_risk_envelopes_fn):
                     try:
                         self._note_worker_progress("equity_risk_envelope_refresh")
+                        self._publish_equity_risk_candidate_handoff_v1()
                         equity_risk_refresh = dict(self.refresh_equity_risk_envelopes_fn() or {})
                     except Exception as exc:
                         equity_risk_refresh = {

@@ -21740,6 +21740,25 @@ def _bounded_current_equity_candidate_rows_v1(max_rows: int = 8) -> list[dict]:
     the worker from rescanning the large decision ledger every cycle.
     """
     limit = max(1, min(12, int(max_rows or 8)))
+    # The canonical worker may already have the exact cached candidate slice
+    # it will qualify this cycle.  Prefer it over a merely recent ledger row
+    # so fresh bar-risk evidence is attached to the same candidate contract.
+    handoff = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("equity_risk_candidate_handoff_v1") or {})
+    handoff_rows = [dict(row) for row in list(handoff.get("rows") or []) if isinstance(row, dict)]
+    if handoff_rows:
+        rows: list[dict] = []
+        seen: set[str] = set()
+        for row in handoff_rows:
+            symbol = str(row.get("symbol") or row.get("ticker") or "").upper().strip()
+            asset_class = str(row.get("asset_class") or row.get("asset_type") or "equity").lower()
+            if not symbol or "/" in symbol or asset_class in {"crypto", "cryptocurrency"} or symbol in seen:
+                continue
+            seen.add(symbol)
+            rows.append(row)
+            if len(rows) >= limit:
+                return rows
+        if rows:
+            return rows
     try:
         with open(CANDIDATE_DECISION_LEDGER_PATH, "rb") as handle:
             handle.seek(0, os.SEEK_END)
@@ -21748,7 +21767,7 @@ def _bounded_current_equity_candidate_rows_v1(max_rows: int = 8) -> list[dict]:
             payload = handle.read().decode("utf-8", "ignore")
     except Exception:
         return []
-    rows: list[dict] = []
+    rows = []
     seen: set[str] = set()
     for line in reversed(payload.splitlines()):
         try:

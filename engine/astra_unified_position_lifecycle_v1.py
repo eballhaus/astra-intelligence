@@ -12,6 +12,8 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Sequence
 
+from engine.astra_canonical_ownership_contract_v1 import classify_dust_position_v1
+
 
 _LEGACY_SWING_CANARY_CONTROL_PATH = os.path.join("state", "legacy_swing_canary_control_v1.json")
 
@@ -749,6 +751,7 @@ def build_position_management_overlay_v1(
     prior = dict(prior_review or {})
     current = now or datetime.now(timezone.utc)
     cohort = classify_position_cohort_v1(row)
+    dust = classify_dust_position_v1(row, is_broker_position=True)
     symbol = _text(row.get("symbol")).upper()
     position_id = _text(row.get("asset_id") or row.get("position_id") or symbol)
     lane = _text(row.get("lane_id") or decision.get("lane") or "SWING").upper()
@@ -771,7 +774,9 @@ def build_position_management_overlay_v1(
     reconstructable = bool(reconstruction_id or row.get("reconstruction_state") in {"RECONSTRUCTION_COMPLETE", "RECONSTRUCTION_PARTIAL"})
     linked = bool(lifecycle_id or candidate_id)
     legacy = bool(cohort.get("legacy_forward_only_management"))
-    if duplicate:
+    if dust.get("is_dust"):
+        classification, reason = "BROKER_DUST_MONITORED", "CANONICAL_BROKER_DUST_EXCLUDED_FROM_NORMAL_MANAGEMENT"
+    elif duplicate:
         classification, reason = "DUPLICATE_OR_CONFLICTED_POSITION", "DUPLICATE_EXPOSURE_REQUIRES_RECONCILIATION"
     elif day_drift:
         classification, reason = "DAY_HORIZON_DRIFT_POSITION", "DAY_POSITION_EXCEEDED_SAME_SESSION_HORIZON"
@@ -787,7 +792,11 @@ def build_position_management_overlay_v1(
         classification, reason = "LEGACY_UNLINKED_POSITION", "BROKER_POSITION_WITHOUT_CURRENT_LIFECYCLE_LINEAGE"
     else:
         classification, reason = "BROKER_ONLY_POSITION", "BROKER_POSITION_IDENTIFIER_INCOMPLETE"
-    management_cohort = "LEGACY_POSITION_RESOLUTION" if classification.startswith("LEGACY_") else _text(row.get("management_cohort") or "CURRENT_MANAGED")
+    management_cohort = (
+        "BROKER_DUST_QUARANTINE" if classification == "BROKER_DUST_MONITORED"
+        else "LEGACY_POSITION_RESOLUTION" if classification.startswith("LEGACY_")
+        else _text(row.get("management_cohort") or "CURRENT_MANAGED")
+    )
     approval_id = _text(
         row.get("legacy_migration_approval_id")
         or prior.get("legacy_migration_approval_id")
@@ -813,7 +822,7 @@ def build_position_management_overlay_v1(
     )
     current_thesis = _text(decision.get("classification") or row.get("thesis_state") or prior.get("current_thesis") or "THESIS_REVALIDATION_REQUIRED").upper()
     exit_readiness = _text(decision.get("classification") or row.get("exit_readiness_state") or prior.get("exit_readiness_state") or "INSUFFICIENT_EVIDENCE").upper()
-    review_hours = 1 if classification in {"STALE_ACTIVE_POSITION", "DAY_HORIZON_DRIFT_POSITION", "DUPLICATE_OR_CONFLICTED_POSITION"} else 4 if management_cohort == "LEGACY_POSITION_RESOLUTION" else 24
+    review_hours = 24 if classification == "BROKER_DUST_MONITORED" else 1 if classification in {"STALE_ACTIVE_POSITION", "DAY_HORIZON_DRIFT_POSITION", "DUPLICATE_OR_CONFLICTED_POSITION"} else 4 if management_cohort == "LEGACY_POSITION_RESOLUTION" else 24
     next_review = current + timedelta(hours=review_hours)
     if prior_next_review and prior_next_review >= current:
         next_review = prior_next_review
@@ -860,7 +869,7 @@ def build_position_management_overlay_v1(
         "symbol": symbol,
         "classification": classification,
         "classification_reason": reason,
-        "classification_confidence": 0.9 if classification == "CURRENT_MANAGED_POSITION" else 0.7 if linked or reconstructable else 0.5,
+        "classification_confidence": 1.0 if classification == "BROKER_DUST_MONITORED" else 0.9 if classification == "CURRENT_MANAGED_POSITION" else 0.7 if linked or reconstructable else 0.5,
         "lifecycle_owner": "engine.astra_unified_position_lifecycle_v1.build_unified_position_lifecycle_decision_v1",
         "exit_owner": "PaperAutopilot.authorized_lane_exit_pending",
         "capacity_owner": "PaperAutopilot._evidence_capacity_snapshot_v1",
@@ -881,7 +890,9 @@ def build_position_management_overlay_v1(
         "active_slot_exclusion_eligible": management_cohort == "LEGACY_POSITION_RESOLUTION",
         "active_slot_exclusion_approved": slot_exclusion,
         "active_slot_exclusion": slot_exclusion,
-        "full_risk_included": True,
+        "full_risk_included": classification != "BROKER_DUST_MONITORED",
+        "normal_position_management": classification != "BROKER_DUST_MONITORED",
+        "dust_classification": dust if dust.get("is_dust") else None,
         "current_thesis": current_thesis,
         "exit_readiness_state": exit_readiness,
         "position_age_days": round(age, 4) if age is not None else None,

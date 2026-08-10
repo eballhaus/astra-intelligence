@@ -408,7 +408,9 @@ def classify_dust_position_v1(
         "dust_reasons": reasons,
         "tradable": False,
         "eligible_for_exit": False,
-        "counts_toward_exposure": True,
+        # Dust remains broker truth for reconciliation, but it is not a
+        # position-sized exposure for entry, capacity, or management views.
+        "counts_toward_exposure": False,
         "counts_toward_reconciliation": True,
         "as_of": _iso(),
     }

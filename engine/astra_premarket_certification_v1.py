@@ -527,7 +527,10 @@ def build_candidate_risk_envelope_v1(
         reward_to_risk = _range(float(upside_range["low_pct"]) / abs(float(downside["low_pct"])), float(upside_range["high_pct"]) / abs(float(downside["high_pct"])), label="EXPECTED_REWARD_TO_RISK")
     execution_horizon, _ = _pretrade_execution_horizon(row)
     horizon = execution_horizon or _text(_first(row, "intended_horizon", "paper_entry_horizon_style", "trade_horizon_style"))
-    hold_days = 1.0 / 24.0 if horizon == "day_trade" else 3.0 if horizon == "swing_trade" else None
+    hold_minutes = _number(_first(row, "expected_hold_minutes", "hold_minutes"))
+    # SCALP duration is supplied by the existing lane/horizon contract.  Do
+    # not substitute a generic duration when that contract is absent.
+    hold_days = (hold_minutes / 1440.0) if hold_minutes and hold_minutes > 0 else 1.0 / 24.0 if horizon == "day_trade" else 3.0 if horizon == "swing_trade" else None
     per_day = None
     if upside_range and hold_days:
         per_day = {"low_pct_per_day": round(float(upside_range["low_pct"]) / hold_days, 4), "high_pct_per_day": round(float(upside_range["high_pct"]) / hold_days, 4), "method": "candidate_expected_return_over_existing_horizon"}
@@ -857,7 +860,8 @@ def enrich_candidate_for_pretrade_contract(
             evidence_class="BOUNDED_POLICY_DEFAULT", confidence=confidence, now=now,
             candidate_specific=True, symbol_specific=True, derived=True,
         )
-    hold_days = 1.0 / 24.0 if str(horizon) == "day_trade" else 3.0 if str(horizon) == "swing_trade" else None
+    hold_minutes = _number(_first(row, "expected_hold_minutes", "hold_minutes"))
+    hold_days = (hold_minutes / 1440.0) if hold_minutes and hold_minutes > 0 else 1.0 / 24.0 if str(horizon) == "day_trade" else 3.0 if str(horizon) == "swing_trade" else None
     per_day = None
     if expected_return_range and hold_days:
         per_day = {
