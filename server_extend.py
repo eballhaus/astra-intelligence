@@ -50920,36 +50920,44 @@ def _paper_autopilot_last_trace_v1() -> dict:
 
 
 def _paper_autopilot_authoritative_trace_v3(force: bool = False) -> dict:
-    """Return one bounded dry-run decision snapshot without broker actions.
+    """Return the canonical worker trace without GET-time re-evaluation.
 
-    PaperAutopilot's `execution_trace` is its authoritative selection owner.
-    Cache it briefly so diagnostics do not duplicate candidate decoration across
-    the multi-lane, DAY, and activation endpoints.
+    The canonical worker persists its exact per-cycle candidate slice after it
+    has refreshed and joined risk evidence.  A GET-time dry run can see a newer
+    ranking cache than that worker cycle and therefore cannot truthfully
+    replace the worker's contract outcomes.  If the worker did not observe a
+    candidate this cycle, report that absence rather than evaluate a different
+    cache slice under the worker's authority.
     """
     cache_key = "paper_autopilot_authoritative_trace_v3"
     cached = _CACHE.get(cache_key) if isinstance(_CACHE.get(cache_key), dict) else {}
     if not force and cached.get("data") and (time.time() - float(cached.get("ts") or 0.0)) <= 10.0:
         return dict(cached.get("data") or {})
-    try:
-        candidates = _cached_candidate_rows_for_horizon_flow_v1()
-        candidates.extend(_crypto_operational_candidate_rows_v3())
-        if hasattr(PAPER_AUTOPILOT, "operational_dry_run"):
-            trace = dict(PAPER_AUTOPILOT.operational_dry_run(candidates, max_candidates=30) or {})
-        else:
-            trace = dict(PAPER_AUTOPILOT.execution_trace(max_candidates=30) or {})
-    except Exception as exc:
-        trace = {
-            "per_candidate_decision_trace": [],
-            "final_blocker_reason": f"authoritative_trace_unavailable:{str(exc)[:100]}",
-        }
-    trace.update({
-        "trace_owner": str(trace.get("trace_owner") or "PaperAutopilot.operational_dry_run"),
-        "dry_run_only": True,
+    persisted_trace, persisted_source = _paper_autopilot_persisted_trace_v1()
+    if persisted_trace.get("per_candidate_decision_trace"):
+        trace = dict(persisted_trace)
+        trace.update({
+            "trace_owner": "PaperAutopilot.canonical_worker_checkpoint",
+            "trace_source": persisted_source,
+            "dry_run_only": False,
+            "submit_order": False,
+            "broker_actions_used": 0,
+            "provider_calls_used": 0,
+            "llm_calls_used": 0,
+        })
+        _CACHE[cache_key] = {"data": dict(trace), "ts": time.time()}
+        return trace
+    trace = {
+        "per_candidate_decision_trace": [],
+        "final_blocker_reason": "NO_CURRENT_WORKER_CANDIDATES",
+        "trace_owner": "PaperAutopilot.canonical_worker_checkpoint",
+        "trace_source": persisted_source,
+        "dry_run_only": False,
         "submit_order": False,
         "broker_actions_used": 0,
         "provider_calls_used": 0,
         "llm_calls_used": 0,
-    })
+    }
     _CACHE[cache_key] = {"data": dict(trace), "ts": time.time()}
     return trace
 
@@ -51736,17 +51744,12 @@ def _multilane_paper_operational_status_v1_payload(statuses: dict | None = None)
         }
     authoritative_trace = _paper_autopilot_authoritative_trace_v3()
     trace_candidates = [dict(row) for row in (authoritative_trace.get("per_candidate_decision_trace") or []) if isinstance(row, dict)]
-    candidates = trace_candidates or [dict(row) for row in (statuses.get("pladeu_candidate_rows") or []) if isinstance(row, dict)]
-    # Crypto rankings are stored separately from the equity top-buys cache.
-    # Include their bounded operational adapter; a missing cache is explicitly
-    # marked as a non-tradable source probe rather than a false candidate.
-    try:
-        # Equity and crypto are stored in separate bounded caches.  A valid
-        # equity trace must never hide the crypto lane's current freshness
-        # state from the consolidated operational view.
-        candidates.extend(_crypto_operational_candidate_rows_v3())
-    except Exception:
-        pass
+    # This operational endpoint reports the canonical worker observation, not
+    # a newer dashboard cache.  Mixing cache rows here creates false contract
+    # defects because those symbols did not receive the worker cycle's bounded
+    # risk/freshness handoff.  An empty lane is evidence pending and remains
+    # fail-closed; it is never a reason to fabricate a candidate trace.
+    candidates = trace_candidates
     seen: set[tuple[str, str]] = set()
     unique_candidates = []
     for row in candidates:

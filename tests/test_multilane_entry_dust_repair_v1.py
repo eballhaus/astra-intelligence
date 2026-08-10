@@ -14,7 +14,7 @@ from engine.astra_premarket_certification_v1 import (
 )
 from engine.astra_unified_position_lifecycle_v1 import build_position_management_overlay_v1
 from engine.alpaca_paper_broker import AlpacaPaperBroker
-from engine.paper_autopilot import PaperAutopilotEngine
+from engine.paper_autopilot import PaperAutopilotEngine, _execution_trace_event
 
 
 def _future() -> str:
@@ -159,6 +159,31 @@ class MultiLaneEntryDustRepairTests(unittest.TestCase):
             contract = build_pretrade_decision_contract(enriched)
             self.assertEqual(contract["contract_status"], "VALID")
             self.assertEqual(contract["missing_required_fields"], [])
+
+    def test_capacity_trace_preserves_attached_current_risk_contract(self):
+        """A capacity rejection must not erase current risk evidence."""
+        candidate = _candidate("DAY")
+        self.engine._runtime_state["equity_risk_envelopes_snapshot_v1"] = {
+            "status": "CURRENT",
+            "valid_until_epoch": time.time() + 60.0,
+            "rows": [{
+                "symbol": candidate["symbol"], "atr_pct": 1.25,
+                "downside_range_pct": 1.6, "quote_execution_eligible": True,
+                "quote_timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "completed_bar_timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "bar_evidence": {"resolution": "15Min", "count": 6},
+            }],
+        }
+        trace = _execution_trace_event(
+            self.engine._attach_current_equity_risk_evidence_v1(candidate),
+            eligible=False,
+            selected=False,
+            decision_reason="max_new_positions_per_cycle_reached",
+        )
+        contract = trace["pretrade_decision_contract"]
+        self.assertEqual(contract["contract_status"], "VALID")
+        self.assertEqual(contract["missing_required_fields"], [])
+        self.assertEqual(trace["equity_risk_evidence_join_v1"]["status"], "CURRENT_SYMBOL_MATCHED")
 
     def test_risk_handoff_preserves_one_current_candidate_per_equity_lane(self):
         current = [

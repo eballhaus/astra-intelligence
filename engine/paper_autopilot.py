@@ -1461,6 +1461,7 @@ def _execution_trace_event(row: dict[str, Any], **values: Any) -> dict[str, Any]
         "overnight_allowed": bool(normalized.get("overnight_allowed")),
         "pretrade_decision_contract": dict(normalized.get("pretrade_decision_contract_v1") or {}),
         "pretrade_decision_contract_status": str((normalized.get("pretrade_decision_contract_v1") or {}).get("contract_status") or "INVALID"),
+        "equity_risk_evidence_join_v1": dict(normalized.get("equity_risk_evidence_join_v1") or {}),
     }
     trace.update(values)
     trace["eligibility_gate_attribution_v1"] = _eligibility_gate_attribution_v1(
@@ -12758,6 +12759,12 @@ class PaperAutopilotEngine:
                         "status": "FAILED_FAIL_CLOSED",
                         "exact_blocker": f"equity_risk_envelope_refresh_exception:{str(exc)[:120]}",
                     }
+            # Full-cycle traces can stop at the existing selection cap before
+            # `_candidate_trace_row` runs. Join the current, symbol-matched
+            # observer output here so those honest capacity rejections retain
+            # their pretrade contract rather than looking like missing-input
+            # defects. This does not change selection or eligibility.
+            candidates = [self._attach_current_equity_risk_evidence_v1(row) for row in candidates]
             candidate_source = "candidate_source_empty"
             if candidates:
                 source_counts: dict[str, int] = {}
