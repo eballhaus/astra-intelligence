@@ -121,6 +121,45 @@ class MultiLaneEntryDustRepairTests(unittest.TestCase):
         self.assertEqual([row["symbol"] for row in observed["handoff"]["rows"]], ["DAYX", "SCALPX"])
         self.assertNotIn("BTCUSD", [row["symbol"] for row in observed["handoff"]["rows"]])
 
+    def test_day_batch_handoff_preserves_current_symbols_for_contract_enrichment(self):
+        """A partial lane slice must not be replaced by a later source read."""
+        current = [{**_candidate("DAY"), "symbol": f"DAY{index}"} for index in range(5)]
+        observed = {}
+
+        def refresh():
+            observed["rows"] = list(
+                (self.engine._runtime_state.get("equity_risk_candidate_handoff_v1") or {}).get("rows") or []
+            )
+            self.engine._runtime_state["equity_risk_envelopes_snapshot_v1"] = {
+                "status": "CURRENT",
+                "valid_until_epoch": time.time() + 60.0,
+                "rows": [
+                    {
+                        "symbol": row["symbol"],
+                        "atr_pct": 1.25,
+                        "downside_range_pct": 1.6,
+                        "quote_execution_eligible": True,
+                        "quote_timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                        "completed_bar_timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                        "bar_evidence": {"resolution": "15Min", "count": 6},
+                    }
+                    for row in observed["rows"]
+                ],
+            }
+            return {"status": "CURRENT", "provider_calls_used": 2, "broker_actions_used": 0}
+
+        self.engine.refresh_equity_risk_envelopes_fn = refresh
+        self.engine._refresh_current_equity_risk_envelopes_v1(current)
+        self.assertEqual([row["symbol"] for row in observed["rows"]], [row["symbol"] for row in current])
+        for candidate in current:
+            enriched = enrich_candidate_for_pretrade_contract(
+                self.engine._attach_current_equity_risk_evidence_v1(candidate),
+                current_candidates=current,
+            )
+            contract = build_pretrade_decision_contract(enriched)
+            self.assertEqual(contract["contract_status"], "VALID")
+            self.assertEqual(contract["missing_required_fields"], [])
+
     def test_risk_handoff_preserves_one_current_candidate_per_equity_lane(self):
         current = [
             {**_candidate("DAY"), "symbol": f"DAY{index}"}

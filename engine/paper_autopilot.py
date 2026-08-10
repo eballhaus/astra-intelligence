@@ -12111,15 +12111,15 @@ class PaperAutopilotEngine:
                             "status": "FAILED_FAIL_CLOSED",
                             "exact_blocker": f"crypto_ranking_refresh_exception:{str(exc)[:120]}",
                         }
-                equity_risk_refresh: dict[str, Any] = {}
-                if callable(self.refresh_equity_risk_envelopes_fn):
-                    try:
-                        equity_risk_refresh = self._refresh_current_equity_risk_envelopes_v1()
-                    except Exception as exc:
-                        equity_risk_refresh = {
-                            "status": "FAILED_FAIL_CLOSED",
-                            "exact_blocker": f"equity_risk_envelope_refresh_exception:{str(exc)[:120]}",
-                        }
+                # The candidate slice is assembled below.  Refresh against
+                # that exact slice rather than a second cached collection so
+                # a partial-cycle DAY contract cannot lose its symbol-matched
+                # risk evidence when the source snapshot rolls between reads.
+                equity_risk_refresh: dict[str, Any] = {
+                    "status": "DEFERRED_TO_CURRENT_PARTIAL_CANDIDATE_SLICE",
+                    "provider_calls_used": 0,
+                    "broker_actions_used": 0,
+                }
                 loss_containment_review_partial: dict[str, Any] = {}
                 try:
                     self._note_worker_progress("loss_containment_review")
@@ -12252,6 +12252,18 @@ class PaperAutopilotEngine:
                             candidate_source_name = "equity_candidate_requires_full_cycle"
                             candidate_source_count = 0
                             snapshot_freshness_str = "SNAPSHOT_MISSING"
+
+                    # Keep the existing one-refresh budget, but bind its
+                    # observations to the lane slice selected above.  This is
+                    # a producer/consumer handoff repair, not a new scanner.
+                    if target_lane != "CRYPTO" and callable(self.refresh_equity_risk_envelopes_fn):
+                        try:
+                            equity_risk_refresh = self._refresh_current_equity_risk_envelopes_v1(candidate_rows)
+                        except Exception as exc:
+                            equity_risk_refresh = {
+                                "status": "FAILED_FAIL_CLOSED",
+                                "exact_blocker": f"equity_risk_envelope_refresh_exception:{str(exc)[:120]}",
+                            }
 
                     # Apply actual candidate gating (bounded)
                     candidate_input_count = len(candidate_rows)
