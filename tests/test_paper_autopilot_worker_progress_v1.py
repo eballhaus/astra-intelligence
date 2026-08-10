@@ -30,6 +30,18 @@ class _Autopilot:
 
 
 class PaperAutopilotWorkerProgressTests(unittest.TestCase):
+    def test_publish_persists_canonical_autopilot_enable_state(self):
+        autopilot = _Autopilot()
+        writes: list[dict] = []
+        with patch("engine.paper_autopilot_worker.read_snapshot", return_value={}), patch(
+            "engine.paper_autopilot_worker.write_snapshot", side_effect=lambda payload: writes.append(dict(payload)) or 0.0
+        ), patch("engine.paper_autopilot_worker.resource_snapshot", return_value={"resource_state": "RESOURCE_NORMAL", "worker_process": {}}):
+            worker = PaperAutopilotWorker(autopilot)
+            worker._publish()
+
+        self.assertTrue(writes)
+        self.assertTrue(writes[-1]["autopilot_enabled"])
+
     def test_bounded_cycle_persists_engine_start_and_completion_progress(self):
         autopilot = _Autopilot()
         with patch("engine.paper_autopilot_worker.read_snapshot", return_value={}), patch(

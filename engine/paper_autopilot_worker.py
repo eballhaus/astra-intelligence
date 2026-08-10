@@ -147,9 +147,12 @@ class PaperAutopilotWorker:
         state["resource_state"] = state["resource"].get("resource_state")
         state["host_load_observed"] = state["resource"].get("host_load_1m")
         state["worker_memory_observed"] = (state["resource"].get("worker_process") or {}).get("memory_mb")
+        # Persist the execution owner's state with this snapshot.  Assigning
+        # it after write_snapshot made a healthy enabled worker look disabled
+        # to read-only status consumers until a later cycle rewrote the file.
+        state["autopilot_enabled"] = bool(getattr(self.autopilot, "_enabled", False))
         write_elapsed = write_snapshot(state)
         state["state_write_elapsed_seconds"] = round(write_elapsed, 4)
-        state["autopilot_enabled"] = bool(getattr(self.autopilot, "_enabled", False))
         return state
 
     def _sync_autopilot_progress(

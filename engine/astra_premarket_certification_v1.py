@@ -894,7 +894,15 @@ def enrich_candidate_for_pretrade_contract(
     if not replacement_conditions:
         replacement_conditions.append("review only against a current eligible comparison set")
     monitoring = _as_plan_list(_first(row, "monitoring_priorities", "monitoring_plan", "monitoring_conditions"), momentum, regime, catalyst, liquidity)
-    if not monitoring and _source_timestamp(row):
+    if not monitoring and _first(
+        row,
+        "risk_evidence_generated_at",
+        "quote_assignment_at",
+        "provider_quote_timestamp",
+        "candidate_generated_at",
+        "generated_at",
+        "expires_at",
+    ):
         monitoring.append("monitor candidate snapshot freshness and the existing thesis conditions")
     entry_conditions = _as_plan_list(_first(row, "entry_conditions", "entry_confirmation_conditions", "recommended_entry_mode", "entry_timing_decision"))
     if not entry_conditions and liquidity:
@@ -1039,7 +1047,14 @@ def build_pretrade_decision_contract(
     recommendation_id = _text(_first(row, "recommendation_id", "canonical_recommendation_id", "source_recommendation_id"))
     decision_id = _text(_first(row, "decision_id", "selection_id", "source_decision_id")) or _stable_decision_id(candidate_id, recommendation_id)
     generated = _text(_first(row, "candidate_generated_at", "generated_at", "timestamp", "recommendation_timestamp"))
-    expiry = _text(expiry_timestamp or _first(row, "expires_at", "candidate_expires_at"))
+    expiry = _text(expiry_timestamp or _first(
+        row,
+        "expires_at",
+        "candidate_expires_at",
+        "risk_evidence_valid_until",
+        "forecast_valid_until",
+        "valid_until",
+    ))
     if not expiry and generated:
         try:
             expiry = (datetime.fromisoformat(generated.replace("Z", "+00:00")).astimezone(timezone.utc) + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")

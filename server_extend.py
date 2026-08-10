@@ -21731,7 +21731,7 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
     return {"status": "CURRENT" if output else "FAILED_FAIL_CLOSED", "generated_at": generated_at, "rows": len(output), "failed_pairs": len(failures), "pairs_evaluated": len(symbols), "provider_calls_used": provider_calls_used, "broker_actions_used": 0}
 
 
-def _bounded_current_equity_candidate_rows_v1(max_rows: int = 8) -> list[dict]:
+def _bounded_current_equity_candidate_rows_v1(max_rows: int = 12) -> list[dict]:
     """Read only a small tail of the canonical ledger for worker observations.
 
     This is intentionally not a ranking reader or a candidate producer.  It
@@ -38498,6 +38498,10 @@ def _backend_watchdog_status_payload():
 def _paper_worker_status_payload():
     """Canonical snapshot adapter; compatibility files cannot supply ownership."""
     canonical = _canonical_worker_state()
+    control_sync = dict(canonical.get("paper_autopilot_control_sync") or {})
+    canonical_enabled = bool(canonical.get("autopilot_enabled"))
+    control_enabled = control_sync.get("autopilot_enabled")
+    control_state_consistent = control_enabled is None or bool(control_enabled) == canonical_enabled
     liveness = _runtime_worker_liveness(canonical)
     pid = liveness.get("active_worker_pid")
     hb_fresh = bool(liveness.get("heartbeat_current"))
@@ -38570,7 +38574,11 @@ def _paper_worker_status_payload():
         "worker_cycle_completed_at": canonical.get("last_cycle_completed_at"),
         "worker_cycle_phase": canonical.get("cycle_state"),
         "last_error": canonical.get("last_error"),
-        "autopilot_enabled": bool(canonical.get("autopilot_enabled")),
+        "autopilot_enabled": canonical_enabled,
+        "control_state_sync": str(control_sync.get("control_state_sync") or "UNAVAILABLE"),
+        "control_state_source": str(control_sync.get("control_state_source") or "canonical_worker_snapshot"),
+        "control_state_consistent": bool(control_state_consistent),
+        "paper_autopilot_control_sync": control_sync,
         "replay_training_enabled": False,
         "replay_interval_seconds": None,
         "replay_runs_per_cycle": 0,

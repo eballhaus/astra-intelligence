@@ -6770,9 +6770,33 @@ class PaperAutopilotEngine:
         evaluate in the current cycle.
         """
         source_rows = candidate_rows if candidate_rows is not None else self._collect_candidate_rows()
-        rows = [dict(row) for row in source_rows
-                if isinstance(row, Mapping)
-                and _norm_asset(row.get("asset_type") or row.get("asset_class") or "stock") != "crypto"][:12]
+        equity_rows = [
+            dict(row) for row in source_rows
+            if isinstance(row, Mapping)
+            and _norm_asset(row.get("asset_type") or row.get("asset_class") or "stock") != "crypto"
+        ]
+        # This is only an evidence-observation budget. Reserve one current
+        # candidate per existing equity lane so DAY rows cannot starve a
+        # valid SCALP or SWING contract; ranking and selection stay untouched.
+        rows: list[dict[str, Any]] = []
+        selected_symbols: set[str] = set()
+        for lane in ("DAY", "SCALP", "SWING"):
+            for row in equity_rows:
+                symbol = str(row.get("symbol") or row.get("ticker") or "").upper().strip()
+                if str(row.get("lane_id") or row.get("lane") or "").upper().strip() != lane or not symbol:
+                    continue
+                rows.append(row)
+                selected_symbols.add(symbol)
+                break
+        for row in equity_rows:
+            symbol = str(row.get("symbol") or row.get("ticker") or "").upper().strip()
+            if not symbol or symbol in selected_symbols:
+                continue
+            rows.append(row)
+            selected_symbols.add(symbol)
+            if len(rows) >= 12:
+                break
+        rows = rows[:12]
         self._runtime_state["equity_risk_candidate_handoff_v1"] = {
             "rows": rows,
             "generated_at": _now_iso(),

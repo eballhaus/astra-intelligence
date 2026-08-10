@@ -121,6 +121,20 @@ class MultiLaneEntryDustRepairTests(unittest.TestCase):
         self.assertEqual([row["symbol"] for row in observed["handoff"]["rows"]], ["DAYX", "SCALPX"])
         self.assertNotIn("BTCUSD", [row["symbol"] for row in observed["handoff"]["rows"]])
 
+    def test_risk_handoff_preserves_one_current_candidate_per_equity_lane(self):
+        current = [
+            {**_candidate("DAY"), "symbol": f"DAY{index}"}
+            for index in range(11)
+        ] + [
+            {**_candidate("SCALP"), "symbol": "SCALP1"},
+            {**_candidate("DAY"), "symbol": "SWING1", "lane_id": "SWING", "paper_entry_horizon_style": "swing_trade"},
+        ]
+        handoff = self.engine._publish_equity_risk_candidate_handoff_v1(current)
+        self.assertEqual(len(handoff), 12)
+        self.assertEqual({row["lane_id"] for row in handoff}, {"DAY", "SCALP", "SWING"})
+        self.assertIn("SCALP1", [row["symbol"] for row in handoff])
+        self.assertIn("SWING1", [row["symbol"] for row in handoff])
+
     def test_canonical_dust_is_not_normal_managed_position(self):
         position = {"symbol": "DUST", "qty": 0.0005, "market_value": 0.001, "lane_id": "DAY"}
         dust = classify_dust_position_v1(position)

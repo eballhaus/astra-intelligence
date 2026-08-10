@@ -145,6 +145,19 @@ class CandidateIntelligenceEnrichmentTests(unittest.TestCase):
         self.assertTrue(contract["pretrade_enrichment_v1"]["enrichment_ran"])
         self.assertEqual(contract["contract_status"], "VALID")
 
+    def test_fresh_risk_evidence_supplies_existing_monitoring_and_expiry_facts(self):
+        now = datetime.now(timezone.utc)
+        expiry = (now + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+        contract = build_pretrade_decision_contract(source_row(
+            generated_at="",
+            expires_at="",
+            risk_evidence_generated_at=now.isoformat().replace("+00:00", "Z"),
+            risk_evidence_valid_until=expiry,
+        ))
+        self.assertNotIn("monitoring_priorities", contract["missing_required_fields"])
+        self.assertNotIn("expiry_timestamp", contract["missing_required_fields"])
+        self.assertEqual(contract["expiry_timestamp"], expiry)
+
     def test_conflicting_evidence_fails_closed(self):
         contract = build_pretrade_decision_contract(source_row(evidence_conflicts=["strategy_archetype"]))
         self.assertEqual(contract["contract_state"], "CONTRACT_CONFLICTING")
