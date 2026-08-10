@@ -21813,9 +21813,24 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
     # market is closed.  Only executable quote/order eligibility is deferred.
     closed_session = now_et.weekday() >= 5 or session != "regular_hours"
     refresh_seconds = max(60.0, min(900.0, float(os.getenv("ASTRA_EQUITY_RISK_ENVELOPE_REFRESH_SECONDS", "300") or 300)))
-    if previous.get("status") in {"CURRENT", "OFF_HOURS_HISTORICAL_CURRENT"} and previous.get("rows") and now_epoch - float(previous.get("generated_at_epoch") or 0.0) < refresh_seconds:
-        return {"status": "CURRENT_CACHE_REUSED", "rows": len(previous.get("rows") or []), "provider_calls_used": 0, "broker_actions_used": 0}
     candidates = _bounded_current_equity_candidate_rows_v1()
+    required_symbols = {
+        str(row.get("symbol") or row.get("ticker") or "").upper().strip()
+        for row in candidates
+        if isinstance(row, dict) and str(row.get("symbol") or row.get("ticker") or "").strip()
+    }
+    cached_symbols = {
+        str(row.get("symbol") or "").upper().strip()
+        for row in list(previous.get("rows") or [])
+        if isinstance(row, dict) and str(row.get("symbol") or "").strip()
+    }
+    if (
+        previous.get("status") in {"CURRENT", "OFF_HOURS_HISTORICAL_CURRENT"}
+        and previous.get("rows")
+        and required_symbols.issubset(cached_symbols)
+        and now_epoch - float(previous.get("generated_at_epoch") or 0.0) < refresh_seconds
+    ):
+        return {"status": "CURRENT_CACHE_REUSED", "rows": len(previous.get("rows") or []), "provider_calls_used": 0, "broker_actions_used": 0}
     if not candidates:
         snapshot = {
             "rows": [], "status": "READY_BUT_NO_CURRENT_CANDIDATE", "market_session": session,

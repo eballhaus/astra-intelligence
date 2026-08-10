@@ -5,6 +5,7 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
 from typing import Any
 
@@ -661,6 +662,48 @@ class AlpacaPaperBroker:
             return {"ok": False, "error": err, "positions": []}
         positions = [_sanitize_position(p) for p in data if isinstance(p, dict)]
         return {"ok": True, "positions": positions, "open_positions_count": len(positions)}
+
+    def close_paper_position(self, symbol: str, qty: str) -> dict[str, Any]:
+        """Close one PAPER position using Alpaca's exact-quantity endpoint.
+
+        This is an explicit operator/worker action, never a reader path.  The
+        quantity is kept as a decimal string and rejected unless it fits the
+        broker's documented nine-decimal close-position precision; it is never
+        rounded up or replaced with a notional order.
+        """
+        safety = self.safety_status()
+        if not safety.get("broker_execution_enabled") or safety.get("live_endpoint_detected"):
+            return {"ok": False, "error": "broker_safety_blocked", "safety_reasons": safety.get("safety_reasons") or []}
+        normalized_symbol = _safe_text(symbol).upper()
+        quantity = _safe_text(qty)
+        if not normalized_symbol or not quantity:
+            return {"ok": False, "error": "symbol_and_qty_required"}
+        try:
+            decimal_qty = Decimal(quantity)
+        except (InvalidOperation, ValueError):
+            return {"ok": False, "error": "invalid_close_quantity"}
+        if decimal_qty <= 0 or decimal_qty.as_tuple().exponent < -9:
+            return {"ok": False, "error": "close_quantity_precision_unsupported"}
+        # Decimal formatting retains the broker-reported amount exactly.
+        exact_qty = format(decimal_qty, "f")
+        query = urllib.parse.urlencode({"qty": exact_qty})
+        ok, data, err = self._request(
+            "DELETE",
+            f"/positions/{urllib.parse.quote(normalized_symbol, safe='')}?{query}",
+        )
+        if not ok or not isinstance(data, dict):
+            self._last_order_status = f"close_rejected:{err[:80]}"
+            return {"ok": False, "error": err or "close_position_rejected", "paper_order_submitted": False}
+        clean = _sanitize_order(data)
+        self._last_order_status = _safe_text(clean.get("status"), "close_submitted")
+        return {
+            "ok": True,
+            "paper_order_submitted": True,
+            "order": clean,
+            "symbol": normalized_symbol,
+            "qty": exact_qty,
+            "paper_only": True,
+        }
 
     def orders(self, status: str = "open", limit: int = 50) -> dict[str, Any]:
         # Alpaca allows a bounded historical order page.  Keep the default

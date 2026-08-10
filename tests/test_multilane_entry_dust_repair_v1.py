@@ -13,6 +13,7 @@ from engine.astra_premarket_certification_v1 import (
     enrich_candidate_for_pretrade_contract,
 )
 from engine.astra_unified_position_lifecycle_v1 import build_position_management_overlay_v1
+from engine.alpaca_paper_broker import AlpacaPaperBroker
 from engine.paper_autopilot import PaperAutopilotEngine
 
 
@@ -42,11 +43,11 @@ class MultiLaneEntryDustRepairTests(unittest.TestCase):
             state_path=os.path.join(self.tmp.name, "state.json"), enabled=False,
         )
 
-    def _dust_cleanup_engine(self, positions):
+    def _dust_cleanup_engine(self, positions, close_result=None):
         class StubBroker:
             def __init__(self, current_positions):
                 self.current_positions = current_positions
-                self.orders_submitted = []
+                self.close_requests = []
 
             def safety_status(self):
                 return {
@@ -61,9 +62,9 @@ class MultiLaneEntryDustRepairTests(unittest.TestCase):
             def orders(self, **_kwargs):
                 return {"ok": True, "orders": []}
 
-            def submit_paper_order(self, order):
-                self.orders_submitted.append(dict(order))
-                return {"ok": True, "paper_order_submitted": True, "order": {"id": "dust-order"}}
+            def close_paper_position(self, symbol, qty):
+                self.close_requests.append((symbol, qty))
+                return close_result or {"ok": True, "paper_order_submitted": True, "order": {"id": "dust-order"}}
 
         broker = StubBroker(positions)
         self.engine.alpaca_paper_broker = broker
@@ -106,6 +107,20 @@ class MultiLaneEntryDustRepairTests(unittest.TestCase):
         self.assertFalse(contract["order_ready_allowed"])
         self.assertIn("expected_downside_range", contract["missing_required_fields"])
 
+    def test_full_cycle_risk_refresh_receives_exact_current_equity_candidates(self):
+        current = [_candidate("DAY"), _candidate("SCALP"), {"symbol": "BTCUSD", "asset_class": "crypto"}]
+        observed = {}
+
+        def refresh():
+            observed["handoff"] = dict(self.engine._runtime_state.get("equity_risk_candidate_handoff_v1") or {})
+            return {"status": "CURRENT", "provider_calls_used": 2, "broker_actions_used": 0}
+
+        self.engine.refresh_equity_risk_envelopes_fn = refresh
+        result = self.engine._refresh_current_equity_risk_envelopes_v1(current)
+        self.assertEqual(result["status"], "CURRENT")
+        self.assertEqual([row["symbol"] for row in observed["handoff"]["rows"]], ["DAYX", "SCALPX"])
+        self.assertNotIn("BTCUSD", [row["symbol"] for row in observed["handoff"]["rows"]])
+
     def test_canonical_dust_is_not_normal_managed_position(self):
         position = {"symbol": "DUST", "qty": 0.0005, "market_value": 0.001, "lane_id": "DAY"}
         dust = classify_dust_position_v1(position)
@@ -125,21 +140,56 @@ class MultiLaneEntryDustRepairTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["submitted"], ["DUST"])
         self.assertEqual(result["meaningful_untouched"], ["KEEP"])
-        self.assertEqual(len(broker.orders_submitted), 1)
-        self.assertEqual(broker.orders_submitted[0]["symbol"], "DUST")
-        self.assertEqual(broker.orders_submitted[0]["qty"], 0.0005)
+        self.assertEqual(broker.close_requests, [("DUST", "0.000500")])
 
-    def test_cleanup_quarantines_unrepresentable_or_crypto_dust_without_submission(self):
+    def test_cleanup_quarantines_unrepresentable_dust_without_submission(self):
         broker = self._dust_cleanup_engine([
-            {"symbol": "TINY", "qty": "0.0000001", "market_value": "0.01", "asset_class": "us_equity"},
-            {"symbol": "BTC/USD", "qty": "0.000001", "market_value": "0.01", "asset_class": "crypto"},
+            {"symbol": "TINY", "qty": "0.0000000001", "market_value": "0.01", "asset_class": "us_equity"},
         ])
         result = self.engine.cleanup_verified_broker_dust_v1()
-        self.assertEqual(set(result["unclosable"]), {"TINY", "BTC/USD"})
-        self.assertEqual(broker.orders_submitted, [])
+        self.assertEqual(result["unclosable"], ["TINY"])
+        self.assertEqual(broker.close_requests, [])
         records = self.engine._runtime_state["broker_dust_cleanup_v1"]
         self.assertEqual(records["TINY"]["status"], "BROKER_UNCLOSABLE_DUST")
-        self.assertEqual(records["BTC/USD"]["first_causal_blocker"], "NATIVE_CRYPTO_EXIT_CONTRACT_REQUIRED")
+
+    def test_cleanup_uses_exact_native_close_for_crypto_dust(self):
+        broker = self._dust_cleanup_engine([
+            {"symbol": "BTCUSD", "qty": "0.000000500", "market_value": "0.01", "asset_class": "crypto"},
+        ])
+        result = self.engine.cleanup_verified_broker_dust_v1()
+        self.assertEqual(result["submitted"], ["BTCUSD"])
+        self.assertEqual(broker.close_requests, [("BTCUSD", "0.000000500")])
+
+    def test_rejected_dust_close_stays_quarantined_without_false_closure(self):
+        self._dust_cleanup_engine(
+            [{"symbol": "DUST", "qty": "0.000500", "market_value": "0.01", "asset_class": "us_equity"}],
+            close_result={"ok": False, "error": "minimum quantity not supported"},
+        )
+        result = self.engine.cleanup_verified_broker_dust_v1()
+        self.assertEqual(result["submitted"], [])
+        self.assertEqual(result["unclosable"], ["DUST"])
+        self.assertEqual(self.engine._runtime_state["broker_dust_cleanup_v1"]["DUST"]["status"], "BROKER_UNCLOSABLE_DUST")
+        quarantine = self.engine._runtime_state["broker_dust_quarantine_v1"]["broker:DUST"]
+        self.assertFalse(quarantine["operational_lifecycle"])
+        self.assertFalse(quarantine["strict_truth_eligible"])
+
+    def test_adapter_close_preserves_exact_nine_decimal_quantity(self):
+        broker = AlpacaPaperBroker()
+        requests = []
+        broker.safety_status = lambda: {"broker_execution_enabled": True, "live_endpoint_detected": False}
+        broker._request = lambda method, path, body=None: (requests.append((method, path, body)) or (True, {"id": "close-1", "status": "accepted"}, ""))
+        result = broker.close_paper_position("BTCUSD", "0.000000500")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["qty"], "0.000000500")
+        self.assertEqual(requests, [("DELETE", "/positions/BTCUSD?qty=0.000000500", None)])
+
+    def test_adapter_close_rejects_unrepresentable_quantity_without_request(self):
+        broker = AlpacaPaperBroker()
+        broker.safety_status = lambda: {"broker_execution_enabled": True, "live_endpoint_detected": False}
+        broker._request = lambda *_args, **_kwargs: self.fail("broker request must not occur")
+        result = broker.close_paper_position("TINY", "0.0000000001")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "close_quantity_precision_unsupported")
 
 
 if __name__ == "__main__":

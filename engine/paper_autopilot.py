@@ -5498,7 +5498,7 @@ class PaperAutopilotEngine:
             return {**base, "ok": False, "status": "PAPER_ONLY_BROKER_BOUNDARY_REQUIRED", "safety_reasons": safety.get("safety_reasons") or []}
 
         broker = self.alpaca_paper_broker
-        if broker is None or not hasattr(broker, "positions") or not hasattr(broker, "orders") or not hasattr(broker, "submit_paper_order"):
+        if broker is None or not hasattr(broker, "positions") or not hasattr(broker, "orders") or not hasattr(broker, "close_paper_position"):
             return {**base, "ok": False, "status": "BROKER_DUST_CLEANUP_ADAPTER_UNAVAILABLE"}
         try:
             positions_payload = dict(broker.positions() or {})
@@ -5540,29 +5540,18 @@ class PaperAutopilotEngine:
                 "paper_only": True,
                 "live_endpoint_rejected": bool(safety.get("live_endpoint_rejected")),
             }
-            asset_class = str(position.get("asset_class") or position.get("asset_type") or "us_equity").lower()
-            if asset_class in {"crypto", "cryptocurrency"}:
-                # Generic residual cleanup cannot satisfy the native crypto
-                # exit contract. Preserve and quarantine rather than bypass it.
-                record.update({
-                    "status": "BROKER_UNCLOSABLE_DUST",
-                    "first_causal_blocker": "NATIVE_CRYPTO_EXIT_CONTRACT_REQUIRED",
-                    "retries_allowed": False,
-                })
-                cleanup_records[symbol or f"unknown:{len(cleanup_records)}"] = record
-                quarantines[f"broker:{symbol or 'unknown'}"] = {**record, "operational_lifecycle": False, "strict_truth_eligible": False}
-                base["unclosable"].append(symbol)
-                continue
             try:
                 quantity = Decimal(quantity_text)
-                adapter_quantity = quantity.quantize(Decimal("0.000001"))
+                # Alpaca's close-position endpoint accepts up to nine decimal
+                # places; reject rather than round any finer broker residue.
+                adapter_quantity = quantity.quantize(Decimal("0.000000001"))
             except (InvalidOperation, ValueError):
                 quantity = Decimal("0")
                 adapter_quantity = Decimal("-1")
             if not symbol or quantity <= 0 or adapter_quantity != quantity:
                 record.update({
                     "status": "BROKER_UNCLOSABLE_DUST",
-                    "first_causal_blocker": "DUST_QUANTITY_NOT_EXACTLY_REPRESENTABLE_BY_CANONICAL_ADAPTER",
+                    "first_causal_blocker": "DUST_QUANTITY_NOT_EXACTLY_REPRESENTABLE_BY_CANONICAL_CLOSE_ENDPOINT",
                     "retries_allowed": False,
                 })
                 cleanup_records[symbol or f"unknown:{len(cleanup_records)}"] = record
@@ -5578,29 +5567,15 @@ class PaperAutopilotEngine:
                 cleanup_records[symbol] = record
                 base["blocked"].append(symbol)
                 continue
-            exact_quantity = format(adapter_quantity, "f")
-            intent_id = f"dust-cleanup-v1:{symbol}:{exact_quantity}"[:96]
-            order = {
-                "symbol": symbol,
-                "side": "sell",
-                "type": "market",
-                "time_in_force": "gtc",
-                "qty": float(adapter_quantity),
-                "asset_class": asset_class,
-                # The adapter requires its existing durable sell boundary.
-                "existing_exit_signal_verified": True,
-                "paper_sell_approval_intent_id": intent_id,
-                "client_order_id": hashlib.sha256(intent_id.encode("utf-8")).hexdigest()[:48],
-                "dust_cleanup_v1": True,
-                "broker_reconciliation_ok": True,
-            }
+            # Keep the broker quantity's exact decimal representation after
+            # validating its precision; do not pad or otherwise rewrite it.
+            exact_quantity = format(quantity, "f")
             try:
-                result = dict(broker.submit_paper_order(order) or {})
+                result = dict(broker.close_paper_position(symbol, exact_quantity) or {})
             except Exception as exc:
-                result = {"ok": False, "error": f"submit_exception:{str(exc)[:120]}"}
+                result = {"ok": False, "error": f"close_exception:{str(exc)[:120]}"}
             record.update({
                 "submitted_quantity": exact_quantity,
-                "approval_intent_id": intent_id,
                 "broker_result": result,
                 "status": "SUBMITTED_PENDING_BROKER_RECONCILIATION" if bool(result.get("ok")) else "BROKER_DUST_CLEANUP_REJECTED",
                 "retries_allowed": False,
@@ -5611,6 +5586,19 @@ class PaperAutopilotEngine:
                 base["submitted"].append(symbol)
                 submitted_symbols.add(symbol)
             else:
+                error = str(result.get("error") or "").lower()
+                if any(token in error for token in ("minimum", "precision", "fraction", "quantity", "qty", "increment")):
+                    record["status"] = "BROKER_UNCLOSABLE_DUST"
+                    record["first_causal_blocker"] = "BROKER_REJECTED_DUST_CLOSE_QUANTITY"
+                    cleanup_records[symbol] = record
+                    base["unclosable"].append(symbol)
+                # A rejected residual remains real broker truth but cannot
+                # re-enter capacity, normal management, or a retry loop.
+                quarantines[f"broker:{symbol}"] = {
+                    **record,
+                    "operational_lifecycle": False,
+                    "strict_truth_eligible": False,
+                }
                 base["blocked"].append(symbol)
 
         self._runtime_state["broker_dust_cleanup_v1"] = cleanup_records
@@ -6771,14 +6759,18 @@ class PaperAutopilotEngine:
                 return dedup
         return dedup
 
-    def _publish_equity_risk_candidate_handoff_v1(self) -> list[dict[str, Any]]:
+    def _publish_equity_risk_candidate_handoff_v1(
+        self,
+        candidate_rows: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
         """Give the existing risk observer the same cached equity slice.
 
         This is a bounded handoff, not a second scanner or ranking source.  It
         lets the worker observe volatility for candidates it will actually
         evaluate in the current cycle.
         """
-        rows = [dict(row) for row in self._collect_candidate_rows()
+        source_rows = candidate_rows if candidate_rows is not None else self._collect_candidate_rows()
+        rows = [dict(row) for row in source_rows
                 if isinstance(row, Mapping)
                 and _norm_asset(row.get("asset_type") or row.get("asset_class") or "stock") != "crypto"][:12]
         self._runtime_state["equity_risk_candidate_handoff_v1"] = {
@@ -6789,6 +6781,17 @@ class PaperAutopilotEngine:
             "provider_calls_used": 0,
         }
         return rows
+
+    def _refresh_current_equity_risk_envelopes_v1(
+        self,
+        candidate_rows: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Refresh the existing observer against the exact worker candidate slice."""
+        if not callable(self.refresh_equity_risk_envelopes_fn):
+            return {"status": "NOT_CONFIGURED", "provider_calls_used": 0, "broker_actions_used": 0}
+        self._note_worker_progress("equity_risk_envelope_refresh")
+        self._publish_equity_risk_candidate_handoff_v1(candidate_rows)
+        return dict(self.refresh_equity_risk_envelopes_fn() or {})
 
     def _assign_trusted_quote_to_candidate(self, row: Mapping[str, Any] | None) -> dict[str, Any]:
         """Attach worker-owned quote evidence before candidate qualification.
@@ -12087,9 +12090,7 @@ class PaperAutopilotEngine:
                 equity_risk_refresh: dict[str, Any] = {}
                 if callable(self.refresh_equity_risk_envelopes_fn):
                     try:
-                        self._note_worker_progress("equity_risk_envelope_refresh")
-                        self._publish_equity_risk_candidate_handoff_v1()
-                        equity_risk_refresh = dict(self.refresh_equity_risk_envelopes_fn() or {})
+                        equity_risk_refresh = self._refresh_current_equity_risk_envelopes_v1()
                     except Exception as exc:
                         equity_risk_refresh = {
                             "status": "FAILED_FAIL_CLOSED",
@@ -12712,6 +12713,15 @@ class PaperAutopilotEngine:
             # this only gives every candidate a stable operational lineage.
             self._note_worker_progress("candidate_collection")
             candidates = [_normalize_paper_entry_bridge(row) for row in self._collect_candidate_rows() if isinstance(row, dict)]
+            equity_risk_refresh_full: dict[str, Any] = {}
+            if callable(self.refresh_equity_risk_envelopes_fn):
+                try:
+                    equity_risk_refresh_full = self._refresh_current_equity_risk_envelopes_v1(candidates)
+                except Exception as exc:
+                    equity_risk_refresh_full = {
+                        "status": "FAILED_FAIL_CLOSED",
+                        "exact_blocker": f"equity_risk_envelope_refresh_exception:{str(exc)[:120]}",
+                    }
             candidate_source = "candidate_source_empty"
             if candidates:
                 source_counts: dict[str, int] = {}
