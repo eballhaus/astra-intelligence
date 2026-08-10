@@ -30,6 +30,7 @@ MAX_RESULTS = 100
 MAX_FILES = 8
 MAX_RAW_ROWS = 240
 MAX_RAW_BYTES = 1_000_000
+DISTILLED_LESSONS_REGISTRY = "historical_evidence_distilled_lessons_v1.json"
 SUPPORTED_DIMENSIONS = (
     "symbol", "asset_class", "sector", "theme", "catalyst", "regime",
     "archetype", "trade_style", "horizon", "recommendation_state",
@@ -201,6 +202,19 @@ class AstraKnowledgeWarehouseV1(CachedDiagnosticModule):
         catalog = self._catalog()
         existing = [row for row in catalog if row.get("exists")]
         indexes = [row for row in existing if row.get("index_available")]
+        distilled = read_json(os.path.join(self.state_dir, DISTILLED_LESSONS_REGISTRY))
+        distilled_lessons = list(distilled.get("lessons") or []) if isinstance(distilled, dict) else []
+        distilled_lesson_reuse = {
+            "owner": "historical_evidence_mining_knowledge_distillation_v1",
+            "retention": "bounded_registry_rebuild_with_v8",
+            "lessons_available": len(distilled_lessons),
+            "deduplicated": bool(distilled.get("deduplicated", True)),
+            "registry_generated_at": distilled.get("updated_at"),
+            "advisory_only": True,
+            "automatic_adaptation": False,
+            "evidence_class": "distilled_lesson",
+            "bounded_read": True,
+        }
         storage_status = statuses.get("astra_storage_cache_attribution_learning_efficiency_v1") or {}
         total_storage = storage_status.get("total_storage_bytes") or storage_status.get("storage_total_bytes")
         daily_growth = storage_status.get("daily_growth_bytes") or storage_status.get("estimated_daily_growth_bytes")
@@ -261,6 +275,7 @@ class AstraKnowledgeWarehouseV1(CachedDiagnosticModule):
             "partitioning_status": "existing_partition_metadata_reused; new partition migration deferred",
             "rotation_status": "not_started_non_destructive",
             "compression_status": "existing_summary_indexes_and_lesson_compression_reused",
+            "distilled_lesson_reuse": distilled_lesson_reuse,
             "incremental_index_status": {
                 "index_generation_observed": any(row.get("index_generation") for row in indexes),
                 "index_lag_measured": False,

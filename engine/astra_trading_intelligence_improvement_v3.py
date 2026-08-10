@@ -151,19 +151,90 @@ def _calibration(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+_REAL_LATER_RETURN_KEYS = (
+    "subsequent_return", "subsequent_return_pct", "later_return_after_rejection",
+    "rejected_later_return_pct", "hypothetical_return",
+)
+
+
+def _real_rejection_outcome(row: Mapping[str, Any]) -> tuple[float | None, str]:
+    """Return (real_later_return, evidence_key) only for real later-price evidence.
+
+    A quality-score proxy (``rejected_return_pct`` without a real price path) is
+    deliberately excluded so classification never fabricates an outcome.
+    """
+    for key in _REAL_LATER_RETURN_KEYS:
+        value = _number(row.get(key))
+        if value is not None:
+            return value, key
+    return None, ""
+
+
 def _classify_rejection(row: Mapping[str, Any]) -> str:
     """Keep a safety-protected rejection ambiguous even after a later rise."""
     if row.get("safety_blocker") or row.get("liquidity_blocker") or row.get("stale_evidence") or row.get("duplicate_exposure"):
         return "AMBIGUOUS_SAFETY_BLOCKER_PRESERVED"
-    outcome = _number(row.get("hypothetical_return") or row.get("subsequent_return"))
+    outcome, _ = _real_rejection_outcome(row)
     if outcome is None:
         return "INSUFFICIENT_EVIDENCE"
     return "MISSED_OPPORTUNITY" if outcome > 0 else "CORRECT_REJECTION" if outcome < 0 else "AMBIGUOUS"
 
 
-def _missed_opportunity(index: Mapping[str, Any], shadow: Mapping[str, Any]) -> dict[str, Any]:
-    candidates = shadow.get("candidate_lessons")
-    candidates = candidates if isinstance(candidates, list) else []
+def _tail_jsonl(path: Path, max_rows: int = 400, max_bytes: int = 1_200_000) -> list[dict[str, Any]]:
+    """Read only the bounded tail of a JSONL store; never a full history scan."""
+    if not path.is_file():
+        return []
+    try:
+        size = path.stat().st_size
+        with open(path, "rb") as handle:
+            handle.seek(max(0, size - max_bytes))
+            text = handle.read().decode("utf-8", "ignore")
+    except OSError:
+        return []
+    lines = text.splitlines()
+    if size > max_bytes and lines:
+        lines = lines[1:]
+    rows: list[dict[str, Any]] = []
+    for line in lines[-max_rows:]:
+        try:
+            parsed = json.loads(line)
+            if isinstance(parsed, dict):
+                rows.append(parsed)
+        except ValueError:
+            continue
+    return rows
+
+
+def _ledger_candidates(path: Path) -> list[dict[str, Any]]:
+    """Bounded rejected-candidate rows that already carry real later-price evidence."""
+    rejected = []
+    for row in _tail_jsonl(path):
+        if isinstance(row, Mapping):
+            symbol = _text(row.get("symbol"))
+            if not symbol:
+                continue
+            outcome, key = _real_rejection_outcome(row)
+            if outcome is None:
+                continue
+            blocks = str(row.get("blocked_reasons") or "")
+            safety_blocker = bool(
+                row.get("safety_blocker")
+                or any(token in blocks.lower() for token in ("safety", "liquidity", "stale", "duplicate"))
+            )
+            rejected.append({
+                "candidate_id": row.get("candidate_id") or row.get("ledger_id") or "UNAVAILABLE",
+                "symbol": symbol,
+                "subsequent_return": outcome,
+                "rejection_later_price_key": key,
+                "safety_blocker": safety_blocker,
+            })
+    return rejected[: MAX_CONTEXT_GROUPS * 2]
+
+
+def _missed_opportunity(index: Mapping[str, Any], shadow: Mapping[str, Any], ledger_candidates: list[Mapping[str, Any]]) -> dict[str, Any]:
+    raw = shadow.get("candidate_lessons")
+    candidates = raw if isinstance(raw, list) else []
+    shape_mismatch = raw is not None and not isinstance(raw, list)
     classified = []
     for row in candidates[:MAX_CONTEXT_GROUPS]:
         if not isinstance(row, Mapping):
@@ -175,6 +246,15 @@ def _missed_opportunity(index: Mapping[str, Any], shadow: Mapping[str, Any]) -> 
             "evidence_tier": "SHADOW_COUNTERFACTUAL",
             "automatic_entry_authority": False,
         })
+    for row in ledger_candidates[:MAX_CONTEXT_GROUPS]:
+        classified.append({
+            "candidate_id": row.get("candidate_id") or "UNAVAILABLE",
+            "symbol": _text(row.get("symbol")),
+            "classification": _classify_rejection(row),
+            "evidence_tier": "REJECTION_LEDGER_LATER_PRICE",
+            "rejection_later_price_key": row.get("rejection_later_price_key") or "UNAVAILABLE",
+            "automatic_entry_authority": False,
+        })
     usable = [row for row in classified if row["classification"] not in {"INSUFFICIENT_EVIDENCE", "AMBIGUOUS_SAFETY_BLOCKER_PRESERVED"}]
     return {
         "status": "OBSERVATIONAL" if usable else "INSUFFICIENT_EVIDENCE",
@@ -182,6 +262,8 @@ def _missed_opportunity(index: Mapping[str, Any], shadow: Mapping[str, Any]) -> 
         "candidate_ledger_rejection_context_counts": _index_counts(index, "regime"),
         "classified_shadow_rejections": classified,
         "candidate_level_shadow_outcomes": len(usable),
+        "candidate_lessons_shape_mismatch_detected": shape_mismatch,
+        "rejected_candidate_later_price_evidence_count": len(ledger_candidates),
         "safety_rejection_preserved_when_price_rises": True,
         "automatic_rejection_policy_authority": False,
     }
@@ -205,7 +287,11 @@ def build_trading_intelligence_improvement_suite_v3(state_dir: str = "state", qu
         "trade_archetype_intelligence": _archetype(strict, archetype_index),
         "catalyst_intelligence": _catalyst(strict, archetype_index),
         "contextual_prediction_calibration": _calibration(strict),
-        "missed_opportunity_rejected_candidate_intelligence": _missed_opportunity(candidate_index, shadow),
+        "missed_opportunity_rejected_candidate_intelligence": _missed_opportunity(
+            candidate_index,
+            shadow,
+            _ledger_candidates(state / "candidate_decision_ledger_v1.jsonl"),
+        ),
         "v1_v2_continuity": {
             "v1_status": v2.get("v1_integration", {}).get("status"),
             "v2_status": v2.get("status"),

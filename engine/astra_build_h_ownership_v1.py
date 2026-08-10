@@ -75,6 +75,18 @@ STORE_CATALOG: tuple[dict[str, Any], ...] = (
         "retention": "bounded_derived_history",
     },
     {
+        "store": "distilled_lessons",
+        "path": "historical_evidence_distilled_lessons_v1.json",
+        "owner": "historical_evidence_mining_knowledge_distillation_v1",
+        "writer": "v8 knowledge distillation registry",
+        "readers": ["warehouse manager", "learning", "governor coverage"],
+        "evidence_class": "distilled_lesson",
+        "authority": "DERIVED",
+        "rebuildable": True,
+        "index": None,
+        "retention": "bounded_registry_rebuild_with_v8",
+    },
+    {
         "store": "trade_memory_similarity",
         "path": "trade_memory_similarity_v1.jsonl",
         "owner": "long_term_memory_symbol_retrieval_suite_v1",

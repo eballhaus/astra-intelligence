@@ -39,6 +39,17 @@ def _to_int(value: Any, default: int = 0) -> int:
         return int(default)
 
 
+def _candidate_lesson_count(data: Any) -> Any:
+    """Numeric candidate-lesson count regardless of producer list/count shape."""
+    if not isinstance(data, dict):
+        return _to_int(data, 0)
+    if data.get("candidate_lesson_count") not in (None, ""):
+        return _to_int(data.get("candidate_lesson_count"), 0)
+    if isinstance(data.get("candidate_lessons"), (int, float)):
+        return _to_int(data.get("candidate_lessons"), 0)
+    return 0
+
+
 def _clamp(value: Any, low: float = 0.0, high: float = 100.0) -> float:
     return max(low, min(high, _to_float(value, low)))
 
@@ -4856,7 +4867,7 @@ class UnifiedLearningDiagnosticsV1:
             "conflicting_lesson_count": _to_int(data.get("conflicting_lesson_count"), 0),
             "consensus_confidence_score": _to_float(data.get("consensus_confidence_score"), 0.0),
             "raw_observations": _to_int(data.get("raw_observations"), 0),
-            "candidate_lessons": _to_int(data.get("candidate_lessons"), 0),
+            "candidate_lessons": _to_int(_candidate_lesson_count(data), 0),
             "validated_lessons": _to_int(data.get("validated_lessons"), 0),
             "high_confidence_lessons": _to_int(data.get("high_confidence_lessons"), 0),
             "future_policy_candidates": _to_int(data.get("future_policy_candidates"), 0),

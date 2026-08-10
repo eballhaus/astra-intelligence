@@ -17700,6 +17700,22 @@ def _to_float(value, default=0.0):
         return float(default)
 
 
+def _shadow_candidate_lesson_count(shadow_lab):
+    """Return the candidate-lesson COUNT regardless of producer list/count shape.
+
+    Producers emit ``candidate_lessons`` as a well-typed list and keep the
+    aggregate count in ``candidate_lesson_count``; numeric renderers must read
+    the count, never the list.
+    """
+    if not isinstance(shadow_lab, dict):
+        return 0
+    if shadow_lab.get("candidate_lesson_count") not in (None, ""):
+        return int(_to_float(shadow_lab.get("candidate_lesson_count"), 0.0))
+    if isinstance(shadow_lab.get("candidate_lessons"), (int, float)):
+        return int(_to_float(shadow_lab.get("candidate_lessons"), 0.0))
+    return 0
+
+
 def _iso_age_seconds(value):
     if not value:
         return None
@@ -40738,6 +40754,24 @@ def _apply_rolling_conviction_v1(payload):
     return p
 
 
+def _real_later_return_evidence(row):
+    """Return (value, key) only for real later-price evidence on a candidate row.
+
+    Quality-score proxies are excluded so later classification can be fail-closed.
+    No broker/provider/LLM call is made; evidence is reused only when it already
+    arrived through an existing path.
+    """
+    for key in ("subsequent_return", "subsequent_return_pct", "later_return_after_rejection",
+                "rejected_later_return_pct", "hypothetical_return"):
+        value = row.get(key)
+        if value not in (None, ""):
+            try:
+                return float(value), key
+            except Exception:
+                continue
+    return None, ""
+
+
 def _log_candidate_decision_ledger_from_payload(payload, decision_source="top_buys"):
     rows = _candidate_rows_from_payload(payload)
     if not rows:
@@ -40895,6 +40929,8 @@ def _log_candidate_decision_ledger_from_payload(payload, decision_source="top_bu
                 "watchlist_only": bool(row.get("watchlist_only", was_watchlist)),
                 "no_trade_flag": bool(row.get("no_trade_flag", was_blocked)),
                 "blocked_reasons": list(blocked_reasons),
+                "subsequent_return": _real_later_return_evidence(row)[0],
+                "rejection_later_price_key": _real_later_return_evidence(row)[1],
                 "data_quality_score": _to_float(row.get("data_quality_score"), _to_float(row.get("live_data_quality_score"), 0.0)),
                 "trusted_quote_for_buys": bool(row.get("trusted_quote_for_buys", False)),
                 "limited_data_mode": bool(row.get("limited_data_mode", False)),
@@ -62915,7 +62951,7 @@ def _astra_intelligence_maturation_readiness_report_v1_payload(statuses: dict | 
         "what_is_collected": [
             f"{broker_total} broker truth records",
             f"{int(_to_float(quality.get('weighted_evidence_count'), 0.0))} weighted evidence rows",
-            f"{int(_to_float(shadow_lab.get('candidate_lessons'), 0.0))} shadow candidate lessons",
+            f"{_shadow_candidate_lesson_count(shadow_lab)} shadow candidate lessons",
             f"{int(_to_float(shadow_lab.get('compressed_lesson_count'), 0.0))} compressed shadow lessons",
         ],
         "what_is_consumed": [
@@ -63045,7 +63081,7 @@ def _astra_intelligence_maturation_readiness_report_v1_payload(statuses: dict | 
         "shadow_replacement_logic": shadow_correction.get("shadow_recommendation"),
         "evidence_quality": shadow_lab.get("evidence_quality_score"),
         "sample_sizes": {
-            "candidate_lessons": int(_to_float(shadow_lab.get("candidate_lessons"), 0.0)),
+            "candidate_lessons": _shadow_candidate_lesson_count(shadow_lab),
             "completed_shadow_lifecycles": int(_to_float(shadow_lab.get("completed_shadow_lifecycles"), 0.0)),
             "validated_recommendations": int(_to_float(shadow_correction.get("validated_recommendations"), 0.0)),
         },
@@ -63410,7 +63446,7 @@ def _astra_evidence_consumption_teacher_shadow_payload(statuses: dict | None = N
     shadow_observation_count = max(
         int(_to_float(shadow_lab.get("evidence_count"), 0.0)),
         int(_to_float(shadow_lab.get("shadow_opportunities"), 0.0)),
-        int(_to_float(shadow_lab.get("candidate_lessons"), 0.0)),
+        _shadow_candidate_lesson_count(shadow_lab),
     )
     replay_observation_count = _lc_count(replay_idx)
     lifecycle_records = max(_lc_count(lifecycle_idx), _lc_count(ctx["indexes"]["lifecycle_v1"]))
@@ -66438,7 +66474,7 @@ def _astra_phase_2a_intelligence_consumption_payload(statuses: dict | None = Non
         "evidence_links_preserved": True,
     }
 
-    lessons_generated = int(_to_float(aios.get("lessons_created"), 0.0) + _to_float(shadow_lab.get("candidate_lessons"), 0.0))
+    lessons_generated = int(_to_float(aios.get("lessons_created"), 0.0) + _shadow_candidate_lesson_count(shadow_lab))
     lessons_indexed = int(_to_float(retrieval.get("indexed_records"), 0.0) or _to_float(symbol_intel.get("indexed_learning_records"), 0.0))
     lessons_consumed = int(_to_float(aios.get("memory_reinforcements_today"), 0.0) + _to_float(learning_alloc.get("retained_weakness_lessons"), 0.0))
     teacher_reinforcement_score = _astra_score_average_v1(
@@ -66473,7 +66509,7 @@ def _astra_phase_2a_intelligence_consumption_payload(statuses: dict | None = Non
         {"stage": "Cortex", "data_received": int(_to_float(quality.get("weighted_evidence_count"), 0.0)), "data_consumed": broker_complete, "score": cortex_reason_lineage_coverage},
         {"stage": "Paper Execution", "data_received": broker_total, "data_consumed": broker_complete, "score": broker_truth_linkage_coverage},
         {"stage": "Broker Truth", "data_received": broker_total, "data_consumed": broker_complete, "score": broker_truth_consumption_score},
-        {"stage": "Shadow Validation", "data_received": int(_to_float(shadow_lab.get("candidate_lessons"), 0.0)), "data_consumed": int(_to_float(shadow_lab.get("completed_shadow_lifecycles"), 0.0)), "score": _to_float((maturation.get("shadow_validation_layer_audit_v1") or {}).get("maturity_score"), 0.0)},
+        {"stage": "Shadow Validation", "data_received": _shadow_candidate_lesson_count(shadow_lab), "data_consumed": int(_to_float(shadow_lab.get("completed_shadow_lifecycles"), 0.0)), "score": _to_float((maturation.get("shadow_validation_layer_audit_v1") or {}).get("maturity_score"), 0.0)},
     ]
     for stage in funnel_stages:
         received = int(_to_float(stage.get("data_received"), 0.0))

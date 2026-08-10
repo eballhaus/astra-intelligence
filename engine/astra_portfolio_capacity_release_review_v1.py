@@ -22,6 +22,48 @@ PRIMARY_STATES = (
     "THESIS_BROKEN", "DUST_CLEANUP_REVIEW", "INSUFFICIENT_EVIDENCE",
 )
 
+RELEASE_STATES = ("EXIT_REVIEW", "THESIS_BROKEN", "REPLACE_CANDIDATE")
+
+
+def _releasable_capital_facts(reviews: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """Measure real releasable capital from broker-derived market values.
+
+    Only positions already in a release-review state contribute.  Missing
+    market value keeps the estimate UNKNOWN rather than fabricating a dollar
+    figure; no ceiling, allocation, or capacity rule is applied here.
+    """
+    components: list[dict[str, Any]] = []
+    actual: list[float] = []
+    for row in reviews:
+        if row.get("primary_state") not in RELEASE_STATES:
+            continue
+        symbol = _text(row.get("symbol"))
+        market_value = _number((row.get("position_snapshot") or {}).get("market_value"))
+        item = {"symbol": symbol, "release_state": row.get("primary_state"), "market_value": market_value}
+        components.append(item)
+        if market_value is not None and market_value >= 0.0:
+            actual.append(market_value)
+    if not components:
+        return {
+            "estimated_releasable_capital": None,
+            "releasable_capital_status": "UNKNOWN_NO_RELEASE_CANDIDATES",
+            "releasable_capital_basis": "no_position_recommended_for_release_review",
+            "releasable_capital_components": [],
+        }
+    if not actual:
+        return {
+            "estimated_releasable_capital": None,
+            "releasable_capital_status": "UNKNOWN_MARKET_VALUE_MISSING",
+            "releasable_capital_basis": "release_candidates_without_broker_market_value",
+            "releasable_capital_components": components[:20],
+        }
+    return {
+        "estimated_releasable_capital": round(sum(actual), 2),
+        "releasable_capital_status": "OBSERVATIONAL_BROKER_DERIVED",
+        "releasable_capital_basis": "sum_of_real_broker_position_market_values_for_release_candidates",
+        "releasable_capital_components": components[:20],
+    }
+
 
 def _number(value: Any) -> float | None:
     try:
@@ -519,6 +561,7 @@ def build_portfolio_release_review(
         "broker_only": sum(1 for row in meaningful if (row.get("retrieval") or {}).get("coverage") == "BROKER_ONLY"),
     }
     primary_concentration = fallback_concentration_audit(reviews)
+    releasable_capital_facts = _releasable_capital_facts(reviews)
     return {
         "portfolio_capacity_release_review_v1": True,
         "total_positions": len(reviews),
@@ -541,7 +584,7 @@ def build_portfolio_release_review(
             "status": "REVIEW_REQUIRED" if blanket_detected or primary_concentration.get("blanket_fallback_detected") else "DIFFERENTIATED_OR_EVIDENCE_LIMITED",
         },
         "estimated_releasable_slots": sum(int(row.get("estimated_capacity_released_if_closed") or 0) for row in reviews),
-        "estimated_releasable_capital": None,
+        **releasable_capital_facts,
         "automatic_action_authorized": False,
         "human_review_required": any(bool(row.get("human_review_required")) for row in reviews),
         "no_exit_orders_submitted": True,

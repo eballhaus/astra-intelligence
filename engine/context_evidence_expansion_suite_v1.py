@@ -259,7 +259,10 @@ class ContextEvidenceExpansionSuiteV1:
             if sym:
                 item = dict(row)
                 item["symbol"] = sym
-                item["later_return_after_rejection"] = _value(row, "rejected_return_pct", "later_return_after_rejection")
+                if _text(item.get("rejected_return_evidence_tier")) == "REAL_LATER_PRICE":
+                    item["later_return_after_rejection"] = _value(row, "rejected_return_pct", "later_return_after_rejection")
+                else:
+                    item["later_return_after_rejection"] = row.get("later_return_after_rejection")
                 rejected.append(item)
         for row in rows["audit"] + rows["candidate"]:
             decision = _text(row.get("final_execution_decision") or row.get("decision") or row.get("rejection_reason") or row.get("suppression_reason"), "").lower()

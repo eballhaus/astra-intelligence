@@ -132,6 +132,55 @@ class OpportunityCostLearningV1:
             penalty += 0.25
         return round(((quality - 70.0) / 18.0) + ((live_quality - 80.0) / 80.0) - penalty, 4)
 
+    _REAL_LATER_RETURN_KEYS = (
+        "subsequent_return", "subsequent_return_pct", "later_return_after_rejection",
+        "rejected_later_return_pct", "hypothetical_return", "realized_return_pct",
+    )
+
+    @staticmethod
+    def _real_rejection_outcome(row: dict[str, Any]) -> tuple[float | None, str]:
+        for key in OpportunityCostLearningV1._REAL_LATER_RETURN_KEYS:
+            value = row.get(key)
+            if value not in (None, ""):
+                try:
+                    return float(value), key
+                except Exception:
+                    continue
+        return None, ""
+
+    @staticmethod
+    def _rejected_return_and_tier(row: dict[str, Any]) -> tuple[float, str, str]:
+        """Rejected-candidate return preferring real later-price evidence.
+
+        Returns (return_pct, evidence_tier, evidence_key).  The quality-score
+        proxy is used only as a fallback so classification can remain fail-closed.
+        """
+        real, key = OpportunityCostLearningV1._real_rejection_outcome(row)
+        if real is not None:
+            return round(real, 4), "REAL_LATER_PRICE", key
+        return OpportunityCostLearningV1._rejected_proxy_return(row), "QUALITY_PROXY", ""
+
+    @staticmethod
+    def _safety_blocked(row: dict[str, Any]) -> bool:
+        reasons = " ".join(
+            str(row.get(_key) or "")
+            for _key in ("blocked_reasons", "rejection_reason", "suppression_reason", "final_blocker_reason")
+        ).lower()
+        return bool(row.get("safety_blocker") or row.get("liquidity_blocker") or row.get("stale_evidence") or row.get("duplicate_exposure")
+                    or any(token in reasons for token in ("safety", "liquidity", "stale", "duplicate")))
+
+    @staticmethod
+    def _classify_rejection(row: dict[str, Any], rejected_return: float, evidence_tier: str) -> str:
+        if OpportunityCostLearningV1._safety_blocked(row):
+            return "AMBIGUOUS_SAFETY_BLOCKER_PRESERVED"
+        if evidence_tier != "REAL_LATER_PRICE":
+            return "INSUFFICIENT_EVIDENCE"
+        if rejected_return > 0:
+            return "MISSED_OPPORTUNITY"
+        if rejected_return < 0:
+            return "CORRECT_REJECTION"
+        return "AMBIGUOUS"
+
     def _derive_rows(self) -> list[dict[str, Any]]:
         selected = self._selected_rows()
         rejected = self._rejected_rows()
@@ -142,7 +191,7 @@ class OpportunityCostLearningV1:
         out: list[dict[str, Any]] = []
         for rej in rejected[-500:]:
             rejected_symbol = _text(rej.get("symbol")).upper()
-            rejected_return = self._rejected_proxy_return(rej)
+            rejected_return, rejected_tier, rejected_key = self._rejected_return_and_tier(rej)
             best_selected = max(selected, key=lambda row: self._selected_return(row), default={})
             matched = selected_by_symbol.get(rejected_symbol) or best_selected
             selected_symbol = _text(matched.get("symbol"), "portfolio_selected").upper()
@@ -153,6 +202,7 @@ class OpportunityCostLearningV1:
             ranking_quality = _clamp(70.0 - max(0.0, opportunity_cost) * 12.0 + (10.0 if correct else 0.0))
             promotion_quality = _clamp(_to_float(rej.get("grade_percent") or rej.get("confidence"), 60.0))
             selection_efficiency = _clamp(100.0 - max(0.0, opportunity_cost) * 15.0)
+            rejection_classification = self._classify_rejection(rej, rejected_return, rejected_tier)
             out.append({
                 "enabled": True,
                 "version": VERSION,
@@ -161,6 +211,9 @@ class OpportunityCostLearningV1:
                 "rejected_symbol": rejected_symbol,
                 "selected_return_pct": _round(selected_return),
                 "rejected_return_pct": _round(rejected_return),
+                "rejected_return_evidence_tier": rejected_tier,
+                "rejected_return_evidence_key": rejected_key,
+                "rejected_candidate_outcome_classification": rejection_classification,
                 "opportunity_cost_pct": _round(opportunity_cost),
                 "missed_better_candidate_flag": bool(missed),
                 "correct_selection_flag": bool(correct),
@@ -239,6 +292,13 @@ class OpportunityCostLearningV1:
         self._write_rows(rows)
         missed = [row for row in rows if row.get("missed_better_candidate_flag")]
         correct = [row for row in rows if row.get("correct_selection_flag")]
+        classification_counts = {
+            "MISSED_OPPORTUNITY": sum(1 for row in rows if row.get("rejected_candidate_outcome_classification") == "MISSED_OPPORTUNITY"),
+            "CORRECT_REJECTION": sum(1 for row in rows if row.get("rejected_candidate_outcome_classification") == "CORRECT_REJECTION"),
+            "AMBIGUOUS": sum(1 for row in rows if row.get("rejected_candidate_outcome_classification") == "AMBIGUOUS"),
+            "INSUFFICIENT_EVIDENCE": sum(1 for row in rows if row.get("rejected_candidate_outcome_classification") == "INSUFFICIENT_EVIDENCE"),
+            "AMBIGUOUS_SAFETY_BLOCKER_PRESERVED": sum(1 for row in rows if row.get("rejected_candidate_outcome_classification") == "AMBIGUOUS_SAFETY_BLOCKER_PRESERVED"),
+        }
         best_selected = max(selected, key=self._selected_return, default={})
         worst_selected = min(selected, key=self._selected_return, default={})
         best_rejected = max(rows, key=lambda row: _to_float(row.get("rejected_return_pct")), default={})
@@ -255,9 +315,10 @@ class OpportunityCostLearningV1:
         if rows:
             recommendation = "review_candidate_suppression_vs_selected" if len(missed) > len(correct) else "preserve_current_selection_bias"
         calculation_method = (
-            "opportunity_cost_pct = rejected_return_pct - selected_return_pct; rejected_return_pct uses realized_return_pct "
-            "when available, otherwise proxy ((quality - 70)/18)+((live_quality - 80)/80)-penalty; selected_return_pct "
-            "uses same-symbol selected lifecycle if available, otherwise best selected lifecycle return."
+            "opportunity_cost_pct = rejected_return_pct - selected_return_pct; rejected_return_pct uses real later-price "
+            "evidence (subsequent_return, later_return_after_rejection, rejected_later_return_pct, hypothetical_return, "
+            "realized_return_pct) when present, otherwise the proxy ((quality - 70)/18)+((live_quality - 80)/80)-penalty; "
+            "selected_return_pct uses same-symbol selected lifecycle if available, otherwise best selected lifecycle return."
         )
         out = {
             "enabled": True,
@@ -276,6 +337,7 @@ class OpportunityCostLearningV1:
             "calculation_method": calculation_method,
             "missed_opportunity_count": len(missed),
             "correct_selection_count": len(correct),
+            "rejected_candidate_outcome_classification_counts": classification_counts,
             "selection_quality_score": selection_quality,
             "ranking_quality_score": ranking_quality,
             "best_selected_symbol": _text(best_selected.get("symbol"), "insufficient_data"),
