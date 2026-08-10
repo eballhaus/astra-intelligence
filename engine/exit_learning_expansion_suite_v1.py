@@ -255,6 +255,13 @@ class ExitLearningExpansionSuiteV1:
             style = "balanced_shadow_review"
         protection = _clamp((1.0 - capture) * 80.0 + min(20.0, giveback * 2.0))
         hold_score = _clamp(cont * 0.65 + capture * 35.0 - min(20.0, giveback))
+        avoidable_loss_pct = row.get("avoidable_loss_pct")
+        if avoidable_loss_pct in (None, ""):
+            avoidable_loss_pct = row.get("avoided_loss_pct")
+        avoidable_loss_value = None if avoidable_loss_pct in (None, "") else round(max(0.0, _to_float(avoidable_loss_pct)), 4)
+        avoidable_loss_source = ""
+        if avoidable_loss_value is not None:
+            avoidable_loss_source = "v2_avoided_loss_pct" if row.get("avoided_loss_pct") not in (None, "") else "v1_avoidable_loss_pct"
         return {
             "symbol": symbol,
             "lifecycle_id": _text(row.get("lifecycle_id"), symbol),
@@ -282,6 +289,9 @@ class ExitLearningExpansionSuiteV1:
             "personality_hold_score": _round(hold_score, 2),
             "personality_profit_protection_score": _round(protection, 2),
             "profit_decay_rate": _round(giveback / max(time_after_peak, hold, 1.0), 6),
+            "avoidable_loss_pct": avoidable_loss_value,
+            "avoidable_loss_source": avoidable_loss_source if avoidable_loss_value is not None else "",
+            "avoidable_loss_status": "KNOWN" if avoidable_loss_value is not None else "UNKNOWN",
             "behavior_safe_to_apply": False,
             "generated_at": _now_iso(),
         }
@@ -366,6 +376,45 @@ class ExitLearningExpansionSuiteV1:
         highest_decay = max(out.items(), key=lambda item: _to_float(item[1].get("decay_probability"), -1), default=("insufficient_data", {}))[0]
         return {"milestone_stats": out, "highest_decay_milestone": highest_decay}
 
+    def _avoidable_loss_stats(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        known = [row for row in rows if row.get("avoidable_loss_pct") not in (None, "") and _to_float(row.get("avoidable_loss_pct")) >= 0.0]
+        losing = [row for row in rows if _to_float(row.get("actual_return_pct")) < 0.0]
+        if not known or not losing:
+            return {
+                "avoidable_loss_aggregation_v1": True,
+                "avoidable_loss_status": "UNKNOWN",
+                "avoidable_loss_evidence_rows": len(rows),
+                "avoidable_loss_known_rows": len(known),
+                "average_avoidable_loss_pct": None,
+                "avoidable_loss_event_rate_pct": None,
+                "average_realized_loss_pct": None,
+                "avoidable_loss_over_total_loss_pct": None,
+                "aggregate_avoidable_loss_pct": None,
+                "behavior_safe_to_apply": False,
+            }
+        avoidable_values = [_to_float(row.get("avoidable_loss_pct")) for row in known]
+        average_avoidable = _avg(avoidable_values)
+        event_rate = (len([v for v in avoidable_values if v > 1e-9]) / len(avoidable_values)) * 100.0
+        average_realized_loss = _avg([_to_float(row.get("actual_return_pct")) for row in losing])
+        average_loss_abs = _avg([abs(_to_float(row.get("actual_return_pct"))) for row in losing]) or 0.0
+        avoidable_to_loss = round((average_avoidable or 0.0) / max(average_loss_abs, 1e-9) * 100.0, 4) if average_avoidable is not None else None
+        return {
+            "avoidable_loss_aggregation_v1": True,
+            "avoidable_loss_status": "KNOWN",
+            "avoidable_loss_evidence_rows": len(rows),
+            "avoidable_loss_known_rows": len(known),
+            "average_avoidable_loss_pct": round(average_avoidable or 0.0, 4),
+            "avoidable_loss_event_rate_pct": round(event_rate, 4),
+            "average_realized_loss_pct": round(average_realized_loss or 0.0, 4),
+            "avoidable_loss_over_total_loss_pct": round(avoidable_to_loss or 0.0, 4),
+            "aggregate_avoidable_loss_pct": round(sum(avoidable_values), 4),
+            "avoidable_loss_by_horizon": _group_avg(known, "horizon", "avoidable_loss_pct"),
+            "avoidable_loss_by_regime": _group_avg(known, "regime", "avoidable_loss_pct"),
+            "avoidable_loss_by_archetype": _group_avg(known, "archetype", "avoidable_loss_pct"),
+            "avoidable_loss_by_symbol": _group_avg(known, "symbol", "avoidable_loss_pct", limit=8),
+            "behavior_safe_to_apply": False,
+        }
+
     def status(self, *, force: bool = False) -> dict[str, Any]:
         start = time.perf_counter()
         now = time.time()
@@ -446,6 +495,7 @@ class ExitLearningExpansionSuiteV1:
             "hold_longer_score": _round(hold_score, 2),
             "milestone_exit_bias": bias,
             "shadow_exit_learning_recommendation": recommendation,
+            "avoidable_loss_evidence_v1": self._avoidable_loss_stats(rows),
             "behavior_safe_to_apply": False,
             "human_review_required": True,
             "auto_apply_allowed": False,

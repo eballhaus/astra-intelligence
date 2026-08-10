@@ -10,6 +10,9 @@ from typing import Any
 VERSION = "1.0.0"
 MAX_TAIL_BYTES = 2_000_000
 MAX_ROWS = 900
+MIN_EV_CALIBRATION_SAMPLES = 20
+STRICT_TRUTH_REGISTRY = "broker_truth_records_v1.json"
+EV_STANDARD_DEVIATIONS = 2.0
 
 
 def _now_iso() -> str:
@@ -125,6 +128,91 @@ def _regime_label(score: float) -> str:
     return "misaligned"
 
 
+def _strict_broker_truth(row: dict[str, Any]) -> bool:
+    """Exact strict-truth predicate reused from the official contract.
+
+    Mirror of astra_multilane_activation_v2.strict_broker_truth to keep the
+    join bounded and independent of runtime wiring.
+    """
+    evidence = _safe_text(row.get("evidence_class") or row.get("truth_quality"), "").upper()
+    dust_safe = dict(row.get("canonical_dust_safe_closure") or {})
+    closure_proven = bool(
+        row.get("broker_residual_zero_confirmed")
+        or row.get("broker_zero_confirmed")
+        or (
+            dust_safe.get("status") == "VERIFIED_CANONICAL_DUST_SAFE_CLOSURE"
+            and dust_safe.get("identity_verified") is True
+            and dust_safe.get("full_exit_fill_verified") is True
+            and bool(dict(dust_safe.get("dust_classification") or {}).get("is_dust"))
+        )
+    )
+    return bool(
+        evidence == "BROKER_CONFIRMED_COMPLETE"
+        and _safe_text(row.get("entry_fill_id") or row.get("entry_order_fill_id"))
+        and _safe_text(row.get("exit_fill_id") or row.get("exit_order_fill_id"))
+        and _safe_text(row.get("entry_order_id") or row.get("broker_order_id"))
+        and _safe_text(row.get("exit_order_id"))
+        and _safe_text(row.get("lifecycle_id"))
+        and closure_proven
+    )
+
+
+def _read_strict_truth_registry(state_dir: str) -> list[dict[str, Any]]:
+    path = os.path.join(state_dir, STRICT_TRUTH_REGISTRY)
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            registry = json.load(handle)
+        rows = list(registry.get("records") or []) if isinstance(registry, dict) else []
+    except Exception:
+        return []
+    return [dict(row) for row in rows if isinstance(row, dict) and _strict_broker_truth(row)]
+
+
+def _closed_outcome_attribution(strict: dict[str, Any]) -> dict[str, Any]:
+    entry_price = _to_float(strict.get("entry_price"), 0.0)
+    exit_price = _to_float(strict.get("exit_price"), 0.0)
+    realized_return = _to_float(strict.get("realized_return"), _to_float(strict.get("realized_return_pct"), 0.0))
+    dollar = strict.get("realized_pnl")
+    if dollar is None and entry_price > 0.0 and exit_price > 0.0:
+        quantity = _to_float(strict.get("filled_qty") or strict.get("exit_filled_quantity") or strict.get("quantity"), 0.0)
+        if quantity > 0.0:
+            dollar = round((exit_price - entry_price) * quantity, 4)
+    return {
+        "realized_return_pct": round(realized_return, 4),
+        "realized_pnl": _to_float(dollar, 0.0) if dollar is not None else None,
+        "entry_price": entry_price,
+        "exit_price": exit_price,
+        "quantity": _to_float(strict.get("filled_qty") or strict.get("exit_filled_quantity") or strict.get("quantity"), 0.0),
+        "symbol": _safe_text(strict.get("symbol")).upper(),
+        "lane_id": _safe_text(strict.get("lane_id")).upper(),
+        "entry_timestamp": _safe_text(strict.get("entry_time") or strict.get("entry_timestamp")),
+        "exit_timestamp": _safe_text(strict.get("exit_time") or strict.get("exit_timestamp")),
+        "outcome": "WIN" if realized_return > 1e-9 else "LOSS" if realized_return < -1e-9 else "BREAKEVEN",
+    }
+
+
+def _exact_identity_match(candidate: dict[str, Any], strict_index: dict[str, Any]) -> dict[str, Any] | None:
+    """Match only on exact immutable identifiers, in fixed preference order."""
+    for key, aliases in (
+        ("candidate_id", ("candidate_id", "decision_id")),
+        ("recommendation_id", ("recommendation_id",)),
+        ("selection_id", ("selection_id",)),
+        ("lifecycle_id", ("lifecycle_id",)),
+    ):
+        candidate_value = ""
+        for alias in aliases:
+            candidate_value = _safe_text(candidate.get(alias))
+            if candidate_value:
+                break
+        if not candidate_value:
+            continue
+        for strict_key in (key, *aliases):
+            hit = strict_index.get(f"{strict_key}:{candidate_value}")
+            if hit is not None:
+                return hit
+    return None
+
+
 class EdgeDevelopmentSuiteV1:
     """Paper-only shadow edge, expectancy, archetype, and regime diagnostics.
 
@@ -139,6 +227,9 @@ class EdgeDevelopmentSuiteV1:
         self.labels_path = os.path.join(self.state_dir, "outcome_labels_v1.jsonl")
         self.ledger_path = os.path.join(self.state_dir, "candidate_decision_ledger_v1.jsonl")
         self._learning_cache: dict[str, Any] | None = None
+
+    def _candidate_ledger_rows(self) -> list[dict[str, Any]]:
+        return _tail_jsonl(self.ledger_path, max_rows=300)
 
     def _learning_hooks(self) -> dict[str, Any]:
         if self._learning_cache is not None:
@@ -446,6 +537,143 @@ class EdgeDevelopmentSuiteV1:
         out["edge_development_summary"] = self.status(rows=rows)
         return out
 
+    def strict_outcome_join_v1(self, candidate_rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        """Exact-identity join of candidate decisions to strict closed outcomes.
+
+        Only exact immutable identifiers (candidate_id, recommendation_id,
+        selection_id, lifecycle_id) are matched, in fixed preference order.
+        No timestamp or price proximity is ever used. A candidate with no
+        exact match is reported as UNLINKED, never approximated.
+        """
+        strict_rows = _read_strict_truth_registry(self.state_dir)
+        index: dict[str, dict[str, Any]] = {}
+        for strict in strict_rows:
+            for key in ("candidate_id", "recommendation_id", "selection_id", "lifecycle_id"):
+                value = _safe_text(strict.get(key))
+                if value:
+                    index[f"{key}:{value}"] = strict
+        candidates = [dict(row) for row in (candidate_rows or self._candidate_ledger_rows())]
+        linked: list[dict[str, Any]] = []
+        unlinked: list[dict[str, Any]] = []
+        for candidate in candidates[:MAX_ROWS]:
+            match = _exact_identity_match(candidate, index)
+            if match is None:
+                unlinked.append({"candidate_id": candidate.get("candidate_id") or "", "symbol": _safe_text(candidate.get("symbol")), "linkage_status": "UNLINKED", "linkage_method": "EXACT_IDENTITY_NO_MATCH"})
+                continue
+            linked.append({
+                "candidate_id": _safe_text(candidate.get("candidate_id") or candidate.get("decision_id")),
+                "recommendation_id": _safe_text(candidate.get("recommendation_id")),
+                "selection_id": _safe_text(candidate.get("selection_id")),
+                "lifecycle_id": _safe_text(match.get("lifecycle_id")),
+                "linkage_status": "LINKED",
+                "linkage_method": "EXACT_IDENTITY",
+                "decision_action": _safe_text(candidate.get("action") or candidate.get("final_action")),
+                "decision_grade": _safe_text(candidate.get("grade")),
+                "decision_confidence": _to_float(candidate.get("grade_percent") or candidate.get("confidence"), 0.0),
+                "expected_value_score": _to_float(candidate.get("expected_value_score") or candidate.get("average_expectancy"), _to_float(candidate.get("average_expected_value_score"), 0.0)),
+                "expected_value_ratio": _to_float(candidate.get("expected_value_ratio"), 0.0),
+                "expected_win_probability": _to_float(candidate.get("expected_win_probability"), 0.0),
+                "expected_reward_risk_ratio": _to_float(candidate.get("expected_reward_risk_ratio"), 0.0),
+                "symbol": _safe_text(match.get("symbol")).upper(),
+                **_closed_outcome_attribution(match),
+            })
+        return {
+            "strict_outcome_join_v1": True,
+            "candidates_reviewed": len(candidates),
+            "linked_candidate_count": len(linked),
+            "unlinked_candidate_count": len(unlinked),
+            "strict_outcome_pool_size": len(strict_rows),
+            "bounded_sample_only": True,
+            "exact_identity_only": True,
+            "fuzzy_matching_used": False,
+            "linked_candidates": linked,
+            "unlinked_candidates": unlinked,
+            "behavior_safe_to_apply": False,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "api_calls_used": 0,
+        }
+
+    def calibrate_expected_value_vs_outcomes(self, joined_rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        """Observational calibration of EV predictions against strict outcomes.
+
+        Consumes only exact-linked candidate rows that carry both a predicted
+        expected value (expected_value_score / expected_value_ratio /
+        expected_win_probability) and a strict realized outcome. Fails closed
+        when the linked sample is below MIN_EV_CALIBRATION_SAMPLES and never
+        changes ranking, EV formulas, entries, or broker behavior.
+        """
+        joined = joined_rows if isinstance(joined_rows, list) else []
+        sample: list[dict[str, Any]] = []
+        for row in joined:
+            expected = _to_float(row.get("expected_value_score") or row.get("expected_expectancy") or row.get("average_expectancy"), 0.0)
+            if expected <= 0.0:
+                continue
+            realized = _to_float(row.get("realized_return_pct"), 0.0)
+            realized_pnl = row.get("realized_pnl")
+            if realized_pnl is None and "realized_return" in row:
+                realized_pnl = _to_float(row.get("realized_return"), 0.0)
+            if realized_pnl is None:
+                continue
+            sample.append({"expected_value_score": round(expected, 4), "expected_value_ratio": round(_to_float(row.get("expected_value_ratio"), 0.0), 4), "expected_win_probability": round(_to_float(row.get("expected_win_probability"), 0.0), 2), "realized_return_pct": round(realized, 6), "realized_pnl": _to_float(realized_pnl, 0.0)})
+        sample_count = len(sample)
+        insufficient = sample_count < MIN_EV_CALIBRATION_SAMPLES
+        if insufficient or not sample:
+            return {
+                "ev_calibration_v1": True,
+                "calibration_status": "INSUFFICIENT_STRICT_OUTCOME_SAMPLE",
+                "ev_calibration_observational_only": True,
+                "sample_count": sample_count,
+                "minimum_sample_required": MIN_EV_CALIBRATION_SAMPLES,
+                "rankings_changed": False,
+                "ev_formula_changed": False,
+                "behavior_safe_to_apply": False,
+                "live_trading_changed": False,
+                "broker_behavior_changed": False,
+                "api_calls_used": 0,
+            }
+        wins = [row for row in sample if row["realized_return_pct"] > 0.0]
+        losses = [row for row in sample if row["realized_return_pct"] < 0.0]
+        avg_predicted_ev = mean(row["expected_value_score"] for row in sample)
+        avg_realized = mean(row["realized_return_pct"] for row in sample)
+        win_rate = (len(wins) / sample_count) * 100.0
+        gross_profit = sum(row["realized_return_pct"] for row in wins)
+        gross_loss = abs(sum(row["realized_return_pct"] for row in losses))
+        profit_factor = (gross_profit / gross_loss) if gross_loss > 1e-9 else (gross_profit if gross_profit > 0 else None)
+        predicted = [row["expected_win_probability"] for row in sample]
+        actual_binary = [1 if row["realized_return_pct"] > 0.0 else 0 for row in sample]
+        brier = mean((p - a) ** 2 for p, a in zip(predicted, actual_binary))
+        calibration_error = round(brier ** 0.5 * 100.0, 4)
+        sorted_sample = sorted(sample, key=lambda row: row["expected_value_score"])
+        monotonic = True
+        for index in range(1, len(sorted_sample)):
+            if sorted_sample[index]["realized_return_pct"] + 0.5 < sorted_sample[index - 1]["realized_return_pct"]:
+                monotonic = False
+                break
+        event_pct = sum(1 for row in sample if row["expected_value_score"] >= 70.0) / sample_count * 100.0
+        return {
+            "ev_calibration_v1": True,
+            "calibration_status": "OBSERVATIONAL_PASS",
+            "ev_calibration_observational_only": True,
+            "sample_count": sample_count,
+            "minimum_sample_required": MIN_EV_CALIBRATION_SAMPLES,
+            "average_predicted_expected_value_score": round(avg_predicted_ev, 4),
+            "average_realized_return_pct": round(avg_realized, 6),
+            "realized_win_rate_pct": round(win_rate, 4),
+            "realized_profit_factor": round(profit_factor, 4) if profit_factor is not None else None,
+            "mean_brier_score": round(brier, 6),
+            "ev_calibration_error_pct": calibration_error,
+            "monotonic_ev_to_outcome": monotonic,
+            "high_confidence_event_pct": round(event_pct, 4),
+            "sample": sample,
+            "rankings_changed": False,
+            "ev_formula_changed": False,
+            "behavior_safe_to_apply": False,
+            "live_trading_changed": False,
+            "broker_behavior_changed": False,
+            "api_calls_used": 0,
+        }
+
     def status(self, rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         decorated = self.decorate_candidates(rows or [])
         count = len(decorated)
@@ -468,6 +696,14 @@ class EdgeDevelopmentSuiteV1:
             default={},
         )
         learning = self._learning_hooks()
+        try:
+            strict_join = self.strict_outcome_join_v1(candidate_rows=list(rows or []))
+        except Exception:
+            strict_join = {"strict_outcome_join_v1": True, "candidates_reviewed": 0, "linked_candidate_count": 0, "unlinked_candidate_count": 0, "linkage_status": "UNAVAILABLE"}
+        try:
+            calibration = self.calibrate_expected_value_vs_outcomes(strict_join.get("linked_candidates") or [])
+        except Exception:
+            calibration = {"ev_calibration_v1": True, "calibration_status": "UNAVAILABLE"}
         summary = (
             f"Evaluated {count} candidates; best current archetype "
             f"{_safe_text(best_current.get('trade_archetype'), 'insufficient_data').replace('_', ' ')}; "
@@ -500,6 +736,8 @@ class EdgeDevelopmentSuiteV1:
             "archetype_outcome_quality": learning.get("archetype_outcome_quality", {}),
             "regime_outcome_quality": learning.get("regime_outcome_quality", {}),
             "learning_hook_sample_size": int(_to_float(learning.get("sample_size"), 0.0)),
+            "candidate_to_strict_outcome_join_v1": strict_join,
+            "ev_calibration_vs_outcomes_v1": calibration,
             "api_calls_used": 0,
             "live_trading_changed": False,
             "broker_execution_changed": False,

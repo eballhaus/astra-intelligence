@@ -5626,6 +5626,19 @@ class PaperAutopilotEngine:
         lifecycle_id = str(open_row.get("position_id") or "").strip()
         entry_verified = bool(open_row.get("entry_price_verified"))
         broker_entry_price = _to_float(open_row.get("broker_filled_avg_price"), 0.0)
+        exit_price_value = float(exit_price)
+        # Dollar P&L is persisted only when both sides of the round trip are
+        # broker-confirmed fills. It is the arithmetic of broker-confirmed
+        # prices and the executed fill quantity, never a reconstructed or
+        # estimated value. When any component is unavailable it stays UNKNOWN.
+        strict_quantity = _to_float(broker_fill.get("filled_qty"), _to_float(open_row.get("quantity"), 0.0))
+        realized_pnl_available = bool(
+            entry_verified
+            and broker_entry_price > 0.0
+            and exit_price_value > 0.0
+            and strict_quantity > 0.0
+        )
+        realized_pnl = round((exit_price_value - broker_entry_price) * strict_quantity, 4) if realized_pnl_available else None
         entry_payload = _safe_json_load(open_row.get("row_json"))
         entry_contract = _safe_json_load(open_row.get("entry_metadata_json"))
         lifecycle_notes = _safe_json_load(open_row.get("lifecycle_notes"))
@@ -5701,6 +5714,12 @@ class PaperAutopilotEngine:
             "exit_filled_quantity": _to_float(broker_fill.get("filled_qty"), 0.0),
             "realized_return": round(float(return_percent), 6), "hold_duration": round(float(hold_seconds), 3),
             "return_per_hour": round(float(return_percent) / max(hold_seconds / 3600.0, 1e-9), 6),
+            # Broker-confirmed dollar P&L, persisted beside realized return
+            # only when both fills are broker-confirmed. Matches the broker
+            # FIFO (exit - cost-basis) for a fully closed lane lifecycle.
+            "realized_pnl": realized_pnl,
+            "realized_pnl_available": realized_pnl_available,
+            "realized_pnl_source": ("broker_confirmed_paired_fill_prices_and_quantity" if realized_pnl_available else "UNAVAILABLE_BROKER_VALUE"),
             # These fields are carried only when the live lifecycle has
             # actually recorded them; unknown remains unknown.
             "mfe": _safe_json_load(open_row.get("row_json")).get("max_favorable_excursion_pct"),
