@@ -50567,18 +50567,9 @@ def cortex_lifecycle_evidence_master_truth_v1(force: bool = False):
         and cached_safety.get("paper_mode_verified") is not None
     )
     if cached_payload_healthy and not force:
-        if "astra_profitability_activation_intelligence_utilization_v1" not in cached_payload:
-            try:
-                cached_payload["astra_profitability_activation_intelligence_utilization_v1"] = ASTRA_PROFITABILITY_ACTIVATION_INTELLIGENCE_UTILIZATION.status(statuses=cached_payload, force=False)
-            except Exception:
-                cached_payload["astra_profitability_activation_intelligence_utilization_v1"] = {}
-        if "astra_tier1_tier2_profitability_activation_v1" not in cached_payload:
-            try:
-                cached_payload["astra_tier1_tier2_profitability_activation_v1"] = ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION.status(statuses=cached_payload, force=False)
-            except Exception:
-                cached_payload["astra_tier1_tier2_profitability_activation_v1"] = {}
-        _attach_astra_integration_completion(cached_payload, cached_unified, force=False)
-        _attach_astra_paper_provider_cortex_completion(cached_payload, cached_unified, force=False)
+        # Normal diagnostics must be a fast, cache-only read. Downstream
+        # attachment builders remain available through the controlled force
+        # refresh path and unified diagnostics, not this GET hot path.
         return cached_payload
     statuses = _cached_autonomous_completion_statuses(cached_unified)
     if isinstance(cached_unified, dict):
@@ -50604,17 +50595,9 @@ def cortex_lifecycle_evidence_master_truth_v1(force: bool = False):
     )
     if needs_refresh:
         payload = CORTEX_LIFECYCLE_EVIDENCE_MASTER_TRUTH.status(statuses=statuses, force=True)
-    if isinstance(payload, dict):
-        try:
-            payload["astra_profitability_activation_intelligence_utilization_v1"] = ASTRA_PROFITABILITY_ACTIVATION_INTELLIGENCE_UTILIZATION.status(statuses={**statuses, **payload}, force=False)
-        except Exception:
-            payload["astra_profitability_activation_intelligence_utilization_v1"] = {}
-        try:
-            payload["astra_tier1_tier2_profitability_activation_v1"] = ASTRA_TIER1_TIER2_PROFITABILITY_ACTIVATION.status(statuses={**statuses, **payload}, force=False)
-        except Exception:
-            payload["astra_tier1_tier2_profitability_activation_v1"] = {}
-        _attach_astra_integration_completion(payload, statuses, force=False)
-        _attach_astra_paper_provider_cortex_completion(payload, statuses, force=False)
+    # This route owns only the bounded Cortex payload. Executive and
+    # integration attachments are supplied by unified diagnostics; invoking
+    # them here made a diagnostic refresh wait on unrelated builders.
     return payload
 
 

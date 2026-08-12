@@ -53,6 +53,7 @@ MAX_V8_PATTERNS_PER_UPDATE = 64
 MAX_V8_INTERACTIONS_PER_UPDATE = 24
 SOURCE_PRIORITY = {
     "candidate_decision_ledger_v1.jsonl": 100,
+    "canonical_lifecycle_lessons_v1.jsonl": 98,
     "outcome_labels_v1.jsonl": 95,
     "replay_counterfactual_learning_v2.jsonl": 90,
     "trade_archetype_regime_intelligence_v1.jsonl": 85,

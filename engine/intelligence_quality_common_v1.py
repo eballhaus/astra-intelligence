@@ -180,9 +180,32 @@ class CachedDiagnosticModule:
         if not force:
             cached = read_json(self.cache_path)
             if cached:
-                self._cache = dict(cached)
-                self._cache_ts = now
-                return dict(cached)
+                # A cache read must not make an old persisted snapshot appear
+                # newly generated. Prefer the oldest trustworthy persisted
+                # timestamp so copied or malformed diagnostic files fail safe.
+                persisted_times: list[float] = []
+                for key in ("generated_at", "updated_at", "last_updated"):
+                    value = cached.get(key)
+                    if not isinstance(value, str) or not value.strip():
+                        continue
+                    try:
+                        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                        stamp = parsed.timestamp()
+                        if stamp <= now:
+                            persisted_times.append(stamp)
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                try:
+                    persisted_times.append(os.path.getmtime(self.cache_path))
+                except OSError:
+                    pass
+                if not persisted_times:
+                    return None
+                persisted_at = min(persisted_times)
+                if now - persisted_at <= self.ttl_seconds:
+                    self._cache = dict(cached)
+                    self._cache_ts = persisted_at
+                    return dict(cached)
         return None
 
     def _store(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -277,4 +300,3 @@ def endpoint_safe(payload: dict[str, Any], marker: str) -> dict[str, Any]:
     out = with_safety(dict(payload or {}))
     out[marker] = True
     return out
-

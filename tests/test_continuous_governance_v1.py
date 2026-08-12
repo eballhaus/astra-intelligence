@@ -199,6 +199,27 @@ class ContinuousGovernanceTests(unittest.TestCase):
             self.assertTrue(result["paper_only_preserved"])
             self.assertFalse(result["forced_exits_enabled"])
 
+    def test_strict_truth_and_learning_acknowledgement_supersede_stale_sell_submitted_diagnostics(self):
+        runtime_state = runtime(review=False)
+        runtime_state["native_lane_exit_lifecycle_v1"] = {
+            "day-life-1": {
+                "position_id": "day-life-1", "lifecycle_id": "day-life-1", "symbol": "RIVN",
+                "lane_id": "DAY", "closure_state": "SELL_SUBMITTED",
+                "reason": "day_lane_session_close_required", "strict_truth_created": True,
+                "learning_acknowledged": True, "stage_entered_at": "2026-07-17T00:00:00Z",
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            result = ContinuousGovernanceV1(directory).run_worker_cycle(
+                worker_state=worker_state(), runtime_state=runtime_state, safety=SAFETY,
+            )
+        stale_failures = [
+            row for row in result["invariants"]
+            if row.get("invariant_id") in {"DAY_POSITION_HORIZON_BREACH", "SELL_SUBMITTED_NOT_ACKNOWLEDGED"}
+            and row.get("dependencies") == ["day-life-1"] and row.get("state") == "FAIL"
+        ]
+        self.assertEqual(stale_failures, [])
+
     def test_historical_reconciliation_collision_prevents_governance_pass(self):
         runtime_state = runtime(review=False)
         runtime_state["system_integrity_scanner_v1"] = {

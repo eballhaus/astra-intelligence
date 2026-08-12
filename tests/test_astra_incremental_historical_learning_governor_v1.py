@@ -96,6 +96,23 @@ class IncrementalHistoricalLearningGovernorV1Tests(unittest.TestCase):
         self.assertIn("BROKER_CONFIRMED_NATURAL_STRICT_TRUTH", tiers)
         self.assertIn("SHADOW_COUNTERFACTUAL", tiers)
 
+    def test_broker_linked_canonical_lesson_reaches_existing_bounded_teacher_handoff(self):
+        root = self._root({"canonical_lifecycle_lessons_v1.jsonl": [{
+            "lesson_id": "lesson-rivn-1", "lifecycle_id": "life-rivn-1", "broker_truth_id": "strict:entry:exit",
+            "symbol": "RIVN", "horizon_style": "day_trade", "outcome_label": "winner",
+            "current_or_exit_profit_pct": 0.25, "evidence_class": "BROKER_CONFIRMED_COMPLETE",
+        }]})
+        result = run_incremental_historical_learning_cycle_v1(str(root), resource_facts=HEALTHY)
+        processed = result["partitions_processed"][0]
+        teacher = result["canonical_handoffs"]["teacher"]
+        index = json.loads((root / "storage_summary_indexes" / DELTA_INDEX_FILE).read_text())
+
+        self.assertEqual(processed["source"], "canonical_lifecycle_lessons_v1.jsonl")
+        self.assertGreaterEqual(processed["outcome_linked_count"], 1)
+        self.assertGreaterEqual(teacher["lessons_created"], 1)
+        self.assertIn("BROKER_CONFIRMED_NATURAL_STRICT_TRUTH", index["evidence_tier_counts"])
+        self.assertEqual(result["broker_actions_added"], 0)
+
     def test_missing_outcomes_remain_explicitly_unavailable(self):
         root = self._root({"candidate_decision_ledger_v1.jsonl": [{"symbol": "ABC", "horizon": "DAY"}]})
         result = run_incremental_historical_learning_cycle_v1(str(root), resource_facts=HEALTHY, max_rows=10_000, max_bytes=10_000_000)

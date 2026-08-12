@@ -416,7 +416,8 @@ class ContinuousGovernanceV1:
             # is emitted only after canonical closure and strict truth
             # persistence.  Treating it as open would keep a resolved DAY
             # horizon breach falsely critical forever.
-            terminal = closure_state in {"BROKER_ZERO_CONFIRMED", "CLOSED", "LEARNING_ACKNOWLEDGED"}
+            canonical_completed = bool(native.get("strict_truth_created")) and bool(native.get("learning_acknowledged"))
+            terminal = closure_state in {"BROKER_ZERO_CONFIRMED", "CLOSED", "LEARNING_ACKNOWLEDGED"} or canonical_completed
             invariants.append({
                 "invariant_id": "DAY_POSITION_HORIZON_BREACH",
                 "owner": "PaperAutopilot._lane_forced_exit_reason",
@@ -440,6 +441,12 @@ class ContinuousGovernanceV1:
         for position_id, native_raw in list(native_exits.items())[:100]:
             native = _dict(native_raw)
             state = _text(native.get("closure_state"))
+            # Native exit state can remain at SELL_SUBMITTED after a durable
+            # broker truth plus learning acknowledgement. Those two facts are
+            # the canonical terminal proof for dust-safe closures and must
+            # supersede the stale transitional label for diagnostics.
+            if bool(native.get("strict_truth_created")) and bool(native.get("learning_acknowledged")):
+                state = "LEARNING_ACKNOWLEDGED"
             if not state:
                 continue
             session = _dict(native.get("session_status"))

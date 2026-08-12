@@ -28,6 +28,7 @@ SAMPLE_BYTES_PER_EDGE = 1_000_000
 MAX_SAMPLE_ROWS_PER_FILE = 1200
 
 TARGET_COLD_FILES = (
+    "canonical_lifecycle_lessons_v1.jsonl",
     "opportunity_cost_learning_v1.jsonl",
     "trade_lifecycle_excursion_v2.jsonl",
     "trade_memory_similarity_v1.jsonl",
@@ -190,7 +191,10 @@ def _source_dimension_defaults(source_name: str) -> dict[str, str]:
 
 def _outcome_value(row: dict[str, Any]) -> float | None:
     """Use only source-reported realized/outcome return fields; no inference."""
-    for key in ("realized_return_pct", "return_pct", "pnl_pct", "friction_adjusted_return_pct", "actual_return_pct"):
+    for key in (
+        "realized_return_pct", "realized_return", "return_pct", "pnl_pct",
+        "friction_adjusted_return_pct", "actual_return_pct", "current_or_exit_profit_pct",
+    ):
         value = row.get(key)
         if value not in (None, ""):
             try:

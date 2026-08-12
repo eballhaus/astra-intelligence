@@ -24,6 +24,58 @@ def _strict_truth(**extra):
 
 
 class CanonicalLessonTruthContradictionTests(unittest.TestCase):
+    def test_strict_truth_is_a_bounded_lesson_base_when_edge_sampling_misses_it(self):
+        with tempfile.TemporaryDirectory() as root:
+            truth = _strict_truth(
+                symbol="RIVN",
+                asset_class="equity",
+                entry_time="2026-08-12T15:39:44Z",
+                exit_time="2026-08-12T19:55:12Z",
+                entry_price=15.96,
+                exit_price=15.97,
+                realized_return=0.062657,
+                mfe=0.469925,
+                mae=-0.344612,
+                profit_giveback=0.75188,
+                hold_duration=15328.407,
+                exit_reason="day_lane_session_close_required",
+                pretrade_context_v1={"paper_entry_horizon_style": "day_trade"},
+            )
+            Path(root, "broker_truth_records_v1.json").write_text(
+                json.dumps({"records": [truth]}), encoding="utf-8"
+            )
+            builder = CortexLifecycleEvidenceMasterTruthV1(state_dir=root)
+            payload = builder.status(force=True)
+            rows = [json.loads(line) for line in Path(root, "canonical_lifecycle_lessons_v1.jsonl").read_text().splitlines()]
+
+        self.assertEqual(payload["canonical_lifecycle_lesson_store_v1"]["canonical_lesson_count"], 1)
+        self.assertEqual(len(rows), 1)
+        lesson = rows[0]
+        self.assertEqual(lesson["lifecycle_id"], "life-1")
+        self.assertEqual(lesson["broker_truth_id"], "strict:entry-1:exit-1")
+        self.assertEqual(lesson["evidence_class"], "BROKER_CONFIRMED_COMPLETE")
+        self.assertEqual(lesson["horizon_style"], "day_trade")
+        self.assertEqual(lesson["outcome_label"], "winner")
+        self.assertEqual(lesson["mfe_pct"], 0.469925)
+        self.assertEqual(lesson["mae_pct"], -0.344612)
+        self.assertEqual(lesson["source_files_used"], ["broker_truth_records_v1.json"])
+
+    def test_strict_truth_stays_in_the_recent_tail_for_bounded_retrieval(self):
+        with tempfile.TemporaryDirectory() as root:
+            Path(root, "broker_truth_records_v1.json").write_text(
+                json.dumps({"records": [_strict_truth()]}), encoding="utf-8"
+            )
+            Path(root, "trade_lifecycle_excursion_v2.jsonl").write_text(
+                json.dumps({"lifecycle_id": "historical-life", "symbol": "OLD", "closed": True, "exit_timestamp": "2026-08-01T00:00:00Z"}) + "\n",
+                encoding="utf-8",
+            )
+            builder = CortexLifecycleEvidenceMasterTruthV1(state_dir=root)
+            builder.status(force=True)
+            rows = [json.loads(line) for line in Path(root, "canonical_lifecycle_lessons_v1.jsonl").read_text().splitlines()]
+
+        self.assertEqual(rows[-1]["lifecycle_id"], "life-1")
+        self.assertEqual(rows[-1]["broker_truth_linkage_status"], "PROVEN_STRICT_BROKER_TRUTH")
+
     def test_exact_strict_truth_link_is_tagged_without_changing_eligibility(self):
         with tempfile.TemporaryDirectory() as root:
             Path(root, "broker_truth_records_v1.json").write_text(

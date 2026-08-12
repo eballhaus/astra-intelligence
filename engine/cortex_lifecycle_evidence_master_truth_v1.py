@@ -34,12 +34,12 @@ FIELD_ALIAS_REGISTRY: dict[str, tuple[str, ...]] = {
     "exit_type": ("exit_type", "exit_style", "exit_policy", "personality_best_exit_style", "best_partial_exit_variant"),
     "exit_reason": ("exit_reason", "shadow_exit_reason", "partial_exit_recommendation", "exit_learning_recommendation"),
     "exit_policy_label": ("exit_policy_label", "exit_policy", "shadow_exit_recommendation", "partial_exit_recommendation"),
-    "mfe_pct": ("mfe_pct", "max_favorable_excursion_pct", "maximum_favorable_excursion_pct", "peak_gain_pct", "peak_unrealized_profit_pct"),
-    "mae_pct": ("mae_pct", "max_adverse_excursion_pct", "maximum_adverse_excursion_pct"),
+    "mfe_pct": ("mfe_pct", "mfe", "max_favorable_excursion_pct", "maximum_favorable_excursion_pct", "peak_gain_pct", "peak_unrealized_profit_pct"),
+    "mae_pct": ("mae_pct", "mae", "max_adverse_excursion_pct", "maximum_adverse_excursion_pct"),
     "capture_ratio": ("capture_ratio", "capture_pct", "profit_capture_ratio", "capture_pct_after", "profit_capture"),
-    "giveback_pct": ("giveback_pct", "current_giveback_pct", "giveback_from_peak_pct", "profit_giveback_pct", "missed_profit_pct"),
-    "hold_duration": ("hold_duration", "hold_minutes", "hold_time_minutes", "hold_duration_minutes", "actual_hold_duration_minutes"),
-    "current_or_exit_profit_pct": ("current_or_exit_profit_pct", "actual_return_pct", "pnl_pct", "exit_gain_pct", "current_or_exit_gain_pct"),
+    "giveback_pct": ("giveback_pct", "profit_giveback", "current_giveback_pct", "giveback_from_peak_pct", "profit_giveback_pct", "missed_profit_pct"),
+    "hold_duration": ("hold_duration", "hold_duration_seconds", "hold_minutes", "hold_time_minutes", "hold_duration_minutes", "actual_hold_duration_minutes"),
+    "current_or_exit_profit_pct": ("current_or_exit_profit_pct", "realized_return", "actual_return_pct", "pnl_pct", "exit_gain_pct", "current_or_exit_gain_pct"),
     "horizon_style": ("horizon_style", "horizon", "horizon_label", "paper_entry_horizon_style", "hold_horizon"),
     "trade_family": ("trade_family", "family", "peer_group", "sector_family", "archetype_label", "trade_archetype", "archetype"),
     "archetype": ("archetype", "trade_archetype", "archetype_label", "setup_type", "setup"),
@@ -256,6 +256,32 @@ class CortexLifecycleEvidenceMasterTruthV1(CachedDiagnosticModule):
             indexed[lifecycle_id] = dict(row)
         return indexed
 
+    def _strict_truth_lesson_base(self, truth: dict[str, Any]) -> dict[str, Any]:
+        """Expose a strict record as a canonical lesson base without inventing evidence."""
+        pretrade = truth.get("pretrade_context_v1")
+        pretrade = dict(pretrade) if isinstance(pretrade, dict) else {}
+        realized_return = truth.get("realized_return")
+        outcome = truth.get("outcome_label")
+        if not _is_present(outcome) and _is_present(realized_return):
+            value = to_float(realized_return)
+            outcome = "winner" if value > 0 else "loser" if value < 0 else "breakeven"
+        return {
+            **dict(truth),
+            "asset_type": first(truth.get("asset_type"), truth.get("asset_class"), truth.get("instrument_type")),
+            "entry_timestamp": first(truth.get("entry_timestamp"), truth.get("entry_time")),
+            "exit_timestamp": first(truth.get("exit_timestamp"), truth.get("exit_time")),
+            "horizon_style": first(
+                truth.get("horizon_style"), truth.get("horizon"),
+                pretrade.get("paper_entry_horizon_style"), pretrade.get("intended_horizon"),
+            ),
+            "current_or_exit_profit_pct": realized_return,
+            "mfe_pct": truth.get("mfe"),
+            "mae_pct": truth.get("mae"),
+            "giveback_pct": truth.get("profit_giveback"),
+            "outcome_label": outcome,
+            "canonical_base_source": STRICT_TRUTH_REGISTRY,
+        }
+
     def _record_is_closed(self, row: dict[str, Any]) -> bool:
         if row.get("closed") is True:
             return True
@@ -292,8 +318,9 @@ class CortexLifecycleEvidenceMasterTruthV1(CachedDiagnosticModule):
         matched: dict[str, dict[str, Any]],
         source_refs: dict[str, str],
         strict_truth: dict[str, Any] | None = None,
+        base_source: str = "trade_lifecycle_excursion_v2.jsonl",
     ) -> dict[str, Any]:
-        sources = {"trade_lifecycle_excursion_v2.jsonl": base}
+        sources = {base_source: base}
         sources.update(matched)
         merged: dict[str, Any] = {}
         for key in (
@@ -345,7 +372,8 @@ class CortexLifecycleEvidenceMasterTruthV1(CachedDiagnosticModule):
         strict_linked = bool(strict_truth_id and str(strict.get("lifecycle_id") or "").strip() == str(merged.get("lifecycle_id") or "").strip())
         if strict_linked:
             source_refs[STRICT_TRUTH_REGISTRY] = strict_truth_id
-            used.append(STRICT_TRUTH_REGISTRY)
+            if STRICT_TRUTH_REGISTRY not in used:
+                used.append(STRICT_TRUTH_REGISTRY)
         prior_evidence_class = base.get("evidence_class") or base.get("truth_quality")
         return {
             "lesson_id": hashlib.sha1(lesson_id_seed.encode("utf-8", errors="ignore")).hexdigest()[:20],
@@ -534,26 +562,49 @@ class CortexLifecycleEvidenceMasterTruthV1(CachedDiagnosticModule):
         lifecycle_index = self._index_by_lifecycle_id(source_rows)
         strict_truth_index = self._strict_truth_index()
 
+        # Edge sampling is intentionally bounded, so an otherwise valid
+        # broker-confirmed closure can fall between the sampled head and tail
+        # while later open-position updates continue to append. Strict truth
+        # is authoritative and small; include it directly as the lesson base
+        # rather than letting a cache/window artifact hide completed learning.
+        strict_bases = [
+            (self._strict_truth_lesson_base(truth), STRICT_TRUTH_REGISTRY)
+            for truth in strict_truth_index.values()
+        ]
+        strict_lifecycle_ids = {str(row.get("lifecycle_id") or "") for row, _ in strict_bases}
+        sampled_bases = [
+            (row, "trade_lifecycle_excursion_v2.jsonl")
+            for row in closed_base_rows
+            if str(row.get("lifecycle_id") or "") not in strict_lifecycle_ids
+        ]
+        # The Warehouse's bounded raw fallback reads the newest tail. Keep
+        # current strict truths at the end of this derived store so they stay
+        # retrievable without widening that safe read window.
+        sampled_budget = max(0, MAX_CANONICAL_LESSONS - len(strict_bases))
+        lesson_bases = sampled_bases[:sampled_budget] + strict_bases[:MAX_CANONICAL_LESSONS]
+
         lessons: list[dict[str, Any]] = []
         join_failures = Counter()
         source_join_counts = Counter()
-        for offset, base in enumerate(closed_base_rows):
+        for offset, (base, base_source) in enumerate(lesson_bases):
             lifecycle_id = base.get("lifecycle_id")
             matched = lifecycle_index.get(str(lifecycle_id), {}) if _is_present(lifecycle_id) else {}
             if not matched:
                 join_failures["missing_lifecycle_id_match"] += 1
-            refs = {"trade_lifecycle_excursion_v2.jsonl": _row_ref("trade_lifecycle_excursion_v2.jsonl", base, offset)}
+            refs = {base_source: _row_ref(base_source, base, offset)}
             for source, row in matched.items():
                 refs[source] = _row_ref(source, row, offset)
                 source_join_counts[source] += 1
             strict_truth = strict_truth_index.get(str(lifecycle_id)) if _is_present(lifecycle_id) else None
-            lessons.append(self._merged_lesson(base, matched, refs, strict_truth=strict_truth))
+            lessons.append(self._merged_lesson(base, matched, refs, strict_truth=strict_truth, base_source=base_source))
 
         coverage = self._canonical_coverage(lessons)
         joined_count = sum(1 for row in lessons if len(row.get("source_files_used") or []) > 1)
         full_joined = to_int(coverage.get("fully_complete_lesson_count"), 0)
         low_confidence = sum(1 for row in lessons if to_float(row.get("reconstruction_confidence"), 0.0) < 45.0)
         source_files_used = [source for source, rows in source_rows.items() if rows]
+        if strict_truth_index:
+            source_files_used.append(STRICT_TRUTH_REGISTRY)
         total_closed_estimate = first(
             (source_indexes.get("trade_lifecycle_excursion_v2.jsonl") or {}).get("source_line_count_estimate"),
             source_meta.get("trade_lifecycle_excursion_v2.jsonl", {}).get("estimated_line_count"),
