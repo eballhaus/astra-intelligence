@@ -1,5 +1,6 @@
 import os
 import tempfile
+import threading
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -36,6 +37,28 @@ class RuntimeResourceGovernanceTests(unittest.TestCase):
             path = Path(directory) / "worker.json"
             write_snapshot({"process_role": "PAPER_AUTOPILOT_WORKER", "cycle_state": "IDLE"}, path)
             self.assertEqual(read_snapshot(path)["process_role"], "PAPER_AUTOPILOT_WORKER")
+
+    def test_concurrent_snapshot_writes_use_distinct_atomic_temp_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "worker.json"
+            failures: list[Exception] = []
+
+            def publish(writer: int) -> None:
+                try:
+                    for sequence in range(20):
+                        write_snapshot({"writer": writer, "sequence": sequence}, path)
+                except Exception as exc:  # Regression guard for the old shared .tmp race.
+                    failures.append(exc)
+
+            writers = [threading.Thread(target=publish, args=(index,)) for index in range(4)]
+            for writer in writers:
+                writer.start()
+            for writer in writers:
+                writer.join()
+
+            self.assertEqual(failures, [])
+            self.assertIn(read_snapshot(path).get("writer"), {0, 1, 2, 3})
+            self.assertEqual(list(Path(directory).glob("*.tmp")), [])
 
     def test_duplicate_worker_lease_is_blocked(self):
         with tempfile.TemporaryDirectory() as directory:

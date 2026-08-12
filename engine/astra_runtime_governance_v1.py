@@ -12,6 +12,7 @@ import os
 import resource
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
 from dataclasses import asdict, dataclass
@@ -240,12 +241,24 @@ def write_snapshot(payload: dict[str, Any], path: Path = WORKER_STATE_PATH) -> f
     path.parent.mkdir(parents=True, exist_ok=True)
     data = dict(payload)
     data["updated_at"] = utc_now()
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    with temporary.open("w", encoding="utf-8") as handle:
-        json.dump(data, handle, separators=(",", ":"), sort_keys=True)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temporary, path)
+    # The bounded worker cycle and its heartbeat can publish concurrently.
+    # A unique same-directory temp file preserves atomic replacement without
+    # allowing one writer to remove another writer's shared ``.tmp`` path.
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, separators=(",", ":"), sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, path)
+    except Exception:
+        try:
+            os.unlink(temporary_name)
+        except OSError:
+            pass
+        raise
     return time.monotonic() - started
 
 
