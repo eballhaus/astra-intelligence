@@ -6847,12 +6847,28 @@ class PaperAutopilotEngine:
             candidate["trusted_quote_for_buys"] = False
             candidate["quote_assignment_blocker"] = "MISSING_SYMBOL"
             return candidate
+        if prior_assignment_state == "CRYPTO_STALE_REFRESH_CONSUMED":
+            # Preserve the first refresh outcome exactly. Re-evaluating the
+            # original stale snapshot would overwrite a more precise missing
+            # or invalid refresh blocker and could invite another lookup.
+            candidate["quote_assignment_state"] = prior_assignment_state
+            return candidate
 
         latest: dict[str, Any] = {}
+        candidate_evidence = canonical_market_timestamp_v1(
+            candidate,
+            source_type=SOURCE_QUOTE,
+            max_age_seconds=20.0,
+        )
+        stale_crypto_refresh = bool(
+            asset_type == "crypto"
+            and str(candidate_evidence.get("first_causal_blocker") or "") == "STALE_PROVIDER_NATIVE_TIMESTAMP"
+            and _to_float(candidate.get("price"), _to_float(candidate.get("current_price"), 0.0)) > 0.0
+        )
         # The full worker loop assigns once before it hands the row to trace
         # and submission.  Re-validate that same evidence rather than issuing
         # a second provider request from a downstream consumer.
-        if prior_assignment_state == "ASSIGNED_AND_CONSUMED":
+        if prior_assignment_state in {"ASSIGNED_AND_CONSUMED", "CRYPTO_STALE_REFRESH_CONSUMED"}:
             latest = dict(candidate)
         elif callable(self.get_latest_row_fn):
             try:
@@ -6888,6 +6904,16 @@ class PaperAutopilotEngine:
                 evidence.get("first_causal_blocker") or "TRUSTED_EXECUTABLE_QUOTE_UNAVAILABLE"
             )
             candidate["quote_freshness_status"] = str(evidence.get("freshness_status") or "UNAVAILABLE")
+            if stale_crypto_refresh:
+                # The worker has consumed its one normal-router refresh for
+                # this stale candidate. A downstream trace revalidation must
+                # preserve the block, not make another provider request.
+                candidate["quote_assignment_state"] = "CRYPTO_STALE_REFRESH_CONSUMED"
+                candidate["crypto_final_quote_refresh_attempted"] = True
+                candidate["crypto_final_quote_refresh_result"] = str(
+                    evidence.get("first_causal_blocker") or "TRUSTED_EXECUTABLE_QUOTE_UNAVAILABLE"
+                )
+                candidate["crypto_final_quote_refresh_attempt_count"] = 1
             return candidate
 
         candidate.update({
@@ -6910,6 +6936,12 @@ class PaperAutopilotEngine:
             "quote_assignment_at": _now_iso(),
             "quote_assignment_blocker": "",
         })
+        if stale_crypto_refresh:
+            candidate.update({
+                "crypto_final_quote_refresh_attempted": True,
+                "crypto_final_quote_refresh_result": "FRESH",
+                "crypto_final_quote_refresh_attempt_count": 1,
+            })
         return candidate
 
     def _attach_current_equity_risk_evidence_v1(self, row: Mapping[str, Any] | None) -> dict[str, Any]:

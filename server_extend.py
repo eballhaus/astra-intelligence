@@ -21677,6 +21677,16 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         enriched_output.append(enriched)
     output = enriched_output
     generated_at = _now_utc_iso()
+    # Persist only a compact, worker-observed executability history. The
+    # signal is an ordering tie-break, never a substitute for final freshness.
+    from engine.astra_crypto_executable_pair_quality_v1 import (
+        apply_crypto_executable_quality_tiebreak_v1,
+        record_crypto_quote_observation_v1,
+    )
+    executable_pair_quality = dict(previous.get("crypto_executable_pair_quality_v1") or {})
+    for integrity in quote_integrity_rows:
+        executable_pair_quality = record_crypto_quote_observation_v1(executable_pair_quality, integrity)
+    output = apply_crypto_executable_quality_tiebreak_v1(output, executable_pair_quality)
     for row in quote_integrity_rows:
         row["snapshot_generated_at"] = generated_at
     persisted_by_symbol = {str(row.get("symbol") or ""): dict(row) for row in output if str(row.get("symbol") or "")}
@@ -21717,6 +21727,7 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         "crypto_volume_audit": volume_audit, "failed_pairs": failures,
         "crypto_quote_integrity_rows": quote_integrity_rows,
         "crypto_quote_handoffs_v1": quote_handoffs,
+        "crypto_executable_pair_quality_v1": executable_pair_quality,
         "crypto_quote_integrity": {"pairs_requested": len(symbols), "pairs_with_quote": sum(1 for row in quote_integrity_rows if row.get("quote_received")), "pairs_with_bid_ask": sum(1 for row in quote_integrity_rows if row.get("bid_present") and row.get("ask_present")), "pairs_with_calculated_spread": sum(1 for row in quote_integrity_rows if row.get("spread_present")), "pairs_missing_bid_ask": sum(1 for row in quote_integrity_rows if not (row.get("bid_present") and row.get("ask_present"))), "pairs_persisted": sum(1 for row in quote_integrity_rows if row.get("candidate_persisted"))},
         "capability_refresh": capability_refresh,
         "pairs_evaluated_this_cycle": len(symbols), "rotation_cycles_remaining": max(0, math.ceil(len(discovered) / batch_size) - 1),
