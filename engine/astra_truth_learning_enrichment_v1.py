@@ -7,11 +7,16 @@ execution, ranking, sizing, or policy decisions.
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _number(value: Any) -> float | None:
@@ -108,6 +113,13 @@ def build_pretrade_truth_context_v1(
     """Copy available entry evidence without deriving new predictions."""
     payload = dict(entry_payload or {})
     contract = dict(entry_contract or {})
+    frozen = contract.get("original_pretrade_prediction_snapshot_v1")
+    if isinstance(frozen, Mapping) and bool(frozen.get("immutable_original_pretrade_prediction")):
+        context = frozen.get("prediction_context")
+        if isinstance(context, Mapping):
+            # A completed truth must read the approved, pre-broker values, not
+            # a later position/monitoring row that may have evolved in flight.
+            return deepcopy(dict(context))
     merged = {**payload, **{key: value for key, value in contract.items() if value not in (None, "", [], {})}}
     keys = (
         "predicted_direction", "direction", "trade_direction", "recommended_direction",
@@ -140,6 +152,41 @@ def build_pretrade_truth_context_v1(
     if expected_range is not None:
         context["expected_return_range"] = expected_range
     return context
+
+
+def build_original_pretrade_prediction_snapshot_v1(
+    entry_payload: Mapping[str, Any] | None,
+    entry_contract: Mapping[str, Any] | None,
+    *,
+    lifecycle_id: str,
+    intended_entry_price: float | None = None,
+    captured_at: str | None = None,
+) -> dict[str, Any]:
+    """Freeze only producer-supplied approved-entry evidence before a broker call."""
+    payload, contract = dict(entry_payload or {}), dict(entry_contract or {})
+    context = build_pretrade_truth_context_v1(payload, contract)
+    candidate_id = context.get("candidate_id") or contract.get("candidate_id") or payload.get("candidate_id")
+    lane = context.get("lane_id") or context.get("lane") or contract.get("lane") or payload.get("lane_id")
+    horizon = context.get("intended_horizon") or context.get("paper_entry_horizon_style") or contract.get("horizon") or payload.get("horizon")
+    return {
+        "schema_version": "astra_original_pretrade_prediction_snapshot_v1",
+        "snapshot_id": f"pretrade:{lifecycle_id}",
+        "lifecycle_id": lifecycle_id or None,
+        "candidate_id": candidate_id or None,
+        "symbol": context.get("symbol") or contract.get("symbol") or payload.get("symbol") or None,
+        "lane": lane or None,
+        "horizon": horizon or None,
+        "prediction_context": deepcopy(context),
+        "intended_entry_price": intended_entry_price if intended_entry_price not in (None, 0) else None,
+        "capital": payload.get("capital_allocated") or payload.get("notional") or payload.get("allocation") or None,
+        "quantity": payload.get("quantity") or payload.get("qty") or None,
+        "risk_envelope": context.get("risk_envelope") or context.get("candidate_risk_envelope_v1") or None,
+        "captured_at": captured_at or _utc_now_iso(),
+        "source_owner": "PaperAutopilotEngine._submit_alpaca_paper_entry_order",
+        "immutable_original_pretrade_prediction": True,
+        "snapshot_state": "APPROVED_NOT_SUBMITTED",
+        "missing_values_are_unavailable": True,
+    }
 
 
 def build_truth_learning_enrichment_v1(

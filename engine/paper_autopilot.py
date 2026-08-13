@@ -102,6 +102,7 @@ from engine.astra_position_peak_memory_v1 import (
     save_peak_memory,
 )
 from engine.astra_truth_learning_enrichment_v1 import (
+    build_original_pretrade_prediction_snapshot_v1,
     build_pretrade_truth_context_v1,
     build_truth_learning_enrichment_v1,
     merge_passive_excursion_evidence_v1,
@@ -5917,6 +5918,15 @@ class PaperAutopilotEngine:
         }
         # This is a passive snapshot of evidence already present at entry.  It
         # is intentionally outside the strict-truth eligibility predicate.
+        frozen_prediction = entry_contract.get("original_pretrade_prediction_snapshot_v1")
+        record["original_pretrade_prediction_snapshot_v1"] = (
+            dict(frozen_prediction)
+            if isinstance(frozen_prediction, Mapping) and bool(frozen_prediction.get("immutable_original_pretrade_prediction"))
+            else None
+        )
+        record["original_prediction_context"] = (
+            "VERIFIED_ORIGINAL_PRETRADE_CONTEXT" if record["original_pretrade_prediction_snapshot_v1"] else "UNAVAILABLE"
+        )
         record["pretrade_context_v1"] = build_pretrade_truth_context_v1(entry_payload, entry_contract)
         try:
             record["observational_learning_v1"] = build_truth_learning_enrichment_v1(
@@ -9120,6 +9130,20 @@ class PaperAutopilotEngine:
                 "entry_lane_horizon_contract_v1": entry_contract,
                 "entry_metadata_gate": entry_validation,
             }
+        lifecycle_id = str(r.get("lifecycle_id") or entry_contract.get("lifecycle_id") or "").strip()
+        if lifecycle_id:
+            snapshot = entry_contract.get("original_pretrade_prediction_snapshot_v1")
+            if not isinstance(snapshot, Mapping) or not bool(snapshot.get("immutable_original_pretrade_prediction")):
+                snapshot = build_original_pretrade_prediction_snapshot_v1(
+                    r, entry_contract, lifecycle_id=lifecycle_id, intended_entry_price=entry_price,
+                )
+                entry_contract["original_pretrade_prediction_snapshot_v1"] = snapshot
+            r["entry_lane_horizon_contract_v1"] = entry_contract
+            # Persist before the broker method is reachable.  The existing
+            # ledger preserves this snapshot across later retry/ack stages.
+            self._runtime_state["entry_lane_horizon_integrity_v1"] = self.entry_lane_horizon_ledger.record(
+                entry_contract, "ORIGINAL_PRETRADE_PREDICTION_PERSISTED"
+            )
         # This is the durable pre-submission identity record. It records no
         # broker truth and does not alter order behavior.
         self._runtime_state["entry_lane_horizon_integrity_v1"] = self.entry_lane_horizon_ledger.record(entry_contract, "ORDER_INTENT_PERSISTED")
@@ -9584,8 +9608,18 @@ class PaperAutopilotEngine:
             return {"ok": False, "error": "no_valid_entry_price", "symbol": symbol}
 
         now_iso = _now_iso()
-        pid = str(uuid.uuid4())
         submit_row = self._merge_latest_quote_for_submission(row, quote, entry_price)
+        pending_contract = dict(submit_row.get("entry_lane_horizon_contract_v1") or {})
+        prior_snapshot = next((
+            item.get("original_pretrade_prediction_snapshot_v1")
+            for item in (self.entry_lane_horizon_ledger.snapshot().get("entries") or [])
+            if str(item.get("order_intent_id") or "") == str(pending_contract.get("order_intent_id") or "")
+            and isinstance(item.get("original_pretrade_prediction_snapshot_v1"), Mapping)
+        ), {})
+        pid = str(prior_snapshot.get("lifecycle_id") or pending_contract.get("lifecycle_id") or uuid.uuid4())
+        submit_row["lifecycle_id"] = pid
+        pending_contract["lifecycle_id"] = pid
+        submit_row["entry_lane_horizon_contract_v1"] = pending_contract
         entry_row = dict(submit_row)
         entry_row.setdefault("symbol", symbol)
         entry_row.setdefault("asset_type", asset_type)
@@ -9671,8 +9705,12 @@ class PaperAutopilotEngine:
         source_client_order_id = str(entry_price_lineage.get("source_client_order_id") or source_client_order_id).strip()
         entry_filled_at = str(entry_price_lineage.get("entry_filled_at") or "").strip()
         entry_fill_id = str(entry_price_lineage.get("entry_fill_id") or "").strip()
+        submitted_contract = dict(submit_row.get("entry_lane_horizon_contract_v1") or {})
+        broker_contract = dict(broker_order.get("entry_lane_horizon_contract_v1") or {})
+        if isinstance(broker_contract.get("original_pretrade_prediction_snapshot_v1"), Mapping):
+            submitted_contract["original_pretrade_prediction_snapshot_v1"] = dict(broker_contract["original_pretrade_prediction_snapshot_v1"])
         entry_contract = link_entry_contract_v1(
-            dict(submit_row.get("entry_lane_horizon_contract_v1") or broker_order.get("entry_lane_horizon_contract_v1") or {}),
+            submitted_contract or broker_contract,
             broker_client_order_id=source_client_order_id,
             broker_order_id=source_broker_order_id,
             entry_fill_id=entry_fill_id,

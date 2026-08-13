@@ -148,5 +148,12 @@ class AstraEntryLaneHorizonLedgerV1:
     def record(self, contract: Mapping[str, Any], stage: str, blockers: list[str] | None = None) -> dict[str, Any]:
         current = self.snapshot(); entries = [dict(x) for x in current.get("entries") or [] if isinstance(x, dict)]
         item = dict(contract or {}); item["stage"] = stage; item["exact_blockers"] = list(dict.fromkeys(list(item.get("exact_blockers") or []) + list(blockers or [])))
-        key = _text(item.get("order_intent_id")); entries = [x for x in entries if _text(x.get("order_intent_id")) != key]; entries.append(item)
+        key = _text(item.get("order_intent_id"))
+        prior = next((x for x in entries if _text(x.get("order_intent_id")) == key), {})
+        frozen = prior.get("original_pretrade_prediction_snapshot_v1")
+        if isinstance(frozen, Mapping) and bool(frozen.get("immutable_original_pretrade_prediction")):
+            # Retry/acknowledgement stages may update order linkage but cannot
+            # replace the values captured before the first broker attempt.
+            item["original_pretrade_prediction_snapshot_v1"] = dict(frozen)
+        entries = [x for x in entries if _text(x.get("order_intent_id")) != key]; entries.append(item)
         return self._write(entries)
