@@ -245,7 +245,10 @@ def build_trade_learning_evidence_lane_monitor_v1(state_dir: str = "state", quer
         similar_query = {"symbol": row.get("symbol"), "horizon": context.get("intended_horizon") or row.get("horizon"), "regime": context.get("market_regime") or context.get("regime"), "archetype": context.get("strategy_archetype"), "catalyst": context.get("catalyst")}
         warehouse_query = {key: value for key, value in similar_query.items() if key in {"symbol", "horizon", "regime", "archetype", "catalyst"} and value not in (None, "")}
         warehouse_result = warehouse.query({**warehouse_query, "max_results": MAX_MATCHES, "detail_level": "summary"})
-        similar = _similarity(truths, {}, similar_query)
+        # A trade cannot be its own historical peer.  Keep the existing V6
+        # bounded matcher while excluding the same canonical lifecycle.
+        peers = [candidate for candidate in truths if candidate.get("lifecycle_id") != row.get("lifecycle_id")]
+        similar = _similarity(peers, {}, similar_query)
         comparisons.append({"lifecycle_id": row.get("lifecycle_id"), "truth_id": _truth_id(row), "similar_trade_comparison": similar, "warehouse_index_first_retrieval": {"index_used": warehouse_result.get("index_used"), "partitions_or_stores_used": warehouse_result.get("partitions_or_stores_used"), "raw_records_read": warehouse_result.get("raw_records_read"), "full_history_scan_used": warehouse_result.get("full_history_scan_used")}})
     return {
         "suite": "ASTRA Trade Learning Evidence + Lane Monitor + Prediction Calibration V1", "version": VERSION,

@@ -97,6 +97,11 @@ class TradeLearningEvidenceLaneMonitorV1Tests(unittest.TestCase):
         self.assertFalse(result["automatic_promotion_authority"])
         self.assertEqual(result["full_history_scan_count"], 0)
 
+    def test_similar_trade_never_compares_a_truth_to_itself(self):
+        root = self._root([strict_truth()])
+        comparison = build_trade_learning_evidence_lane_monitor_v1(str(root))["similar_trade_learning"]["comparisons"][0]["similar_trade_comparison"]
+        self.assertEqual(comparison["comparable_historical_outcomes"], 0)
+
     def test_paper_safety_and_existing_day_truth_remain_valid(self):
         root = self._root([strict_truth()])
         result = build_trade_learning_evidence_lane_monitor_v1(str(root))
