@@ -10280,6 +10280,10 @@ class PaperAutopilotEngine:
                 pass
         if callable(close_lifecycle_record):
             try:
+                mfe_raw = notes.get("max_favorable_excursion")
+                mae_raw = notes.get("max_adverse_excursion")
+                mfe_available = mfe_raw not in (None, "")
+                mae_available = mae_raw not in (None, "")
                 close_lifecycle_record(
                     pid,
                     {
@@ -10289,8 +10293,16 @@ class PaperAutopilotEngine:
                         "exit_price": exit_price,
                         "current_price": exit_price,
                         "pnl_pct": ret,
-                        "max_favorable_excursion_pct": _to_float(notes.get("max_favorable_excursion"), max(ret, 0.0)),
-                        "max_adverse_excursion_pct": _to_float(notes.get("max_adverse_excursion"), min(ret, 0.0)),
+                        # Preserve only observed tracker evidence for the
+                        # broker-truth bridge; missing excursion data remains
+                        # explicitly unavailable rather than inferred here.
+                        "max_favorable_excursion_pct": _to_float(mfe_raw, 0.0),
+                        "max_adverse_excursion_pct": _to_float(mae_raw, 0.0),
+                        "mfe_evidence_available": mfe_available,
+                        "mae_evidence_available": mae_available,
+                        "peak_return_percent": _to_float(notes.get("peak_unrealized_pnl_percent"), 0.0),
+                        "drawdown_from_peak_percent": _to_float(notes.get("drawdown_from_peak_percent"), 0.0),
+                        "hold_time_seconds": hold_seconds,
                         "exit_reason": str(exit_reason or ""),
                         "exit_order_id": str((broker_fill or {}).get("exit_order_id") or ""),
                         "exit_fill_id": str((broker_fill or {}).get("exit_fill_id") or ""),
@@ -10305,7 +10317,7 @@ class PaperAutopilotEngine:
                 pass
         if self.trade_lifecycle_excursion_suite is not None and hasattr(self.trade_lifecycle_excursion_suite, "record_closed_position"):
             try:
-                self.trade_lifecycle_excursion_suite.record_closed_position(
+                excursion_close = self.trade_lifecycle_excursion_suite.record_closed_position(
                     {
                         **dict(open_row or {}),
                         "exit_timestamp": now_iso,
@@ -10316,6 +10328,15 @@ class PaperAutopilotEngine:
                     exit_reason=str(exit_reason or ""),
                     source_endpoint="paper_autopilot_natural_close",
                 )
+                canonical_exit_quality = dict(excursion_close or {}).get("record", {}).get("exit_quality_score")
+                if canonical_exit_quality not in (None, "") and callable(update_lifecycle_progress):
+                    update_lifecycle_progress(
+                        pid,
+                        {
+                            "exit_quality_score": _to_float(canonical_exit_quality, 0.0),
+                            "exit_quality_evidence_available": True,
+                        },
+                    )
             except Exception:
                 pass
 

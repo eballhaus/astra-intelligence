@@ -48,6 +48,18 @@ def _normalize_record(data: dict[str, Any]) -> dict[str, Any]:
         "pnl_pct": _to_float(data.get("pnl_pct"), 0.0),
         "max_favorable_excursion_pct": _to_float(data.get("max_favorable_excursion_pct"), 0.0),
         "max_adverse_excursion_pct": _to_float(data.get("max_adverse_excursion_pct"), 0.0),
+        # These are observational close-time facts.  They preserve the
+        # canonical excursion evidence without participating in exit logic.
+        "peak_return_percent": _to_float(data.get("peak_return_percent"), 0.0),
+        "drawdown_from_peak_percent": _to_float(data.get("drawdown_from_peak_percent"), 0.0),
+        "hold_time_seconds": _to_float(data.get("hold_time_seconds"), 0.0),
+        "mfe_evidence_available": bool(data.get("mfe_evidence_available", False)),
+        "mae_evidence_available": bool(data.get("mae_evidence_available", False)),
+        "exit_quality_score": (
+            _to_float(data.get("exit_quality_score"), 0.0)
+            if data.get("exit_quality_score") not in (None, "") else None
+        ),
+        "exit_quality_evidence_available": bool(data.get("exit_quality_evidence_available", False)),
         "confidence": _to_float(data.get("confidence"), 0.0),
         "grade": _to_float(data.get("grade"), 0.0),
         "entry_quality_score": _to_float(data.get("entry_quality_score"), 0.0),
@@ -79,6 +91,11 @@ def _normalize_record(data: dict[str, Any]) -> dict[str, Any]:
         ("capital_book_id", ""),
         ("source_ranking_version", ""),
         ("source_policy_version", ""),
+        ("entry_order_id", ""),
+        ("entry_fill_id", ""),
+        ("exit_order_id", ""),
+        ("exit_fill_id", ""),
+        ("source_client_order_id", ""),
     ):
         if isinstance(default, bool):
             record[key] = bool(data.get(key, default))

@@ -716,6 +716,100 @@ class AlpacaPaperBroker:
         orders = [_sanitize_order(o) for o in data if isinstance(o, dict)]
         return {"ok": True, "orders": orders, "open_orders_count": len(orders)}
 
+    @staticmethod
+    def _canonical_closed_lifecycle_rows(limit: int = 500) -> list[dict[str, Any]]:
+        """Read bounded canonical lifecycle evidence without broker I/O.
+
+        The lifecycle store is append-only and has already collapsed each
+        lifecycle to its latest record.  A read failure must never change
+        broker P&L truth, so callers receive no enrichment in that case.
+        """
+        try:
+            from engine.trade_lifecycle_tracker import load_recent_lifecycle_records
+
+            return [dict(row) for row in load_recent_lifecycle_records(limit=limit) if isinstance(row, dict)]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _matching_lifecycle_excursion_evidence(
+        closed_row: dict[str, Any], lifecycle_rows: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        """Return only a unique, broker-order-linked canonical lifecycle.
+
+        Timestamp and symbol-only matches can incorrectly join separate
+        partial fills.  The exact exit broker order id is therefore required.
+        """
+        symbol = _safe_text(closed_row.get("symbol")).upper()
+        exit_order_id = _safe_text(closed_row.get("order_id"))
+        if not symbol or not exit_order_id:
+            return None
+        matches = [
+            row
+            for row in lifecycle_rows
+            if _safe_text(row.get("symbol")).upper() == symbol
+            and _safe_text(row.get("exit_order_id")) == exit_order_id
+            and (
+                _safe_text(row.get("lifecycle_stage")).lower().startswith("closed")
+                or bool(_safe_text(row.get("exit_timestamp")))
+            )
+        ]
+        return dict(matches[0]) if len(matches) == 1 else None
+
+    @staticmethod
+    def _enrich_closed_trade_with_excursion(
+        closed_row: dict[str, Any], lifecycle_rows: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Attach provenance-backed excursion facts without inferring gaps."""
+        row = dict(closed_row)
+        lifecycle = AlpacaPaperBroker._matching_lifecycle_excursion_evidence(row, lifecycle_rows)
+        row.update({
+            "canonical_lifecycle_id": None,
+            "lifecycle_excursion_evidence_status": "UNMATCHED_CANONICAL_LIFECYCLE",
+            "max_favorable_excursion": None,
+            "max_adverse_excursion": None,
+            "peak_return_percent": None,
+            "drawdown_from_peak_percent": None,
+            "hold_time_seconds": None,
+            "profit_capture_ratio": None,
+            "giveback_pct": None,
+            "exit_quality_score": None,
+        })
+        if lifecycle is None:
+            return row
+
+        mfe = _to_float(lifecycle.get("max_favorable_excursion_pct"), 0.0)
+        mae = _to_float(lifecycle.get("max_adverse_excursion_pct"), 0.0)
+        # New lifecycle closures carry explicit availability flags.  Older
+        # canonical rows can still prove an observed excursion when the
+        # stored value is directionally non-zero; a normalizer default cannot
+        # produce either of those values.
+        mfe_available = bool(lifecycle.get("mfe_evidence_available", False)) or mfe > 0.0
+        mae_available = bool(lifecycle.get("mae_evidence_available", False)) or mae < 0.0
+        canonical_exit_quality = lifecycle.get("exit_quality_score")
+        exit_quality_available = bool(lifecycle.get("exit_quality_evidence_available", False)) and canonical_exit_quality not in (None, "")
+        row.update({
+            "canonical_lifecycle_id": _safe_text(lifecycle.get("lifecycle_id")) or None,
+            "lifecycle_excursion_evidence_status": "CANONICAL_EXACT_EXIT_ORDER_MATCH",
+            "max_favorable_excursion": round(mfe, 4) if mfe_available else None,
+            "max_adverse_excursion": round(mae, 4) if mae_available else None,
+            "peak_return_percent": round(_to_float(lifecycle.get("peak_return_percent"), 0.0), 4),
+            "drawdown_from_peak_percent": round(_to_float(lifecycle.get("drawdown_from_peak_percent"), 0.0), 4),
+            "hold_time_seconds": round(_to_float(lifecycle.get("hold_time_seconds"), 0.0), 3),
+            "exit_quality_score": round(_to_float(canonical_exit_quality, 0.0), 4) if exit_quality_available else None,
+        })
+
+        realized_return = _to_float(row.get("realized_return_pct"), 0.0)
+        if realized_return <= 0.0 or not mfe_available or mfe <= 0.0:
+            return row
+        capture_ratio = realized_return / mfe
+        giveback_pct = mfe - realized_return
+        row.update({
+            "profit_capture_ratio": round(capture_ratio, 6),
+            "giveback_pct": round(giveback_pct, 4),
+        })
+        return row
+
     def broker_truth_metrics(self, limit: int = 200) -> dict[str, Any]:
         closed = self.orders(status="closed", limit=max(50, min(500, _to_int(limit, 200))))
         if not isinstance(closed, dict) or not closed.get("ok"):
@@ -736,6 +830,11 @@ class AlpacaPaperBroker:
                 "error": _safe_text(closed.get("error"), "closed_orders_unavailable"),
                 "closed_orders_reviewed": 0,
                 "filled_orders_reviewed": 0,
+                "profit_capture_trade_count": 0,
+                "profit_capture_coverage_percent": 0.0,
+                "mfe_available_count": 0,
+                "mae_available_count": 0,
+                "missing_excursion_evidence_count": 0,
                 "closed_trade_rows": [],
             }
         orders = [dict(row) for row in (closed.get("orders") or []) if isinstance(row, dict)]
@@ -883,6 +982,29 @@ class AlpacaPaperBroker:
         roi = ((realized_profit - realized_loss) / gross_cost * 100.0) if gross_cost > 0 else None
         pf = (realized_profit / realized_loss) if realized_loss > 1e-9 else (realized_profit if realized_profit > 0 else None)
         win_rate = ((winning / trade_count) * 100.0) if trade_count > 0 else None
+        lifecycle_rows = self._canonical_closed_lifecycle_rows(limit=max(200, min(500, trade_count * 4 or 200)))
+        enriched_closed_rows = [
+            self._enrich_closed_trade_with_excursion(row, lifecycle_rows)
+            for row in closed_rows
+        ]
+        mfe_available_count = sum(1 for row in enriched_closed_rows if row.get("max_favorable_excursion") is not None)
+        mae_available_count = sum(1 for row in enriched_closed_rows if row.get("max_adverse_excursion") is not None)
+        capture_rows = [row for row in enriched_closed_rows if row.get("profit_capture_ratio") is not None]
+        profit_capture_trade_count = len(capture_rows)
+        missing_excursion_evidence_count = max(0, trade_count - mfe_available_count)
+        avg_capture = (
+            sum(_to_float(row.get("profit_capture_ratio"), 0.0) for row in capture_rows) / profit_capture_trade_count
+            if profit_capture_trade_count else None
+        )
+        avg_giveback = (
+            sum(_to_float(row.get("giveback_pct"), 0.0) for row in capture_rows) / profit_capture_trade_count
+            if profit_capture_trade_count else None
+        )
+        exit_quality_rows = [row for row in enriched_closed_rows if row.get("exit_quality_score") is not None]
+        avg_exit_quality = (
+            sum(_to_float(row.get("exit_quality_score"), 0.0) for row in exit_quality_rows) / len(exit_quality_rows)
+            if exit_quality_rows else None
+        )
         trust = "high" if trade_count >= 20 else "warming_up" if trade_count > 0 else "insufficient_broker_confirmed_evidence"
         confidence = min(100.0, trade_count * 4.0)
         return {
@@ -894,9 +1016,15 @@ class AlpacaPaperBroker:
             "true_paper_win_rate": round(win_rate, 4) if win_rate is not None else None,
             "true_paper_avg_return": round(avg_return, 4) if avg_return is not None else None,
             "true_paper_roi": round(roi, 4) if roi is not None else None,
-            "true_paper_profit_capture": None,
-            "true_paper_avg_giveback": None,
-            "true_paper_exit_quality": None,
+            # Unit: ratio, where 1.0 means 100% of observed MFE retained.
+            "true_paper_profit_capture": round(avg_capture, 6) if avg_capture is not None else None,
+            "true_paper_profit_capture_unit": "ratio_1_0_equals_100_percent_of_mfe",
+            # Unit: percentage points of observed MFE not retained at exit.
+            "true_paper_avg_giveback": round(avg_giveback, 4) if avg_giveback is not None else None,
+            "true_paper_avg_giveback_unit": "percentage_points",
+            # Unit: canonical natural-lifecycle exit-quality score, 0-100.
+            "true_paper_exit_quality": round(avg_exit_quality, 4) if avg_exit_quality is not None else None,
+            "true_paper_exit_quality_unit": "score_0_to_100",
             "true_paper_trade_count": trade_count,
             "true_paper_closed_trade_count": trade_count,
             "true_paper_metric_source": "broker_truth_engine_v1",
@@ -916,6 +1044,11 @@ class AlpacaPaperBroker:
             "buy_fill_count": len(buy_fill_rows),
             "sell_fill_count": len(sell_fill_rows),
             "paired_round_trip_count": trade_count,
+            "profit_capture_trade_count": profit_capture_trade_count,
+            "profit_capture_coverage_percent": round((profit_capture_trade_count / trade_count) * 100.0, 4) if trade_count else 0.0,
+            "mfe_available_count": mfe_available_count,
+            "mae_available_count": mae_available_count,
+            "missing_excursion_evidence_count": missing_excursion_evidence_count,
             "unpaired_buy_count": unpaired_buy_count,
             "unpaired_sell_count": unpaired_sell_count,
             # These lots are a read-only provenance aid.  They are not a
@@ -924,7 +1057,7 @@ class AlpacaPaperBroker:
             "fill_rows": fill_rows[-100:],
             "buy_fill_rows": buy_fill_rows[-50:],
             "sell_fill_rows": sell_fill_rows[-50:],
-            "closed_trade_rows": closed_rows[-25:],
+            "closed_trade_rows": enriched_closed_rows[-25:],
         }
 
     def reconstruct_open_position_provenance(
