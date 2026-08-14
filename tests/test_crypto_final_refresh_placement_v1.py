@@ -146,19 +146,36 @@ class CryptoFinalRefreshPlacementTests(unittest.TestCase):
     def test_stale_or_missing_final_native_quote_remains_blocked(self):
         for reply, quote_blocker in (
             ({**self.reply, "provider_quote_timestamp": _iso(-21)}, "STALE_PROVIDER_NATIVE_TIMESTAMP"),
-            ({key: value for key, value in self.reply.items() if key != "provider_quote_timestamp"}, "crypto_quote_freshness_missing"),
+            ({key: value for key, value in self.reply.items() if key != "provider_quote_timestamp"}, "PROVIDER_NATIVE_MARKET_OBSERVATION_UNAVAILABLE"),
         ):
             with self.subTest(quote_blocker=quote_blocker):
                 self.reply = reply
                 self.calls.clear()
-                trace, allowed, reason, _ = self._trace(_candidate())
-                self.assertFalse(allowed)
-                if quote_blocker == "STALE_PROVIDER_NATIVE_TIMESTAMP":
-                    self.assertEqual(trace["quote_assignment_blocker"], quote_blocker)
-                else:
-                    self.assertEqual(reason, quote_blocker)
+                refreshed = self.engine._finalize_crypto_quote_refresh_v1(
+                    self._deferred(), pre_market_gates_passed=True,
+                )
+                self.assertFalse(refreshed["trusted_quote_for_buys"])
+                self.assertEqual(refreshed["quote_assignment_blocker"], quote_blocker)
                 self.assertEqual(self.calls, [1])
-                self.assertTrue(trace["crypto_final_quote_refresh_attempted"])
+                self.assertTrue(refreshed["crypto_final_quote_refresh_attempted"])
+
+    def test_stale_refresh_persists_the_validated_provider_timestamp_and_age(self):
+        refreshed_at = _iso(-21)
+        self.reply = {**self.reply, "provider_quote_timestamp": refreshed_at}
+
+        refreshed = self.engine._finalize_crypto_quote_refresh_v1(
+            self._deferred(), pre_market_gates_passed=True,
+        )
+
+        self.assertFalse(refreshed["trusted_quote_for_buys"])
+        self.assertEqual(refreshed["crypto_final_quote_refresh_result"], "STALE_PROVIDER_NATIVE_TIMESTAMP")
+        self.assertEqual(refreshed["provider_quote_timestamp"], refreshed_at)
+        self.assertGreater(refreshed["quote_age_seconds"], 20.0)
+        self.assertEqual(
+            refreshed["quote_age_seconds"],
+            refreshed["crypto_final_refresh_validated_age_seconds"],
+        )
+        self.assertEqual(self.calls, [1])
 
     def test_generated_at_cannot_satisfy_final_freshness(self):
         self.reply = {**self.reply, "generated_at": _iso()}

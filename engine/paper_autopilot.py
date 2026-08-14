@@ -6965,6 +6965,12 @@ class PaperAutopilotEngine:
                 # this stale candidate. A downstream trace revalidation must
                 # preserve the block, not make another provider request.
                 candidate["quote_assignment_state"] = "CRYPTO_STALE_REFRESH_CONSUMED"
+                # Persist the exact provider-native observation that failed
+                # final validation so the trace cannot report the older
+                # ranking snapshot as the failed refresh evidence.
+                candidate["provider_quote_timestamp"] = evidence.get("market_observation_timestamp")
+                candidate["quote_age_seconds"] = evidence.get("age_seconds")
+                candidate["crypto_final_refresh_validated_age_seconds"] = evidence.get("age_seconds")
                 candidate["crypto_final_quote_refresh_attempted"] = True
                 candidate["crypto_final_quote_refresh_result"] = str(
                     evidence.get("first_causal_blocker") or "TRUSTED_EXECUTABLE_QUOTE_UNAVAILABLE"
