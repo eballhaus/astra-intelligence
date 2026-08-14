@@ -281,6 +281,11 @@ class LaneExecutionTraceLedgerV1:
                 "commitment_final_state": _text(source.get("commitment_final_state")),
                 "entry_owner": _text(source.get("entry_owner")),
                 "exit_owner": _text(source.get("exit_owner") or source.get("exit_policy_owner")),
+                "crypto_final_quote_refresh_attempted": bool(source.get("crypto_final_quote_refresh_attempted", False)),
+                "crypto_final_quote_refresh_attempt_count": source.get("crypto_final_quote_refresh_attempt_count"),
+                "crypto_final_quote_refresh_result": _text(source.get("crypto_final_quote_refresh_result")),
+                "crypto_final_refresh_quote_timestamp": _text(source.get("crypto_final_refresh_quote_timestamp")),
+                "crypto_final_refresh_quote_age_seconds": source.get("crypto_final_refresh_quote_age_seconds"),
             }
             records.append(record)
             known.add(trace_id)
