@@ -6874,7 +6874,12 @@ class PaperAutopilotEngine:
         self._publish_equity_risk_candidate_handoff_v1(candidate_rows)
         return dict(self.refresh_equity_risk_envelopes_fn() or {})
 
-    def _assign_trusted_quote_to_candidate(self, row: Mapping[str, Any] | None) -> dict[str, Any]:
+    def _assign_trusted_quote_to_candidate(
+        self,
+        row: Mapping[str, Any] | None,
+        *,
+        refresh_crypto_stale: bool = True,
+    ) -> dict[str, Any]:
         """Attach worker-owned quote evidence before candidate qualification.
 
         Candidate snapshots are intentionally cache-only API products.  The
@@ -6906,15 +6911,20 @@ class PaperAutopilotEngine:
             source_type=SOURCE_QUOTE,
             max_age_seconds=20.0,
         )
-        stale_crypto_refresh = bool(
+        crypto_refresh_needed = bool(
             asset_type == "crypto"
-            and str(candidate_evidence.get("first_causal_blocker") or "") == "STALE_PROVIDER_NATIVE_TIMESTAMP"
+            and not bool(candidate_evidence.get("executable_freshness"))
             and _to_float(candidate.get("price"), _to_float(candidate.get("current_price"), 0.0)) > 0.0
         )
         # The full worker loop assigns once before it hands the row to trace
         # and submission.  Re-validate that same evidence rather than issuing
         # a second provider request from a downstream consumer.
         if prior_assignment_state in {"ASSIGNED_AND_CONSUMED", "CRYPTO_STALE_REFRESH_CONSUMED"}:
+            latest = dict(candidate)
+        elif asset_type == "crypto" and not refresh_crypto_stale:
+            # The first CRYPTO pass is observation-only.  Its stale native
+            # quote cannot authorize an order, but it also must not spend the
+            # lane's one bounded refresh until non-market gates have passed.
             latest = dict(candidate)
         elif callable(self.get_latest_row_fn):
             try:
@@ -6950,7 +6960,7 @@ class PaperAutopilotEngine:
                 evidence.get("first_causal_blocker") or "TRUSTED_EXECUTABLE_QUOTE_UNAVAILABLE"
             )
             candidate["quote_freshness_status"] = str(evidence.get("freshness_status") or "UNAVAILABLE")
-            if stale_crypto_refresh:
+            if crypto_refresh_needed and refresh_crypto_stale:
                 # The worker has consumed its one normal-router refresh for
                 # this stale candidate. A downstream trace revalidation must
                 # preserve the block, not make another provider request.
@@ -6960,6 +6970,11 @@ class PaperAutopilotEngine:
                     evidence.get("first_causal_blocker") or "TRUSTED_EXECUTABLE_QUOTE_UNAVAILABLE"
                 )
                 candidate["crypto_final_quote_refresh_attempt_count"] = 1
+            elif crypto_refresh_needed:
+                candidate["quote_assignment_state"] = "CRYPTO_STALE_REFRESH_DEFERRED"
+                candidate["crypto_final_quote_refresh_deferred"] = True
+                candidate["crypto_final_quote_refresh_attempted"] = False
+                candidate["crypto_final_quote_refresh_attempt_count"] = 0
             return candidate
 
         candidate.update({
@@ -6982,13 +6997,28 @@ class PaperAutopilotEngine:
             "quote_assignment_at": _now_iso(),
             "quote_assignment_blocker": "",
         })
-        if stale_crypto_refresh:
+        if crypto_refresh_needed and refresh_crypto_stale:
             candidate.update({
                 "crypto_final_quote_refresh_attempted": True,
                 "crypto_final_quote_refresh_result": "FRESH",
                 "crypto_final_quote_refresh_attempt_count": 1,
             })
         return candidate
+
+    def _finalize_crypto_quote_refresh_v1(
+        self,
+        row: Mapping[str, Any] | None,
+        *,
+        pre_market_gates_passed: bool,
+    ) -> dict[str, Any]:
+        """Spend CRYPTO's one refresh only at the final market-data boundary."""
+        candidate = dict(row or {})
+        if not pre_market_gates_passed:
+            candidate["crypto_final_quote_refresh_skipped_reason"] = "PRE_MARKET_GATES_NOT_PASSED"
+            return candidate
+        if str(candidate.get("quote_assignment_state") or "") != "CRYPTO_STALE_REFRESH_DEFERRED":
+            return candidate
+        return self._assign_trusted_quote_to_candidate(candidate, refresh_crypto_stale=True)
 
     def _attach_current_equity_risk_evidence_v1(self, row: Mapping[str, Any] | None) -> dict[str, Any]:
         """Join the worker's bounded risk observation to its current candidate.
@@ -7082,7 +7112,12 @@ class PaperAutopilotEngine:
             "exact_blocker": "" if paper_ready else str(capital.get("capital_configuration_status") or "CRYPTO_CAPITAL_CONFIGURATION_REQUIRED") if not capital_configured else str(capability.get("exact_blocker") or "crypto_runtime_capability_not_validated"),
         }
 
-    def _crypto_execution_data_gate(self, row: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
+    def _crypto_execution_data_gate(
+        self,
+        row: dict[str, Any],
+        *,
+        require_fresh_quote: bool = True,
+    ) -> tuple[bool, str, dict[str, Any]]:
         quote_age = _to_float(
             row.get("quote_age_seconds"),
             _to_float(row.get("freshness_seconds"), -1.0),
@@ -7110,10 +7145,11 @@ class PaperAutopilotEngine:
             "crypto_max_quote_age_seconds": max_age,
             "crypto_max_spread_pct": max_spread,
             "crypto_min_data_quality_score": min_quality,
+            "crypto_quote_freshness_deferred": not require_fresh_quote,
         }
-        if quote_age < 0:
+        if require_fresh_quote and quote_age < 0:
             return False, "crypto_quote_freshness_missing", meta
-        if quote_age > max_age:
+        if require_fresh_quote and quote_age > max_age:
             return False, "crypto_quote_stale", meta
         if spread_pct < 0:
             return False, "crypto_spread_missing", meta
@@ -7125,7 +7161,15 @@ class PaperAutopilotEngine:
             return False, "crypto_data_quality_below_floor", meta
         return True, "crypto_market_data_gates_passed", meta
 
-    def _crypto_execution_integrity_gate(self, row: dict[str, Any], *, capacity_snapshot: Mapping[str, Any] | None = None, duplicate_pending: bool = False, reconciliation_ok: bool = False) -> tuple[bool, str, dict[str, Any]]:
+    def _crypto_execution_integrity_gate(
+        self,
+        row: dict[str, Any],
+        *,
+        capacity_snapshot: Mapping[str, Any] | None = None,
+        duplicate_pending: bool = False,
+        reconciliation_ok: bool = False,
+        allow_pending_quote_freshness: bool = False,
+    ) -> tuple[bool, str, dict[str, Any]]:
         """Use the same strict identity/gate truth as the diagnostics and broker."""
         activation = self._crypto_paper_activation_status()
         capability = dict(activation.get("capability") or {})
@@ -7146,15 +7190,24 @@ class PaperAutopilotEngine:
             kill_switch_enabled=bool(activation.get("kill_switch_enabled")),
         )
         failed = list(result.get("failed_gates") or [])
+        non_quote_failures = [gate for gate in failed if gate != "timestamp_freshness"]
+        if allow_pending_quote_freshness and not non_quote_failures:
+            result["final_quote_freshness_deferred"] = True
+            return True, "crypto_execution_integrity_pending_final_quote_refresh", result
         return bool(result.get("execution_eligible")), (failed[0] if failed else "crypto_execution_integrity_passed"), result
 
-    def _entry_commitment_gate_v1(self, row: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
+    def _entry_commitment_gate_v1(
+        self,
+        row: dict[str, Any],
+        *,
+        require_trusted_quote: bool = True,
+    ) -> tuple[bool, str, dict[str, Any]]:
         row = _normalize_paper_entry_bridge(row)
         # Candidate rankings are advisory until the worker consumes fresh,
         # provider-native executable quote evidence. This is deliberately the
         # first entry gate so no score can turn retrieval time into tradeable
         # market evidence.
-        if not bool(row.get("valid_quote")) or not bool(row.get("trusted_quote_for_buys")):
+        if require_trusted_quote and (not bool(row.get("valid_quote")) or not bool(row.get("trusted_quote_for_buys"))):
             return False, str(
                 row.get("quote_assignment_blocker") or "TRUSTED_EXECUTABLE_QUOTE_UNAVAILABLE"
             ), {"commitment_score": 0.0, "quote_assignment_required": True}
@@ -8816,7 +8869,15 @@ class PaperAutopilotEngine:
         capacity_snapshot: Mapping[str, Any] | None = None,
         current_candidates: list[dict[str, Any]] | None = None,
     ) -> tuple[dict[str, Any], bool, str, dict[str, Any]]:
-        r = self._assign_trusted_quote_to_candidate(_normalize_paper_entry_bridge(row))
+        r = _normalize_paper_entry_bridge(row)
+        asset = _norm_asset(r.get("asset_type") or "stock")
+        r = self._assign_trusted_quote_to_candidate(
+            r,
+            # CRYPTO receives an observation-only pass here. Its bounded
+            # provider refresh is deliberately deferred until every
+            # non-market-data gate below has passed.
+            refresh_crypto_stale=asset != "crypto",
+        )
         r = self._attach_current_equity_risk_evidence_v1(r)
         r = enrich_candidate_for_pretrade_contract(r, current_candidates=current_candidates)
         certification = dict(self._runtime_state.get("pre_market_certification_v1") or {})
@@ -8827,6 +8888,10 @@ class PaperAutopilotEngine:
         )
         symbol = str(r.get("symbol") or "").upper().strip()
         asset = _norm_asset(r.get("asset_type") or "stock")
+        deferred_crypto_quote = bool(
+            asset == "crypto"
+            and str(r.get("quote_assignment_state") or "") == "CRYPTO_STALE_REFRESH_DEFERRED"
+        )
         crypto_source_ready = not bool(r.get("operational_probe_only")) if asset == "crypto" else True
         crypto_freshness_ready = bool(
             crypto_source_ready and (r.get("candidate_generated_at") or r.get("generated_at"))
@@ -8892,7 +8957,14 @@ class PaperAutopilotEngine:
         elif asset == "crypto" and crypto_capacity <= 0 and not reserve_capacity_allowed:
             reason = "crypto_capacity_reached"
         else:
-            allowed, reason, gate_meta = self._is_candidate_paper_eligible(r)
+            allowed, reason, gate_meta = self._entry_commitment_gate_v1(
+                r,
+                # The normal trusted-quote requirement is still mandatory at
+                # the final order boundary. This limited preliminary call
+                # only avoids spending a provider refresh on a candidate that
+                # fails its independent commitment gate.
+                require_trusted_quote=not deferred_crypto_quote,
+            )
         contract = dict(r.get("pretrade_decision_contract_v1") or {})
         if allowed and not bool(contract.get("order_ready_allowed")):
             allowed = False
@@ -8940,12 +9012,19 @@ class PaperAutopilotEngine:
         if asset == "crypto":
             crypto_activation = self._crypto_paper_activation_status()
             horizon = str(r.get("paper_entry_horizon_style") or r.get("trade_horizon_style") or "").strip()
-            crypto_data_ok, crypto_data_reason, crypto_data_meta = self._crypto_execution_data_gate(r)
+            # Check every non-freshness data/integrity gate before consuming
+            # the final native quote refresh. Timestamp freshness is the one
+            # market fact intentionally deferred to the final order boundary.
+            crypto_data_ok, crypto_data_reason, crypto_data_meta = self._crypto_execution_data_gate(
+                r,
+                require_fresh_quote=False,
+            )
             integrity_ok, integrity_reason, integrity_meta = self._crypto_execution_integrity_gate(
                 r,
                 capacity_snapshot=capacity_snapshot,
                 duplicate_pending=symbol in open_syms,
                 reconciliation_ok=broker_reconciliation_active,
+                allow_pending_quote_freshness=True,
             )
             crypto_session_ok = bool(
                 crypto_activation.get("paper_active_bounded")
@@ -8953,6 +9032,33 @@ class PaperAutopilotEngine:
                 and crypto_data_ok
                 and integrity_ok
             )
+            if not crypto_session_ok and allowed:
+                allowed = False
+                reason = "crypto_scalp_shadow_only" if horizon == "scalp" else crypto_data_reason if not crypto_data_ok else integrity_reason if not integrity_ok else "crypto_paper_activation_not_ready"
+            if allowed:
+                # This is the one provider-touching CRYPTO quote refresh. It
+                # happens only after commitment, contract, capacity, session,
+                # duplicate, data-quality, and integrity pre-gates pass.
+                r = self._finalize_crypto_quote_refresh_v1(
+                    r,
+                    pre_market_gates_passed=True,
+                )
+                crypto_data_ok, crypto_data_reason, crypto_data_meta = self._crypto_execution_data_gate(r)
+                integrity_ok, integrity_reason, integrity_meta = self._crypto_execution_integrity_gate(
+                    r,
+                    capacity_snapshot=capacity_snapshot,
+                    duplicate_pending=symbol in open_syms,
+                    reconciliation_ok=broker_reconciliation_active,
+                )
+                crypto_session_ok = bool(
+                    crypto_activation.get("paper_active_bounded")
+                    and horizon in {"day_trade", "swing_trade"}
+                    and crypto_data_ok
+                    and integrity_ok
+                )
+                if not crypto_session_ok:
+                    allowed = False
+                    reason = "crypto_scalp_shadow_only" if horizon == "scalp" else crypto_data_reason if not crypto_data_ok else integrity_reason if not integrity_ok else "crypto_paper_activation_not_ready"
             session_diag = {
                 "market_session_mode": "crypto_24_7",
                 "current_session_type": "crypto_24_7",
@@ -8968,9 +9074,6 @@ class PaperAutopilotEngine:
                 "defer_until_market_confirmation": False,
                 "requires_open_confirmation": not crypto_session_ok,
             }
-            if not crypto_session_ok and allowed:
-                allowed = False
-                reason = "crypto_scalp_shadow_only" if horizon == "scalp" else crypto_data_reason if not crypto_data_ok else integrity_reason if not integrity_ok else "crypto_paper_activation_not_ready"
             gate_meta.update(crypto_data_meta)
             gate_meta["crypto_execution_integrity"] = integrity_meta
             gate_meta["crypto_execution_integrity_ok"] = integrity_ok
@@ -12412,7 +12515,12 @@ class PaperAutopilotEngine:
                     # full cycle, but never submits an order here.
                     for row in candidate_rows[:1]:
                         evaluated_count += 1
-                        hydrated = self._assign_trusted_quote_to_candidate(row)
+                        hydrated = self._assign_trusted_quote_to_candidate(
+                            row,
+                            refresh_crypto_stale=_norm_asset(
+                                row.get("asset_type") or row.get("asset_class")
+                            ) != "crypto",
+                        )
                         if bool(hydrated.get("trusted_quote_for_buys")):
                             fresh_count += 1
                         sym = _text(hydrated.get("symbol")).upper()
@@ -13145,10 +13253,9 @@ class PaperAutopilotEngine:
                         ))
                         continue
 
-                # Quote assignment belongs to the worker, before both
-                # qualification and broker preflight.  The trace re-validates
-                # this evidence without a second provider lookup.
-                row = self._assign_trusted_quote_to_candidate(row)
+                # Candidate qualification owns the bounded final CRYPTO quote
+                # refresh ordering. It retains the existing immediate quote
+                # assignment behavior for equity lanes.
                 row_trace, allowed, reason, gate_meta = self._candidate_trace_row(
                     row,
                     open_syms=open_syms,
