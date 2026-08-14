@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from engine.astra_multilane_activation_v2 import canonical_lane_activation_contract
@@ -58,6 +59,54 @@ class MultilaneExecutionIntegrityV1ContractTests(unittest.TestCase):
             summary = ledger.summary()
             self.assertTrue(summary["bounded_summary_read"])
             self.assertEqual(summary["lanes"]["DAY"]["order_ready"], 1)
+
+    def test_ledger_records_terminal_order_rejection_for_selected_candidate(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            ledger = LaneExecutionTraceLedgerV1(root)
+            row = {
+                "lane_id": "DAY", "candidate_id": "candidate-rejected", "recommendation_id": "recommendation-rejected",
+                "symbol": "NVDA", "candidate_generated_at": "2026-08-11T00:00:00Z",
+                "eligible": True, "selected": True, "order_ready": True,
+                "order_result": "rejected", "order_rejection_reason": "BROKER_BUYING_POWER_INSUFFICIENT",
+                "order_readiness_reason": "ready_for_existing_paper_order_boundary", "decision_reason": "eligible",
+            }
+            self.assertEqual(ledger.record([row], cycle_id="cycle-rejected")["appended"], 1)
+            with open(ledger.path, "r", encoding="utf-8") as handle:
+                record = json.loads(handle.readline())
+            self.assertEqual(record["exact_blocker"], "BROKER_BUYING_POWER_INSUFFICIENT")
+
+    def test_ledger_preserves_early_pipeline_blocker_without_order_rejection(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            ledger = LaneExecutionTraceLedgerV1(root)
+            row = {
+                "lane_id": "DAY", "candidate_id": "candidate-stale", "recommendation_id": "recommendation-stale",
+                "symbol": "RIVN", "candidate_generated_at": "2026-08-11T00:00:00Z",
+                "eligible": False, "selected": False, "order_ready": False,
+                "order_readiness_reason": "STALE_PROVIDER_NATIVE_TIMESTAMP",
+                "decision_reason": "candidate_stale",
+            }
+            ledger.record([row], cycle_id="cycle-stale")
+            with open(ledger.path, "r", encoding="utf-8") as handle:
+                record = json.loads(handle.readline())
+            self.assertEqual(record["exact_blocker"], "STALE_PROVIDER_NATIVE_TIMESTAMP")
+
+    def test_ledger_terminal_rejection_beats_generic_eligible_values(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            ledger = LaneExecutionTraceLedgerV1(root)
+            row = {
+                "lane_id": "DAY", "candidate_id": "candidate-generic", "recommendation_id": "recommendation-generic",
+                "symbol": "COST", "candidate_generated_at": "2026-08-11T00:00:00Z",
+                "eligible": True, "selected": True, "order_ready": True,
+                "order_rejection_reason": "BROKER_ORDER_REJECTED:duplicate_client_order_id",
+                "order_readiness_reason": "eligible", "decision_reason": "eligible", "final_blocker_reason": "eligible",
+            }
+            ledger.record([row], cycle_id="cycle-generic")
+            with open(ledger.path, "r", encoding="utf-8") as handle:
+                record = json.loads(handle.readline())
+            self.assertEqual(record["exact_blocker"], "BROKER_ORDER_REJECTED:duplicate_client_order_id")
 
 
 if __name__ == "__main__":

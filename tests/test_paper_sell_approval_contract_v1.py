@@ -297,9 +297,10 @@ class ProductionApprovalEnforcementTests(unittest.TestCase):
         self.assertFalse(second["submitted"])
         self.assertIn("unresolved_sell_intent", second["reason"])
         self.assertEqual(engine.alpaca_paper_broker.submit_calls, 1)
-        intent = engine._runtime_state["paper_sell_order_intents"]["day-exit-1"]
+        issued_client_order_id = engine.alpaca_paper_broker.submitted_orders[0]["client_order_id"]
+        intent = engine._runtime_state["paper_sell_order_intents"][issued_client_order_id]
         self.assertEqual(intent["status"], "AMBIGUOUS_SUBMISSION")
-        self.assertEqual(intent["client_order_id"], "day-exit-1")
+        self.assertEqual(intent["client_order_id"], issued_client_order_id)
 
         # Restoring worker state preserves the original intent and cannot
         # create a new approval or a second client order id.
@@ -311,7 +312,10 @@ class ProductionApprovalEnforcementTests(unittest.TestCase):
         self.assertFalse(after_restart["submitted"])
         self.assertIn("unresolved_sell_intent", after_restart["reason"])
         self.assertEqual(restarted.alpaca_paper_broker.submit_calls, 1)
-        self.assertEqual(restarted._runtime_state["paper_sell_order_intents"]["day-exit-1"]["client_order_id"], "day-exit-1")
+        self.assertEqual(
+            restarted._runtime_state["paper_sell_order_intents"][issued_client_order_id]["client_order_id"],
+            issued_client_order_id,
+        )
 
     def test_day_swing_and_crypto_writers_share_ambiguity_duplicate_guard(self):
         from unittest.mock import patch

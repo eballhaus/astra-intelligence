@@ -43,6 +43,23 @@ def _cohort_id(lane: str, asset_class: Any, instrument_type: Any) -> str:
     return f"{lane}_{suffix}" if lane in {"DAY", "SWING"} else "SWING_EQUITY"
 
 
+def _exact_blocker(source: Mapping[str, Any]) -> str:
+    """Prefer the terminal order rejection without changing earlier gates."""
+    for field in (
+        "order_rejection_reason",
+        "order_submission_rejection_reason",
+        "broker_rejection_reason",
+    ):
+        value = _text(source.get(field))
+        if value:
+            return value
+    return _text(
+        source.get("order_readiness_reason")
+        or source.get("decision_reason")
+        or source.get("final_blocker_reason")
+    )
+
+
 class LaneExecutionTraceLedgerV1:
     """Bounded index over append-only operational traces; never broker truth."""
 
@@ -228,7 +245,7 @@ class LaneExecutionTraceLedgerV1:
             if trace_id in known:
                 suppressed += 1
                 continue
-            blocker = _text(source.get("order_readiness_reason") or source.get("decision_reason") or source.get("final_blocker_reason"))
+            blocker = _exact_blocker(source)
             record = {
                 "trace_id": trace_id, "timestamp_utc": _now(), "cycle_id": _text(cycle_id),
                 "lane_id": lane, "candidate_id": candidate_id, "recommendation_id": recommendation_id,

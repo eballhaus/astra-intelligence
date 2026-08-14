@@ -678,6 +678,39 @@ def _paper_attribution_client_order_id(row: dict[str, Any] | None) -> str:
     return f"astra-{hashlib.sha256(seed.encode('utf-8')).hexdigest()[:24]}"[:48]
 
 
+def _paper_broker_client_order_id(
+    row: dict[str, Any] | None,
+    *,
+    side: str,
+    purpose: str,
+) -> str:
+    """Issue one globally unique, traceable ID for a new PAPER broker order.
+
+    The stable attribution ID remains useful for joins, but Alpaca requires a
+    fresh client order ID for every new submission. Pending or ambiguous
+    submissions retain the issued ID in their durable intent and are not
+    resubmitted through this helper.
+    """
+    source = dict(row or {})
+    metadata = _paper_attribution_metadata(source)
+    symbol = re.sub(r"[^A-Z0-9]", "", str(source.get("symbol") or "").upper())[:5] or "ORDER"
+    lane = str(source.get("lane_id") or ("CRYPTO" if _norm_asset(source.get("asset_type") or source.get("asset_class")) == "crypto" else "SWING")).upper()
+    lane_token = {"DAY": "day", "SCALP": "scp", "SWING": "swg", "CRYPTO": "cry"}.get(lane, "unk")
+    asset_token = "c" if _norm_asset(source.get("asset_type") or source.get("asset_class")) == "crypto" else "s"
+    side_token = "b" if str(side or "").strip().lower() == "buy" else "s"
+    trace_seed = "|".join([
+        metadata["recommendation_id"], metadata["decision_id"], metadata["eligibility_evaluation_id"],
+        metadata["candidate_id"], str(source.get("position_id") or "").strip(),
+        str(source.get("order_intent_id") or source.get("intent_id") or "").strip(),
+        str(source.get("client_order_id") or "").strip(), symbol, lane, side_token, str(purpose or "order"),
+    ])
+    trace_token = hashlib.sha256(trace_seed.encode("utf-8")).hexdigest()[:8]
+    nonce = uuid.uuid4().hex[:12]
+    # Alpaca accepts ASCII client order IDs up to 48 characters. This is 40
+    # characters maximum and exposes enough context for safe trace joins.
+    return f"astra-{lane_token}-{asset_token}{side_token}-{symbol}-{trace_token}-{nonce}"[:48]
+
+
 def _safe_json(value: Any) -> str:
     try:
         return json.dumps(value if value is not None else {}, separators=(",", ":"), ensure_ascii=True)
@@ -2921,7 +2954,12 @@ class PaperAutopilotEngine:
                 self._persist_sell_intent(intent_id, status="BLOCKED_WITH_EXACT_CAUSE", first_causal_blocker="DUST_OR_UNAVAILABLE_QUANTITY")
                 self._persist_legacy_retirement_transition(lifecycle_id, status="LEGACY_EXIT_BLOCKED", first_causal_blocker="DUST_OR_UNAVAILABLE_QUANTITY")
                 return {"submitted": False, "blocked": True, "state": "BLOCKED_WITH_EXACT_CAUSE"}
-            order = {**dict(current.get("order") or {}), "symbol": symbol, "side": "sell", "type": "market", "time_in_force": "day", "qty": normalized.get("normalized_sell_qty"), "paper_only": True, "existing_exit_signal_verified": True, "paper_sell_approval_intent_id": intent_id[:48], "client_order_id": str(current.get("client_order_id") or intent_id)[:48], "legacy_imported_retirement": True, "legacy_lifecycle_id": lifecycle_id}
+            client_order_id = _paper_broker_client_order_id(
+                {**current, "symbol": symbol, "lane_id": "SWING", "order_intent_id": intent_id},
+                side="sell",
+                purpose="legacy_exit",
+            )
+            order = {**dict(current.get("order") or {}), "symbol": symbol, "side": "sell", "type": "market", "time_in_force": "day", "qty": normalized.get("normalized_sell_qty"), "paper_only": True, "existing_exit_signal_verified": True, "paper_sell_approval_intent_id": intent_id[:48], "client_order_id": client_order_id, "legacy_imported_retirement": True, "legacy_lifecycle_id": lifecycle_id}
             self._persist_sell_intent(intent_id, status="SUBMISSION_RESERVED", order=order, preflight=preflight, submitted_quantity=order["qty"], first_causal_blocker="")
             self._persist_legacy_retirement_transition(lifecycle_id, status="LEGACY_EXIT_PENDING_BROKER", preflight=preflight, submitted_quantity=order["qty"], client_order_id=order["client_order_id"])
             try:
@@ -3652,7 +3690,11 @@ class PaperAutopilotEngine:
                 reason=exit_reason, blocker="DUST_OR_UNAVAILABLE_QUANTITY",
             )
             return {"ok": False, "submitted": False, "reason": "DUST_OR_UNAVAILABLE_QUANTITY", "contract": contract, **normalized}
-        client_order_id = str(open_row.get("client_order_id") or f"astra-{lane.lower()}-exit-{position_id[:18] or symbol[:16]}")[:48]
+        client_order_id = _paper_broker_client_order_id(
+            {**open_row, "symbol": symbol, "lane_id": lane, "position_id": position_id},
+            side="sell",
+            purpose="native_exit",
+        )
         order = {
             "symbol": symbol, "side": "sell", "type": "market",
             "time_in_force": "gtc" if lane == "CRYPTO" else "day", "qty": qty,
@@ -6391,7 +6433,11 @@ class PaperAutopilotEngine:
                 "loop_breaker": loop_row,
             })
             return {"ok": False, "submitted": False, "reason": "sell_rejection_loop_breaker_active", "candidate": candidate, "loop_breaker": loop_row}
-        client_order_id = f"astra-lexit-{pid[:10] or symbol[:8]}-{self._learned_exit_today_key().replace('-', '')}"[:48]
+        client_order_id = _paper_broker_client_order_id(
+            {**candidate, "symbol": symbol, "position_id": pid, "lane_id": candidate.get("lane_id") or open_row.get("lane_id")},
+            side="sell",
+            purpose="learned_exit",
+        )
         order = {
             "symbol": symbol,
             "side": "sell",
@@ -9198,6 +9244,7 @@ class PaperAutopilotEngine:
             }
         attribution = _paper_attribution_metadata(r)
         attribution_client_order_id = _paper_attribution_client_order_id(r)
+        broker_client_order_id = _paper_broker_client_order_id(r, side="buy", purpose="entry")
         asset_type = _norm_asset(r.get("asset_type") or "stock")
         crypto_activation = self._crypto_paper_activation_status() if asset_type == "crypto" else {}
         if asset_type == "crypto" and not crypto_activation.get("paper_active_bounded"):
@@ -9416,8 +9463,8 @@ class PaperAutopilotEngine:
             "astra_order_id": entry_contract.get("astra_order_id"),
         }
         order.update({field: r.get(field) for field in CONTRACT_FIELDS if field in r})
-        if attribution_client_order_id:
-            order["client_order_id"] = attribution_client_order_id
+        order["client_order_id"] = broker_client_order_id
+        order["client_order_attribution_id"] = attribution_client_order_id
         if asset_type == "crypto":
             integrity_row = dict(r)
             integrity_row["notional"] = min(50.0, max(10.0, _to_float(os.getenv("ASTRA_ALPACA_CRYPTO_PAPER_NOTIONAL"), 25.0)))
@@ -9458,7 +9505,8 @@ class PaperAutopilotEngine:
             res.setdefault("decision_id", attribution["decision_id"])
             res.setdefault("eligibility_evaluation_id", attribution["eligibility_evaluation_id"])
             res.setdefault("candidate_id", attribution["candidate_id"])
-            res.setdefault("client_order_id", attribution_client_order_id)
+            res.setdefault("client_order_id", broker_client_order_id)
+            res.setdefault("client_order_attribution_id", attribution_client_order_id)
             broker_payload = dict(res.get("order") or {})
             linked = link_entry_contract_v1(
                 entry_contract,
