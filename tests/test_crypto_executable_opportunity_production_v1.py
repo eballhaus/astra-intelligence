@@ -10,6 +10,7 @@ from engine.astra_crypto_executable_pair_quality_v1 import (
     apply_crypto_executable_quality_tiebreak_v1,
     quality_for_crypto_pair_v1,
     record_crypto_quote_observation_v1,
+    select_crypto_hybrid_rotation_batch_v1,
 )
 from engine.paper_autopilot import PaperAutopilotEngine
 
@@ -75,6 +76,71 @@ class CryptoExecutablePairQualityTests(unittest.TestCase):
             {"symbol": "ADA/USD", "ranking_score": 89.5},
         ], state)
         self.assertEqual(not_comparable[0]["symbol"], "POL/USD")
+
+    def test_hybrid_rotation_prioritizes_reliable_evidence_and_keeps_two_fair_slots(self):
+        universe = ["BTC/USD", "ETH/USD", "SOL/USD", "ADA/USD", "POL/USD"]
+        state = _state("BTC/USD", [3, 4, 5, 6])
+        for age in [45, 50, 60, 70]:
+            state = record_crypto_quote_observation_v1(state, _observation("POL/USD", age))
+
+        rotation = select_crypto_hybrid_rotation_batch_v1(universe, 0, state, batch_size=3)
+
+        self.assertEqual(rotation["crypto_rotation_mode"], "HYBRID")
+        self.assertEqual(rotation["priority_pair"], "BTC/USD")
+        self.assertEqual(len(rotation["batch_pairs"]), 3)
+        self.assertEqual(len(set(rotation["batch_pairs"])), 3)
+        self.assertEqual(len(rotation["exploration_pairs"]), 2)
+        self.assertNotIn("BTC/USD", rotation["exploration_pairs"])
+        self.assertEqual(rotation["exploration_pairs"], ["ADA/USD", "ETH/USD"])
+
+    def test_hybrid_rotation_uses_symbol_as_a_deterministic_quality_tie_break(self):
+        universe = ["ETH/USD", "BTC/USD", "SOL/USD"]
+        state = _state("ETH/USD", [3, 4, 5, 6])
+        for age in [3, 4, 5, 6]:
+            state = record_crypto_quote_observation_v1(state, _observation("BTC/USD", age))
+
+        rotation = select_crypto_hybrid_rotation_batch_v1(universe, 0, state, batch_size=3)
+
+        self.assertEqual(rotation["priority_pair"], "BTC/USD")
+
+    def test_hybrid_rotation_falls_back_to_existing_fair_rotation_without_usable_quality(self):
+        universe = ["BTC/USD", "ETH/USD", "SOL/USD", "ADA/USD", "POL/USD"]
+
+        rotation = select_crypto_hybrid_rotation_batch_v1(universe, 1, {}, batch_size=3)
+
+        self.assertEqual(rotation["crypto_rotation_mode"], "FAIR_FALLBACK")
+        self.assertEqual(rotation["batch_pairs"], ["BTC/USD", "ETH/USD", "POL/USD"])
+        self.assertEqual(rotation["exploration_pairs"], rotation["batch_pairs"])
+
+    def test_insufficient_stale_or_malformed_quality_cannot_claim_priority(self):
+        universe = ["BTC/USD", "ETH/USD", "SOL/USD"]
+        insufficient = _state("BTC/USD", [3, 4, 5])
+        stale = _state("BTC/USD", [3, 4, 5, 6])
+        stale["pairs"]["BTC/USD"]["observations"][-1]["observed_at"] = _iso(-3601)
+        cases = (
+            ("insufficient", insufficient),
+            ("stale", stale),
+            ("malformed", {"pairs": {"BTC/USD": "not-a-quality-record"}}),
+        )
+
+        for name, state in cases:
+            with self.subTest(name=name):
+                rotation = select_crypto_hybrid_rotation_batch_v1(universe, 0, state, batch_size=3)
+                self.assertEqual(rotation["crypto_rotation_mode"], "FAIR_FALLBACK")
+                self.assertEqual(rotation["priority_pair"], "")
+                self.assertEqual(rotation["batch_pairs"], ["BTC/USD", "ETH/USD", "SOL/USD"])
+
+    def test_hybrid_rotation_exploration_eventually_visits_the_full_universe(self):
+        universe = [f"COIN{index:02d}/USD" for index in range(30)]
+        state = _state("COIN00/USD", [3, 4, 5, 6])
+        cursor, observed = 0, set()
+
+        for _ in range(30):
+            rotation = select_crypto_hybrid_rotation_batch_v1(universe, cursor, state, batch_size=3)
+            observed.update(rotation["batch_pairs"])
+            cursor = rotation["next_cursor"]
+
+        self.assertEqual(observed, set(universe))
 
 
 class CryptoFinalRefreshTests(unittest.TestCase):

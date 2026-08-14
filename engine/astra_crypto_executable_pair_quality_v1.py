@@ -6,6 +6,7 @@ canonical worker already collected.  It never requests data, changes the
 """
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from functools import cmp_to_key
 from typing import Any, Mapping
 
@@ -15,6 +16,7 @@ MAX_PAIRS = 32
 MAX_OBSERVATIONS_PER_PAIR = 12
 MIN_SAMPLES_FOR_QUALITY = 4
 EXECUTABLE_QUOTE_MAX_AGE_SECONDS = 20.0
+ROTATION_QUALITY_MAX_AGE_SECONDS = 60 * 60
 
 
 def _number(value: Any, default: float | None = None) -> float | None:
@@ -26,6 +28,16 @@ def _number(value: Any, default: float | None = None) -> float | None:
 
 def _symbol(value: Any) -> str:
     return str(value or "").upper().strip()
+
+
+def _observed_epoch(value: Any) -> float | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(UTC).timestamp()
+    except (TypeError, ValueError):
+        return None
 
 
 def _quality_summary(symbol: str, observations: list[dict[str, Any]]) -> dict[str, Any]:
@@ -133,6 +145,122 @@ def quality_for_crypto_pair_v1(state: Mapping[str, Any] | None, symbol: Any) -> 
     if not pair:
         return _quality_summary(_symbol(symbol), [])
     return {key: value for key, value in pair.items() if key != "observations"}
+
+
+def select_crypto_hybrid_rotation_batch_v1(
+    universe: list[str] | tuple[str, ...] | None,
+    cursor: int,
+    state: Mapping[str, Any] | None,
+    *,
+    batch_size: int = 3,
+    now_epoch: float | None = None,
+) -> dict[str, Any]:
+    """Choose one quality-priority observation plus fair exploration slots.
+
+    This consumes only the existing bounded executable-pair observations. It
+    does not rank candidates or authorize execution; final quote freshness
+    remains owned by the existing entry path.
+    """
+    pairs = sorted({_symbol(symbol) for symbol in (universe or []) if _symbol(symbol)})
+    size = max(1, min(int(batch_size or 1), len(pairs))) if pairs else 0
+    if not pairs:
+        return {
+            "crypto_rotation_mode": "FAIR_FALLBACK",
+            "priority_pair": "",
+            "priority_reason": "EMPTY_UNIVERSE",
+            "priority_pass_rate": None,
+            "priority_source": "crypto_executable_pair_quality_v1",
+            "exploration_pairs": [],
+            "batch_pairs": [],
+            "next_cursor": 0,
+        }
+
+    start = int(cursor or 0) % len(pairs)
+
+    def fair_batch(exclude: set[str], count: int) -> tuple[list[str], int]:
+        selected: list[str] = []
+        scanned = 0
+        while scanned < len(pairs) and len(selected) < count:
+            symbol = pairs[(start + scanned) % len(pairs)]
+            scanned += 1
+            if symbol not in exclude and symbol not in selected:
+                selected.append(symbol)
+        return selected, (start + scanned) % len(pairs)
+
+    raw_pairs = dict(state or {}).get("pairs")
+    if not isinstance(raw_pairs, Mapping):
+        explored, next_cursor = fair_batch(set(), size)
+        return {
+            "crypto_rotation_mode": "FAIR_FALLBACK",
+            "priority_pair": "",
+            "priority_reason": "QUALITY_EVIDENCE_UNAVAILABLE",
+            "priority_pass_rate": None,
+            "priority_source": "crypto_executable_pair_quality_v1",
+            "exploration_pairs": explored,
+            "batch_pairs": explored,
+            "next_cursor": next_cursor,
+        }
+
+    now = float(now_epoch) if now_epoch is not None else datetime.now(UTC).timestamp()
+    candidates: list[tuple[int, float, int, float, str, dict[str, Any]]] = []
+    for symbol in pairs:
+        raw_quality = raw_pairs.get(symbol)
+        if not isinstance(raw_quality, Mapping):
+            continue
+        quality = dict(raw_quality)
+        observations = list(quality.get("observations") or [])
+        last_observed_at = _observed_epoch((observations[-1] if observations else {}).get("observed_at"))
+        sample_size = int(_number(quality.get("native_quote_observation_count"), 0) or 0)
+        pass_rate = _number(quality.get("freshness_pass_rate"))
+        quality_name = str(quality.get("quality") or "")
+        if (
+            not observations
+            or last_observed_at is None
+            or now - last_observed_at > ROTATION_QUALITY_MAX_AGE_SECONDS
+            or not bool(quality.get("sample_sufficient"))
+            or sample_size < MIN_SAMPLES_FOR_QUALITY
+            or pass_rate is None
+            or quality_name not in {"RELIABLE_EXECUTABLE", "MIXED_EXECUTABILITY", "CHRONICALLY_STALE"}
+        ):
+            continue
+        class_rank = {
+            "RELIABLE_EXECUTABLE": 2,
+            "MIXED_EXECUTABILITY": 1,
+            "CHRONICALLY_STALE": 0,
+        }[quality_name]
+        latest_age = _number(quality.get("last_native_quote_age_seconds"), float("inf"))
+        candidates.append((class_rank, float(pass_rate), sample_size, float(latest_age if latest_age is not None else float("inf")), symbol, quality))
+
+    if not candidates:
+        explored, next_cursor = fair_batch(set(), size)
+        return {
+            "crypto_rotation_mode": "FAIR_FALLBACK",
+            "priority_pair": "",
+            "priority_reason": "QUALITY_EVIDENCE_INSUFFICIENT_OR_STALE",
+            "priority_pass_rate": None,
+            "priority_source": "crypto_executable_pair_quality_v1",
+            "exploration_pairs": explored,
+            "batch_pairs": explored,
+            "next_cursor": next_cursor,
+        }
+
+    # Prefer reliable, then mixed, then chronically stale evidence. Within a
+    # class, existing pass rate/sample/age facts and the symbol are a stable
+    # deterministic tie-break; no alpha or trade ranking input is introduced.
+    candidates.sort(key=lambda item: (-item[0], -item[1], -item[2], item[3], item[4]))
+    _, pass_rate, _sample_size, _latest_age, priority_pair, priority_quality = candidates[0]
+    exploration, next_cursor = fair_batch({priority_pair}, max(0, size - 1))
+    batch_pairs = [priority_pair, *exploration]
+    return {
+        "crypto_rotation_mode": "HYBRID",
+        "priority_pair": priority_pair,
+        "priority_reason": f"{priority_quality.get('quality')}_SAMPLE_SUFFICIENT",
+        "priority_pass_rate": pass_rate,
+        "priority_source": "crypto_executable_pair_quality_v1",
+        "exploration_pairs": exploration,
+        "batch_pairs": batch_pairs,
+        "next_cursor": next_cursor,
+    }
 
 
 def apply_crypto_executable_quality_tiebreak_v1(

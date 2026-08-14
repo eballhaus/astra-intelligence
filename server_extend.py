@@ -21562,6 +21562,12 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         discovered = list(_ASTRA_CRYPTO_APPROVED_CORE_UNIVERSE_V1)
     batch_size = max(1, min(3, int(os.getenv("ASTRA_CRYPTO_REFRESH_PAIRS_PER_CYCLE", "3") or 3)))
     cursor = int(previous.get("discovery_cursor") or 0) % len(discovered)
+    from engine.astra_crypto_executable_pair_quality_v1 import (
+        apply_crypto_executable_quality_tiebreak_v1,
+        record_crypto_quote_observation_v1,
+        select_crypto_hybrid_rotation_batch_v1,
+    )
+    executable_pair_quality = dict(previous.get("crypto_executable_pair_quality_v1") or {})
     # One bounded diagnostic pass establishes real request/response evidence
     # for liquid reference pairs without increasing the existing three-pair
     # worker budget. It affects observation order only, never ranking or lane
@@ -21571,8 +21577,24 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
     diagnostic_active = bool(diagnostic_set and diagnostic_cursor < len(diagnostic_set) and not previous.get("market_data_diagnostic_complete"))
     if diagnostic_active:
         symbols = diagnostic_set[diagnostic_cursor:diagnostic_cursor + batch_size]
+        rotation_plan = {
+            "crypto_rotation_mode": "DIAGNOSTIC_BOOTSTRAP",
+            "priority_pair": "",
+            "priority_reason": "MARKET_DATA_DIAGNOSTIC_ACTIVE",
+            "priority_pass_rate": None,
+            "priority_source": "crypto_executable_pair_quality_v1",
+            "exploration_pairs": list(symbols),
+            "batch_pairs": list(symbols),
+            "next_cursor": (cursor + batch_size) % len(discovered),
+        }
     else:
-        symbols = [discovered[(cursor + offset) % len(discovered)] for offset in range(batch_size)]
+        rotation_plan = select_crypto_hybrid_rotation_batch_v1(
+            discovered,
+            cursor,
+            executable_pair_quality,
+            batch_size=batch_size,
+        )
+        symbols = list(rotation_plan["batch_pairs"])
     end = datetime.now(UTC)
     start = end - timedelta(hours=6)
     output, failures, volume_audit, quote_integrity_rows = [], [], [], []
@@ -21679,11 +21701,6 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
     generated_at = _now_utc_iso()
     # Persist only a compact, worker-observed executability history. The
     # signal is an ordering tie-break, never a substitute for final freshness.
-    from engine.astra_crypto_executable_pair_quality_v1 import (
-        apply_crypto_executable_quality_tiebreak_v1,
-        record_crypto_quote_observation_v1,
-    )
-    executable_pair_quality = dict(previous.get("crypto_executable_pair_quality_v1") or {})
     for integrity in quote_integrity_rows:
         executable_pair_quality = record_crypto_quote_observation_v1(executable_pair_quality, integrity)
     output = apply_crypto_executable_quality_tiebreak_v1(output, executable_pair_quality)
@@ -21718,7 +21735,7 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         "quote_provider": "worker_provider_router",
         "provider_owner": "data_orchestrator.ProviderRouter + AlpacaPaperBroker.historical_bars",
         "crypto_discovery_universe": discovered,
-        "discovery_cursor": (cursor + batch_size) % len(discovered),
+        "discovery_cursor": int(rotation_plan["next_cursor"]),
         "market_data_diagnostic_cycle_id": f"crypto-market-data-diagnostic:{int(now)}" if diagnostic_active else None,
         "market_data_diagnostic_cursor": min(len(diagnostic_set), diagnostic_cursor + len(symbols)) if diagnostic_active else diagnostic_cursor,
         "market_data_diagnostic_complete": bool(diagnostic_active and diagnostic_cursor + len(symbols) >= len(diagnostic_set)) or bool(previous.get("market_data_diagnostic_complete")),
@@ -21731,7 +21748,7 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         "crypto_quote_integrity": {"pairs_requested": len(symbols), "pairs_with_quote": sum(1 for row in quote_integrity_rows if row.get("quote_received")), "pairs_with_bid_ask": sum(1 for row in quote_integrity_rows if row.get("bid_present") and row.get("ask_present")), "pairs_with_calculated_spread": sum(1 for row in quote_integrity_rows if row.get("spread_present")), "pairs_missing_bid_ask": sum(1 for row in quote_integrity_rows if not (row.get("bid_present") and row.get("ask_present"))), "pairs_persisted": sum(1 for row in quote_integrity_rows if row.get("candidate_persisted"))},
         "capability_refresh": capability_refresh,
         "pairs_evaluated_this_cycle": len(symbols), "rotation_cycles_remaining": max(0, math.ceil(len(discovered) / batch_size) - 1),
-        "rotation_observability": {"evaluated_symbols": symbols, "core_pairs_in_discovery": [pair for pair in ("BTC/USD", "ETH/USD", "LINK/USD", "LTC/USD") if pair in discovered], "fair_rotation_enforced": True, "market_data_diagnostic_active": diagnostic_active, "market_data_diagnostic_remaining": max(0, len(diagnostic_set) - (diagnostic_cursor + len(symbols) if diagnostic_active else diagnostic_cursor)), "provider_calls_used": provider_calls_used, "broker_actions_used": 0},
+        "rotation_observability": {"evaluated_symbols": symbols, "core_pairs_in_discovery": [pair for pair in ("BTC/USD", "ETH/USD", "LINK/USD", "LTC/USD") if pair in discovered], "fair_rotation_enforced": True, "market_data_diagnostic_active": diagnostic_active, "market_data_diagnostic_remaining": max(0, len(diagnostic_set) - (diagnostic_cursor + len(symbols) if diagnostic_active else diagnostic_cursor)), "crypto_rotation_mode": rotation_plan["crypto_rotation_mode"], "priority_pair": rotation_plan["priority_pair"], "priority_reason": rotation_plan["priority_reason"], "priority_pass_rate": rotation_plan["priority_pass_rate"], "exploration_pairs": rotation_plan["exploration_pairs"], "batch_pairs": rotation_plan["batch_pairs"], "priority_source": rotation_plan["priority_source"], "provider_calls_used": provider_calls_used, "broker_actions_used": 0},
     }
     PAPER_AUTOPILOT._runtime_state["crypto_rankings_snapshot_v1"] = snapshot
     PAPER_AUTOPILOT._runtime_state["crypto_quote_handoffs_v1"] = quote_handoffs
