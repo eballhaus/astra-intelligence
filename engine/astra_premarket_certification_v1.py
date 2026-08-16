@@ -641,6 +641,42 @@ def enrich_candidate_for_pretrade_contract(
     may fill a missing field but cannot overwrite stronger evidence.
     """
     row = dict(candidate or {})
+    # The crypto ranking producer persists its bounded continuation forecast
+    # as a versioned nested contract.  Consume only a complete, candidate-local
+    # forecast before resolving the risk envelope; otherwise the downstream
+    # aliases cannot see already-attributable return/risk evidence.  This is a
+    # materialization bridge, not a forecast fallback: incomplete forecasts
+    # remain untouched and the contract stays fail closed.
+    crypto_forecast = dict(row.get("crypto_pretrade_forecast_v1") or {})
+    if crypto_forecast.get("forecast_state") == "FORECAST_COMPLETE":
+        for field in (
+            "expected_return_range",
+            "expected_return_pct",
+            "expected_target_low",
+            "expected_target_high",
+            "expected_downside_range",
+            "expected_drawdown",
+            "invalidation_level",
+        ):
+            if row.get(field) in (None, "", [], {}) and crypto_forecast.get(field) not in (None, "", [], {}):
+                row[field] = crypto_forecast[field]
+        for field in (
+            "forecast_timestamp",
+            "valid_until",
+            "calculation_method",
+            "source_inputs",
+            "source_provenance",
+            "schema_version",
+        ):
+            target_field = {
+                "valid_until": "forecast_valid_until",
+                "calculation_method": "expected_return_method",
+                "source_inputs": "forecast_source_inputs",
+                "source_provenance": "forecast_source_provenance",
+                "schema_version": "forecast_schema_version",
+            }.get(field, field)
+            if row.get(target_field) in (None, "", [], {}) and crypto_forecast.get(field) not in (None, "", [], {}):
+                row[target_field] = crypto_forecast[field]
     # A previous enrichment can contain a stale envelope after a restart or a
     # new market snapshot. Rebuild from the supplied bounded evidence instead
     # of treating the presence of any old envelope as an idempotency proof.
