@@ -15,7 +15,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 
 VERSION = "1.0.0"
-LANES = ("SWING", "DAY", "CRYPTO")
+LANES = ("SWING", "DAY", "SCALP", "CRYPTO")
 REQUIRED_CONTRACT_FIELDS = (
     "candidate_id", "recommendation_id", "decision_id", "symbol", "lane",
     "strategy_archetype", "trade_style", "ranking_score", "thesis",
@@ -150,7 +150,9 @@ def _lane(value: Any) -> str:
         return raw
     if raw in {"DAY_TRADE", "DAYTRADE"}:
         return "DAY"
-    if raw in {"SCALP", "SWING_TRADE", "SHORT_SWING", "STANDARD_SWING", "EXTENDED_SWING"}:
+    if raw == "SCALP":
+        return "SCALP"
+    if raw in {"SWING_TRADE", "SHORT_SWING", "STANDARD_SWING", "EXTENDED_SWING"}:
         return "SWING"
     return raw or "UNKNOWN"
 
@@ -222,6 +224,23 @@ def _number(value: Any) -> float | None:
         return float(str(value).replace("%", "").strip())
     except (TypeError, ValueError):
         return None
+
+
+def _expected_hold_duration_days(row: Mapping[str, Any], horizon: str) -> tuple[float | None, str]:
+    """Preserve explicit duration evidence before existing horizon fallbacks."""
+    minutes, minutes_field = _first_field(row, ("expected_hold_minutes", "hold_minutes"))
+    minutes_value = _number(minutes)
+    if minutes_value is not None and minutes_value > 0:
+        return minutes_value / 1440.0, minutes_field
+    days, days_field = _first_field(row, ("expected_hold_days", "hold_days"))
+    days_value = _number(days)
+    if days_value is not None and days_value > 0:
+        return days_value, days_field
+    if horizon == "day_trade":
+        return 1.0 / 24.0, "existing_day_trade_policy"
+    if horizon == "swing_trade":
+        return 3.0, "existing_swing_trade_policy"
+    return None, ""
 
 
 def _candidate_symbol(row: Mapping[str, Any]) -> str:
@@ -527,13 +546,22 @@ def build_candidate_risk_envelope_v1(
         reward_to_risk = _range(float(upside_range["low_pct"]) / abs(float(downside["low_pct"])), float(upside_range["high_pct"]) / abs(float(downside["high_pct"])), label="EXPECTED_REWARD_TO_RISK")
     execution_horizon, _ = _pretrade_execution_horizon(row)
     horizon = execution_horizon or _text(_first(row, "intended_horizon", "paper_entry_horizon_style", "trade_horizon_style"))
-    hold_minutes = _number(_first(row, "expected_hold_minutes", "hold_minutes"))
-    # SCALP duration is supplied by the existing lane/horizon contract.  Do
-    # not substitute a generic duration when that contract is absent.
-    hold_days = (hold_minutes / 1440.0) if hold_minutes and hold_minutes > 0 else 1.0 / 24.0 if horizon == "day_trade" else 3.0 if horizon == "swing_trade" else None
+    hold_days, hold_duration_source = _expected_hold_duration_days(row, horizon)
     per_day = None
     if upside_range and hold_days:
         per_day = {"low_pct_per_day": round(float(upside_range["low_pct"]) / hold_days, 4), "high_pct_per_day": round(float(upside_range["high_pct"]) / hold_days, 4), "method": "candidate_expected_return_over_existing_horizon"}
+        provenance["expected_return_per_day_range"] = _provenance(
+            per_day,
+            source_system="candidate_expected_return_and_horizon",
+            source_field=f"expected_return_range/{hold_duration_source}",
+            source_row=row,
+            evidence_class="CURRENT_CANDIDATE_DIRECT" if hold_duration_source in {"expected_hold_minutes", "hold_minutes", "expected_hold_days", "hold_days"} else "BOUNDED_POLICY_DEFAULT",
+            confidence=_first(row, "confidence", "risk_confidence"),
+            now=now,
+            candidate_specific=True,
+            symbol_specific=True,
+            derived=True,
+        )
     missing = [name for name, value in (("expected_downside_range", downside), ("expected_drawdown", drawdown), ("expected_upside_range", upside_range)) if value in (None, "", [], {})]
     stale = bool(quote_timestamp and quote_freshness == "STALE")
     state = "RISK_ENVELOPE_STALE" if stale else "RISK_ENVELOPE_INCOMPLETE" if missing else "RISK_ENVELOPE_COMPLETE_WITH_WARNINGS" if not price or quote_freshness == "UNKNOWN" else "RISK_ENVELOPE_COMPLETE"
@@ -888,7 +916,22 @@ def enrich_candidate_for_pretrade_contract(
         # is not a percentage loss forecast for the pretrade contract.
         drawdown = None
         provenance.pop("expected_drawdown", None)
+    hold_days, hold_duration_source = _expected_hold_duration_days(row, str(horizon))
     hold_window = _text(_first(row, "expected_hold_window", "hold_window"))
+    if not hold_window and hold_duration_source in {"expected_hold_days", "hold_days"} and hold_days:
+        hold_window = f"{hold_days:g} trading days"
+        provenance["expected_hold_window"] = _provenance(
+            hold_window,
+            source_system="candidate_existing_duration",
+            source_field=hold_duration_source,
+            source_row=row,
+            evidence_class="CURRENT_CANDIDATE_DIRECT",
+            confidence=confidence,
+            now=now,
+            candidate_specific=True,
+            symbol_specific=True,
+            derived=True,
+        )
     if not hold_window and horizon:
         hold_window = "same session" if str(horizon) == "day_trade" else "1-5 trading days" if str(horizon) == "swing_trade" else "bounded existing horizon"
         provenance["expected_hold_window"] = _provenance(
@@ -896,8 +939,6 @@ def enrich_candidate_for_pretrade_contract(
             evidence_class="BOUNDED_POLICY_DEFAULT", confidence=confidence, now=now,
             candidate_specific=True, symbol_specific=True, derived=True,
         )
-    hold_minutes = _number(_first(row, "expected_hold_minutes", "hold_minutes"))
-    hold_days = (hold_minutes / 1440.0) if hold_minutes and hold_minutes > 0 else 1.0 / 24.0 if str(horizon) == "day_trade" else 3.0 if str(horizon) == "swing_trade" else None
     per_day = None
     if expected_return_range and hold_days:
         per_day = {
@@ -906,8 +947,8 @@ def enrich_candidate_for_pretrade_contract(
             "method": "candidate_expected_return_over_bounded_horizon",
         }
         provenance["expected_return_per_day_range"] = _provenance(
-            per_day, source_system="candidate_expected_return_and_horizon", source_field="expected_return_range/intended_horizon", source_row=row,
-            evidence_class="BOUNDED_POLICY_DEFAULT", confidence=confidence, now=now,
+            per_day, source_system="candidate_expected_return_and_horizon", source_field=f"expected_return_range/{hold_duration_source}", source_row=row,
+            evidence_class="CURRENT_CANDIDATE_DIRECT" if hold_duration_source in {"expected_hold_minutes", "hold_minutes", "expected_hold_days", "hold_days"} else "BOUNDED_POLICY_DEFAULT", confidence=confidence, now=now,
             candidate_specific=True, symbol_specific=True, derived=True,
         )
     hold_conditions = _as_plan_list(_first(row, "hold_conditions", "thesis_hold_conditions"))
