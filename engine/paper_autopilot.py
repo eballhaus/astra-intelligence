@@ -1210,7 +1210,12 @@ def _normalize_paper_entry_bridge(row: dict[str, Any]) -> dict[str, Any]:
     # Preserve the producer's explicit values before the legacy compatibility
     # lane registry can derive display metadata.  New entries may only use
     # these pretrade values through the mandatory contract below.
-    r["_entry_raw_lane"] = r.get("lane_id")
+    r.setdefault("_entry_raw_lane", r.get("lane_id"))
+    # Retain the producer-owned lane independently from the raw compatibility
+    # field.  A blank compatibility value must not erase valid upstream
+    # canonical identity, while a genuinely unclassified candidate remains
+    # fail-closed after later display derivation.
+    r["_entry_canonical_lane"] = r.get("lane_id")
     r["_entry_raw_horizon"] = next((r.get(key) for key in (
         "paper_entry_horizon_style", "trade_horizon_style", "best_horizon_style", "intended_horizon", "horizon"
     ) if r.get(key) not in (None, "")), "")

@@ -11,6 +11,7 @@ from engine.astra_entry_lane_horizon_contract_v1 import (
     validate_entry_submission_contract_v1,
 )
 from engine.astra_position_lane_horizon_recovery_v1 import build_position_lane_horizon_recovery_v1
+from engine.paper_autopilot import _normalize_paper_entry_bridge
 
 
 def _row(**extra):
@@ -25,11 +26,70 @@ def _row(**extra):
 class EntryLaneHorizonContractTests(unittest.TestCase):
     def test_aliases_normalize_without_defaulting(self):
         day = build_entry_lane_horizon_contract_v1(_row())
+        scalp = build_entry_lane_horizon_contract_v1(_row(lane_id="SCALP", trade_horizon_style="scalp"))
         swing = build_entry_lane_horizon_contract_v1(_row(lane_id="SWING", trade_horizon_style="multi_day"))
         crypto = build_entry_lane_horizon_contract_v1(_row(symbol="BTC/USD", asset_class="crypto", lane_id="CRYPTO", trade_horizon_style="crypto_short"))
         self.assertEqual((day["lane"], day["horizon"]), ("DAY", "day_trade"))
+        self.assertEqual((scalp["lane"], scalp["horizon"]), ("SCALP", "scalp"))
         self.assertEqual((swing["lane"], swing["horizon"]), ("SWING", "swing_trade"))
         self.assertEqual((crypto["lane"], crypto["horizon"]), ("CRYPTO", "crypto_multi_horizon"))
+
+    def test_blank_raw_lane_yields_to_canonical_scalp_identity_after_registry_derivation(self):
+        candidate = _row(
+            symbol="GEHC",
+            lane_id="SCALP",
+            _entry_raw_lane="",
+            trade_style="scalp",
+            trade_horizon_style="scalp",
+        )
+        bridged = _normalize_paper_entry_bridge(candidate)
+        contract = dict(bridged["entry_lane_horizon_contract_v1"])
+
+        self.assertEqual(bridged["_entry_raw_lane"], "")
+        self.assertEqual(bridged["lane_id"], "SCALP")
+        self.assertEqual((contract["lane"], contract["horizon"]), ("SCALP", "scalp"))
+        self.assertTrue(validate_entry_submission_contract_v1(contract)["allowed"])
+
+    def test_raw_placeholders_do_not_shadow_valid_canonical_lane(self):
+        for placeholder in ("", "unknown", "UNAVAILABLE", "missing", "None", "null", "N/A"):
+            with self.subTest(placeholder=placeholder):
+                contract = build_entry_lane_horizon_contract_v1(_row(
+                    lane_id="SCALP",
+                    trade_horizon_style="scalp",
+                    _entry_raw_lane=placeholder,
+                ))
+                self.assertEqual(contract["lane"], "SCALP")
+                self.assertTrue(validate_entry_submission_contract_v1(contract)["allowed"])
+
+    def test_blank_raw_lane_preserves_existing_day_swing_and_crypto_contracts(self):
+        cases = (
+            ("DAY", "intraday", "equity", "DAY", "day_trade"),
+            ("SWING", "swing_trade", "equity", "SWING", "swing_trade"),
+            ("CRYPTO", "crypto_short", "crypto", "CRYPTO", "crypto_multi_horizon"),
+        )
+        for lane_id, horizon, asset_class, expected_lane, expected_horizon in cases:
+            with self.subTest(lane=lane_id):
+                contract = build_entry_lane_horizon_contract_v1(_row(
+                    lane_id=lane_id,
+                    asset_class=asset_class,
+                    trade_horizon_style=horizon,
+                    _entry_raw_lane="UNAVAILABLE",
+                ))
+                self.assertEqual((contract["lane"], contract["horizon"]), (expected_lane, expected_horizon))
+                self.assertTrue(validate_entry_submission_contract_v1(contract)["allowed"])
+
+    def test_genuinely_unclassified_lane_remains_unavailable_and_blocks_without_calls(self):
+        contract = build_entry_lane_horizon_contract_v1(_row(
+            lane_id="",
+            _entry_raw_lane="unknown",
+            trade_horizon_style="scalp",
+        ))
+        verdict = validate_entry_submission_contract_v1(contract)
+
+        self.assertEqual(contract["lane"], "UNAVAILABLE")
+        self.assertFalse(verdict["allowed"])
+        self.assertIn("MISSING_CANONICAL_ENTRY_LANE", verdict["exact_blockers"])
+        self.assertEqual((verdict["broker_actions_used"], verdict["provider_calls_used"]), (0, 0))
 
     def test_missing_or_invalid_metadata_fails_closed(self):
         for row, blocker in [

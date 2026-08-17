@@ -11,9 +11,10 @@ from typing import Any, Mapping
 
 
 VERSION = "1.0.0"
-VALID_LANES = {"DAY", "SWING", "CRYPTO"}
+VALID_LANES = {"DAY", "SCALP", "SWING", "CRYPTO"}
 LANE_ALIASES = {
     "day": "DAY", "day_equity": "DAY", "day_etf": "DAY",
+    "scalp": "SCALP",
     "swing": "SWING", "swing_equity": "SWING", "swing_etf": "SWING",
     "crypto": "CRYPTO", "cryptocurrency": "CRYPTO",
 }
@@ -40,6 +41,16 @@ def _normalize(value: Any, aliases: Mapping[str, str]) -> str:
     return aliases.get(raw, "")
 
 
+def _attributable_value(value: Any) -> str:
+    """Keep compatibility placeholders from shadowing canonical evidence."""
+    text = _text(value)
+    if text.lower().replace("-", "_").replace("/", "_").replace(" ", "_") in {
+        "", "unknown", "unavailable", "missing", "none", "null", "n_a", "na",
+    }:
+        return ""
+    return text
+
+
 def _stable_id(prefix: str, *parts: Any) -> str:
     seed = "|".join(_text(part) for part in parts)
     return prefix + "-" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:24]
@@ -48,12 +59,26 @@ def _stable_id(prefix: str, *parts: Any) -> str:
 def build_entry_lane_horizon_contract_v1(row: Mapping[str, Any] | None) -> dict[str, Any]:
     """Build metadata from explicit pretrade evidence only; never default values."""
     source = dict(row or {})
-    explicit_lane = source.get("_entry_raw_lane", source.get("lane_id"))
-    explicit_horizon = source.get("_entry_raw_horizon")
-    if explicit_horizon in (None, ""):
+    # `_entry_raw_*` are compatibility snapshots.  They may be blank when the
+    # canonical lane registry derives an attributable lane/horizon later in
+    # the same pretrade handoff, so only meaningful raw values may override
+    # canonical evidence.
+    explicit_lane = _attributable_value(source.get("_entry_raw_lane"))
+    if not explicit_lane:
+        # The paper bridge records the lane supplied by the producer before
+        # its compatibility registry runs.  A blank snapshot means no
+        # attributable lane existed, so do not validate a later inferred
+        # display lane as entry authority.
+        if "_entry_canonical_lane" in source:
+            explicit_lane = _attributable_value(source.get("_entry_canonical_lane"))
+        else:
+            explicit_lane = _attributable_value(source.get("lane_id"))
+    explicit_horizon = _attributable_value(source.get("_entry_raw_horizon"))
+    if not explicit_horizon:
         for key in ("paper_entry_horizon_style", "trade_horizon_style", "best_horizon_style", "intended_horizon", "horizon"):
-            if source.get(key) not in (None, ""):
-                explicit_horizon = source.get(key)
+            value = _attributable_value(source.get(key))
+            if value:
+                explicit_horizon = value
                 break
     lane = _normalize(explicit_lane, {**{key.lower(): value for key, value in LANE_ALIASES.items()}, **{key.lower(): key for key in VALID_LANES}})
     horizon = _normalize(explicit_horizon, HORIZON_ALIASES)
