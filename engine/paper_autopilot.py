@@ -2470,6 +2470,13 @@ class PaperAutopilotEngine:
         "PARTIALLY_FILLED",
         "RETRY_PENDING",
     }
+    # A broker-filled intent is terminal as an order intent, but it is not
+    # evidence of broker-zero or canonical lifecycle closure.  Keep this
+    # state outside the unresolved set so an old filled sell cannot block a
+    # later same-symbol lifecycle.
+    _FILLED_SELL_INTENT_RECONCILED_STATES = {
+        "BROKER_FILLED_INTENT_RECONCILED",
+    }
 
     def _paper_sell_order_intents(self) -> dict[str, Any]:
         return dict(self._runtime_state.get("paper_sell_order_intents") or {})
@@ -2497,19 +2504,97 @@ class PaperAutopilotEngine:
             pass
         return row
 
-    def _matching_sell_intent(self, symbol: str, position_id: str = "") -> tuple[str, dict[str, Any]]:
+    @staticmethod
+    def _sell_intent_identity_values(intent: Mapping[str, Any] | None) -> set[str]:
+        """Return only canonical lifecycle identities carried by an intent."""
+        row = dict(intent or {})
+        order = dict(row.get("order") or {})
+        values: set[str] = set()
+        for source in (row, order):
+            for field in (
+                "position_id",
+                "lifecycle_id",
+                "canonical_position_id",
+                "canonical_lifecycle_id",
+            ):
+                value = str(source.get(field) or "").strip()
+                if value:
+                    values.add(value)
+        return values
+
+    def _matching_sell_intent(
+        self,
+        symbol: str,
+        position_id: str = "",
+        lifecycle_id: str = "",
+    ) -> tuple[str, dict[str, Any]]:
         sym = str(symbol or "").upper().strip()
-        pid = str(position_id or "").strip()
+        target_identities = {
+            value for value in (str(position_id or "").strip(), str(lifecycle_id or "").strip()) if value
+        }
+        symbol_matches: list[tuple[str, dict[str, Any]]] = []
         for key, raw in self._paper_sell_order_intents().items():
             row = dict(raw or {})
             if str(row.get("status") or "").upper() not in self._UNRESOLVED_SELL_INTENT_STATES:
                 continue
             order = dict(row.get("order") or {})
-            if sym and str(row.get("symbol") or order.get("symbol") or "").upper().strip() == sym:
+            row_symbol = str(row.get("symbol") or order.get("symbol") or "").upper().strip()
+            identities = self._sell_intent_identity_values(row)
+            # Canonical identity always wins over symbol matching.  This keeps
+            # same-position idempotency while allowing a new same-symbol
+            # lifecycle to proceed after a prior one has been reconciled.
+            if target_identities and identities.intersection(target_identities):
                 return str(key), row
-            if pid and str(row.get("position_id") or "").strip() == pid:
-                return str(key), row
+            if (not sym or row_symbol == sym) and not target_identities:
+                symbol_matches.append((str(key), row))
+        if symbol_matches:
+            return symbol_matches[0]
         return "", {}
+
+    def _sell_intent_identity_ambiguity(
+        self,
+        symbol: str,
+        target_identities: set[str],
+        *,
+        statuses: set[str],
+    ) -> str:
+        """Return a same-symbol intent that cannot be attributed safely."""
+        if not target_identities:
+            return ""
+        sym = str(symbol or "").upper().strip()
+        for key, raw in self._paper_sell_order_intents().items():
+            row = dict(raw or {})
+            if str(row.get("status") or "").upper() not in statuses:
+                continue
+            order = dict(row.get("order") or {})
+            if sym and str(row.get("symbol") or order.get("symbol") or "").upper().strip() != sym:
+                continue
+            if not self._sell_intent_identity_values(row):
+                return str(key)
+        return ""
+
+    def _terminalize_broker_filled_sell_intent(
+        self,
+        intent_id: str,
+        order_id: str,
+        order: Mapping[str, Any],
+    ) -> None:
+        """Retain an authoritative fill without claiming lifecycle closure."""
+        broker_order = dict(order or {})
+        self._persist_sell_intent(
+            intent_id,
+            status="BROKER_FILLED_INTENT_RECONCILED",
+            reconciliation_status="ORIGINAL_ORDER_FILLED",
+            broker_order_id=str(broker_order.get("id") or order_id),
+            broker_order_status="FILLED",
+            filled_quantity=_to_float(broker_order.get("filled_qty") or broker_order.get("filled_quantity"), 0.0),
+            average_fill_price=_to_float(broker_order.get("filled_avg_price"), 0.0),
+            filled_at=str(broker_order.get("filled_at") or "").strip(),
+            terminal=True,
+            terminal_scope="SELL_INTENT_ONLY",
+            canonical_lifecycle_reconciliation_required=True,
+            retry_eligible=False,
+        )
 
     def _refresh_unresolved_sell_intents(self) -> dict[str, Any]:
         """Reconcile ambiguous intents without ever submitting a replacement.
@@ -2583,8 +2668,11 @@ class PaperAutopilotEngine:
                     self._persist_sell_intent(intent_id, status="BROKER_RECONCILIATION_REQUIRED", reconciliation_status="SYMBOL_MISMATCH", retry_eligible=False)
                     ambiguous += 1
                     continue
-                self._persist_sell_intent(intent_id, status="SUBMITTED", reconciliation_status="ORIGINAL_ORDER_FOUND", broker_order_id=str(order.get("id") or ""), retry_eligible=False)
-                active += 1
+                if str(order.get("status") or "").lower().strip() == "filled":
+                    self._terminalize_broker_filled_sell_intent(intent_id, "", order)
+                else:
+                    self._persist_sell_intent(intent_id, status="SUBMITTED", reconciliation_status="ORIGINAL_ORDER_FOUND", broker_order_id=str(order.get("id") or ""), retry_eligible=False)
+                    active += 1
                 continue
             if not hasattr(broker, "order"):
                 self._persist_sell_intent(intent_id, status="BROKER_RECONCILIATION_REQUIRED", reconciliation_status="LOOKUP_FAILED", retry_eligible=False)
@@ -2612,7 +2700,11 @@ class PaperAutopilotEngine:
                 continue
             status = str(order.get("status") or "").lower().strip()
             if status == "filled":
-                self._persist_sell_intent(intent_id, status="SUBMITTED", reconciliation_status="ORIGINAL_ORDER_FILLED", broker_order_id=str(order.get("id") or order_id), retry_eligible=False)
+                # The broker order is terminal.  Preserve its evidence, but
+                # never assert broker-zero or canonical lifecycle closure
+                # here; the lane-owned reconciliation path remains the sole
+                # owner of those transitions.
+                self._terminalize_broker_filled_sell_intent(intent_id, order_id, order)
             elif status in {"new", "accepted", "pending_new", "partially_filled", "held", "accepted_for_bidding", "calculated"}:
                 self._persist_sell_intent(intent_id, status="SUBMITTED", reconciliation_status="ORIGINAL_ORDER_ACTIVE", broker_order_id=str(order.get("id") or order_id), retry_eligible=False)
                 active += 1
@@ -2623,22 +2715,62 @@ class PaperAutopilotEngine:
                 ambiguous += 1
         return {"checked": checked, "active": active, "ambiguous": ambiguous}
 
-    def _position_pending_sell(self, symbol: str, position_id: str = "") -> tuple[bool, str]:
+    def _position_pending_sell(
+        self,
+        symbol: str,
+        position_id: str = "",
+        lifecycle_id: str = "",
+    ) -> tuple[bool, str]:
         sym = str(symbol or "").upper().strip()
-        pid = str(position_id or "").strip()
+        target_identities = {
+            value for value in (str(position_id or "").strip(), str(lifecycle_id or "").strip()) if value
+        }
         pending = self._learned_exit_pending_map()
+        symbol_pending: list[tuple[str, dict[str, Any]]] = []
         for key, row in pending.items():
             if not isinstance(row, dict):
                 continue
             if str(row.get("terminal") or "").lower() == "true":
                 continue
-            if sym and str(row.get("symbol") or "").upper().strip() == sym:
+            row_symbol = str(row.get("symbol") or "").upper().strip()
+            identities = self._sell_intent_identity_values(row)
+            if target_identities and identities.intersection(target_identities):
                 return True, f"local_pending_sell:{key}"
-            if pid and str(row.get("position_id") or "").strip() == pid:
-                return True, f"local_pending_sell:{key}"
-        intent_id, intent = self._matching_sell_intent(sym, pid)
+            if not sym or row_symbol == sym:
+                symbol_pending.append((str(key), row))
+        if not target_identities and symbol_pending:
+            return True, f"local_pending_sell:{symbol_pending[0][0]}"
+        for key, row in symbol_pending:
+            if target_identities and not self._sell_intent_identity_values(row):
+                return True, f"local_pending_sell_identity_ambiguous:{key}"
+
+        intent_id, intent = self._matching_sell_intent(sym, position_id, lifecycle_id)
         if intent_id:
             return True, f"unresolved_sell_intent:{intent_id}:{str(intent.get('status') or '').lower()}"
+        ambiguous_intent = self._sell_intent_identity_ambiguity(
+            sym,
+            target_identities,
+            statuses=self._UNRESOLVED_SELL_INTENT_STATES,
+        )
+        if ambiguous_intent:
+            return True, f"unresolved_sell_intent_identity_ambiguous:{ambiguous_intent}"
+
+        # A filled intent is not pending, but the exact same lifecycle must
+        # still wait for canonical broker-zero reconciliation rather than
+        # manufacture a duplicate sell.  A known different lifecycle is safe
+        # to ignore; an identity-less same-symbol fill remains fail-closed.
+        for key, raw in self._paper_sell_order_intents().items():
+            row = dict(raw or {})
+            if str(row.get("status") or "").upper() not in self._FILLED_SELL_INTENT_RECONCILED_STATES:
+                continue
+            order = dict(row.get("order") or {})
+            if sym and str(row.get("symbol") or order.get("symbol") or "").upper().strip() != sym:
+                continue
+            identities = self._sell_intent_identity_values(row)
+            if target_identities and identities.intersection(target_identities):
+                return True, f"filled_sell_intent_awaiting_canonical_reconciliation:{key}"
+            if target_identities and not identities:
+                return True, f"filled_sell_intent_identity_ambiguous:{key}"
         return False, ""
 
     def _authorized_lane_exit_pending_map(self) -> dict[str, Any]:
@@ -3245,11 +3377,11 @@ class PaperAutopilotEngine:
         reservation is still durable and idempotent, but it deliberately does
         not apply to learned, legacy, manual, or canary exits.
         """
-        existing_id, _existing = self._matching_sell_intent(
+        pending, pending_reason = self._position_pending_sell(
             str(order.get("symbol") or ""), str(order.get("position_id") or ""),
         )
-        if existing_id:
-            return {"reserved": False, "reason": f"unresolved_sell_intent:{existing_id}"}
+        if pending:
+            return {"reserved": False, "reason": pending_reason}
         self._persist_sell_intent(
             order_intent_id,
             symbol=str(order.get("symbol") or "").upper().strip(),
