@@ -5233,6 +5233,17 @@ class PaperAutopilotEngine:
     def _native_lane_exit_session_status(self) -> dict[str, Any]:
         """Read the cached/local session guard without querying a broker."""
         suite = getattr(self, "market_session_timing_suite", None)
+        # MarketSessionExecutionTimingV1 owns the canonical session clock via
+        # session_status().  Native DAY exits previously skipped it because
+        # this compatibility adapter only probed status(), leaving the close
+        # decision and execution guard on different clocks.
+        if suite is not None and hasattr(suite, "session_status"):
+            try:
+                session = dict(suite.session_status() or {})
+                if session:
+                    return session
+            except Exception:
+                pass
         if suite is not None and hasattr(suite, "status"):
             try:
                 return dict(suite.status(broker_ready=True, open_orders_count=0) or {})
