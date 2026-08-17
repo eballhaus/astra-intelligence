@@ -1544,6 +1544,10 @@ class PaperAutopilotEngine:
         self.position_exit_readiness_state_path = str(
             os.path.join(os.path.dirname(self.state_path) or "state", "astra_position_exit_readiness_v1.json")
         )
+        self.executable_exit_quote_trace_path = str(
+            kwargs.get("executable_exit_quote_trace_path")
+            or os.path.join(os.path.dirname(self.state_path) or "state", "astra_executable_exit_quote_trace_v1.json")
+        )
         self.shadow_exit_state_dir = os.path.dirname(self.state_path) or "state"
         self.position_lane_horizon_recovery = AstraPositionLaneHorizonRecoveryV1(
             os.path.dirname(self.state_path) or "state"
@@ -10991,6 +10995,8 @@ class PaperAutopilotEngine:
     def _loss_containment_quote_evidence(
         self,
         broker_position_by_symbol: Mapping[str, Mapping[str, Any]],
+        *,
+        managed_rows_by_symbol: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Return quote evidence for loss review without inventing market time.
 
@@ -11001,12 +11007,45 @@ class PaperAutopilotEngine:
         """
         quotes: dict[str, dict[str, Any]] = {}
         diagnostics: dict[str, dict[str, Any]] = {}
+        managed = {
+            str(symbol or "").upper().strip(): dict(row or {})
+            for symbol, row in dict(managed_rows_by_symbol or {}).items()
+            if str(symbol or "").strip() and isinstance(row, Mapping)
+        }
+        trace_rows: dict[str, dict[str, Any]] = {}
         quote_budget = max(1, min(12, _to_int(os.getenv("ASTRA_LOSS_CONTAINMENT_QUOTES_PER_CYCLE"), 12)))
         for index, (raw_symbol, raw_position) in enumerate(broker_position_by_symbol.items()):
             symbol = str(raw_symbol or "").upper().strip()
             broker_position = dict(raw_position or {})
             if not symbol:
                 continue
+            managed_row = dict(managed.get(symbol) or {})
+            trace_key = _pick_first_text(
+                managed_row.get("canonical_position_id"),
+                managed_row.get("lifecycle_id"),
+                managed_row.get("position_id"),
+                symbol,
+            )
+            trace_row = {
+                "symbol": symbol,
+                "canonical_position_id": _pick_first_text(managed_row.get("canonical_position_id"), managed_row.get("position_id")),
+                "lifecycle_id": _pick_first_text(managed_row.get("lifecycle_id"), managed_row.get("canonical_position_id"), managed_row.get("position_id")),
+                "lane": str(managed_row.get("lane_id") or managed_row.get("lane") or "").upper() or None,
+                "horizon": str(managed_row.get("paper_entry_horizon_style") or managed_row.get("horizon") or "") or None,
+                "quote_request_attempted": bool(callable(self.get_latest_row_fn) and index < quote_budget),
+                "provider": None,
+                "provider_native_market_timestamp": None,
+                "retrieval_timestamp": None,
+                "quote_age_seconds": None,
+                "freshness_status": "UNAVAILABLE",
+                "present_in_latest_price_by_symbol": False,
+                "accepted_into_latest_price_by_symbol": False,
+                "rejection_blocker": "",
+                "delivered_to_evaluate_exit": False,
+                "evaluator_first_blocker": "",
+                "evaluator_exit_reason": "",
+                "generated_at": _now_iso(),
+            }
             asset_type = _norm_asset(broker_position.get("asset_type") or broker_position.get("asset_class") or "stock")
             quote: dict[str, Any] = {}
             if callable(self.get_latest_row_fn) and index < quote_budget:
@@ -11043,29 +11082,126 @@ class PaperAutopilotEngine:
                     "provider_quote_timestamp": str(quote.get("provider_quote_timestamp") or quote.get("quote_timestamp") or quote.get("market_observation_timestamp") or ""),
                     "evaluated_at": _now_iso(),
                 }
-                continue
-            price = _to_float(
-                broker_position.get("current_price"),
-                _to_float(broker_position.get("market_price"), _to_float(broker_position.get("lastday_price"), 0.0)),
+            else:
+                price = _to_float(
+                    broker_position.get("current_price"),
+                    _to_float(broker_position.get("market_price"), _to_float(broker_position.get("lastday_price"), 0.0)),
+                )
+                if price > 0.0:
+                    # Deliberately omit quote/market timestamps. The loss engine
+                    # will surface MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE instead
+                    # of treating this cycle's retrieval clock as provider truth.
+                    quotes[symbol] = {
+                        "symbol": symbol,
+                        "price": price,
+                        "retrieval_timestamp": _now_iso(),
+                        "source": "alpaca_broker_position_mark",
+                        "provider_used": "alpaca_paper",
+                    }
+                    diagnostics.setdefault(symbol, {
+                        "status": "BROKER_MARK_ONLY",
+                        "first_causal_blocker": "MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE",
+                        "evaluated_at": _now_iso(),
+                    })
+            delivered = dict(quotes.get(symbol) or {})
+            evidence = canonical_market_timestamp_v1(
+                delivered,
+                source_type=SOURCE_QUOTE,
+                max_age_seconds=20.0,
             )
-            if price > 0.0:
-                # Deliberately omit quote/market timestamps. The loss engine
-                # will surface MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE instead
-                # of treating this cycle's retrieval clock as provider truth.
-                quotes[symbol] = {
-                    "symbol": symbol,
-                    "price": price,
-                    "retrieval_timestamp": _now_iso(),
-                    "source": "alpaca_broker_position_mark",
-                    "provider_used": "alpaca_paper",
-                }
-                diagnostics.setdefault(symbol, {
-                    "status": "BROKER_MARK_ONLY",
-                    "first_causal_blocker": "MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE",
-                    "evaluated_at": _now_iso(),
-                })
+            trace_row.update({
+                "provider": str(delivered.get("provider_used") or delivered.get("provider_name") or delivered.get("source") or "") or None,
+                "provider_native_market_timestamp": evidence.get("provider_native_timestamp"),
+                "retrieval_timestamp": delivered.get("retrieval_timestamp") or delivered.get("retrieved_at") or delivered.get("fetched_at") or None,
+                "quote_age_seconds": evidence.get("age_seconds"),
+                "freshness_status": evidence.get("freshness_status"),
+                "present_in_latest_price_by_symbol": bool(delivered),
+                # A stale or timestamp-less record may remain available for
+                # advisory review, but is never accepted as executable input.
+                "accepted_into_latest_price_by_symbol": bool(evidence.get("executable_freshness")),
+                "rejection_blocker": str(evidence.get("first_causal_blocker") or ""),
+            })
+            trace_rows[trace_key] = trace_row
         self._runtime_state["loss_containment_quote_evidence_v1"] = diagnostics
+        self._runtime_state["executable_exit_quote_trace_v1"] = {
+            "schema_version": "astra_executable_exit_quote_trace_v1",
+            "generated_at": _now_iso(),
+            "max_rows": quote_budget,
+            "rows": list(trace_rows.values())[:quote_budget],
+            "provider_calls_added": 0,
+            "broker_actions_added": 0,
+            "observability_only": True,
+        }
         return quotes
+
+    def _record_executable_exit_quote_evaluation(
+        self,
+        open_row: Mapping[str, Any],
+        latest_row: Mapping[str, Any],
+        *,
+        should_close: bool,
+        reason: str,
+    ) -> None:
+        """Attach evaluator disposition to the same bounded quote trace."""
+        trace = dict(self._runtime_state.get("executable_exit_quote_trace_v1") or {})
+        rows = [dict(row) for row in (trace.get("rows") or []) if isinstance(row, dict)]
+        identity = _pick_first_text(
+            open_row.get("canonical_position_id"),
+            open_row.get("lifecycle_id"),
+            open_row.get("position_id"),
+            open_row.get("symbol"),
+        )
+        symbol = str(open_row.get("symbol") or "").upper().strip()
+        for row in rows:
+            if str(row.get("canonical_position_id") or row.get("lifecycle_id") or row.get("symbol") or "") not in {identity, symbol}:
+                continue
+            evidence = canonical_market_timestamp_v1(
+                latest_row,
+                source_type=SOURCE_QUOTE,
+                max_age_seconds=20.0,
+            )
+            evaluator_blocker = "" if should_close or reason == "hold" else str(reason or evidence.get("first_causal_blocker") or "")
+            row.update({
+                "provider": str(latest_row.get("provider_used") or latest_row.get("provider_name") or latest_row.get("source") or row.get("provider") or "") or None,
+                "provider_native_market_timestamp": evidence.get("provider_native_timestamp") or row.get("provider_native_market_timestamp"),
+                "retrieval_timestamp": latest_row.get("retrieval_timestamp") or latest_row.get("retrieved_at") or latest_row.get("fetched_at") or row.get("retrieval_timestamp"),
+                "quote_age_seconds": evidence.get("age_seconds"),
+                "freshness_status": evidence.get("freshness_status"),
+                "delivered_to_evaluate_exit": True,
+                "evaluator_first_blocker": evaluator_blocker,
+                "evaluator_exit_reason": str(reason or "") if should_close else "",
+                "generated_at": _now_iso(),
+            })
+            break
+        trace["rows"] = rows[: int(trace.get("max_rows") or 12)]
+        trace["generated_at"] = _now_iso()
+        self._runtime_state["executable_exit_quote_trace_v1"] = trace
+
+    def _persist_executable_exit_quote_trace(self) -> None:
+        """Atomically replace the bounded worker trace; never affect execution."""
+        trace = dict(self._runtime_state.get("executable_exit_quote_trace_v1") or {})
+        if not trace:
+            return
+        path = str(getattr(self, "executable_exit_quote_trace_path", "") or "")
+        if not path:
+            return
+        payload = {
+            **trace,
+            "rows": [dict(row) for row in (trace.get("rows") or []) if isinstance(row, dict)][:12],
+            "generated_at": _now_iso(),
+        }
+        temporary_path = f"{path}.tmp-{os.getpid()}"
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(temporary_path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, sort_keys=True)
+            os.replace(temporary_path, path)
+        except Exception:
+            try:
+                if os.path.exists(temporary_path):
+                    os.unlink(temporary_path)
+            except Exception:
+                pass
 
     def _loss_containment_review_phase(
         self,
@@ -12751,6 +12887,11 @@ class PaperAutopilotEngine:
                 self._note_worker_progress("loss_containment_review")
                 latest_price_by_symbol = self._loss_containment_quote_evidence(
                     broker_position_by_symbol,
+                    managed_rows_by_symbol={
+                        str((row or {}).get("symbol") or "").upper().strip(): dict(row or {})
+                        for row in open_rows_initial
+                        if str((row or {}).get("symbol") or "").strip()
+                    },
                 )
                 loss_containment_review = self._loss_containment_review_phase(
                     open_rows=open_rows_initial,
@@ -12903,6 +13044,12 @@ class PaperAutopilotEngine:
                         continue
 
                 should_close, reason = self._evaluate_exit(row, latest)
+                self._record_executable_exit_quote_evaluation(
+                    row,
+                    latest,
+                    should_close=should_close,
+                    reason=reason,
+                )
                 forced_lane_reason = self._lane_forced_exit_reason(row)
                 if forced_lane_reason:
                     should_close, reason = True, forced_lane_reason
@@ -12924,6 +13071,8 @@ class PaperAutopilotEngine:
                         self._update_learned_exit_daily_state(state)
                         if symbol:
                             open_syms.discard(symbol)
+
+            self._persist_executable_exit_quote_trace()
 
             if capacity_source == "broker":
                 broker_crypto_rows = {
