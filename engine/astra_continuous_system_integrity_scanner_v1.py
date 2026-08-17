@@ -308,7 +308,10 @@ class ContinuousSystemIntegrityScannerV1:
                                 "first_bad_handoff": "configured FMP credential -> worker-owned provider request",
                                 "owner": "engine.provider_router.ProviderRouter",
                                 "repair": "verify bounded smart-budget FMP eligibility and worker request scheduling"})
-            if _number(provider.get("responses_accepted")) and not _text(provider.get("last_consumer")):
+            assignment_required = _number(
+                provider.get("assignment_required_accepted", provider.get("responses_accepted"))
+            )
+            if assignment_required and not _text(provider.get("last_consumer")):
                 signals.append({"kind": "PROVIDER_SUCCESS_NOT_CONSUMED", "severity": "HIGH",
                                 "canonical_fact_ids": ["FMP_PROVIDER_CONSUMPTION"],
                                 "affected_endpoints": ["provider consumption telemetry", "legacy position triage"],
@@ -324,7 +327,10 @@ class ContinuousSystemIntegrityScannerV1:
                     signals.append({"kind": "CONFIGURED_ENDPOINT_NOT_SCHEDULED", "severity": "MEDIUM", "confidence": "VERIFIED",
                                     "canonical_fact_ids": ["FMP_PROVIDER_CONSUMPTION"], "affected_components": ["PaperAutopilot FMP context scheduler"],
                                     "affected_endpoint_family": name, "first_bad_handoff": "configured endpoint family -> worker schedule"})
-                if _number(family.get("responses_accepted")) > _number(family.get("responses_assigned")):
+                assignment_required = _number(
+                    family.get("assignment_required_accepted", family.get("responses_accepted"))
+                )
+                if assignment_required > _number(family.get("responses_assigned")):
                     signals.append({"kind": "PROVIDER_SUCCESS_NOT_ASSIGNED", "severity": "HIGH", "confidence": "VERIFIED",
                                     "canonical_fact_ids": ["FMP_PROVIDER_CONSUMPTION"], "affected_endpoint_family": name,
                                     "first_bad_handoff": "accepted provider evidence -> current position assignment"})

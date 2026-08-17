@@ -134,6 +134,73 @@ class FmpProviderConsumptionTests(unittest.TestCase):
             self.assertFalse(provider["telemetry_complete"])
             self.assertEqual(provider["endpoint_families"][0]["responses_assigned"], 0)
 
+    def test_generic_router_quote_is_accepted_without_position_assignment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "fmp_efficiency_ledger_v1.jsonl")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({
+                    "timestamp": "2026-07-24T00:00:00Z", "endpoint_family": "quote",
+                    "caller_context": "provider_router_fmp_quote", "ok": True,
+                    "useful_fields_count": 2, "bytes_actual_if_available": 42, "status_code": 200,
+                }) + "\n")
+            telemetry = build_provider_consumption_telemetry_v1(
+                state_dir=directory, configured=True, key_fingerprint="deadbeef",
+            )
+            provider = telemetry["providers"][0]
+            family = provider["endpoint_families"][0]
+            self.assertEqual(family["responses_accepted"], 1)
+            self.assertEqual(family["generic_router_quote_accepted"], 1)
+            self.assertEqual(family["assignment_required_accepted"], 0)
+            self.assertEqual(family["responses_assigned"], 0)
+            self.assertEqual(provider["bytes_received"], 42)
+            self.assertTrue(telemetry["telemetry_complete"])
+
+    def test_generic_and_targeted_evidence_do_not_cross_contaminate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "fmp_efficiency_ledger_v1.jsonl")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({
+                    "timestamp": "2026-07-24T00:00:00Z", "endpoint_family": "quote",
+                    "caller_context": "provider_router_fmp_quote", "ok": True,
+                    "useful_fields_count": 2, "bytes_actual_if_available": 42, "status_code": 200,
+                }) + "\n")
+                handle.write(json.dumps({
+                    "timestamp": "2026-07-24T00:00:01Z", "endpoint_family": "quote",
+                    "assignment_scope": "position_targeted_evidence", "ok": True,
+                    "useful_fields_count": 2, "bytes_actual_if_available": 43, "status_code": 200,
+                }) + "\n")
+            telemetry = build_provider_consumption_telemetry_v1(
+                state_dir=directory, configured=True, key_fingerprint="deadbeef",
+            )
+            family = telemetry["providers"][0]["endpoint_families"][0]
+            self.assertEqual(family["responses_accepted"], 2)
+            self.assertEqual(family["generic_router_quote_accepted"], 1)
+            self.assertEqual(family["position_targeted_accepted"], 1)
+            self.assertEqual(family["assignment_required_accepted"], 1)
+            self.assertFalse(telemetry["telemetry_complete"])
+
+    def test_assigned_but_unconsumed_targeted_evidence_remains_visible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "fmp_efficiency_ledger_v1.jsonl")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({
+                    "timestamp": "2026-07-24T00:00:00Z", "endpoint_family": "quote",
+                    "assignment_scope": "candidate_targeted_evidence", "ok": True,
+                    "useful_fields_count": 2, "bytes_actual_if_available": 42, "status_code": 200,
+                }) + "\n")
+            telemetry = build_provider_consumption_telemetry_v1(
+                state_dir=directory, configured=True, key_fingerprint="deadbeef",
+                consumer_events=[{
+                    "endpoint_family": "quote", "consumer": "candidate_writer",
+                    "consumer_record_id": "candidate:AAA", "assigned": True, "consumed": False,
+                }],
+            )
+            family = telemetry["providers"][0]["endpoint_families"][0]
+            self.assertEqual(family["assignment_required_accepted"], 1)
+            self.assertEqual(family["responses_assigned"], 1)
+            self.assertEqual(family["responses_consumed"], 0)
+            self.assertFalse(telemetry["telemetry_complete"])
+
     def test_freshness_rejected_consumer_event_resolves_accepted_response(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "fmp_efficiency_ledger_v1.jsonl")
@@ -284,6 +351,34 @@ class FmpProviderConsumptionTests(unittest.TestCase):
         kinds = {row["kind"] for row in signals}
         self.assertIn("CONFIGURED_PROVIDER_UNUSED", kinds)
         self.assertIn("PROVIDER_SUCCESS_NOT_CONSUMED", kinds)
+
+    def test_scanner_ignores_generic_quote_assignment_but_keeps_targeted_loss(self):
+        generic = {"providers": [{
+            "provider": "FMP", "configured": True, "attempted_calls": 1,
+            "responses_accepted": 1, "assignment_required_accepted": 0,
+            "last_consumer": "", "endpoint_families": [{
+                "endpoint_family": "quote", "responses_accepted": 1,
+                "assignment_required_accepted": 0, "responses_assigned": 0,
+                "responses_consumed": 0,
+            }],
+        }]}
+        signals, _waiting, _compliance = ContinuousSystemIntegrityScannerV1._signals(
+            {"provider_consumption_telemetry": generic}, {}, 10,
+        )
+        self.assertNotIn("PROVIDER_SUCCESS_NOT_ASSIGNED", {row["kind"] for row in signals})
+        targeted = {"providers": [{
+            "provider": "FMP", "configured": True, "attempted_calls": 1,
+            "responses_accepted": 1, "assignment_required_accepted": 1,
+            "last_consumer": "", "endpoint_families": [{
+                "endpoint_family": "quote", "responses_accepted": 1,
+                "assignment_required_accepted": 1, "responses_assigned": 0,
+                "responses_consumed": 0,
+            }],
+        }]}
+        signals, _waiting, _compliance = ContinuousSystemIntegrityScannerV1._signals(
+            {"provider_consumption_telemetry": targeted}, {}, 10,
+        )
+        self.assertIn("PROVIDER_SUCCESS_NOT_ASSIGNED", {row["kind"] for row in signals})
 
     def test_worker_verification_is_bounded_and_never_creates_trade_artifacts(self):
         class Router:

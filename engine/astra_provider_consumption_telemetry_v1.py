@@ -14,6 +14,20 @@ FMP_EVENT_LEDGER_NAME = "fmp_efficiency_ledger_v1.jsonl"
 MAX_FMP_EVENT_ROWS = 2_000
 MAX_FMP_EVENT_BYTES = 2 * 1024 * 1024
 
+# Generic router quotes are transport/cache observations. They have no
+# attributable position or candidate assignment contract by themselves.
+_GENERIC_ROUTER_QUOTE_CONTEXTS = frozenset({"provider_router_fmp_quote"})
+_GENERIC_DIAGNOSTIC_CONTEXTS = frozenset({
+    "provider_router_deliberate_fmp_probe",
+    "fmp_rest_controlled_test",
+    "fmp_url_builder",
+})
+_POSITION_TARGETED_CONTEXTS = frozenset({
+    "paper_autopilot_legacy_swing_worker",
+    "paper_autopilot_open_position_worker",
+})
+_CANDIDATE_TARGETED_CONTEXTS = frozenset({"top_buys_fmp_enrichment_v1"})
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -200,6 +214,34 @@ def _transport_succeeded(row: Mapping[str, Any]) -> bool:
     return 200 <= status < 400 or (status == 0 and bool(row.get("ok")))
 
 
+def _assignment_scope(row: Mapping[str, Any]) -> str:
+    """Classify assignment intent without inferring it from endpoint or symbol."""
+    explicit = str(row.get("assignment_scope") or "").strip().lower()
+    if explicit in {
+        "generic_router_quote",
+        "generic_diagnostic",
+        "position_targeted_evidence",
+        "candidate_targeted_evidence",
+        "assignment_required_unclassified",
+    }:
+        return explicit
+    caller = str(row.get("caller_context") or "").strip().lower()
+    if caller in _GENERIC_ROUTER_QUOTE_CONTEXTS:
+        return "generic_router_quote"
+    if caller in _GENERIC_DIAGNOSTIC_CONTEXTS:
+        return "generic_diagnostic"
+    if caller in _POSITION_TARGETED_CONTEXTS:
+        return "position_targeted_evidence"
+    if caller in _CANDIDATE_TARGETED_CONTEXTS:
+        return "candidate_targeted_evidence"
+    # Preserve prior fail-closed accounting for unknown producers.
+    return "assignment_required_unclassified"
+
+
+def _requires_assignment(row: Mapping[str, Any]) -> bool:
+    return _assignment_scope(row) not in {"generic_router_quote", "generic_diagnostic"}
+
+
 def _event_counts(events: list[dict[str, Any]], consumer_events: list[dict[str, Any]], family: str) -> dict[str, Any]:
     scoped = [row for row in events if _family(row) == family]
     assigned = [row for row in consumer_events if str(row.get("endpoint_family") or "unknown") == family and bool(row.get("assigned"))]
@@ -212,6 +254,10 @@ def _event_counts(events: list[dict[str, Any]], consumer_events: list[dict[str, 
     successful = [row for row in network if _transport_succeeded(row)]
     failures = [row for row in network if row not in successful]
     accepted = [row for row in successful if _number(row.get("useful_fields_count")) > 0]
+    assignment_required = [row for row in accepted if _requires_assignment(row)]
+    generic_router_quotes = [row for row in accepted if _assignment_scope(row) == "generic_router_quote"]
+    position_targeted = [row for row in accepted if _assignment_scope(row) == "position_targeted_evidence"]
+    candidate_targeted = [row for row in accepted if _assignment_scope(row) == "candidate_targeted_evidence"]
     byte_missing = [row for row in successful if _number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta")) <= 0]
     last = dict(scoped[-1]) if scoped else {}
     return {
@@ -226,6 +272,13 @@ def _event_counts(events: list[dict[str, Any]], consumer_events: list[dict[str, 
         "not_eligible": 0, "responses_parsed": len(successful),
         "responses_accepted": len(accepted), "responses_rejected": max(0, len(successful) - len(accepted)) + len(rejected_by_consumer),
         "responses_assigned": len(assigned), "responses_consumed": len(consumed),
+        "assignment_required_accepted": len(assignment_required),
+        "generic_router_quote_accepted": len(generic_router_quotes),
+        "position_targeted_accepted": len(position_targeted),
+        "candidate_targeted_accepted": len(candidate_targeted),
+        "unclassified_assignment_required_accepted": sum(
+            1 for row in assignment_required if _assignment_scope(row) == "assignment_required_unclassified"
+        ),
         "byte_telemetry_missing": len(byte_missing),
         "bytes_received": int(sum(max(0.0, _number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta"))) for row in scoped)),
         "last_attempt_at": str(last.get("timestamp") or ""),
@@ -280,6 +333,10 @@ def build_provider_consumption_telemetry_v1(
     successes = [row for row in network_sent if _transport_succeeded(row)]
     failures = [row for row in network_sent if row not in successes]
     accepted = [row for row in successes if _number(row.get("useful_fields_count")) > 0]
+    assignment_required = [row for row in accepted if _requires_assignment(row)]
+    generic_router_quotes = [row for row in accepted if _assignment_scope(row) == "generic_router_quote"]
+    position_targeted = [row for row in accepted if _assignment_scope(row) == "position_targeted_evidence"]
+    candidate_targeted = [row for row in accepted if _assignment_scope(row) == "candidate_targeted_evidence"]
     byte_missing = [row for row in successes if _number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta")) <= 0]
     bytes_received = int(sum(max(0.0, _number(row.get("bytes_actual_if_available") or row.get("bandwidth_delta"))) for row in events))
     consumer_rows = ledger_consumers + [
@@ -314,6 +371,13 @@ def build_provider_consumption_telemetry_v1(
         "responses_rejected": max(0, len(successes) - len(accepted)) + len(rejected),
         "responses_assigned": assigned_count,
         "responses_consumed": consumed_count,
+        "assignment_required_accepted": len(assignment_required),
+        "generic_router_quote_accepted": len(generic_router_quotes),
+        "position_targeted_accepted": len(position_targeted),
+        "candidate_targeted_accepted": len(candidate_targeted),
+        "unclassified_assignment_required_accepted": sum(
+            1 for row in assignment_required if _assignment_scope(row) == "assignment_required_unclassified"
+        ),
         "byte_telemetry_missing": len(byte_missing),
         "bytes_received": bytes_received,
         "last_attempt_at": str(last_event.get("timestamp") or ""),
@@ -329,14 +393,15 @@ def build_provider_consumption_telemetry_v1(
         "budget_remaining": max(0, 750 - len(network_sent)),
         "bounded_usage_status": (
             "CONFIGURED_UNUSED" if configured and not attempts else
-            "SUCCESS_NOT_CONSUMED" if accepted and not consumed and not rejected else
+            "SUCCESS_NOT_CONSUMED" if assignment_required and not consumed and not rejected else
+            "GENERIC_ROUTER_QUOTE_ACTIVITY" if generic_router_quotes and not assignment_required else
             "ACTIVE" if consumed else "FAIL_CLOSED"
         ),
     }
     families = sorted({_family(row) for row in events} | {str(row.get("endpoint_family") or "unknown") for row in consumer_rows})
     family_rows = [_event_counts(events, consumer_rows, family) for family in families]
     complete = bool(family_rows) and not any(
-        row["responses_accepted"] > row["responses_assigned"] + row["responses_rejected"] or row["responses_assigned"] > row["responses_consumed"] or row["byte_telemetry_missing"] > 0
+        row["assignment_required_accepted"] > row["responses_assigned"] + row["responses_rejected"] or row["responses_assigned"] > row["responses_consumed"] or row["byte_telemetry_missing"] > 0
         for row in family_rows
     )
     return {
@@ -348,12 +413,12 @@ def build_provider_consumption_telemetry_v1(
         "endpoint_families": family_rows,
         "telemetry_complete": complete,
         "configured_but_unused_count": int(bool(configured and not attempts)),
-        "successful_but_unconsumed_count": int(bool(accepted and not consumed and not rejected)),
+        "successful_but_unconsumed_count": int(bool(assignment_required and not consumed and not rejected)),
         "provider_starvation_count": int(bool(configured and not attempts)),
         "budget_warning_count": int(any(str(row.get("blocked_reason") or "") in {"call_limit", "bandwidth_budget"} for row in events)),
         "governor_blocked_count": len(governor_blocked),
         "expected_traffic_missing_count": int(bool(configured and not attempts)),
-        "success_not_consumed_count": int(bool(accepted and not consumed and not rejected)),
+        "success_not_consumed_count": int(bool(assignment_required and not consumed and not rejected)),
         "stale_evidence_count": 0,
         "byte_telemetry_mismatch_count": len(byte_missing),
         "provider_calls_used": 0,
