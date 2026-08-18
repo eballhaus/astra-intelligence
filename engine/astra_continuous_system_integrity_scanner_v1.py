@@ -15,6 +15,7 @@ from engine.astra_runtime_governance_v1 import worker_lease_integrity
 from engine.astra_safe_correction_registry_v1 import SafeCorrectionRegistryV1
 from engine.astra_sentinel_causal_handoff_integrity_v1 import (
     causal_facts_from_candidate_traces_v1,
+    causal_facts_from_position_horizon_handoffs_v1,
     classify_causal_handoff_facts_v1,
 )
 
@@ -640,6 +641,12 @@ class ContinuousSystemIntegrityScannerV1:
             ][:limits["max_rows"]]
             causal_facts.extend(causal_facts_from_candidate_traces_v1(
                 [dict(row) for row in list(context.get("current_candidate_traces") or []) if isinstance(row, dict)],
+                limit=max(1, limits["max_rows"] - len(causal_facts)),
+            ))
+            causal_facts.extend(causal_facts_from_position_horizon_handoffs_v1(
+                dict(context.get("position_lane_horizon_recovery") or {}),
+                dict(context.get("position_exit_readiness") or {}),
+                dict(context.get("unified_position_advisory") or {}),
                 limit=max(1, limits["max_rows"] - len(causal_facts)),
             ))
             lease = dict(context.get("worker_lease_integrity") or worker_lease_integrity(

@@ -7988,6 +7988,17 @@ class PaperAutopilotEngine:
                 if callable(create_lifecycle_record):
                     try:
                         entry_context = _safe_json_load(row.get("lifecycle_notes"))
+                        # A broker acknowledgement can arrive after the entry
+                        # cycle that originally persisted this row.  Reuse the
+                        # immutable, entry-linked contract rather than letting
+                        # the lifecycle tracker's fail-closed defaults erase a
+                        # proven DAY/SCALP same-session requirement.
+                        entry_contract_row = self._materialize_open_position_entry_contract(row)
+                        lifecycle_contract = {
+                            field: entry_contract_row[field]
+                            for field in CONTRACT_FIELDS
+                            if field in entry_contract_row and entry_contract_row.get(field) not in (None, "")
+                        }
                         create_lifecycle_record({
                             "lifecycle_id": str(row.get("position_id") or ""),
                             "symbol": symbol,
@@ -8005,6 +8016,7 @@ class PaperAutopilotEngine:
                             "entry_price_evidence_class": str(lineage.get("entry_price_evidence_class") or ""),
                             "source_endpoint": "paper_autopilot_broker_entry_reconciliation",
                             "lifecycle_stage": "entry",
+                            **lifecycle_contract,
                         })
                     except Exception:
                         pass
@@ -11918,6 +11930,7 @@ class PaperAutopilotEngine:
             loss_containment=loss_containment or self._runtime_state.get("loss_containment_state_v1") or {},
             profit_protection=profit_protection or self._runtime_state.get("profit_protection_state_v1") or {},
             resolution=resolution,
+            recovery=recovery,
         )
         # Shadow evaluation is downstream of broker truth and cached evidence.
         # It creates no provider or broker calls and cannot authorize an exit.
@@ -11951,6 +11964,7 @@ class PaperAutopilotEngine:
             profit_protection=profit_protection or self._runtime_state.get("profit_protection_state_v1") or {},
             resolution=resolution,
             shadow_handoff=shadow_handoff,
+            recovery=recovery,
         )
         save_position_exit_readiness_v1(exit_readiness, os.path.dirname(self.position_exit_readiness_state_path) or "state")
         self._runtime_state["position_exit_readiness_v1"] = exit_readiness

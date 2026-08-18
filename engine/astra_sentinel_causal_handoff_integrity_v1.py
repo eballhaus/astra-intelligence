@@ -97,6 +97,25 @@ def classify_causal_handoff_facts_v1(facts: list[dict[str, Any]] | None, *, limi
         elif kind == "WORKER_LEASE_STALE" or _text(fact.get("lease_state")) in {"STALE_DEAD_LEASE", "LEASE_PROCESS_OWNERSHIP_CONTRADICTION"}:
             handoff = "worker shutdown -> canonical worker lease cleanup"
             signals.append(_signal(fact, kind="WORKER_LEASE_PROCESS_OWNERSHIP_CONTRADICTION", category="CAUSAL_HANDOFF_LOSS", handoff=handoff, repair="remove only an identity-matching released lock; recover a dead lease only after canonical ownership is disproven", severity="HIGH"))
+        elif (
+            (kind == "HORIZON_CONTRACT_LOSS" and fact.get("consumer_value") is not True)
+            or (
+                _text(fact.get("field")) == "same_session_exit_required"
+                and fact.get("producer_value") is True
+                and fact.get("consumer_value") is not True
+            )
+        ):
+            handoff = _text(fact.get("first_bad_handoff")) or "canonical horizon contract -> exit-readiness consumer"
+            signals.append(_signal(fact, kind="CAUSAL_HANDOFF_LOSS", category="CAUSAL_HANDOFF_LOSS", handoff=handoff, repair="preserve the exact canonical same-session contract through lifecycle and advisory consumers"))
+        elif (
+            (kind == "CANONICAL_IDENTITY_FALLBACK" and _text(fact.get("consumer_identity_status")).upper() in {"LEGACY", "UNAVAILABLE", "UNRESOLVED"})
+            or (
+                _text(fact.get("producer_identity_status")).upper() == "RESOLVED"
+                and _text(fact.get("consumer_identity_status")).upper() in {"LEGACY", "UNAVAILABLE", "UNRESOLVED"}
+            )
+        ):
+            handoff = _text(fact.get("first_bad_handoff")) or "canonical position identity -> advisory identity consumer"
+            signals.append(_signal(fact, kind="CAUSAL_HANDOFF_LOSS", category="CAUSAL_HANDOFF_LOSS", handoff=handoff, repair="retain the exact current canonical lifecycle identity before applying legacy advisory overlays"))
         elif bool(fact.get("producer_value_available")) and _unavailable(fact.get("consumer_value")):
             handoff = _text(fact.get("first_bad_handoff")) or f"{fact.get('producer') or 'producer'} -> {fact.get('consumer') or 'consumer'}"
             signals.append(_signal(fact, kind="CAUSAL_HANDOFF_LOSS", category="CAUSAL_HANDOFF_LOSS", handoff=handoff, repair="preserve the existing canonical field through the verified transformation"))
@@ -145,4 +164,67 @@ def causal_facts_from_candidate_traces_v1(rows: list[dict[str, Any]] | None, *, 
             and _text(commitment.get("persona_disagreement_input_state")) != "DEFAULT_UNAVAILABLE"
         ):
             facts.append({**base, "kind": "PLACEHOLDER_SHADOWING", "producer": commitment.get("persona_disagreement_provenance"), "consumer": "PaperAutopilot._entry_commitment_gate_v1", "field": "persona_disagreement_index", "placeholder_used_as_measured": True})
+    return facts[:max(1, int(limit))]
+
+
+def causal_facts_from_position_horizon_handoffs_v1(
+    recovery: dict[str, Any] | None,
+    exit_readiness: dict[str, Any] | None,
+    unified_advisory: dict[str, Any] | None,
+    *,
+    limit: int = MAX_FACTS,
+) -> list[dict[str, Any]]:
+    """Adapt current worker-owned horizon facts for the existing Sentinel path.
+
+    The adapter is observational: it compares exact recovery identity with the
+    already-built advisory projections and never reads or changes positions.
+    """
+    readiness_by_symbol = {
+        _text(row.get("symbol")).upper(): dict(row)
+        for row in list((exit_readiness or {}).get("positions") or [])
+        if isinstance(row, dict) and _text(row.get("symbol"))
+    }
+    advisory_by_symbol = {
+        _text(row.get("symbol")).upper(): dict(row)
+        for row in list((unified_advisory or {}).get("positions") or [])
+        if isinstance(row, dict) and _text(row.get("symbol"))
+    }
+    facts: list[dict[str, Any]] = []
+    for recovered in list((recovery or {}).get("positions") or [])[:max(1, int(limit))]:
+        if not isinstance(recovered, dict):
+            continue
+        symbol = _text(recovered.get("symbol")).upper()
+        if not symbol:
+            continue
+        readiness = readiness_by_symbol.get(symbol, {})
+        advisory = advisory_by_symbol.get(symbol, {})
+        base = {
+            "current": True,
+            "lifecycle_id": recovered.get("canonical_lifecycle_id") or recovered.get("canonical_position_id"),
+            "candidate_id": recovered.get("candidate_id"),
+            "evidence_timestamp": (recovery or {}).get("generated_at"),
+        }
+        if recovered.get("same_session_exit_required") is True:
+            requirement = dict(readiness.get("horizon_exit_requirement") or {})
+            facts.append({
+                **base,
+                "kind": "HORIZON_CONTRACT_LOSS",
+                "producer": "astra_position_lane_horizon_recovery_v1",
+                "consumer": "astra_position_exit_readiness_v1",
+                "field": "same_session_exit_required",
+                "producer_value": True,
+                "consumer_value": requirement.get("same_session_exit_required"),
+                "first_bad_handoff": "canonical horizon recovery -> exit readiness",
+            })
+        if _text(recovered.get("canonical_identity_status")).upper() == "RESOLVED":
+            facts.append({
+                **base,
+                "kind": "CANONICAL_IDENTITY_FALLBACK",
+                "producer": "astra_position_lane_horizon_recovery_v1",
+                "consumer": "astra_unified_position_advisory_v1",
+                "field": "canonical_position_id",
+                "producer_identity_status": "RESOLVED",
+                "consumer_identity_status": advisory.get("canonical_identity_status"),
+                "first_bad_handoff": "canonical position recovery -> unified position advisory",
+            })
     return facts[:max(1, int(limit))]

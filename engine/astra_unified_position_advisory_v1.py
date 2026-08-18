@@ -108,6 +108,25 @@ def _recovery_by_symbol(recovery: Mapping[str, Any] | None) -> dict[str, dict[st
     return _index(list((recovery or {}).get("positions") or []))
 
 
+def _canonical_same_session_requirement(recovered: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Expose a proven hard horizon term without creating an exit authority."""
+    row = dict(recovered or {})
+    required = (
+        _text(row.get("canonical_identity_status")).upper() == "RESOLVED"
+        and _text(row.get("horizon_contract_status")).upper() == "RESOLVED"
+        and row.get("same_session_exit_required") is True
+        and row.get("overnight_allowed") is False
+        and _text(row.get("expected_max_hold")).lower() == "same_session"
+    )
+    return {
+        "status": "CANONICAL_SAME_SESSION_EXIT_REQUIRED" if required else "UNAVAILABLE",
+        "same_session_exit_required": True if required else None,
+        "overnight_allowed": False if required else None,
+        "expected_max_hold": "same_session" if required else None,
+        "source": "astra_position_lane_horizon_recovery_v1" if required else "UNAVAILABLE",
+    }
+
+
 def _atomic_write(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
@@ -148,13 +167,18 @@ def build_unified_position_advisory_v1(
         profit = profit_by_position_id.get(canonical_position_id, {}) if canonical_identity_status == "RESOLVED" else {}
         resolution_row = resolution_by_symbol.get(symbol, {})
         shadow = dict((shadow_handoff or {}).get(symbol) or {})
-        legacy = bool(triage_row)
+        # A legacy triage overlay is evidence, not an identity owner.  An
+        # exact current lifecycle must never be downgraded merely because a
+        # same-symbol legacy row also exists.
+        legacy = bool(triage_row) and canonical_identity_status != "RESOLVED"
         policy = unified_position_recommendation(
             loss, profit, ownership="UNRESOLVED_FAIL_CLOSED" if evidence_row.get("canonical_lane_status") != "RESOLVED" and not legacy else "KNOWN",
             stale_evidence=evidence_row.get("quote_status") == "STALE" or evidence_row.get("completed_bar_status") == "STALE",
         )
         exit_row = exit_by_symbol.get(symbol, {})
-        recommendation = _text(exit_row.get("recommendation")) or _text(triage_row.get("recommendation")) or _text(policy.get("canonical_recommendation")) or "WATCH"
+        horizon_requirement = _canonical_same_session_requirement(recovered)
+        generic_recommendation = _text(exit_row.get("generic_recommendation")) or _text(exit_row.get("recommendation")) or _text(triage_row.get("recommendation")) or _text(policy.get("canonical_recommendation")) or "WATCH"
+        recommendation = "SAME_SESSION_EXIT_REQUIRED" if horizon_requirement["status"] == "CANONICAL_SAME_SESSION_EXIT_REQUIRED" else generic_recommendation
         blocker = _text(exit_row.get("first_causal_blocker")) or _text(triage_row.get("first_causal_blocker")) or _text(evidence_row.get("first_causal_blocker")) or _text((loss.get("exact_blockers") or [""])[0]) or "EVIDENCE_UNAVAILABLE"
         confidence = _text(triage_row.get("confidence")) or _text(loss.get("confidence")) or _text(evidence_row.get("evidence_confidence")) or "LOW"
         rows.append({
@@ -162,14 +186,15 @@ def build_unified_position_advisory_v1(
             "canonical_position_id": canonical_position_id or None,
             "lifecycle_id": canonical_position_id or None,
             "canonical_identity_status": canonical_identity_status,
-            "final_advisory": recommendation, "confidence": confidence,
-            "priority": "HIGH" if recommendation in {"EXIT_REVIEW", "THESIS_BROKEN", "PROTECT_CAPITAL"} else "MEDIUM" if recommendation == "WATCH" else "LOW",
-            "primary_reason": _text(resolution_row.get("plain_english_explanation")) or _text(triage_row.get("plain_english_reason")) or _text(loss.get("human_readable_reason")) or blocker,
+            "final_advisory": recommendation, "generic_advisory": generic_recommendation, "confidence": confidence,
+            "priority": "HIGH" if recommendation in {"EXIT_REVIEW", "THESIS_BROKEN", "PROTECT_CAPITAL", "SAME_SESSION_EXIT_REQUIRED"} else "MEDIUM" if recommendation == "WATCH" else "LOW",
+            "primary_reason": "canonical same-session horizon requires existing exit-policy review" if horizon_requirement["status"] == "CANONICAL_SAME_SESSION_EXIT_REQUIRED" else (_text(resolution_row.get("plain_english_explanation")) or _text(triage_row.get("plain_english_reason")) or _text(loss.get("human_readable_reason")) or blocker),
             "supporting_reasons": [blocker], "evidence_used": triage_row.get("evidence_used") or {},
             "evidence_missing": triage_row.get("evidence_missing") or ([blocker] if blocker != "EVIDENCE_CURRENT" else []),
             "first_causal_blocker": blocker, "source_components": [name for name, row in (("position_evidence_completeness_v1", evidence_row), ("legacy_position_risk_triage_v1", triage_row), ("legacy_position_resolution_v1", resolution_row), ("exit_readiness", exit_row), ("loss_containment", loss), ("profit_protection", profit)) if row],
             "legacy_position": legacy, "loss_containment_state": loss.get("canonical_recommendation"), "profit_protection_state": profit.get("canonical_recommendation") or profit.get("profit_state"),
             "resolution_plan": resolution_row.get("resolution_plan"), "capacity_impact": resolution_row.get("estimated_capacity_releasable"), "urgency": resolution_row.get("urgency"),
+            "horizon_exit_requirement": horizon_requirement,
             **shadow,
             "shadow_only": True, "promotion_status": "NOT_PROMOTED",
             "generated_at": _now(), "execution_authority": "DISABLED", "advisory_only": True,
@@ -184,6 +209,7 @@ def build_position_exit_readiness_v1(
     loss_containment: Mapping[str, Any] | None = None, profit_protection: Mapping[str, Any] | None = None,
     resolution: Mapping[str, Any] | None = None,
     shadow_handoff: Mapping[str, Mapping[str, Any]] | None = None,
+    recovery: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist the existing advisory policy inputs for every broker position.
 
@@ -196,18 +222,22 @@ def build_position_exit_readiness_v1(
     loss_by_symbol = _index(list((loss_containment or {}).get("decisions", {}).values()))
     profit_by_symbol = _index(list((profit_protection or {}).get("decisions", {}).values()))
     resolution_by_symbol = _index(list((resolution or {}).get("positions") or []))
+    recovery_by_symbol = _recovery_by_symbol(recovery)
     rows = []
     for symbol in sorted(broker_positions or {}):
         item, legacy, loss, profit = evidence_by_symbol.get(symbol, {}), triage_by_symbol.get(symbol, {}), loss_by_symbol.get(symbol, {}), profit_by_symbol.get(symbol, {})
         resolution_row = resolution_by_symbol.get(symbol, {})
+        recovered = recovery_by_symbol.get(symbol, {})
         shadow = dict((shadow_handoff or {}).get(symbol) or {})
         policy = unified_position_recommendation(loss, profit, ownership="KNOWN", stale_evidence=item.get("quote_status") == "STALE" or item.get("completed_bar_status") == "STALE")
-        recommendation = _text(legacy.get("recommendation")) or _text(policy.get("canonical_recommendation")) or "WATCH"
+        horizon_requirement = _canonical_same_session_requirement(recovered)
+        generic_recommendation = _text(legacy.get("recommendation")) or _text(policy.get("canonical_recommendation")) or "WATCH"
+        recommendation = "SAME_SESSION_EXIT_REQUIRED" if horizon_requirement["status"] == "CANONICAL_SAME_SESSION_EXIT_REQUIRED" else generic_recommendation
         blocker = _text(legacy.get("first_causal_blocker")) or _text(item.get("first_causal_blocker")) or "EVIDENCE_UNAVAILABLE"
         rows.append({
-            "symbol": symbol, "exit_readiness_state": "EVIDENCE_INCOMPLETE" if blocker != "EVIDENCE_CURRENT" else "ADVISORY_READY",
-            "recommendation": recommendation, "confidence": _text(legacy.get("confidence")) or _text(policy.get("confidence")) or "LOW",
-            "urgency": "HIGH" if recommendation in {"EXIT_REVIEW", "THESIS_BROKEN", "PROTECT_CAPITAL"} else "MEDIUM" if recommendation == "WATCH" else "LOW",
+            "symbol": symbol, "exit_readiness_state": "CANONICAL_SAME_SESSION_EXIT_REQUIRED" if horizon_requirement["status"] == "CANONICAL_SAME_SESSION_EXIT_REQUIRED" else ("EVIDENCE_INCOMPLETE" if blocker != "EVIDENCE_CURRENT" else "ADVISORY_READY"),
+            "recommendation": recommendation, "generic_recommendation": generic_recommendation, "confidence": _text(legacy.get("confidence")) or _text(policy.get("confidence")) or "LOW",
+            "urgency": "HIGH" if recommendation in {"EXIT_REVIEW", "THESIS_BROKEN", "PROTECT_CAPITAL", "SAME_SESSION_EXIT_REQUIRED"} else "MEDIUM" if recommendation == "WATCH" else "LOW",
             "forward_value_state": _text(item.get("opportunity_cost_status")) or "MISSING", "risk_state": _text(loss.get("canonical_recommendation")) or "UNAVAILABLE",
             "profit_protection_state": _text(profit.get("canonical_recommendation") or profit.get("profit_state")) or "UNAVAILABLE",
             "legacy_triage_state": _text(legacy.get("recommendation")) or "NOT_APPLICABLE", "opportunity_cost_state": _text(item.get("opportunity_cost_status")) or "MISSING",
@@ -215,6 +245,9 @@ def build_position_exit_readiness_v1(
             "evidence_missing": legacy.get("evidence_missing") or ([blocker] if blocker != "EVIDENCE_CURRENT" else []), "first_causal_blocker": blocker,
             "plain_english_reason": _text(resolution_row.get("plain_english_explanation")) or _text(legacy.get("plain_english_reason")) or blocker.lower().replace("_", " "),
             "resolution_plan": resolution_row.get("resolution_plan"), "capacity_impact": resolution_row.get("estimated_capacity_releasable"),
+            "canonical_position_id": recovered.get("canonical_position_id") if _text(recovered.get("canonical_identity_status")).upper() == "RESOLVED" else None,
+            "canonical_identity_status": _text(recovered.get("canonical_identity_status")) or "UNAVAILABLE",
+            "horizon_exit_requirement": horizon_requirement,
             **shadow,
             "shadow_only": True, "promotion_status": "NOT_PROMOTED",
             "execution_authority": "DISABLED", "advisory_only": True,

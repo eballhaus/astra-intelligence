@@ -16,7 +16,7 @@ from typing import Any, Iterable, Mapping
 
 
 SCHEMA_VERSION = "astra_position_lane_horizon_recovery_v1"
-LANES = frozenset({"DAY", "SWING", "CRYPTO"})
+LANES = frozenset({"DAY", "SCALP", "SWING", "CRYPTO"})
 STATUS_RESOLVED = "RESOLVED"
 STATUS_UNAVAILABLE = "UNAVAILABLE"
 STATUS_CONFLICT = "CONFLICT"
@@ -54,6 +54,22 @@ def _lane(value: Any) -> str:
 def _horizon(value: Any) -> str:
     candidate = _text(value)
     return "" if candidate.upper() in {"", "UNKNOWN", "UNAVAILABLE", "NONE", "N/A"} else candidate
+
+
+def _contract_value(key: str, *sources: Mapping[str, Any]) -> Any:
+    """Return only an explicitly persisted contract value, never a default."""
+    for source in sources:
+        if key in source and source.get(key) not in (None, ""):
+            return source.get(key)
+    return None
+
+
+def _bool_or_none(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
+        return value.strip().lower() == "true"
+    return None
 
 
 def _timestamp(value: Any) -> datetime | None:
@@ -123,18 +139,28 @@ def _source_claim(
         except (TypeError, ValueError):
             row_metadata = {}
     row_metadata = dict(row_metadata) if isinstance(row_metadata, Mapping) else {}
+    expected_max_hold = _text(_contract_value("expected_max_hold", metadata, row, row_metadata))
+    same_session_exit_required = _bool_or_none(
+        _contract_value("same_session_exit_required", metadata, row, row_metadata)
+    )
+    overnight_allowed = _bool_or_none(
+        _contract_value("overnight_allowed", metadata, row, row_metadata)
+    )
     return {
         "source_type": source_type,
         "source_id": source_id,
         "source_timestamp": source_timestamp,
         "match_method": match_method,
-        "lane": _lane(metadata.get("lane") or row.get("lane_id") or row.get("original_lane") or row.get("lane")),
+        "lane": _lane(metadata.get("lane") or metadata.get("lane_id") or row.get("lane_id") or row.get("original_lane") or row.get("lane")),
         "horizon": _horizon(
-            metadata.get("horizon") or row.get("canonical_horizon")
+            metadata.get("horizon") or metadata.get("intended_horizon") or row.get("canonical_horizon")
             or row.get("paper_entry_horizon_style")
             or row.get("original_horizon")
             or row.get("intended_horizon")
         ),
+        "expected_max_hold": expected_max_hold,
+        "same_session_exit_required": same_session_exit_required,
+        "overnight_allowed": overnight_allowed,
         # These fields are Astra-owned identity/ownership metadata.  They are
         # populated only from a matched lifecycle record, never from the
         # broker's asset identifier or a same-symbol fallback.
@@ -282,6 +308,14 @@ def build_position_lane_horizon_recovery_v1(
             if horizon["status"] == STATUS_UNAVAILABLE:
                 horizon["status"] = STATUS_AMBIGUOUS
         method = next((claim.get("match_method") for claim in claims if claim.get("match_method")), "NONE")
+        contract_claim = identity_claim if identity_status == STATUS_RESOLVED else {}
+        contract_complete = (
+            lane["status"] == STATUS_RESOLVED
+            and horizon["status"] == STATUS_RESOLVED
+            and _text(contract_claim.get("expected_max_hold"))
+            and contract_claim.get("same_session_exit_required") is not None
+            and contract_claim.get("overnight_allowed") is not None
+        )
         positions.append({
             "symbol": symbol,
             "asset_class": _asset(broker.get("asset_class") or broker.get("asset_type")) or "UNAVAILABLE",
@@ -298,6 +332,10 @@ def build_position_lane_horizon_recovery_v1(
             "management_owner": identity_claim.get("management_owner") if identity_status == STATUS_RESOLVED else "",
             "exit_owner": identity_claim.get("exit_owner") if identity_status == STATUS_RESOLVED else "",
             "canonical_identity_status": identity_status,
+            "expected_max_hold": contract_claim.get("expected_max_hold") if contract_complete else None,
+            "same_session_exit_required": contract_claim.get("same_session_exit_required") if contract_complete else None,
+            "overnight_allowed": contract_claim.get("overnight_allowed") if contract_complete else None,
+            "horizon_contract_status": STATUS_RESOLVED if contract_complete else STATUS_UNAVAILABLE,
             "recovery_method": method, "confidence": "CANONICAL" if claims and not blockers else "NONE",
             "conflicts": [claim for claim in claims if claim.get("lane") or claim.get("horizon")] if any("CONFLICT" in blocker for blocker in blockers) else [],
             "exact_blockers": blockers,
@@ -370,6 +408,9 @@ def enrich_canonical_position_snapshot_v1(snapshot: Mapping[str, Any], recovery:
                     "position_owner": row.get("position_owner"),
                     "management_owner": row.get("management_owner"),
                     "exit_policy_owner": row.get("exit_owner"),
+                    "expected_max_hold": row.get("expected_max_hold"),
+                    "same_session_exit_required": row.get("same_session_exit_required"),
+                    "overnight_allowed": row.get("overnight_allowed"),
                 })
             # Recovery metadata is always attached so consumers can distinguish
             # RESOLVED (verified) from UNAVAILABLE (defaulted) lanes.
