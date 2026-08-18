@@ -17,10 +17,11 @@ from engine.astra_sentinel_causal_handoff_integrity_v1 import (
     causal_facts_from_candidate_traces_v1,
     causal_facts_from_position_horizon_handoffs_v1,
     classify_causal_handoff_facts_v1,
+    collect_platform_integrity_monitors_v2,
 )
 
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 ROOT_LIMIT = 100
 VERIFICATION_WINDOW = 3
 _SEVERITY_PRIORITY = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
@@ -663,9 +664,22 @@ class ContinuousSystemIntegrityScannerV1:
                 "evidence_timestamp": worker_state.get("heartbeat_at"),
                 "worker_generation_id": worker_state.get("worker_generation_id"),
             })
+            platform_integrity = collect_platform_integrity_monitors_v2({
+                **context,
+                "worker_state": worker_state,
+            }, limit=limits["max_rows"])
+            causal_facts.extend(platform_integrity.get("facts") or [])
             causal = classify_causal_handoff_facts_v1(causal_facts, limit=limits["max_rows"])
             signals.extend(causal["signals"])
             waiting.extend(causal["nondefects"])
+            waiting.extend(platform_integrity.get("nondefects") or [])
+            platform_signal_count = sum(
+                1 for row in causal["signals"]
+                if str(row.get("monitor") or "") in {
+                    "PRICE_DATA_TRUTH", "LIFECYCLE_PROOF_DEADLINE",
+                    "BROKER_POSITION_EXECUTION_TRUTH", "RESOURCE_PROVIDER_RELIABILITY",
+                }
+            )
             previous_summary = _read(self.summary_path)
             crypto_market_data, crypto_signals, crypto_waiting = self._crypto_market_data(context, previous_summary, limits["max_rows"])
             signals.extend(crypto_signals); waiting.extend(crypto_waiting)
@@ -703,9 +717,16 @@ class ContinuousSystemIntegrityScannerV1:
                        "targeted_scan": {"triggered": mode == "TARGETED", "triggers": list(context.get("targeted_reasons") or [])[:8]},
                        "resource_protection": {"scan_runtime_budget_seconds": runtime_limit, "max_files": limits["max_file_reads"], "max_rows": limits["max_rows"], "max_facts": limits["max_facts"], "max_consumers": limits["max_consumers"], "deferred": False, "worker_priority_preserved": True},
                        "causal_handoff_integrity_v1": causal,
+                       "platform_integrity_monitors_v2": {
+                           **{key: value for key, value in platform_integrity.items() if key not in {"facts", "nondefects"}},
+                           "finding_count": platform_signal_count,
+                           "nondefect_count": len(platform_integrity.get("nondefects") or []),
+                       },
                        "crypto_market_data": crypto_market_data,
-                       "governance_summary": {"root_causes": len(active), "human_repair_required": len(human), "safe_corrections": len(corrections), "sentinel_single_scan_owner": True},
+                       "governance_summary": {"root_causes": len(active), "human_repair_required": len(human), "safe_corrections": len(corrections), "sentinel_single_scan_owner": True,
+                                              "platform_integrity_status": {key: dict(value).get("status") for key, value in platform_integrity.items() if key in {"price_data_truth", "lifecycle_proof_deadline", "broker_position_execution_truth", "resource_provider_reliability"}}},
                        "cortex_summary": {"system_integrity_summary": status, "highest_impact_root_causes": active[:5], "downstream_symptoms_grouped": True,
+                                          "platform_integrity_patterns": {key: dict(value).get("status") for key, value in platform_integrity.items() if key in {"price_data_truth", "lifecycle_proof_deadline", "broker_position_execution_truth", "resource_provider_reliability"}},
                                           "truth_promotion_allowed": False, "recommended_repair_order": [row.get("root_cause_id") for row in active[:5]], "root_cause_orchestration": True},
                        "dependency_graph": dependency_graph_v1(), "consolidated_repair_queue": [{"priority": index + 1, "root_cause_id": row.get("root_cause_id"), "summary": row.get("smallest_safe_repair"), "systems_affected": row.get("affected_components"), "downstream_blockers_cleared": row.get("downstream_symptoms"), "safe_to_autocorrect": bool(row.get("safe_correction_available")), "recommended_files": row.get("affected_components"), "required_tests": ["scanner root-cause regression"]} for index, row in enumerate(active[:10])],
                        "resource_usage": {"provider_calls_used": 0, "broker_read_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "safe_corrections_attempted": len(corrections), "safe_corrections_applied": sum(bool(row.get("applied")) for row in corrections), "issues_grouped": len(active), "duplicate_symptoms_suppressed": max(0, len(signals) - len(active))},

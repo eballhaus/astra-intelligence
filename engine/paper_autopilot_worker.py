@@ -459,6 +459,7 @@ class PaperAutopilotWorker:
         crypto_integrity: dict[str, Any] = {}
         shadow_protection: dict[str, Any] = {}
         truth_arbitration: dict[str, Any] = {}
+        positions: list[dict[str, Any]] = []
         try:
             # Compatibility rows are retained only as a rejected diagnostic
             # claim. Active crypto reconciliation uses canonical SQLite rows.
@@ -658,6 +659,11 @@ class PaperAutopilotWorker:
                 "historical_reconciliation_ownership_collisions": dict(getattr(self.autopilot, "_historical_reconciliation_ownership_collisions_v1", lambda: {})() or {}),
                 "entry_lane_horizon_integrity": dict(getattr(self.autopilot, "entry_lane_horizon_ledger", None).snapshot() if getattr(self.autopilot, "entry_lane_horizon_ledger", None) is not None else {}),
                 "provider_consumption_telemetry": dict(runtime.get("provider_consumption_telemetry_v1") or {}),
+                "broker_positions": positions[:20],
+                "broker_truth_records": [dict(row) for row in list(runtime.get("broker_truth_records_v1") or []) if isinstance(row, dict)][:20],
+                "canonical_lifecycle_lessons": [dict(row) for row in list(runtime.get("canonical_lifecycle_lessons_v1") or []) if isinstance(row, dict)][:20],
+                "broker_position_truth_facts": [dict(row) for row in list(runtime.get("broker_position_truth_facts_v1") or []) if isinstance(row, dict)][:20],
+                "price_truth_facts": [dict(row) for row in list(runtime.get("price_truth_facts_v1") or []) if isinstance(row, dict)][:20],
                 "position_evidence_completeness": dict(runtime.get("position_evidence_completeness_v1") or {}),
                 "unified_position_advisory": dict(runtime.get("unified_position_advisory_v1") or {}),
                 "copilot_position_advisory_handoff": dict(runtime.get("copilot_position_advisory_handoff_v1") or {}),

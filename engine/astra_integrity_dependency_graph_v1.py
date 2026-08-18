@@ -103,5 +103,6 @@ def root_cause_from_signal_v1(signal: dict[str, Any]) -> dict[str, Any]:
             "verification_plan": "three consistent worker-owned scans with source-compliant consumers",
             "recurrence_state": "OPEN",
             "causal_handoff_integrity_v1": causal,
+            "platform_integrity_monitor_v2": signal.get("monitor"),
             "current_vs_historical": causal.get("current_vs_historical", "CURRENT"),
             "legitimate_fail_closed": bool(causal.get("legitimate_fail_closed", False))}
