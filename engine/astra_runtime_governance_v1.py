@@ -589,36 +589,198 @@ def rotate_log(path: str | Path, *, max_bytes: int | None = None, generations: i
 
 
 class WorkerLease:
-    """Single-writer file lock plus generation identity; PID existence is not trusted."""
+    """Single-writer lock with identity-checked stale-metadata recovery."""
 
-    def __init__(self, path: Path = WORKER_LOCK_PATH) -> None:
+    def __init__(
+        self,
+        path: Path = WORKER_LOCK_PATH,
+        *,
+        state_path: Path | None = None,
+        process_lookup: Any = process_info,
+    ) -> None:
         self.path = path
+        self.state_path = state_path or path.with_name(WORKER_STATE_PATH.name)
+        self.process_lookup = process_lookup
         self._handle: Any | None = None
         self.instance_id = f"paper-autopilot-{uuid.uuid4().hex[:12]}"
         self.generation_id = f"generation-{os.getpid()}-{int(time.time())}-{uuid.uuid4().hex[:6]}"
+        self.last_acquire_state = "UNATTEMPTED"
+
+    @staticmethod
+    def _metadata(raw: str) -> dict[str, Any] | None:
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(value, dict):
+            return None
+        try:
+            pid = int(value.get("pid") or 0)
+        except (TypeError, ValueError):
+            return None
+        if pid <= 0 or not str(value.get("worker_instance_id") or "") or not str(value.get("worker_generation_id") or ""):
+            return None
+        return value
+
+    @staticmethod
+    def _same_file(handle: Any, path: Path) -> bool:
+        try:
+            return os.fstat(handle.fileno()).st_ino == path.stat().st_ino
+        except OSError:
+            return False
+
+    def _stale_recovery_allowed(self, metadata: dict[str, Any]) -> bool:
+        """Require positive dead-PID and canonical-state identity evidence."""
+        try:
+            locked_pid = int(metadata.get("pid") or 0)
+        except (TypeError, ValueError):
+            return False
+        if locked_pid <= 0 or bool(self.process_lookup(locked_pid).get("running")):
+            return False
+        state = read_snapshot(self.state_path)
+        if not state:
+            return False
+        active_pid = int(_as_float(state.get("active_worker_pid") or state.get("process_id"), 0.0)) or None
+        active_running = bool(active_pid and self.process_lookup(active_pid).get("running"))
+        if active_running:
+            return False
+        active_claimed = bool(state.get("active_worker_present")) or str(state.get("ownership_state") or "") != "NO_WORKER_ACTIVE"
+        expected_instance = str(state.get("last_known_worker_instance_id") or state.get("worker_instance_id") or "")
+        expected_generation = str(state.get("last_known_worker_generation_id") or state.get("worker_generation_id") or "")
+        identity_matches = (
+            str(metadata.get("worker_instance_id") or "") == expected_instance
+            and str(metadata.get("worker_generation_id") or "") == expected_generation
+        )
+        if active_claimed and (active_pid != locked_pid or not identity_matches):
+            return False
+        if not active_claimed and (expected_instance or expected_generation) and not identity_matches:
+            return False
+        return identity_matches
 
     def acquire(self) -> bool:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._handle = self.path.open("a+", encoding="utf-8")
-        try:
-            fcntl.flock(self._handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            self._handle.close()
-            self._handle = None
-            return False
-        self._handle.seek(0)
-        self._handle.truncate()
-        self._handle.write(json.dumps({"pid": os.getpid(), "worker_instance_id": self.instance_id, "worker_generation_id": self.generation_id, "locked_at": utc_now()}))
-        self._handle.flush()
-        return True
+        # A contender can hold an unlinked inode during another worker's
+        # cleanup. Verify the path still names this descriptor before writing.
+        for _attempt in range(2):
+            existed = self.path.exists()
+            handle = self.path.open("a+", encoding="utf-8")
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                handle.close()
+                self.last_acquire_state = "LIVE_LEASE_HELD"
+                return False
+            if not self._same_file(handle, self.path):
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                handle.close()
+                continue
+            handle.seek(0)
+            raw = handle.read()
+            metadata = self._metadata(raw) if raw.strip() else None
+            if existed and raw.strip() and metadata is None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                handle.close()
+                self.last_acquire_state = "AMBIGUOUS_LOCK_METADATA"
+                return False
+            if metadata is not None and not self._stale_recovery_allowed(metadata):
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                handle.close()
+                self.last_acquire_state = "AMBIGUOUS_OR_LIVE_LOCK_METADATA"
+                return False
+            self._handle = handle
+            self._handle.seek(0)
+            self._handle.truncate()
+            self._handle.write(json.dumps({"pid": os.getpid(), "worker_instance_id": self.instance_id, "worker_generation_id": self.generation_id, "locked_at": utc_now()}))
+            self._handle.flush()
+            self.last_acquire_state = "STALE_LEASE_RECOVERED" if metadata is not None else "ACQUIRED"
+            return True
+        self.last_acquire_state = "LEASE_PATH_RACE_FAIL_CLOSED"
+        return False
 
     def release(self) -> None:
         if self._handle is not None:
             try:
-                fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+                self._handle.seek(0)
+                metadata = self._metadata(self._handle.read())
+                if (
+                    metadata is not None
+                    and int(metadata.get("pid") or 0) == os.getpid()
+                    and str(metadata.get("worker_instance_id") or "") == self.instance_id
+                    and str(metadata.get("worker_generation_id") or "") == self.generation_id
+                    and self._same_file(self._handle, self.path)
+                ):
+                    # Remove only this owner's metadata while its advisory
+                    # lock is still held. Acquire() rejects an unlinked inode
+                    # contender, preventing split ownership during this gap.
+                    try:
+                        self.path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
             finally:
+                fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
                 self._handle.close()
                 self._handle = None
+
+
+def worker_lease_integrity(
+    path: Path = WORKER_LOCK_PATH,
+    *,
+    state_path: Path = WORKER_STATE_PATH,
+    process_lookup: Any = process_info,
+) -> dict[str, Any]:
+    """Read-only lease/process identity classification for Sentinel."""
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {"state": "NO_LEASE", "current": True, "legitimate_fail_closed": False}
+    except OSError:
+        return {"state": "LEASE_UNREADABLE", "current": True, "legitimate_fail_closed": True}
+    metadata = WorkerLease._metadata(raw)
+    if metadata is None:
+        return {"state": "LEASE_METADATA_AMBIGUOUS", "current": True, "legitimate_fail_closed": True}
+    pid = int(metadata["pid"])
+    process = dict(process_lookup(pid) or {})
+    state = read_snapshot(state_path)
+    active_pid = int(_as_float(state.get("active_worker_pid") or state.get("process_id"), 0.0)) or None
+    active_process = dict(process_lookup(active_pid) or {}) if active_pid else {}
+    active_command = str(active_process.get("command") or "").lower()
+    active_canonical = bool(
+        state.get("active_worker_present")
+        and active_pid
+        and active_process.get("running")
+        and "engine.paper_autopilot_worker" in active_command
+    )
+    identity_matches = (
+        active_pid == pid
+        and str(state.get("active_worker_instance_id") or state.get("worker_instance_id") or "") == str(metadata.get("worker_instance_id") or "")
+        and str(state.get("active_worker_generation_id") or state.get("worker_generation_id") or "") == str(metadata.get("worker_generation_id") or "")
+    )
+    if active_canonical and identity_matches and process.get("running"):
+        result = "ACTIVE_MATCHING_LEASE"
+    elif process.get("running"):
+        result = "LIVE_OR_PID_REUSED_LEASE"
+    elif active_canonical:
+        result = "LEASE_PROCESS_OWNERSHIP_CONTRADICTION"
+    else:
+        known_instance = str(state.get("last_known_worker_instance_id") or state.get("worker_instance_id") or "")
+        known_generation = str(state.get("last_known_worker_generation_id") or state.get("worker_generation_id") or "")
+        history_matches = (
+            known_instance == str(metadata.get("worker_instance_id") or "")
+            and known_generation == str(metadata.get("worker_generation_id") or "")
+        )
+        result = "STALE_DEAD_LEASE" if history_matches else "LEASE_IDENTITY_AMBIGUOUS"
+    return {
+        "state": result,
+        "current": result not in {"NO_LEASE"},
+        "legitimate_fail_closed": result in {"LEASE_UNREADABLE", "LEASE_METADATA_AMBIGUOUS", "LIVE_OR_PID_REUSED_LEASE", "LEASE_IDENTITY_AMBIGUOUS"},
+        "pid": pid,
+        "worker_instance_id": metadata.get("worker_instance_id"),
+        "worker_generation_id": metadata.get("worker_generation_id"),
+        "process_running": bool(process.get("running")),
+        "active_worker_pid": active_pid,
+        "active_worker_canonical": active_canonical,
+        "identity_matches_active_worker": identity_matches,
+    }
 
 
 def log_sizes() -> dict[str, int]:

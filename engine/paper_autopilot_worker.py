@@ -662,6 +662,10 @@ class PaperAutopilotWorker:
                 "shadow_exit_analysis_outputs": dict(runtime.get("shadow_exit_analysis_outputs_v1") or {}),
                 "shadow_exit_performance": dict(runtime.get("shadow_exit_performance_v1") or {}),
                 "canonical_capacity_fact": dict(lane.get("canonical_capacity_fact") or {}),
+                "current_candidate_traces": [
+                    dict(row) for row in list((runtime.get("last_execution_trace") or {}).get("per_candidate_decision_trace") or [])
+                    if isinstance(row, dict)
+                ][:20],
                 "targeted_reasons": targeted_reasons,
                 "get_side_effects": 0,
             },

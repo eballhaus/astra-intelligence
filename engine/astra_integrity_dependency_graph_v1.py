@@ -90,6 +90,7 @@ def root_cause_from_signal_v1(signal: dict[str, Any]) -> dict[str, Any]:
     root_id = _id(category, handoff, ",".join(facts), position_identity)
     severity = str(signal.get("severity") or "HIGH")
     finding_id = "finding-" + hashlib.sha256((root_id + "|" + kind).encode("utf-8")).hexdigest()[:16]
+    causal = dict(signal.get("causal_finding_v1") or {})
     return {"root_cause_id": root_id, "finding_id": finding_id, "governance_issue_id": root_id,
             "verification_id": "verification-" + root_id.removeprefix("root-"), "category": category, "severity": severity,
             "confidence": str(signal.get("confidence") or ("VERIFIED" if kind not in {"UNKNOWN_SYSTEM_DEFECT"} else "LOW")),
@@ -100,4 +101,7 @@ def root_cause_from_signal_v1(signal: dict[str, Any]) -> dict[str, Any]:
             "safe_correction_available": bool(signal.get("safe_correction_available")),
             "human_repair_required": not bool(signal.get("safe_correction_available")),
             "verification_plan": "three consistent worker-owned scans with source-compliant consumers",
-            "recurrence_state": "OPEN"}
+            "recurrence_state": "OPEN",
+            "causal_handoff_integrity_v1": causal,
+            "current_vs_historical": causal.get("current_vs_historical", "CURRENT"),
+            "legitimate_fail_closed": bool(causal.get("legitimate_fail_closed", False))}

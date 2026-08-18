@@ -11,10 +11,15 @@ from typing import Any
 from engine.astra_canonical_truth_registry_v1 import canonical_fact_registry_v1
 from engine.astra_contract_integrity_v1 import validate_field_contract_v1
 from engine.astra_integrity_dependency_graph_v1 import dependency_graph_v1, root_cause_from_signal_v1
+from engine.astra_runtime_governance_v1 import worker_lease_integrity
 from engine.astra_safe_correction_registry_v1 import SafeCorrectionRegistryV1
+from engine.astra_sentinel_causal_handoff_integrity_v1 import (
+    causal_facts_from_candidate_traces_v1,
+    classify_causal_handoff_facts_v1,
+)
 
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 ROOT_LIMIT = 100
 VERIFICATION_WINDOW = 3
 _SEVERITY_PRIORITY = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
@@ -629,6 +634,31 @@ class ContinuousSystemIntegrityScannerV1:
             registry = canonical_fact_registry_v1()
             static_scan = self._static_scan(limits["max_file_reads"])
             signals, waiting, compliance = self._signals(context, registry, limits["max_rows"])
+            causal_facts = [
+                dict(row) for row in list(context.get("causal_handoff_facts") or [])
+                if isinstance(row, dict)
+            ][:limits["max_rows"]]
+            causal_facts.extend(causal_facts_from_candidate_traces_v1(
+                [dict(row) for row in list(context.get("current_candidate_traces") or []) if isinstance(row, dict)],
+                limit=max(1, limits["max_rows"] - len(causal_facts)),
+            ))
+            lease = dict(context.get("worker_lease_integrity") or worker_lease_integrity(
+                self.state_dir / "astra_worker_runtime_v1.lock",
+                state_path=self.state_dir / "astra_worker_runtime_state_v1.json",
+            ))
+            causal_facts.append({
+                "kind": "WORKER_LEASE",
+                "lease_state": lease.get("state"),
+                "producer": "PaperAutopilotWorker.run",
+                "consumer": "WorkerLease.acquire",
+                "field": "astra_worker_runtime_v1.lock",
+                "current": bool(lease.get("current")),
+                "evidence_timestamp": worker_state.get("heartbeat_at"),
+                "worker_generation_id": worker_state.get("worker_generation_id"),
+            })
+            causal = classify_causal_handoff_facts_v1(causal_facts, limit=limits["max_rows"])
+            signals.extend(causal["signals"])
+            waiting.extend(causal["nondefects"])
             previous_summary = _read(self.summary_path)
             crypto_market_data, crypto_signals, crypto_waiting = self._crypto_market_data(context, previous_summary, limits["max_rows"])
             signals.extend(crypto_signals); waiting.extend(crypto_waiting)
@@ -665,6 +695,7 @@ class ContinuousSystemIntegrityScannerV1:
                        "deep_scan": {"interval_seconds": limits["deep_interval_seconds"], "max_runtime_seconds": limits["deep_max_runtime_seconds"], "last_run_at": _now() if mode == "DEEP" else previous_summary.get("deep_scan", {}).get("last_run_at"), "deferred_for_load": False},
                        "targeted_scan": {"triggered": mode == "TARGETED", "triggers": list(context.get("targeted_reasons") or [])[:8]},
                        "resource_protection": {"scan_runtime_budget_seconds": runtime_limit, "max_files": limits["max_file_reads"], "max_rows": limits["max_rows"], "max_facts": limits["max_facts"], "max_consumers": limits["max_consumers"], "deferred": False, "worker_priority_preserved": True},
+                       "causal_handoff_integrity_v1": causal,
                        "crypto_market_data": crypto_market_data,
                        "governance_summary": {"root_causes": len(active), "human_repair_required": len(human), "safe_corrections": len(corrections), "sentinel_single_scan_owner": True},
                        "cortex_summary": {"system_integrity_summary": status, "highest_impact_root_causes": active[:5], "downstream_symptoms_grouped": True,

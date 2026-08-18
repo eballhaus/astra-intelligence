@@ -16,6 +16,7 @@ from engine.astra_runtime_governance_v1 import (
     read_snapshot,
     rotate_log,
     snapshot_age_seconds,
+    worker_lease_integrity,
     write_snapshot,
     worker_liveness,
 )
@@ -70,6 +71,96 @@ class RuntimeResourceGovernanceTests(unittest.TestCase):
             first.release()
             self.assertTrue(second.acquire())
             second.release()
+
+    def test_graceful_release_removes_only_its_own_lock_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "worker.lock"
+            lease = WorkerLease(lock)
+            self.assertTrue(lease.acquire())
+            self.assertTrue(lock.exists())
+            lease.release()
+            self.assertFalse(lock.exists())
+
+    def test_dead_identity_matching_lease_is_recovered(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "worker.lock"
+            state = Path(directory) / "astra_worker_runtime_state_v1.json"
+            lock.write_text('{"pid":999999,"worker_instance_id":"old-instance","worker_generation_id":"old-generation"}', encoding="utf-8")
+            write_snapshot({
+                "active_worker_present": False,
+                "ownership_state": "NO_WORKER_ACTIVE",
+                "last_known_worker_instance_id": "old-instance",
+                "last_known_worker_generation_id": "old-generation",
+            }, state)
+            lease = WorkerLease(lock, state_path=state)
+            self.assertTrue(lease.acquire())
+            self.assertEqual(lease.last_acquire_state, "STALE_LEASE_RECOVERED")
+            lease.release()
+
+    def test_live_or_pid_reused_lease_is_never_recovered(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "worker.lock"
+            state = Path(directory) / "astra_worker_runtime_state_v1.json"
+            lock.write_text('{"pid":41,"worker_instance_id":"old-instance","worker_generation_id":"old-generation"}', encoding="utf-8")
+            write_snapshot({
+                "active_worker_present": False,
+                "ownership_state": "NO_WORKER_ACTIVE",
+                "last_known_worker_instance_id": "old-instance",
+                "last_known_worker_generation_id": "old-generation",
+            }, state)
+            lease = WorkerLease(
+                lock,
+                state_path=state,
+                process_lookup=lambda _pid: {"running": True, "command": "unrelated-process"},
+            )
+            self.assertFalse(lease.acquire())
+            self.assertEqual(lease.last_acquire_state, "AMBIGUOUS_OR_LIVE_LOCK_METADATA")
+            self.assertTrue(lock.exists())
+
+    def test_ambiguous_state_cannot_clear_dead_lease(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "worker.lock"
+            state = Path(directory) / "astra_worker_runtime_state_v1.json"
+            lock.write_text('{"pid":999999,"worker_instance_id":"old-instance","worker_generation_id":"old-generation"}', encoding="utf-8")
+            write_snapshot({
+                "active_worker_present": True,
+                "ownership_state": "SINGLE_WORKER_ACTIVE",
+                "active_worker_pid": 999999,
+                "worker_instance_id": "different-instance",
+                "worker_generation_id": "different-generation",
+            }, state)
+            lease = WorkerLease(lock, state_path=state)
+            self.assertFalse(lease.acquire())
+            self.assertEqual(lease.last_acquire_state, "AMBIGUOUS_OR_LIVE_LOCK_METADATA")
+            self.assertTrue(lock.exists())
+
+    def test_lease_integrity_distinguishes_dead_stale_from_live_matching_owner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "worker.lock"
+            state = Path(directory) / "astra_worker_runtime_state_v1.json"
+            lock.write_text('{"pid":999999,"worker_instance_id":"old-instance","worker_generation_id":"old-generation"}', encoding="utf-8")
+            write_snapshot({
+                "active_worker_present": False,
+                "ownership_state": "NO_WORKER_ACTIVE",
+                "last_known_worker_instance_id": "old-instance",
+                "last_known_worker_generation_id": "old-generation",
+            }, state)
+            dead = worker_lease_integrity(lock, state_path=state)
+            self.assertEqual(dead["state"], "STALE_DEAD_LEASE")
+
+            lock.write_text('{"pid":41,"worker_instance_id":"live-instance","worker_generation_id":"live-generation"}', encoding="utf-8")
+            write_snapshot({
+                "active_worker_present": True,
+                "active_worker_pid": 41,
+                "worker_instance_id": "live-instance",
+                "worker_generation_id": "live-generation",
+            }, state)
+            live = worker_lease_integrity(
+                lock,
+                state_path=state,
+                process_lookup=lambda _pid: {"running": True, "command": "python -m engine.paper_autopilot_worker"},
+            )
+            self.assertEqual(live["state"], "ACTIVE_MATCHING_LEASE")
 
     def test_log_rotation_retains_recent_generation(self):
         with tempfile.TemporaryDirectory() as directory:
