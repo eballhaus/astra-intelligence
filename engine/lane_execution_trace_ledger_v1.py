@@ -308,6 +308,10 @@ class LaneExecutionTraceLedgerV1:
                 "hot_candidate_quote_refresh_attempt_count": source.get("hot_candidate_quote_refresh_attempt_count"),
                 "hot_candidate_quote_refresh_result": _text(source.get("hot_candidate_quote_refresh_result")),
                 "hot_candidate_quote_refresh_cache_bypass_requested": bool(source.get("hot_candidate_quote_refresh_cache_bypass_requested", False)),
+                # Blocker-specific detail is produced by the worker and is
+                # retained only in this existing bounded lane trace.
+                "entry_commitment_trace_v1": dict(source.get("entry_commitment_trace_v1") or {}),
+                "pretrade_contract_missing_fields_trace_v1": dict(source.get("pretrade_contract_missing_fields_trace_v1") or {}),
             }
             records.append(record)
             known.add(trace_id)

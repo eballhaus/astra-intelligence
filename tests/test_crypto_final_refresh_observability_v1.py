@@ -116,6 +116,35 @@ class CryptoFinalRefreshTracePersistenceTests(unittest.TestCase):
             self.assertEqual(summary["total_trace_rows"], 2)
             self.assertEqual(summary["lanes"]["CRYPTO"]["candidates_seen"], 2)
 
+    def test_blocker_specific_observability_persists_in_existing_trace(self):
+        with tempfile.TemporaryDirectory() as root:
+            ledger = LaneExecutionTraceLedgerV1(root)
+            row = {
+                **_base_row("SCALP"),
+                "decision_reason": "PRETRADE_DECISION_CONTRACT_MISSING_FIELDS",
+                "entry_commitment_trace_v1": {
+                    "commitment_score": 53.2,
+                    "applied_minimum": 58.0,
+                    "defaulted_inputs": ["consensus_strength"],
+                },
+                "pretrade_contract_missing_fields_trace_v1": {
+                    "missing_required_fields": ["candidate_risk_envelope_v1"],
+                    "contract_lane": "SCALP",
+                    "intended_horizon": "scalp",
+                    "risk_envelope_missing_fields": ["expected_downside_range"],
+                },
+            }
+            ledger.record([row], cycle_id="cycle-blocker")
+            with open(ledger.path, "r", encoding="utf-8") as handle:
+                record = json.loads(handle.readline())
+            self.assertEqual(record["entry_commitment_trace_v1"]["commitment_score"], 53.2)
+            self.assertEqual(record["entry_commitment_trace_v1"]["defaulted_inputs"], ["consensus_strength"])
+            self.assertEqual(
+                record["pretrade_contract_missing_fields_trace_v1"]["missing_required_fields"],
+                ["candidate_risk_envelope_v1"],
+            )
+            self.assertEqual(record["pretrade_contract_missing_fields_trace_v1"]["contract_lane"], "SCALP")
+
 
 class CryptoFinalRefreshTraceFlowTests(unittest.TestCase):
     def test_candidate_trace_carries_refresh_fields_into_trace_dict(self):

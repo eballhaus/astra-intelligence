@@ -7580,7 +7580,57 @@ class PaperAutopilotEngine:
         base_commitment_floor = max(50.0, 58.0 - self.paper_entry_threshold_relief_points)
         watchlist_commitment_floor = max(56.0, 64.0 - self.paper_entry_threshold_relief_points)
         if commitment_score < base_commitment_floor:
-            return False, "entry_commitment_below_threshold", {"commitment_score": round(commitment_score, 2)}
+            unavailable_values = {"", "unknown", "unavailable", "missing", "none", "null", "n/a"}
+
+            def _input_source(*fields: str) -> str:
+                for field in fields:
+                    value = row.get(field)
+                    if value is None:
+                        continue
+                    if isinstance(value, str) and value.strip().lower() in unavailable_values:
+                        continue
+                    if value not in ([], {}):
+                        return field
+                return "DEFAULT"
+
+            input_sources = {
+                "buy_or_trade_quality_score": _input_source("buy_quality_score", "trade_quality_score"),
+                "confidence_or_predicted_win_probability": _input_source("confidence", "predicted_win_probability"),
+                "consensus_strength": _input_source("consensus_strength"),
+                "entry_edge_score": _input_source("entry_edge_score"),
+                "persona_disagreement_index": _input_source("persona_disagreement_index"),
+                "uncertainty_score": _input_source("uncertainty_score"),
+                "follow_through_state": _input_source("follow_through_state"),
+                "buy_eligibility": _input_source("buy_eligibility"),
+                "discipline_action": _input_source("core_decision_discipline_action"),
+                "discipline_tier": _input_source("core_decision_discipline_tier"),
+            }
+            commitment_trace = {
+                "schema_version": "astra_entry_commitment_trace_v1",
+                "commitment_score": round(commitment_score, 2),
+                "applied_minimum": round(base_commitment_floor, 2),
+                "applied_floor_type": "base_commitment_floor",
+                "paper_entry_threshold_relief_points": round(self.paper_entry_threshold_relief_points, 2),
+                "commitment_source_class": "PaperAutopilot._entry_commitment_gate_v1",
+                "buy_or_trade_quality_score": round(quality, 2),
+                "confidence_or_predicted_win_probability": round(confidence, 2),
+                "consensus_strength": round(consensus, 2),
+                "entry_edge_score": round(entry_edge, 4),
+                "persona_disagreement_index": round(disagreement, 2),
+                "uncertainty_score": round(uncertainty_score, 2),
+                "follow_through_state": follow or "UNAVAILABLE",
+                "buy_eligibility": eligibility or "UNAVAILABLE",
+                "discipline_action": discipline_action or "UNAVAILABLE",
+                "discipline_tier": discipline_tier or "UNAVAILABLE",
+                "input_sources": input_sources,
+                "defaulted_inputs": sorted(
+                    name for name, source in input_sources.items() if source == "DEFAULT"
+                ),
+            }
+            return False, "entry_commitment_below_threshold", {
+                "commitment_score": round(commitment_score, 2),
+                "entry_commitment_trace_v1": commitment_trace,
+            }
         if commitment_score < watchlist_commitment_floor and "watchlist" in eligibility:
             return False, "watchlist_commitment_not_strong_enough", {"commitment_score": round(commitment_score, 2)}
 
@@ -9281,6 +9331,61 @@ class PaperAutopilotEngine:
             acknowledgements["CONSUMED_BY_ORDER_READY"] = bool(allowed)
             contract["candidate_risk_envelope_v1"] = risk_envelope
         r["pretrade_decision_contract_v1"] = contract
+
+        def _bounded_texts(values: Any, limit: int = 16) -> list[str]:
+            if not isinstance(values, (list, tuple, set)):
+                return []
+            return [str(value) for value in values if str(value).strip()][:limit]
+
+        missing_contract_fields = _bounded_texts(contract.get("missing_required_fields"))
+        pretrade_missing_fields_trace: dict[str, Any] = {}
+        if reason == "PRETRADE_DECISION_CONTRACT_MISSING_FIELDS":
+            forecast = dict(r.get("crypto_pretrade_forecast_v1") or {})
+            contract_provenance = dict(contract.get("field_provenance_v1") or {})
+            risk_provenance = dict(risk_envelope.get("field_provenance_v1") or {})
+            known_field_sources: dict[str, dict[str, str]] = {}
+            for field in missing_contract_fields:
+                provenance = dict(contract_provenance.get(field) or risk_provenance.get(field) or {})
+                source_system = str(provenance.get("source_system") or "")
+                source_field = str(provenance.get("source_field") or "")
+                if source_system or source_field:
+                    known_field_sources[field] = {
+                        "source_system": source_system or "UNAVAILABLE",
+                        "source_field": source_field or "UNAVAILABLE",
+                    }
+                elif field == "candidate_risk_envelope_v1":
+                    known_field_sources[field] = {
+                        "source_system": "engine.astra_premarket_certification_v1.enrich_candidate_for_pretrade_contract",
+                        "source_field": "candidate_risk_envelope_v1",
+                    }
+                elif field in {"expected_return_range", "expected_return_per_day_range"}:
+                    known_field_sources[field] = {
+                        "source_system": (
+                            "crypto_pretrade_forecast_v1"
+                            if asset == "crypto"
+                            else "engine.astra_premarket_certification_v1.build_candidate_risk_envelope_v1"
+                        ),
+                        "source_field": field,
+                    }
+            pretrade_missing_fields_trace = {
+                "schema_version": "astra_pretrade_contract_missing_fields_trace_v1",
+                "missing_required_fields": missing_contract_fields,
+                "contract_lane": str(contract.get("lane") or r.get("lane_id") or "UNAVAILABLE"),
+                "intended_horizon": str(contract.get("intended_horizon") or r.get("intended_horizon") or "UNAVAILABLE"),
+                "risk_envelope_state": str(risk_envelope.get("risk_envelope_state") or "RISK_ENVELOPE_INCOMPLETE"),
+                "risk_envelope_missing_fields": _bounded_texts(risk_envelope.get("missing_inputs")),
+                "crypto_pretrade_forecast_state": (
+                    str(forecast.get("forecast_state") or "UNAVAILABLE")
+                    if asset == "crypto"
+                    else "NOT_APPLICABLE"
+                ),
+                "crypto_pretrade_forecast_missing_fields": (
+                    _bounded_texts(forecast.get("missing_inputs") or forecast.get("missing_fields"))
+                    if asset == "crypto"
+                    else []
+                ),
+                "known_field_sources": known_field_sources,
+            }
         portfolio_fit = _to_float(r.get("portfolio_fit_score"), 50.0)
         portfolio_fit_label = str(r.get("portfolio_fit_label") or "").strip()
         portfolio_diversification_block_reason = str(r.get("portfolio_diversification_block_reason") or "").strip()
@@ -9564,6 +9669,8 @@ class PaperAutopilotEngine:
             "eligible": bool(allowed),
             "decision_reason": str(reason),
             "commitment_score": round(_to_float(gate_meta.get("commitment_score"), 0.0), 2),
+            "entry_commitment_trace_v1": dict(gate_meta.get("entry_commitment_trace_v1") or {}),
+            "pretrade_contract_missing_fields_trace_v1": pretrade_missing_fields_trace,
             "duplicate_active_position": bool(symbol in open_syms) if symbol else False,
             "duplicate_source": duplicate_source,
             "duplicate_exposure_state": duplicate_exposure_state,

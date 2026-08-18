@@ -106,6 +106,93 @@ class CryptoFinalRefreshPlacementTests(unittest.TestCase):
         self.assertEqual(self.calls, [])
         self.assertEqual(self.executable_calls, [])
         self.assertFalse(trace["crypto_final_quote_refresh_attempted"])
+        commitment = trace["entry_commitment_trace_v1"]
+        self.assertEqual(commitment["commitment_score"], trace["commitment_score"])
+        self.assertEqual(commitment["applied_minimum"], 58.0)
+        self.assertEqual(commitment["applied_floor_type"], "base_commitment_floor")
+        self.assertEqual(commitment["buy_or_trade_quality_score"], 75.0)
+        self.assertEqual(commitment["confidence_or_predicted_win_probability"], 80.0)
+        self.assertEqual(commitment["consensus_strength"], 0.0)
+        self.assertEqual(commitment["input_sources"]["consensus_strength"], "consensus_strength")
+        self.assertEqual(
+            commitment["defaulted_inputs"],
+            ["discipline_action", "discipline_tier", "follow_through_state"],
+        )
+
+    def test_crypto_missing_contract_trace_retains_risk_and_forecast_gaps(self):
+        contract = _valid_contract(
+            contract_status="INVALID",
+            contract_state="CONTRACT_INCOMPLETE",
+            order_ready_allowed=False,
+            fail_closed_reason="PRETRADE_DECISION_CONTRACT_MISSING_FIELDS",
+            missing_required_fields=[
+                "candidate_risk_envelope_v1",
+                "expected_return_range",
+                "expected_return_per_day_range",
+            ],
+            candidate_risk_envelope_v1={
+                "risk_envelope_state": "RISK_ENVELOPE_INCOMPLETE",
+                "missing_inputs": ["expected_upside_range", "expected_downside_range"],
+            },
+        )
+        trace, allowed, reason, _ = self._trace(
+            _candidate(
+                symbol="PEPE/USD",
+                crypto_pretrade_forecast_v1={
+                    "forecast_state": "FORECAST_INCOMPLETE",
+                    "missing_inputs": ["completed_bar_continuation"],
+                },
+            ),
+            contract=contract,
+        )
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "PRETRADE_DECISION_CONTRACT_MISSING_FIELDS")
+        observed = trace["pretrade_contract_missing_fields_trace_v1"]
+        self.assertEqual(observed["missing_required_fields"], contract["missing_required_fields"])
+        self.assertEqual(observed["contract_lane"], "CRYPTO")
+        self.assertEqual(observed["risk_envelope_state"], "RISK_ENVELOPE_INCOMPLETE")
+        self.assertEqual(observed["risk_envelope_missing_fields"], ["expected_upside_range", "expected_downside_range"])
+        self.assertEqual(observed["crypto_pretrade_forecast_state"], "FORECAST_INCOMPLETE")
+        self.assertEqual(observed["crypto_pretrade_forecast_missing_fields"], ["completed_bar_continuation"])
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.executable_calls, [])
+
+    def test_scalp_missing_contract_trace_retains_lane_and_risk_gaps(self):
+        contract = _valid_contract(
+            contract_status="INVALID",
+            contract_state="CONTRACT_INCOMPLETE",
+            order_ready_allowed=False,
+            fail_closed_reason="PRETRADE_DECISION_CONTRACT_MISSING_FIELDS",
+            missing_required_fields=["candidate_risk_envelope_v1", "expected_return_range"],
+            candidate_risk_envelope_v1={
+                "risk_envelope_state": "RISK_ENVELOPE_INCOMPLETE",
+                "missing_inputs": ["expected_downside_range"],
+            },
+        )
+        trace, allowed, reason, _ = self._trace(
+            _candidate(
+                symbol="GEHC",
+                asset_type="stock",
+                asset_class="equity",
+                lane_id="SCALP",
+                paper_entry_horizon_style="scalp",
+                trade_horizon_style="scalp",
+                provider_quote_timestamp=_iso(),
+                quote_assignment_state="ASSIGNED_AND_CONSUMED",
+                valid_quote=True,
+                trusted_quote_for_buys=True,
+            ),
+            contract=contract,
+        )
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "PRETRADE_DECISION_CONTRACT_MISSING_FIELDS")
+        observed = trace["pretrade_contract_missing_fields_trace_v1"]
+        self.assertEqual(observed["contract_lane"], "SCALP")
+        self.assertEqual(observed["intended_horizon"], "scalp")
+        self.assertEqual(observed["risk_envelope_missing_fields"], ["expected_downside_range"])
+        self.assertEqual(observed["crypto_pretrade_forecast_state"], "NOT_APPLICABLE")
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.executable_calls, [])
 
     def test_missing_pretrade_contract_does_not_spend_final_refresh(self):
         trace, allowed, reason, _ = self._trace(
