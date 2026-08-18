@@ -57,6 +57,25 @@ class CryptoFinalRefreshTracePersistenceTests(unittest.TestCase):
                 record = json.loads(handle.readline())
             self.assertEqual(record["crypto_final_quote_refresh_result"], "STALE_PROVIDER_NATIVE_TIMESTAMP")
 
+    def test_hot_refresh_provenance_persists(self):
+        with tempfile.TemporaryDirectory() as root:
+            ledger = LaneExecutionTraceLedgerV1(root)
+            row = {
+                **_base_row("SCALP"),
+                "hot_candidate_quote_refresh_lane": "SCALP",
+                "hot_candidate_quote_refresh_attempted": True,
+                "hot_candidate_quote_refresh_attempt_count": 1,
+                "hot_candidate_quote_refresh_result": "FRESH",
+                "hot_candidate_quote_refresh_cache_bypass_requested": True,
+            }
+            ledger.record([row], cycle_id="cycle-hot")
+            with open(ledger.path, "r", encoding="utf-8") as handle:
+                record = json.loads(handle.readline())
+            self.assertEqual(record["hot_candidate_quote_refresh_lane"], "SCALP")
+            self.assertIs(record["hot_candidate_quote_refresh_attempted"], True)
+            self.assertEqual(record["hot_candidate_quote_refresh_result"], "FRESH")
+            self.assertIs(record["hot_candidate_quote_refresh_cache_bypass_requested"], True)
+
     def test_refreshed_quote_timestamp_and_age_persist_when_present(self):
         with tempfile.TemporaryDirectory() as root:
             ledger = LaneExecutionTraceLedgerV1(root)

@@ -17269,7 +17269,7 @@ def _paper_rankings_snapshot():
     }
 
 
-def _paper_single_symbol_quote(symbol, asset_type):
+def _paper_single_symbol_quote(symbol, asset_type, *, bypass_cache=False):
     """Return one bounded, provider-native quote for the worker only.
 
     ``PaperAutopilot`` is the sole caller of this adapter.  API handlers use
@@ -17288,6 +17288,7 @@ def _paper_single_symbol_quote(symbol, asset_type):
         asset_type="crypto" if kind == "crypto" else "stock",
         preferred_providers=["ALPACA", "FMP"],
         cache_max_age_seconds=20,
+        bypass_cache=bool(bypass_cache),
         protected_tier1=True,
     )
     out = dict(quote or {})
@@ -17297,7 +17298,7 @@ def _paper_single_symbol_quote(symbol, asset_type):
     return out
 
 
-def _paper_latest_symbol_snapshot(symbol, asset_type):
+def _paper_latest_symbol_snapshot(symbol, asset_type, *, bypass_cache=False):
     kind = _normalize_asset_type(asset_type)
     _ensure_latest_rankings()
     # Keep paper exits tied to reasonably fresh snapshots so entry/exit prices can diverge.
@@ -17329,7 +17330,7 @@ def _paper_latest_symbol_snapshot(symbol, asset_type):
             if bool(evidence.get("executable_freshness")):
                 return out
             break
-    return _paper_single_symbol_quote(sym, kind)
+    return _paper_single_symbol_quote(sym, kind, bypass_cache=bool(bypass_cache))
 
 
 PAPER_FRESHNESS = QuoteFreshnessManager(
@@ -17388,6 +17389,9 @@ PAPER_AUTOPILOT = PaperAutopilotEngine(
     paper_entry_threshold_relief_points=float(PAPER_THROUGHPUT_ENTRY_THRESHOLD_RELIEF_POINTS if PAPER_THROUGHPUT_EXPANSION_ENABLED else 0.0),
     get_top_buys_fn=_paper_top_buys_snapshot,
     get_latest_row_fn=_paper_latest_symbol_snapshot,
+    get_executable_quote_fn=lambda symbol, asset_type: _paper_latest_symbol_snapshot(
+        symbol, asset_type, bypass_cache=True,
+    ),
     exit_engine=EXIT_INTEL,
     exit_learning=EXIT_LEARNING,
     alpaca_paper_broker=ALPACA_PAPER_BROKER,

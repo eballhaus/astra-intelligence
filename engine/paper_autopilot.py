@@ -1605,6 +1605,16 @@ class PaperAutopilotEngine:
 
         self.get_top_buys_fn = kwargs.get("get_top_buys_fn") if callable(kwargs.get("get_top_buys_fn")) else None
         self.get_latest_row_fn = kwargs.get("get_latest_row_fn") if callable(kwargs.get("get_latest_row_fn")) else None
+        # This callback is deliberately narrower than the ordinary snapshot
+        # lookup: it is used only by a selected hot candidate after every
+        # non-market gate has passed.  The worker adapter owns cache bypass
+        # and provider-budget enforcement.
+        self.get_executable_quote_fn = kwargs.get("get_executable_quote_fn") if callable(kwargs.get("get_executable_quote_fn")) else None
+        self.hot_candidate_quote_refresh_max_per_lane = min(
+            3,
+            max(1, _to_int(os.getenv("ASTRA_HOT_CANDIDATE_QUOTE_REFRESH_MAX_PER_LANE"), 1)),
+        )
+        self._hot_candidate_quote_refresh_counts_v1: dict[str, int] = {}
         self.trade_intel = kwargs.get("trade_intel")
         self.exit_engine = kwargs.get("exit_engine")
         self.exit_learning = kwargs.get("exit_learning")
@@ -7031,6 +7041,7 @@ class PaperAutopilotEngine:
         row: Mapping[str, Any] | None,
         *,
         refresh_crypto_stale: bool = True,
+        refresh_scalp_stale: bool = True,
     ) -> dict[str, Any]:
         """Attach worker-owned quote evidence before candidate qualification.
 
@@ -7042,6 +7053,7 @@ class PaperAutopilotEngine:
         candidate = dict(row or {})
         symbol = str(candidate.get("symbol") or "").upper().strip()
         asset_type = _norm_asset(candidate.get("asset_type") or candidate.get("asset_class") or "stock")
+        lane_id = str(candidate.get("lane_id") or candidate.get("lane") or "").upper().strip()
         prior_assignment_state = str(candidate.get("quote_assignment_state") or "")
         candidate["quote_assignment_consumer"] = "PaperAutopilot.candidate_preflight"
         candidate["quote_assignment_state"] = "NOT_ASSIGNED"
@@ -7050,7 +7062,7 @@ class PaperAutopilotEngine:
             candidate["trusted_quote_for_buys"] = False
             candidate["quote_assignment_blocker"] = "MISSING_SYMBOL"
             return candidate
-        if prior_assignment_state == "CRYPTO_STALE_REFRESH_CONSUMED":
+        if prior_assignment_state in {"CRYPTO_STALE_REFRESH_CONSUMED", "SCALP_STALE_REFRESH_CONSUMED"}:
             # Preserve the first refresh outcome exactly. Re-evaluating the
             # original stale snapshot would overwrite a more precise missing
             # or invalid refresh blocker and could invite another lookup.
@@ -7068,19 +7080,45 @@ class PaperAutopilotEngine:
             and not bool(candidate_evidence.get("executable_freshness"))
             and _to_float(candidate.get("price"), _to_float(candidate.get("current_price"), 0.0)) > 0.0
         )
+        scalp_refresh_needed = bool(
+            asset_type == "stock"
+            and lane_id == "SCALP"
+            and not bool(candidate_evidence.get("executable_freshness"))
+            and _to_float(candidate.get("price"), _to_float(candidate.get("current_price"), 0.0)) > 0.0
+        )
         # The full worker loop assigns once before it hands the row to trace
         # and submission.  Re-validate that same evidence rather than issuing
         # a second provider request from a downstream consumer.
-        if prior_assignment_state in {"ASSIGNED_AND_CONSUMED", "CRYPTO_STALE_REFRESH_CONSUMED"}:
+        if prior_assignment_state in {
+            "ASSIGNED_AND_CONSUMED", "CRYPTO_STALE_REFRESH_CONSUMED", "SCALP_STALE_REFRESH_CONSUMED",
+        }:
             latest = dict(candidate)
         elif asset_type == "crypto" and not refresh_crypto_stale:
             # The first CRYPTO pass is observation-only.  Its stale native
             # quote cannot authorize an order, but it also must not spend the
             # lane's one bounded refresh until non-market gates have passed.
             latest = dict(candidate)
-        elif callable(self.get_latest_row_fn):
+        elif scalp_refresh_needed and not refresh_scalp_stale:
+            # SCALP keeps its session and non-market gates ahead of a direct
+            # quote request.  After-hours or otherwise ineligible rows never
+            # consume the small hot-candidate budget.
+            latest = dict(candidate)
+        elif callable(self.get_latest_row_fn) or callable(self.get_executable_quote_fn):
+            quote_lookup = self.get_latest_row_fn
+            hot_refresh_lane = ""
+            if crypto_refresh_needed and refresh_crypto_stale:
+                hot_refresh_lane = "CRYPTO"
+            elif scalp_refresh_needed and refresh_scalp_stale:
+                hot_refresh_lane = "SCALP"
+            if hot_refresh_lane and callable(self.get_executable_quote_fn):
+                quote_lookup = self.get_executable_quote_fn
+            if not callable(quote_lookup):
+                candidate["valid_quote"] = False
+                candidate["trusted_quote_for_buys"] = False
+                candidate["quote_assignment_blocker"] = "LATEST_QUOTE_LOOKUP_UNAVAILABLE"
+                return candidate
             try:
-                latest = dict(self.get_latest_row_fn(symbol, asset_type) or {})
+                latest = dict(quote_lookup(symbol, asset_type) or {})
             except Exception as exc:
                 candidate["valid_quote"] = False
                 candidate["trusted_quote_for_buys"] = False
@@ -7128,11 +7166,34 @@ class PaperAutopilotEngine:
                     evidence.get("first_causal_blocker") or "TRUSTED_EXECUTABLE_QUOTE_UNAVAILABLE"
                 )
                 candidate["crypto_final_quote_refresh_attempt_count"] = 1
+                candidate["hot_candidate_quote_refresh_lane"] = "CRYPTO"
+                candidate["hot_candidate_quote_refresh_attempted"] = True
+                candidate["hot_candidate_quote_refresh_attempt_count"] = 1
+                candidate["hot_candidate_quote_refresh_result"] = candidate["crypto_final_quote_refresh_result"]
+                candidate["hot_candidate_quote_refresh_cache_bypass_requested"] = bool(
+                    callable(self.get_executable_quote_fn)
+                )
             elif crypto_refresh_needed:
                 candidate["quote_assignment_state"] = "CRYPTO_STALE_REFRESH_DEFERRED"
                 candidate["crypto_final_quote_refresh_deferred"] = True
                 candidate["crypto_final_quote_refresh_attempted"] = False
                 candidate["crypto_final_quote_refresh_attempt_count"] = 0
+            elif scalp_refresh_needed and refresh_scalp_stale:
+                candidate["quote_assignment_state"] = "SCALP_STALE_REFRESH_CONSUMED"
+                candidate["hot_candidate_quote_refresh_lane"] = "SCALP"
+                candidate["hot_candidate_quote_refresh_attempted"] = True
+                candidate["hot_candidate_quote_refresh_attempt_count"] = 1
+                candidate["hot_candidate_quote_refresh_result"] = str(
+                    evidence.get("first_causal_blocker") or "TRUSTED_EXECUTABLE_QUOTE_UNAVAILABLE"
+                )
+                candidate["hot_candidate_quote_refresh_cache_bypass_requested"] = bool(
+                    callable(self.get_executable_quote_fn)
+                )
+            elif scalp_refresh_needed:
+                candidate["quote_assignment_state"] = "SCALP_STALE_REFRESH_DEFERRED"
+                candidate["hot_candidate_quote_refresh_lane"] = "SCALP"
+                candidate["hot_candidate_quote_refresh_attempted"] = False
+                candidate["hot_candidate_quote_refresh_attempt_count"] = 0
             return candidate
 
         candidate.update({
@@ -7160,8 +7221,36 @@ class PaperAutopilotEngine:
                 "crypto_final_quote_refresh_attempted": True,
                 "crypto_final_quote_refresh_result": "FRESH",
                 "crypto_final_quote_refresh_attempt_count": 1,
+                "hot_candidate_quote_refresh_lane": "CRYPTO",
+                "hot_candidate_quote_refresh_attempted": True,
+                "hot_candidate_quote_refresh_attempt_count": 1,
+                "hot_candidate_quote_refresh_result": "FRESH",
+                "hot_candidate_quote_refresh_cache_bypass_requested": bool(
+                    callable(self.get_executable_quote_fn)
+                ),
+            })
+        elif scalp_refresh_needed and refresh_scalp_stale:
+            candidate.update({
+                "hot_candidate_quote_refresh_lane": "SCALP",
+                "hot_candidate_quote_refresh_attempted": True,
+                "hot_candidate_quote_refresh_attempt_count": 1,
+                "hot_candidate_quote_refresh_result": "FRESH",
+                "hot_candidate_quote_refresh_cache_bypass_requested": bool(
+                    callable(self.get_executable_quote_fn)
+                ),
             })
         return candidate
+
+    def _hot_candidate_refresh_slot_available_v1(self, lane_id: str) -> bool:
+        """Reserve one per-cycle direct quote slot without changing any gate."""
+        lane = str(lane_id or "").upper().strip()
+        if lane not in {"CRYPTO", "SCALP"}:
+            return False
+        used = _to_int(self._hot_candidate_quote_refresh_counts_v1.get(lane), 0)
+        if used >= self.hot_candidate_quote_refresh_max_per_lane:
+            return False
+        self._hot_candidate_quote_refresh_counts_v1[lane] = used + 1
+        return True
 
     def _finalize_crypto_quote_refresh_v1(
         self,
@@ -7176,7 +7265,42 @@ class PaperAutopilotEngine:
             return candidate
         if str(candidate.get("quote_assignment_state") or "") != "CRYPTO_STALE_REFRESH_DEFERRED":
             return candidate
+        if not self._hot_candidate_refresh_slot_available_v1("CRYPTO"):
+            candidate["quote_assignment_state"] = "CRYPTO_STALE_REFRESH_DEFERRED_BY_BUDGET"
+            candidate["quote_assignment_blocker"] = "HOT_CANDIDATE_QUOTE_REFRESH_BUDGET_EXHAUSTED"
+            candidate["hot_candidate_quote_refresh_lane"] = "CRYPTO"
+            candidate["hot_candidate_quote_refresh_attempted"] = False
+            candidate["hot_candidate_quote_refresh_attempt_count"] = 0
+            candidate["hot_candidate_quote_refresh_result"] = "BUDGET_EXHAUSTED"
+            return candidate
         return self._assign_trusted_quote_to_candidate(candidate, refresh_crypto_stale=True)
+
+    def _finalize_scalp_quote_refresh_v1(
+        self,
+        row: Mapping[str, Any] | None,
+        *,
+        pre_market_gates_passed: bool,
+        regular_session_open: bool,
+    ) -> dict[str, Any]:
+        """Spend one SCALP refresh only for a regular-session hot candidate."""
+        candidate = dict(row or {})
+        if not pre_market_gates_passed:
+            candidate["hot_candidate_quote_refresh_skipped_reason"] = "PRE_MARKET_GATES_NOT_PASSED"
+            return candidate
+        if not regular_session_open:
+            candidate["hot_candidate_quote_refresh_skipped_reason"] = "REGULAR_SESSION_REQUIRED"
+            return candidate
+        if str(candidate.get("quote_assignment_state") or "") != "SCALP_STALE_REFRESH_DEFERRED":
+            return candidate
+        if not self._hot_candidate_refresh_slot_available_v1("SCALP"):
+            candidate["quote_assignment_state"] = "SCALP_STALE_REFRESH_DEFERRED_BY_BUDGET"
+            candidate["quote_assignment_blocker"] = "HOT_CANDIDATE_QUOTE_REFRESH_BUDGET_EXHAUSTED"
+            candidate["hot_candidate_quote_refresh_lane"] = "SCALP"
+            candidate["hot_candidate_quote_refresh_attempted"] = False
+            candidate["hot_candidate_quote_refresh_attempt_count"] = 0
+            candidate["hot_candidate_quote_refresh_result"] = "BUDGET_EXHAUSTED"
+            return candidate
+        return self._assign_trusted_quote_to_candidate(candidate, refresh_scalp_stale=True)
 
     def _attach_current_equity_risk_evidence_v1(self, row: Mapping[str, Any] | None) -> dict[str, Any]:
         """Join the worker's bounded risk observation to its current candidate.
@@ -9035,6 +9159,7 @@ class PaperAutopilotEngine:
             # provider refresh is deliberately deferred until every
             # non-market-data gate below has passed.
             refresh_crypto_stale=asset != "crypto",
+            refresh_scalp_stale=str(r.get("lane_id") or r.get("lane") or "").upper() != "SCALP",
         )
         r = self._attach_current_equity_risk_evidence_v1(r)
         r = enrich_candidate_for_pretrade_contract(r, current_candidates=current_candidates)
@@ -9049,6 +9174,11 @@ class PaperAutopilotEngine:
         deferred_crypto_quote = bool(
             asset == "crypto"
             and str(r.get("quote_assignment_state") or "") == "CRYPTO_STALE_REFRESH_DEFERRED"
+        )
+        deferred_scalp_quote = bool(
+            asset == "stock"
+            and str(r.get("lane_id") or r.get("lane") or "").upper() == "SCALP"
+            and str(r.get("quote_assignment_state") or "") == "SCALP_STALE_REFRESH_DEFERRED"
         )
         crypto_source_ready = not bool(r.get("operational_probe_only")) if asset == "crypto" else True
         crypto_freshness_ready = bool(
@@ -9121,7 +9251,7 @@ class PaperAutopilotEngine:
                 # the final order boundary. This limited preliminary call
                 # only avoids spending a provider refresh on a candidate that
                 # fails its independent commitment gate.
-                require_trusted_quote=not deferred_crypto_quote,
+                require_trusted_quote=not (deferred_crypto_quote or deferred_scalp_quote),
             )
         contract = dict(r.get("pretrade_decision_contract_v1") or {})
         if allowed and not bool(contract.get("order_ready_allowed")):
@@ -9238,6 +9368,23 @@ class PaperAutopilotEngine:
             gate_meta["crypto_execution_integrity_reason"] = integrity_reason
             gate_meta["crypto_market_data_gates_ok"] = crypto_data_ok
             gate_meta["crypto_market_data_gate_reason"] = crypto_data_reason
+        elif (
+            allowed
+            and str(r.get("lane_id") or r.get("lane") or "").upper() == "SCALP"
+            and deferred_scalp_quote
+        ):
+            r = self._finalize_scalp_quote_refresh_v1(
+                r,
+                pre_market_gates_passed=True,
+                regular_session_open=bool(session_diag.get("paper_order_submission_allowed", False)),
+            )
+            if not bool(r.get("trusted_quote_for_buys")):
+                allowed = False
+                reason = str(
+                    r.get("quote_assignment_blocker")
+                    or r.get("hot_candidate_quote_refresh_skipped_reason")
+                    or "TRUSTED_EXECUTABLE_QUOTE_UNAVAILABLE"
+                )
         trace = {
             "symbol": symbol,
             "valid_quote": bool(r.get("valid_quote")),
@@ -9250,6 +9397,11 @@ class PaperAutopilotEngine:
             "crypto_final_quote_refresh_result": str(r.get("crypto_final_quote_refresh_result") or ""),
             "crypto_final_refresh_quote_timestamp": str(r.get("provider_quote_timestamp") or r.get("quote_timestamp") or "") if bool(r.get("crypto_final_quote_refresh_attempted")) else "",
             "crypto_final_refresh_quote_age_seconds": (round(_to_float(r.get("quote_age_seconds"), 0.0), 3) if bool(r.get("crypto_final_quote_refresh_attempted")) else None),
+            "hot_candidate_quote_refresh_lane": str(r.get("hot_candidate_quote_refresh_lane") or ""),
+            "hot_candidate_quote_refresh_attempted": bool(r.get("hot_candidate_quote_refresh_attempted", False)),
+            "hot_candidate_quote_refresh_attempt_count": int(_to_float(r.get("hot_candidate_quote_refresh_attempt_count"), 0.0)),
+            "hot_candidate_quote_refresh_result": str(r.get("hot_candidate_quote_refresh_result") or ""),
+            "hot_candidate_quote_refresh_cache_bypass_requested": bool(r.get("hot_candidate_quote_refresh_cache_bypass_requested", False)),
             "market_observation_timestamp": str(r.get("market_observation_timestamp") or ""),
             "provider_quote_timestamp": str(r.get("provider_quote_timestamp") or ""),
             "provider_used": str(r.get("provider_used") or ""),
@@ -12566,6 +12718,9 @@ class PaperAutopilotEngine:
 
         with self._cycle_lock:
             cycle_id = _now_iso()
+            # A cycle may inspect many candidates, but only a tiny per-lane
+            # subset can request a direct executable quote after qualification.
+            self._hot_candidate_quote_refresh_counts_v1 = {}
             # Keep legacy market evidence ahead of generic preflight work.
             # This is the same bounded worker-owned refresh and has no order
             # submission path; the later position-aware pass reuses its cache.

@@ -351,6 +351,18 @@ class ServerQuoteAdapterTests(unittest.TestCase):
         self.assertEqual(quote["market_source_type"], "QUOTE")
         self.assertNotIn("timestamp", quote)
 
+    def test_executable_worker_quote_bypasses_only_router_quote_cache(self):
+        provider_timestamp = _iso()
+        with patch.object(
+            server_extend.PAPER_AUTOPILOT._legacy_swing_fmp_router,
+            "get_quote",
+            return_value={"symbol": "BTC/USD", "price": 101.0, "provider_used": "ALPACA", "quote_timestamp": provider_timestamp},
+        ) as router:
+            quote = server_extend._paper_single_symbol_quote("BTC/USD", "crypto", bypass_cache=True)
+        router.assert_called_once()
+        self.assertIs(router.call_args.kwargs["bypass_cache"], True)
+        self.assertEqual(quote["quote_timestamp"], provider_timestamp)
+
     def test_rankings_generic_timestamp_cannot_become_quote_timestamp(self):
         provider_timestamp = _iso()
         with patch.object(server_extend, "LAST_RANKINGS", {"stocks": [{"symbol": "AAPL", "price": 99.0, "timestamp": _iso()}], "crypto": {}}), patch.object(

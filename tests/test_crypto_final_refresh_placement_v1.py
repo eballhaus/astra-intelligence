@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from engine.paper_autopilot import PaperAutopilotEngine
@@ -45,6 +46,7 @@ class CryptoFinalRefreshPlacementTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory(prefix="astra_crypto_refresh_placement_")
         self.addCleanup(self.directory.cleanup)
         self.calls: list[int] = []
+        self.executable_calls: list[int] = []
         self.reply = {
             "symbol": "BCH/USD", "asset_type": "crypto", "price": 101.0,
             "provider_quote_timestamp": _iso(), "market_source_type": "QUOTE",
@@ -55,6 +57,7 @@ class CryptoFinalRefreshPlacementTests(unittest.TestCase):
             state_path=os.path.join(self.directory.name, "state.json"),
             enabled=False,
             get_latest_row_fn=lambda _symbol, _asset: self.calls.append(1) or dict(self.reply),
+            get_executable_quote_fn=lambda _symbol, _asset: self.executable_calls.append(1) or dict(self.reply),
         )
 
     def _deferred(self, row: dict | None = None) -> dict:
@@ -101,6 +104,7 @@ class CryptoFinalRefreshPlacementTests(unittest.TestCase):
         self.assertFalse(allowed)
         self.assertEqual(reason, "entry_commitment_below_threshold")
         self.assertEqual(self.calls, [])
+        self.assertEqual(self.executable_calls, [])
         self.assertFalse(trace["crypto_final_quote_refresh_attempted"])
 
     def test_missing_pretrade_contract_does_not_spend_final_refresh(self):
@@ -110,6 +114,7 @@ class CryptoFinalRefreshPlacementTests(unittest.TestCase):
         self.assertFalse(allowed)
         self.assertEqual(reason, "PRETRADE_DECISION_CONTRACT_INVALID")
         self.assertEqual(self.calls, [])
+        self.assertEqual(self.executable_calls, [])
         self.assertFalse(trace["crypto_final_quote_refresh_attempted"])
 
     def test_integrity_failure_does_not_spend_final_refresh(self):
@@ -117,6 +122,7 @@ class CryptoFinalRefreshPlacementTests(unittest.TestCase):
         self.assertFalse(allowed)
         self.assertEqual(reason, "duplicate_pending")
         self.assertEqual(self.calls, [])
+        self.assertEqual(self.executable_calls, [])
         self.assertFalse(trace["crypto_final_quote_refresh_attempted"])
 
     def test_other_non_market_gate_failures_do_not_spend_final_refresh(self):
@@ -129,15 +135,18 @@ class CryptoFinalRefreshPlacementTests(unittest.TestCase):
         for name, row, options in cases:
             with self.subTest(name=name):
                 self.calls.clear()
+                self.executable_calls.clear()
                 trace, allowed, _reason, _ = self._trace(row, **options)
                 self.assertFalse(allowed)
                 self.assertEqual(self.calls, [])
+                self.assertEqual(self.executable_calls, [])
                 self.assertFalse(trace["crypto_final_quote_refresh_attempted"])
 
     def test_otherwise_ready_stale_candidate_refreshes_once_and_becomes_ready(self):
         trace, allowed, reason, _ = self._trace(_candidate())
         self.assertTrue(allowed, reason)
-        self.assertEqual(self.calls, [1])
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.executable_calls, [1])
         self.assertTrue(trace["crypto_final_quote_refresh_attempted"])
         self.assertEqual(trace["crypto_final_quote_refresh_attempt_count"], 1)
         self.assertEqual(trace["crypto_final_quote_refresh_result"], "FRESH")
@@ -151,12 +160,15 @@ class CryptoFinalRefreshPlacementTests(unittest.TestCase):
             with self.subTest(quote_blocker=quote_blocker):
                 self.reply = reply
                 self.calls.clear()
+                self.executable_calls.clear()
+                self.engine._hot_candidate_quote_refresh_counts_v1 = {}
                 refreshed = self.engine._finalize_crypto_quote_refresh_v1(
                     self._deferred(), pre_market_gates_passed=True,
                 )
                 self.assertFalse(refreshed["trusted_quote_for_buys"])
                 self.assertEqual(refreshed["quote_assignment_blocker"], quote_blocker)
-                self.assertEqual(self.calls, [1])
+                self.assertEqual(self.calls, [])
+                self.assertEqual(self.executable_calls, [1])
                 self.assertTrue(refreshed["crypto_final_quote_refresh_attempted"])
 
     def test_stale_refresh_persists_the_validated_provider_timestamp_and_age(self):
@@ -175,7 +187,8 @@ class CryptoFinalRefreshPlacementTests(unittest.TestCase):
             refreshed["quote_age_seconds"],
             refreshed["crypto_final_refresh_validated_age_seconds"],
         )
-        self.assertEqual(self.calls, [1])
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.executable_calls, [1])
 
     def test_generated_at_cannot_satisfy_final_freshness(self):
         self.reply = {**self.reply, "generated_at": _iso()}
@@ -188,7 +201,8 @@ class CryptoFinalRefreshPlacementTests(unittest.TestCase):
         deferred = self._deferred()
         refreshed = self.engine._finalize_crypto_quote_refresh_v1(deferred, pre_market_gates_passed=True)
         repeated = self.engine._finalize_crypto_quote_refresh_v1(refreshed, pre_market_gates_passed=True)
-        self.assertEqual(self.calls, [1])
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.executable_calls, [1])
         self.assertTrue(repeated["trusted_quote_for_buys"])
         self.assertEqual(repeated["crypto_final_quote_refresh_attempt_count"], 1)
 
@@ -201,6 +215,85 @@ class CryptoFinalRefreshPlacementTests(unittest.TestCase):
         assigned = self.engine._assign_trusted_quote_to_candidate(row)
         self.assertTrue(assigned["trusted_quote_for_buys"])
         self.assertEqual(self.calls, [1])
+        self.assertEqual(self.executable_calls, [])
+
+    def test_scalp_hot_refresh_requires_regular_session_and_uses_executable_lookup(self):
+        stale = {
+            "symbol": "AAPL", "asset_type": "stock", "lane_id": "SCALP", "price": 100.0,
+            "provider_quote_timestamp": _iso(-45), "market_source_type": "QUOTE",
+        }
+        deferred = self.engine._assign_trusted_quote_to_candidate(stale, refresh_scalp_stale=False)
+        self.assertEqual(deferred["quote_assignment_state"], "SCALP_STALE_REFRESH_DEFERRED")
+        self.assertEqual(self.calls, [])
+
+        self.reply = {
+            "symbol": "AAPL", "asset_type": "stock", "price": 101.0,
+            "provider_quote_timestamp": _iso(), "market_source_type": "QUOTE",
+        }
+        refreshed = self.engine._finalize_scalp_quote_refresh_v1(
+            deferred, pre_market_gates_passed=True, regular_session_open=True,
+        )
+        self.assertTrue(refreshed["trusted_quote_for_buys"])
+        self.assertEqual(refreshed["hot_candidate_quote_refresh_lane"], "SCALP")
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.executable_calls, [1])
+
+    def test_scalp_after_hours_does_not_consume_hot_refresh(self):
+        deferred = self.engine._assign_trusted_quote_to_candidate({
+            "symbol": "AAPL", "asset_type": "stock", "lane_id": "SCALP", "price": 100.0,
+            "provider_quote_timestamp": _iso(-45), "market_source_type": "QUOTE",
+        }, refresh_scalp_stale=False)
+        blocked = self.engine._finalize_scalp_quote_refresh_v1(
+            deferred, pre_market_gates_passed=True, regular_session_open=False,
+        )
+        self.assertEqual(blocked["quote_assignment_state"], "SCALP_STALE_REFRESH_DEFERRED")
+        self.assertEqual(blocked["hot_candidate_quote_refresh_skipped_reason"], "REGULAR_SESSION_REQUIRED")
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.executable_calls, [])
+
+    def test_regular_session_scalp_trace_spends_one_hot_refresh_after_pretrade(self):
+        self.engine.market_session_timing_suite = SimpleNamespace(
+            confirmation_for_candidate=lambda *_args, **_kwargs: {
+                "paper_order_submission_allowed": True,
+                "market_is_open": True,
+                "market_is_tradable": True,
+            },
+        )
+        self.reply = {
+            "symbol": "AAPL", "asset_type": "stock", "price": 101.0,
+            "provider_quote_timestamp": _iso(), "market_source_type": "QUOTE",
+        }
+        row = _candidate(
+            symbol="AAPL", asset_type="stock", asset_class="equity", lane_id="SCALP",
+            paper_entry_horizon_style="scalp", trade_horizon_style="scalp",
+        )
+        with (
+            patch("engine.paper_autopilot.canonical_lane_activation_contract", return_value={"execution_enabled": True}),
+            patch("engine.paper_autopilot.enrich_candidate_for_pretrade_contract", side_effect=lambda value, **_kwargs: dict(value)),
+            patch("engine.paper_autopilot.build_pretrade_decision_contract", return_value=_valid_contract()),
+            patch.object(self.engine, "_entry_commitment_gate_v1", return_value=(True, "eligible", {})),
+        ):
+            trace, allowed, reason, _ = self.engine._candidate_trace_row(
+                row, open_syms=set(), stock_capacity=2, crypto_capacity=2, total_capacity=2,
+            )
+        self.assertTrue(allowed, reason)
+        self.assertEqual(trace["hot_candidate_quote_refresh_lane"], "SCALP")
+        self.assertTrue(trace["hot_candidate_quote_refresh_attempted"])
+        self.assertTrue(trace["hot_candidate_quote_refresh_cache_bypass_requested"])
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.executable_calls, [1])
+
+    def test_hot_refresh_per_lane_budget_is_one_by_default(self):
+        first = self.engine._finalize_crypto_quote_refresh_v1(
+            self._deferred(), pre_market_gates_passed=True,
+        )
+        second = self.engine._finalize_crypto_quote_refresh_v1(
+            self._deferred(_candidate(symbol="ETH/USD", candidate_id="candidate-eth")),
+            pre_market_gates_passed=True,
+        )
+        self.assertTrue(first["trusted_quote_for_buys"])
+        self.assertEqual(second["quote_assignment_state"], "CRYPTO_STALE_REFRESH_DEFERRED_BY_BUDGET")
+        self.assertEqual(self.executable_calls, [1])
 
 
 if __name__ == "__main__":
