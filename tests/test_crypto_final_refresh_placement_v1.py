@@ -116,7 +116,12 @@ class CryptoFinalRefreshPlacementTests(unittest.TestCase):
         self.assertEqual(commitment["input_sources"]["consensus_strength"], "consensus_strength")
         self.assertEqual(
             commitment["defaulted_inputs"],
-            ["discipline_action", "discipline_tier", "follow_through_state"],
+            [
+                "discipline_action",
+                "discipline_tier",
+                "follow_through_state",
+                "persona_disagreement_index",
+            ],
         )
 
     def test_crypto_missing_contract_trace_retains_risk_and_forecast_gaps(self):

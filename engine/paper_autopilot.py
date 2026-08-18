@@ -1240,6 +1240,42 @@ def _normalize_paper_entry_bridge(row: dict[str, Any]) -> dict[str, Any]:
             else:
                 r["buy_quality_tier"] = "weak"
     is_crypto = str(r.get("asset_class") or r.get("asset_type") or "").strip().lower() in {"crypto", "cryptocurrency"}
+    if is_crypto:
+        # The bounded ranking feedback profile already owns this exact
+        # commitment input. Preserve it when the flattened candidate omitted
+        # the field; do not derive an edge from another score.
+        feedback_profile = dict(r.get("ranking_feedback_profile") or {})
+        if r.get("entry_edge_score") in (None, "", [], {}):
+            profile_edge = feedback_profile.get("entry_edge_score")
+            try:
+                if profile_edge not in (None, "", [], {}):
+                    r["entry_edge_score"] = float(profile_edge)
+                    r["entry_edge_score_provenance_v1"] = (
+                        "ranking_feedback_profile.entry_edge_score"
+                    )
+            except (TypeError, ValueError):
+                pass
+
+        # _ensure_persona_fields() uses 100 only as its missing-persona
+        # placeholder. It is not a measured disagreement value when there
+        # are no grades or persona identity. Preserve a genuine 100, but let
+        # the existing commitment-gate default handle this explicit unknown.
+        persona_summary = dict(r.get("persona_consensus_summary") or {})
+        persona_grades = dict(r.get("persona_grades") or {})
+        persona_best_fit = str(
+            r.get("persona_best_fit") or persona_summary.get("persona_best_fit") or ""
+        ).strip().lower()
+        persona_consensus = _to_float(persona_summary.get("consensus_strength"), 0.0)
+        persona_disagreement = _to_float(r.get("persona_disagreement_index"), -1.0)
+        if (
+            not persona_grades
+            and persona_best_fit in {"", "unknown"}
+            and persona_consensus == 0.0
+            and persona_disagreement == 100.0
+        ):
+            r.pop("persona_disagreement_index", None)
+            r["persona_disagreement_input_state_v1"] = "DEFAULT_UNAVAILABLE"
+            r["persona_disagreement_provenance_v1"] = "_ensure_persona_fields.missing_persona_placeholder"
     horizon, horizon_source, inferred = _infer_horizon_style(r)
     # Crypto candidates must carry the worker-persisted horizon evidence.  The
     # generic compatibility default is useful for older equity rows but must
@@ -7616,7 +7652,16 @@ class PaperAutopilotEngine:
                 "confidence_or_predicted_win_probability": round(confidence, 2),
                 "consensus_strength": round(consensus, 2),
                 "entry_edge_score": round(entry_edge, 4),
+                "entry_edge_score_provenance": str(
+                    row.get("entry_edge_score_provenance_v1") or "DIRECT_CANDIDATE_FIELD"
+                ),
                 "persona_disagreement_index": round(disagreement, 2),
+                "persona_disagreement_input_state": str(
+                    row.get("persona_disagreement_input_state_v1") or "CANONICAL"
+                ),
+                "persona_disagreement_provenance": str(
+                    row.get("persona_disagreement_provenance_v1") or "DIRECT_CANDIDATE_FIELD"
+                ),
                 "uncertainty_score": round(uncertainty_score, 2),
                 "follow_through_state": follow or "UNAVAILABLE",
                 "buy_eligibility": eligibility or "UNAVAILABLE",
