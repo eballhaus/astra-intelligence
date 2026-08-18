@@ -7158,8 +7158,12 @@ class PaperAutopilotEngine:
                 # Persist the exact provider-native observation that failed
                 # final validation so the trace cannot report the older
                 # ranking snapshot as the failed refresh evidence.
+                candidate["quote_timestamp"] = evidence.get("market_observation_timestamp")
                 candidate["provider_quote_timestamp"] = evidence.get("market_observation_timestamp")
+                candidate["market_observation_timestamp"] = evidence.get("market_observation_timestamp")
+                candidate["retrieval_timestamp"] = evidence.get("retrieval_timestamp")
                 candidate["quote_age_seconds"] = evidence.get("age_seconds")
+                candidate["freshness_seconds"] = evidence.get("age_seconds")
                 candidate["crypto_final_refresh_validated_age_seconds"] = evidence.get("age_seconds")
                 candidate["crypto_final_quote_refresh_attempted"] = True
                 candidate["crypto_final_quote_refresh_result"] = str(
@@ -7228,6 +7232,9 @@ class PaperAutopilotEngine:
                 "hot_candidate_quote_refresh_cache_bypass_requested": bool(
                     callable(self.get_executable_quote_fn)
                 ),
+                # The fresh final observation is the one submission must
+                # revalidate; it cannot be replaced by the ranking row.
+                "final_executable_quote_refresh_authoritative": True,
             })
         elif scalp_refresh_needed and refresh_scalp_stale:
             candidate.update({
@@ -7238,6 +7245,7 @@ class PaperAutopilotEngine:
                 "hot_candidate_quote_refresh_cache_bypass_requested": bool(
                     callable(self.get_executable_quote_fn)
                 ),
+                "final_executable_quote_refresh_authoritative": True,
             })
         return candidate
 
@@ -9347,6 +9355,16 @@ class PaperAutopilotEngine:
                 if not crypto_session_ok:
                     allowed = False
                     reason = "crypto_scalp_shadow_only" if horizon == "scalp" else crypto_data_reason if not crypto_data_ok else integrity_reason if not integrity_ok else "crypto_paper_activation_not_ready"
+                # A consumed final refresh is authoritative.  Do not allow a
+                # stale/missing result to fall back to the earlier ranking
+                # observation, even if another gate still sees that row.
+                if not bool(r.get("trusted_quote_for_buys")):
+                    allowed = False
+                    reason = str(
+                        r.get("quote_assignment_blocker")
+                        or r.get("crypto_final_quote_refresh_result")
+                        or "TRUSTED_EXECUTABLE_QUOTE_UNAVAILABLE"
+                    )
             session_diag = {
                 "market_session_mode": "crypto_24_7",
                 "current_session_type": "crypto_24_7",
@@ -9600,7 +9618,13 @@ class PaperAutopilotEngine:
             session=session_diag,
             capacity=capacity_decision,
         )
-        return trace, bool(allowed), str(reason), dict(gate_meta or {})
+        # The primary entry loop must submit the fully qualified candidate,
+        # including the final executable quote result, rather than its stale
+        # ranking input.  This private handoff stays in the call stack and is
+        # never written to the trace ledger.
+        gate_meta = dict(gate_meta or {})
+        gate_meta["_qualified_candidate_for_submission_v1"] = dict(r)
+        return trace, bool(allowed), str(reason), gate_meta
 
     def _submit_alpaca_paper_entry_order(
         self,
@@ -10088,7 +10112,12 @@ class PaperAutopilotEngine:
             return {"ok": False, "error": "symbol_required"}
 
         quote = {}
-        if callable(self.get_latest_row_fn):
+        # A successful hot refresh is already the final canonical executable
+        # observation. Revalidate that exact evidence below without a second
+        # cache-eligible lookup that could replace it.
+        if bool(row.get("final_executable_quote_refresh_authoritative")):
+            quote = dict(row)
+        elif callable(self.get_latest_row_fn):
             try:
                 quote = dict(self.get_latest_row_fn(symbol, asset_type) or {})
             except Exception:
@@ -13830,8 +13859,12 @@ class PaperAutopilotEngine:
                         continue
 
                 eligible_count += 1
+                submission_row = dict(
+                    gate_meta.pop("_qualified_candidate_for_submission_v1", None)
+                    or row
+                )
                 commitment = self._request_lane_reserve_commitment(
-                    row,
+                    submission_row,
                     evidence_capacity_snapshot,
                     cycle_id=cycle_id,
                 )
@@ -13876,7 +13909,7 @@ class PaperAutopilotEngine:
                 gate_meta["paper_autopilot_limits_ok"] = True
                 gate_meta["paper_autopilot_limits_reason"] = "max_new_max_open_and_capacity_passed"
                 opened_row = self._open_position_from_row(
-                    row,
+                    submission_row,
                     source_bucket=f"paper_autopilot_{reason}",
                     gate_meta=gate_meta,
                 )

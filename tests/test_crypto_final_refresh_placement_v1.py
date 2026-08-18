@@ -171,6 +171,44 @@ class CryptoFinalRefreshPlacementTests(unittest.TestCase):
                 self.assertEqual(self.executable_calls, [1])
                 self.assertTrue(refreshed["crypto_final_quote_refresh_attempted"])
 
+    def test_stale_final_refresh_is_terminal_before_submission_handoff(self):
+        self.reply = {**self.reply, "provider_quote_timestamp": _iso(-21)}
+
+        trace, allowed, reason, gate_meta = self._trace(_candidate())
+
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "STALE_PROVIDER_NATIVE_TIMESTAMP")
+        self.assertFalse(trace["order_ready"])
+        self.assertTrue(trace["crypto_final_quote_refresh_attempted"])
+        self.assertEqual(trace["crypto_final_quote_refresh_result"], "STALE_PROVIDER_NATIVE_TIMESTAMP")
+        self.assertFalse(gate_meta["_qualified_candidate_for_submission_v1"]["trusted_quote_for_buys"])
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.executable_calls, [1])
+
+    def test_fresh_final_refresh_preserves_qualified_row_for_submission(self):
+        trace, allowed, reason, gate_meta = self._trace(_candidate())
+
+        self.assertTrue(allowed, reason)
+        qualified = gate_meta["_qualified_candidate_for_submission_v1"]
+        self.assertTrue(qualified["final_executable_quote_refresh_authoritative"])
+        self.assertEqual(qualified["provider_quote_timestamp"], self.reply["provider_quote_timestamp"])
+        self.assertEqual(qualified["price"], self.reply["price"])
+        self.assertTrue(trace["crypto_final_quote_refresh_attempted"])
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.executable_calls, [1])
+
+        submitted_rows: list[dict] = []
+        self.engine._submit_alpaca_paper_entry_order = lambda row, _price, **_kwargs: (
+            submitted_rows.append(dict(row))
+            or {"ok": False, "enabled": True, "error": "test_block"}
+        )
+        opened = self.engine._open_position_from_row(qualified)
+        self.assertFalse(opened["ok"])
+        self.assertEqual(len(submitted_rows), 1)
+        self.assertEqual(submitted_rows[0]["provider_quote_timestamp"], self.reply["provider_quote_timestamp"])
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.executable_calls, [1])
+
     def test_stale_refresh_persists_the_validated_provider_timestamp_and_age(self):
         refreshed_at = _iso(-21)
         self.reply = {**self.reply, "provider_quote_timestamp": refreshed_at}
@@ -195,7 +233,7 @@ class CryptoFinalRefreshPlacementTests(unittest.TestCase):
         self.reply.pop("provider_quote_timestamp")
         _trace, allowed, reason, _ = self._trace(_candidate())
         self.assertFalse(allowed)
-        self.assertEqual(reason, "crypto_quote_freshness_missing")
+        self.assertEqual(reason, "PROVIDER_NATIVE_MARKET_OBSERVATION_UNAVAILABLE")
 
     def test_second_finalization_does_not_refresh_again(self):
         deferred = self._deferred()
