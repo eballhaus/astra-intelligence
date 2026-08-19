@@ -2279,6 +2279,12 @@ class PaperAutopilotEngine:
                 "occurred_at": _now_iso(),
                 "retry_state": "RETRY_ON_NEXT_BOUNDED_CYCLE",
             }
+        elif str(phase or "").startswith("external_cycle_"):
+            # This field represents the current bounded cycle. Preserve the
+            # historical suppressed-exception record above, but do not let an
+            # error from a completed prior generation masquerade as a current
+            # worker-integrity failure after a healthy external cycle begins.
+            self._runtime_state["worker_cycle_error"] = ""
         if persist:
             self._save_state_file(worker_owned=True)
 

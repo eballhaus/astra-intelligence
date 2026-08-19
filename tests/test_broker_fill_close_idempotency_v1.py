@@ -246,6 +246,24 @@ class BrokerFillCloseIdempotencyTests(unittest.TestCase):
             self.assertEqual(result["mirror_candidates"][0]["mirror_status"], "MIRROR_EXISTS_RECHECKED")
             self.assertEqual(count, 1)
 
+    def test_healthy_external_cycle_clears_only_the_current_worker_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            engine = self._engine(root, _TradeIntel())
+            engine._runtime_state["worker_cycle_error"] = "UNIQUE constraint failed: paper_positions.position_id"
+            engine._runtime_state["worker_last_suppressed_exception_v1"] = {"message": "historical"}
+
+            engine.record_external_worker_progress(
+                worker_generation_id="generation-healthy",
+                process_id=123,
+                parent_process_id=1,
+                cycle_count=2,
+                phase="external_cycle_completed",
+            )
+
+            self.assertEqual(engine._runtime_state["worker_cycle_error"], "")
+            self.assertEqual(engine._runtime_state["worker_last_suppressed_exception_v1"], {"message": "historical"})
+
 
 if __name__ == "__main__":
     unittest.main()
