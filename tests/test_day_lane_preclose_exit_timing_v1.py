@@ -41,13 +41,13 @@ class DayLanePrecloseExitTimingTests(unittest.TestCase):
         return engine, session
 
     @staticmethod
-    def _row(*, lane: str = "DAY") -> dict[str, object]:
+    def _row(*, lane: str = "DAY", same_session_exit_required: bool | None = None) -> dict[str, object]:
         return {
             "position_id": f"life-{lane.lower()}",
             "symbol": lane,
             "lane_id": lane,
             "entry_timestamp": "2026-08-14T14:00:00Z",
-            "same_session_exit_required": lane == "DAY",
+            "same_session_exit_required": lane == "DAY" if same_session_exit_required is None else same_session_exit_required,
             "overnight_allowed": False,
         }
 
@@ -92,11 +92,27 @@ class DayLanePrecloseExitTimingTests(unittest.TestCase):
         self.assertEqual(state["closure_state"], "EXIT_BLOCKED_EXECUTION")
         self.assertIn("REGULAR_SESSION_REQUIRED", state["exact_blocker"])
 
-    def test_non_day_lanes_do_not_receive_day_preclose_reason(self) -> None:
+    def test_scalp_uses_its_explicit_same_session_contract_at_the_existing_deadline(self) -> None:
         engine, _ = self._engine()
         with self._at(datetime(2026, 8, 14, 15, 55, tzinfo=ET)):
-            for lane in ("SWING", "SCALP", "CRYPTO"):
+            self.assertEqual(
+                engine._lane_forced_exit_reason(
+                    self._row(lane="SCALP", same_session_exit_required=True)
+                ),
+                "scalp_lane_session_close_required",
+            )
+
+    def test_non_contract_lanes_do_not_receive_same_session_preclose_reason(self) -> None:
+        engine, _ = self._engine()
+        with self._at(datetime(2026, 8, 14, 15, 55, tzinfo=ET)):
+            for lane in ("SWING", "CRYPTO"):
                 self.assertEqual(engine._lane_forced_exit_reason(self._row(lane=lane)), "")
+            self.assertEqual(
+                engine._lane_forced_exit_reason(
+                    self._row(lane="SCALP", same_session_exit_required=False)
+                ),
+                "",
+            )
 
 
 if __name__ == "__main__":

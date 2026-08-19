@@ -4,7 +4,10 @@ import tempfile
 import unittest
 
 from engine.astra_continuous_system_integrity_scanner_v1 import ContinuousSystemIntegrityScannerV1
-from engine.astra_sentinel_causal_handoff_integrity_v1 import classify_causal_handoff_facts_v1
+from engine.astra_sentinel_causal_handoff_integrity_v1 import (
+    classify_causal_handoff_facts_v1,
+    collect_platform_integrity_monitors_v2,
+)
 
 
 class SentinelCausalHandoffIntegrityTests(unittest.TestCase):
@@ -68,6 +71,36 @@ class SentinelCausalHandoffIntegrityTests(unittest.TestCase):
     def test_live_matching_worker_lease_is_not_a_defect(self):
         result = self._classify({"kind": "WORKER_LEASE", "lease_state": "ACTIVE_MATCHING_LEASE"})
         self.assertEqual(result["signals"], [])
+
+    def test_worker_cached_broker_fill_pending_close_is_a_causal_handoff_loss(self):
+        monitors = collect_platform_integrity_monitors_v2({
+            "native_lane_exit_lifecycle": {
+                "life-1": {
+                    "lifecycle_id": "life-1", "symbol": "LYFT", "lane_id": "DAY",
+                    "closure_state": "AWAITING_BROKER_ZERO",
+                },
+            },
+            "authorized_lane_exit_pending": {
+                "exit-1": {"position_id": "life-1", "last_order_status": "filled_awaiting_broker_zero"},
+            },
+        })
+        fact = next(row for row in monitors["facts"] if row["kind"] == "BROKER_FILLED_CLOSURE_PENDING")
+        result = self._classify(fact)
+        self.assertEqual(result["signals"][0]["category"], "CAUSAL_HANDOFF_LOSS")
+
+    def test_worker_cached_scalp_deadline_quote_blocker_surfaces_without_submission(self):
+        monitors = collect_platform_integrity_monitors_v2({
+            "native_lane_exit_lifecycle": {
+                "life-2": {
+                    "lifecycle_id": "life-2", "symbol": "GEHC", "lane_id": "SCALP",
+                    "closure_state": "EXIT_BLOCKED_EVIDENCE",
+                    "exact_blocker": "STALE_PROVIDER_NATIVE_TIMESTAMP",
+                    "deadline_requirement_status": "SAME_SESSION_DEADLINE_PASSED",
+                },
+            },
+        })
+        fact = next(row for row in monitors["facts"] if row["kind"] == "HORIZON_DEADLINE_MISSED")
+        self.assertEqual(fact["consumer_state"], "STALE_PROVIDER_NATIVE_TIMESTAMP")
 
     def test_scanner_publishes_bounded_causal_root_to_existing_sentinel_path(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -105,6 +105,9 @@ def classify_causal_handoff_facts_v1(facts: list[dict[str, Any]] | None, *, limi
         elif kind == "HORIZON_DEADLINE_MISSED":
             handoff = _text(fact.get("first_bad_handoff")) or "canonical horizon deadline -> natural exit evaluation"
             signals.append(_signal(fact, kind=kind, category="HORIZON_DEADLINE_MISSED", handoff=handoff, repair="ensure the existing natural exit owner evaluates the canonical deadline; do not create a parallel exit path", severity="CRITICAL"))
+        elif kind == "BROKER_FILLED_CLOSURE_PENDING":
+            handoff = _text(fact.get("first_bad_handoff")) or "broker-confirmed exit fill -> canonical lifecycle closure"
+            signals.append(_signal(fact, kind="CAUSAL_HANDOFF_LOSS", category="CAUSAL_HANDOFF_LOSS", handoff=handoff, repair="reconcile the exact existing lifecycle and broker fill idempotently; do not submit another exit", severity="CRITICAL"))
         elif kind == "PRICE_TRUTH_DIVERGENCE":
             handoff = _text(fact.get("first_bad_handoff")) or "canonical current price -> downstream price consumer"
             signals.append(_signal(fact, kind="CAUSAL_HANDOFF_LOSS", category="CAUSAL_HANDOFF_LOSS", handoff=handoff, repair="preserve the freshest attributable price evidence through the existing consumer handoff", severity="HIGH"))
@@ -323,6 +326,50 @@ def _lifecycle_monitor(context: dict[str, Any], *, limit: int) -> tuple[dict[str
             waiting.append({**base, "category": "INSUFFICIENT_RUNTIME_EVIDENCE", "reason": "canonical_same_session_deadline_unavailable", "legitimate_fail_closed": True})
         elif datetime.now(UTC) >= deadline and (evaluated_at is None or evaluated_at < deadline):
             facts.append({**base, "kind": "HORIZON_DEADLINE_MISSED", "producer_state": "DEADLINE_PASSED", "consumer_state": "NO_VALID_EXIT_EVALUATION", "first_bad_handoff": "canonical horizon deadline -> existing natural exit evaluation"})
+
+    # Native exit state and its pending broker-order map are already owned by
+    # the worker. Correlating the two is read-only and lets the existing
+    # Sentinel distinguish a genuine broker-filled close that is still waiting
+    # for local persistence from an ordinary active lifecycle.
+    native_states = dict(context.get("native_lane_exit_lifecycle") or {})
+    pending_by_position = {
+        _text(item.get("position_id")): dict(item)
+        for item in dict(context.get("authorized_lane_exit_pending") or {}).values()
+        if isinstance(item, dict) and _text(item.get("position_id"))
+    }
+    for position_id, native in list(native_states.items())[:limit]:
+        if not isinstance(native, dict):
+            continue
+        pending = pending_by_position.get(_text(position_id), {})
+        status = _text(pending.get("last_order_status")).lower()
+        base = {
+            "monitor": "LIFECYCLE_PROOF_DEADLINE",
+            "current": True,
+            "symbol": native.get("symbol"),
+            "lane": _lane(native),
+            "lifecycle_id": native.get("lifecycle_id") or position_id,
+            "producer": "authorized lane exit broker reconciliation",
+            "consumer": "canonical lifecycle closure",
+            "field": "exit_fill_id",
+            "evidence_timestamp": pending.get("last_checked_at") or native.get("last_evaluated_at"),
+        }
+        if status == "filled_awaiting_broker_zero":
+            facts.append({
+                **base,
+                "kind": "BROKER_FILLED_CLOSURE_PENDING",
+                "producer_state": "BROKER_FILLED",
+                "consumer_state": _text(native.get("closure_state")) or "AWAITING_BROKER_ZERO",
+                "first_bad_handoff": "broker-confirmed exit fill -> canonical lifecycle closure",
+            })
+        if _text(native.get("deadline_requirement_status")) == "SAME_SESSION_DEADLINE_PASSED":
+            facts.append({
+                **base,
+                "kind": "HORIZON_DEADLINE_MISSED",
+                "field": "same_session_exit_required",
+                "producer_state": "DEADLINE_PASSED",
+                "consumer_state": _text(native.get("exact_blocker")) or "EXIT_BLOCKED_EVIDENCE",
+                "first_bad_handoff": "canonical same-session deadline -> bounded executable quote evidence",
+            })
     return {"monitor": "LIFECYCLE_PROOF_DEADLINE", "status": "DEGRADED" if facts else "PASS", "lanes": lanes, "deadline_checks": len(facts) + len(waiting), "observational_only": True}, facts, waiting
 
 

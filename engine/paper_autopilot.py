@@ -3861,6 +3861,39 @@ class PaperAutopilotEngine:
                         session_status=session,
                     )
                     return {"ok": False, "submitted": False, "reason": blocker, "blocker": "session", "contract": contract}
+            # A SCALP same-session deadline is a lifecycle requirement, not
+            # authority to manufacture or reuse an old execution price. The
+            # normal bounded quote path remains the sole producer of an
+            # executable quote; without it, persist the deadline blocker and
+            # retry on that existing path.
+            if lane == "SCALP" and str(exit_reason or "").startswith("scalp_lane_"):
+                quote_evidence = canonical_market_timestamp_v1(
+                    dict(latest_quote or {}),
+                    source_type=SOURCE_QUOTE,
+                    max_age_seconds=20.0,
+                )
+                if not bool(quote_evidence.get("executable_freshness")):
+                    blocker = str(
+                        quote_evidence.get("first_causal_blocker")
+                        or "TRUSTED_EXECUTABLE_QUOTE_UNAVAILABLE"
+                    )
+                    self._record_native_lane_exit_state(
+                        open_row,
+                        state="EXIT_BLOCKED_EVIDENCE",
+                        decision="EXIT_READY",
+                        reason=exit_reason,
+                        blocker=blocker,
+                        next_reevaluation="next_bounded_executable_quote_refresh",
+                        deadline_requirement_status="SAME_SESSION_DEADLINE_PASSED",
+                        executable_quote_evidence=quote_evidence,
+                    )
+                    return {
+                        "ok": False,
+                        "submitted": False,
+                        "reason": blocker,
+                        "blocker": "executable_quote_freshness",
+                        "contract": contract,
+                    }
         else:
             # Human approval remains mandatory for learned, legacy, manual,
             # and canary sell writers.  Native DAY/SCALP lifecycle exits are
@@ -5382,8 +5415,9 @@ class PaperAutopilotEngine:
         }
 
     def _lane_forced_exit_reason(self, open_row: dict[str, Any]) -> str:
-        """DAY force-flat is scoped to explicit DAY owners and never CRYPTO."""
-        if str(open_row.get("lane_id") or "").upper().strip() != "DAY":
+        """Use only an explicit lane-owned same-session contract."""
+        lane = str(open_row.get("lane_id") or "").upper().strip()
+        if lane not in {"DAY", "SCALP"}:
             return ""
         if not bool(open_row.get("same_session_exit_required")) or bool(open_row.get("overnight_allowed")):
             return ""
@@ -5391,14 +5425,14 @@ class PaperAutopilotEngine:
             now_et = datetime.now(ZoneInfo("America/New_York"))
             entry = datetime.fromisoformat(str(open_row.get("entry_timestamp") or "").replace("Z", "+00:00")).astimezone(ZoneInfo("America/New_York"))
         except Exception:
-            return "day_lane_entry_timestamp_unavailable"
+            return f"{lane.lower()}_lane_entry_timestamp_unavailable"
         if entry.date() < now_et.date():
-            return "day_lane_overnight_breach"
+            return f"{lane.lower()}_lane_overnight_breach"
         if now_et.weekday() >= 5:
-            return "day_lane_weekend_breach"
+            return f"{lane.lower()}_lane_weekend_breach"
         cutoff = self._day_lane_close_cutoff_et(now_et)
         if now_et >= cutoff:
-            return "day_lane_session_close_required"
+            return f"{lane.lower()}_lane_session_close_required"
         return ""
 
     def _day_lane_close_cutoff_et(self, now_et: datetime) -> datetime:
@@ -5965,19 +5999,21 @@ class PaperAutopilotEngine:
         self,
         broker_position_by_symbol: Mapping[str, Mapping[str, Any]],
     ) -> dict[str, Any]:
-        """Prioritize due DAY lifecycle closes ahead of bounded evidence work.
+        """Prioritize due same-session lifecycle closes ahead of evidence work.
 
         This is not a new exit strategy and does not invent a sell signal.  It
         consumes only the immutable same-session exit contract created at
         entry, the broker's current position snapshot, and the existing
-        idempotent lane writer.  Running it before long evidence phases keeps
-        a slow scan from silently rolling a DAY lifecycle past its close.
+        idempotent lane writer. Running it before long evidence phases keeps a
+        slow scan from silently rolling a same-session lifecycle past close.
+        SCALP retains its own lane contract and must still present a fresh
+        executable quote before a sell is submitted.
         """
         reviewed = submitted = blocked = 0
         rows = self._fetch_open_positions()
         session = self._native_lane_exit_session_status()
         for row in rows:
-            if str(row.get("lane_id") or "").upper().strip() != "DAY":
+            if str(row.get("lane_id") or "").upper().strip() not in {"DAY", "SCALP"}:
                 continue
             position_id = str(row.get("position_id") or "").strip()
             reconciliation = dict(self._runtime_state.get("broker_position_dust_mismatch_v1") or {}).get(position_id) or {}
@@ -10311,6 +10347,48 @@ class PaperAutopilotEngine:
         submit_row["lifecycle_id"] = pid
         pending_contract["lifecycle_id"] = pid
         submit_row["entry_lane_horizon_contract_v1"] = pending_contract
+        # A recovered worker can revisit a broker-confirmed entry after its
+        # lifecycle has already been persisted. Do not submit another order or
+        # retry a duplicate primary-key insert: the durable order intent is
+        # the exact pre-submission lineage available at this boundary.
+        with self._connect() as conn:
+            existing_row = conn.execute(
+                """
+                SELECT position_id, symbol, status, entry_order_id, entry_fill_id,
+                       order_intent_id, entry_metadata_json
+                FROM paper_positions WHERE position_id=?
+                """,
+                (pid,),
+            ).fetchone()
+        if existing_row is not None:
+            existing = dict(existing_row)
+            persisted_contract = _safe_json_load(existing.get("entry_metadata_json"))
+            expected_intent_id = str(pending_contract.get("order_intent_id") or "").strip()
+            persisted_intent_id = str(
+                existing.get("order_intent_id")
+                or persisted_contract.get("order_intent_id")
+                or ""
+            ).strip()
+            if (
+                str(existing.get("symbol") or "").upper().strip() != symbol
+                or not expected_intent_id
+                or expected_intent_id != persisted_intent_id
+            ):
+                return {
+                    "ok": False,
+                    "error": "canonical_position_id_lineage_conflict",
+                    "symbol": symbol,
+                    "position_id": pid,
+                }
+            return {
+                "ok": True,
+                "idempotent_entry_reconciliation": True,
+                "position_id": pid,
+                "symbol": symbol,
+                "entry_position_status": str(existing.get("status") or ""),
+                "broker_order_id": str(existing.get("entry_order_id") or ""),
+                "entry_fill_id": str(existing.get("entry_fill_id") or ""),
+            }
         entry_row = dict(submit_row)
         entry_row.setdefault("symbol", symbol)
         entry_row.setdefault("asset_type", asset_type)
@@ -10638,6 +10716,50 @@ class PaperAutopilotEngine:
         if not pid or not symbol:
             return {"ok": False, "error": "position_row_invalid"}
 
+        # The worker can see a broker fill again after a prior local close
+        # committed but before its durable pending intent was cleared. Only an
+        # exact canonical row with the same broker order and fill is harmless
+        # to replay; all other identities remain fail-closed.
+        canonical_row_exists = False
+        if isinstance(broker_fill, dict):
+            requested_order_id = str(broker_fill.get("exit_order_id") or "").strip()
+            requested_fill_id = str(broker_fill.get("exit_fill_id") or "").strip()
+            if not requested_order_id or not requested_fill_id:
+                return {"ok": False, "error": "broker_exit_fill_required_before_lifecycle_close"}
+            with self._connect() as conn:
+                persisted_row = conn.execute(
+                    """
+                    SELECT position_id, symbol, status, exit_order_id, exit_fill_id,
+                           lifecycle_notes
+                    FROM paper_positions WHERE position_id=?
+                    """,
+                    (pid,),
+                ).fetchone()
+            if persisted_row is not None:
+                canonical_row_exists = True
+                persisted = dict(persisted_row)
+                if str(persisted.get("symbol") or "").upper().strip() != symbol:
+                    return {"ok": False, "error": "canonical_position_symbol_mismatch", "position_id": pid}
+                if str(persisted.get("status") or "").upper() == "CLOSED":
+                    if (
+                        requested_order_id == str(persisted.get("exit_order_id") or "").strip()
+                        and requested_fill_id == str(persisted.get("exit_fill_id") or "").strip()
+                    ):
+                        notes = _safe_json_load(persisted.get("lifecycle_notes"))
+                        return {
+                            "ok": True,
+                            "idempotent_broker_fill_reconciliation": True,
+                            "position_id": pid,
+                            "symbol": symbol,
+                            "lane_id": str(open_row.get("lane_id") or "").upper().strip(),
+                            "strict_broker_truth_persistence": dict(notes.get("strict_truth_promotion_result") or {}),
+                            "learning_acknowledged": bool(notes.get("learning_acknowledged_at")),
+                            "canonical_dust_safe_closure": dict(notes.get("canonical_dust_safe_closure") or {}),
+                        }
+                    return {"ok": False, "error": "canonical_closed_exit_lineage_conflict", "position_id": pid}
+                if str(persisted.get("status") or "").upper() != "OPEN":
+                    return {"ok": False, "error": "canonical_position_not_open", "position_id": pid}
+
         lane = str(open_row.get("lane_id") or "").upper().strip()
         # Every lane needs a real fill plus an independent broker residual
         # lookup.  Local remaining quantity is reconciliation context only.
@@ -10728,7 +10850,7 @@ class PaperAutopilotEngine:
 
         lifecycle_stage = "completed_winner" if ret > 0 else "completed_loser"
         with self._connect() as conn:
-            conn.execute(
+            update_result = conn.execute(
                 """
                 UPDATE paper_positions
                 SET status='CLOSED', exit_price=?, return_percent=?, friction_adjusted_return=?,
@@ -10763,11 +10885,17 @@ class PaperAutopilotEngine:
                     pid,
                 ),
             )
+            if canonical_row_exists and update_result.rowcount != 1:
+                conn.rollback()
+                return {"ok": False, "error": "canonical_position_close_update_missing", "position_id": pid}
             if isinstance(broker_fill, dict):
-                conn.execute(
+                lineage_result = conn.execute(
                     "UPDATE paper_positions SET exit_order_id=?, exit_fill_id=? WHERE position_id=?",
                     (str(broker_fill.get("exit_order_id") or ""), str(broker_fill.get("exit_fill_id") or ""), pid),
                 )
+                if canonical_row_exists and lineage_result.rowcount != 1:
+                    conn.rollback()
+                    return {"ok": False, "error": "canonical_position_exit_lineage_update_missing", "position_id": pid}
             conn.commit()
 
         if self._position_tracker is not None:

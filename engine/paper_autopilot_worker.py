@@ -667,6 +667,8 @@ class PaperAutopilotWorker:
                 "crypto_market_data_matrix": crypto_matrix,
                 "multilane_completion_matrix": multilane_completion,
                 "position_lane_horizon_recovery": dict(runtime.get("position_lane_horizon_recovery_v1") or {}),
+                "native_lane_exit_lifecycle": dict(runtime.get("native_lane_exit_lifecycle_v1") or {}),
+                "authorized_lane_exit_pending": dict(runtime.get("authorized_lane_exit_pending") or {}),
                 "historical_reconciliation_ownership_collisions": dict(getattr(self.autopilot, "_historical_reconciliation_ownership_collisions_v1", lambda: {})() or {}),
                 "entry_lane_horizon_integrity": dict(getattr(self.autopilot, "entry_lane_horizon_ledger", None).snapshot() if getattr(self.autopilot, "entry_lane_horizon_ledger", None) is not None else {}),
                 "provider_consumption_telemetry": dict(runtime.get("provider_consumption_telemetry_v1") or {}),

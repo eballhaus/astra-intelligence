@@ -1,6 +1,7 @@
 """Regression coverage for native same-session lane closure plumbing."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import unittest
 from unittest.mock import patch
 
@@ -26,6 +27,19 @@ def _row():
         "lane_id": "DAY", "entry_order_id": "entry-1", "entry_fill_id": "fill-1",
         "same_session_exit_required": True, "overnight_allowed": False,
         "position_owner": "DAY", "exit_policy_owner": "DAY",
+    }
+
+
+def _scalp_row():
+    return {
+        **_row(),
+        "symbol": "SCALP",
+        "position_id": "scalp-current",
+        "lane_id": "SCALP",
+        "position_owner": "SCALP",
+        "exit_policy_owner": "SCALP",
+        "same_session_exit_required": True,
+        "overnight_allowed": False,
     }
 
 
@@ -66,6 +80,34 @@ class NativeLaneExitClosureTests(unittest.TestCase):
         self.assertFalse(result["submitted"])
         self.assertEqual(len(engine.alpaca_paper_broker.submitted), 0)
         self.assertIn("APPROVAL", result["reason"])
+
+    def test_scalp_same_session_deadline_never_submits_with_stale_quote(self):
+        engine = self._engine()
+        stale = {"symbol": "SCALP", "price": 10.0, "timestamp": "2020-01-01T00:00:00Z"}
+        with patch.object(engine, "_authorized_lane_exit_contract", return_value={"authorized": True, "lane_id": "SCALP", "native_natural_exit_authorized": True, "entry_order_id": "entry-1", "entry_fill_id": "fill-1"}):
+            result = engine._submit_authorized_lane_exit(
+                _scalp_row(), {"qty_available": 10}, "scalp_lane_session_close_required", latest_quote=stale,
+            )
+        self.assertFalse(result["submitted"])
+        self.assertEqual(result["blocker"], "executable_quote_freshness")
+        self.assertEqual(len(engine.alpaca_paper_broker.submitted), 0)
+        state = engine._runtime_state["native_lane_exit_lifecycle_v1"]["scalp-current"]
+        self.assertEqual(state["closure_state"], "EXIT_BLOCKED_EVIDENCE")
+        self.assertEqual(state["deadline_requirement_status"], "SAME_SESSION_DEADLINE_PASSED")
+
+    def test_scalp_same_session_deadline_can_use_existing_fresh_quote_path(self):
+        engine = self._engine()
+        fresh = {
+            "symbol": "SCALP",
+            "price": 10.0,
+            "provider_quote_timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        with patch.object(engine, "_authorized_lane_exit_contract", return_value={"authorized": True, "lane_id": "SCALP", "native_natural_exit_authorized": True, "entry_order_id": "entry-1", "entry_fill_id": "fill-1"}):
+            result = engine._submit_authorized_lane_exit(
+                _scalp_row(), {"qty_available": 10}, "scalp_lane_session_close_required", latest_quote=fresh,
+            )
+        self.assertTrue(result["submitted"])
+        self.assertEqual(len(engine.alpaca_paper_broker.submitted), 1)
 
     def test_partial_fill_stays_on_the_same_lifecycle(self):
         engine = self._engine(_Broker(status="partially_filled"))
