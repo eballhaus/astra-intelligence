@@ -15709,7 +15709,33 @@ class PaperAutopilotEngine:
                     continue
 
                 if apply:
-                    mirror_position_id = f"broker_mirror:{symbol}:{int(time.time())}"
+                    # The initial open-row snapshot can be stale by the time a
+                    # reconciliation write is attempted. Recheck the canonical
+                    # table before creating a broker mirror so a second caller
+                    # cannot manufacture duplicate local ownership.
+                    persisted_open = conn.execute(
+                        """
+                        SELECT position_id, source_bucket
+                        FROM paper_positions
+                        WHERE symbol=? AND status='OPEN'
+                        ORDER BY updated_at DESC, created_at DESC
+                        LIMIT 1
+                        """,
+                        (symbol,),
+                    ).fetchone()
+                    if persisted_open:
+                        persisted_open_row = dict(persisted_open)
+                        open_by_symbol[symbol] = persisted_open_row
+                        row["mirror_status"] = "MIRROR_EXISTS_RECHECKED"
+                        row["safe_to_create"] = False
+                        mirrors_preserved += 1
+                        continue
+
+                    # A mirror is a distinct local reconciliation record, not
+                    # a deterministic broker identity. UUIDs prevent a closed
+                    # mirror recreated in the same second from colliding with
+                    # the paper_positions primary key.
+                    mirror_position_id = f"broker_mirror:{symbol}:{uuid.uuid4().hex}"
                     mirror_notes = {
                         "source": "BROKER_MIRRORED_OPEN",
                         "broker_confirmed": True,

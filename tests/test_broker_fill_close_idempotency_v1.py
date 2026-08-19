@@ -188,6 +188,64 @@ class BrokerFillCloseIdempotencyTests(unittest.TestCase):
             self.assertTrue(result["idempotent_entry_reconciliation"])
             self.assertEqual(result["position_id"], row["position_id"])
 
+    @staticmethod
+    def _broker_open_snapshot(symbol: str = "LYFT") -> dict[str, object]:
+        return {
+            "broker_positions_fetch_ok": True,
+            "broker_open_positions_count": 1,
+            "broker_position_by_symbol": {
+                symbol: {
+                    "symbol": symbol,
+                    "qty": 5,
+                    "avg_entry_price": 17.09,
+                    "market_value": 86.25,
+                    "current_price": 17.25,
+                    "unrealized_pl": 0.8,
+                }
+            },
+        }
+
+    def test_broker_open_mirror_reconciliation_is_idempotent_across_repeated_cycles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            engine = self._engine(root, _TradeIntel())
+            snapshot = self._broker_open_snapshot()
+
+            first = engine.broker_open_position_mirror_backfill(apply=True, broker_snapshot=snapshot)
+            second = engine.broker_open_position_mirror_backfill(apply=True, broker_snapshot=snapshot)
+
+            with engine._connect() as conn:
+                rows = [dict(row) for row in conn.execute(
+                    "SELECT position_id, source_bucket FROM paper_positions WHERE symbol='LYFT'"
+                ).fetchall()]
+            self.assertEqual(first["mirrors_created"], 1)
+            self.assertEqual(second["mirrors_created"], 0)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["source_bucket"], "BROKER_MIRRORED_OPEN")
+            self.assertTrue(rows[0]["position_id"].startswith("broker_mirror:LYFT:"))
+            self.assertNotRegex(rows[0]["position_id"], r"^broker_mirror:LYFT:\d{10}$")
+
+    def test_broker_open_mirror_rechecks_the_database_when_initial_snapshot_is_stale(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            engine = self._engine(root, _TradeIntel())
+            snapshot = self._broker_open_snapshot()
+            engine.broker_open_position_mirror_backfill(apply=True, broker_snapshot=snapshot)
+
+            # Simulate an older reconciliation view. The write owner must still
+            # consult canonical storage before attempting another mirror insert.
+            with patch.object(engine, "_trade_state_open_mirrors_by_symbol", return_value={}):
+                result = engine.broker_open_position_mirror_backfill(apply=True, broker_snapshot=snapshot)
+
+            with engine._connect() as conn:
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM paper_positions WHERE symbol='LYFT'"
+                ).fetchone()[0]
+            self.assertEqual(result["mirrors_created"], 0)
+            self.assertEqual(result["mirrors_preserved"], 1)
+            self.assertEqual(result["mirror_candidates"][0]["mirror_status"], "MIRROR_EXISTS_RECHECKED")
+            self.assertEqual(count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
