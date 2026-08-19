@@ -43,6 +43,7 @@ from engine.astra_multilane_completion_matrix_v1 import AstraMultilaneCompletion
 from engine.astra_operating_health_contract_v1 import AstraOperatingHealthContractV1
 from engine.astra_evidence_accumulation_capacity_v1 import canonical_candidate_capacity_fact
 from engine.candidate_execution_integrity_v1 import derive_crypto_horizon_evidence_v1
+from engine.adaptive_profit_capture_intelligence_v1 import build_profit_capture_trade_effectiveness_v2
 
 
 # A cycle may contain bounded local persistence work that lasts longer than
@@ -459,6 +460,7 @@ class PaperAutopilotWorker:
         crypto_integrity: dict[str, Any] = {}
         shadow_protection: dict[str, Any] = {}
         truth_arbitration: dict[str, Any] = {}
+        trade_effectiveness: dict[str, Any] = {}
         positions: list[dict[str, Any]] = []
         try:
             # Compatibility rows are retained only as a rejected diagnostic
@@ -556,6 +558,14 @@ class PaperAutopilotWorker:
                 if isinstance(row, dict)
             ]
             runtime = getattr(self.autopilot, "_runtime_state", {})
+            # Strict-truth-only trade effectiveness is a bounded, passive
+            # consumer of the current cycle's already-persisted records.
+            trade_effectiveness = build_profit_capture_trade_effectiveness_v2(
+                [dict(row) for row in list(runtime.get("broker_truth_records_v1") or []) if isinstance(row, dict)],
+                shadow_exit_performance=dict(runtime.get("shadow_exit_performance_v1") or {}),
+                shadow_exit_outputs=dict(runtime.get("shadow_exit_analysis_outputs_v1") or {}),
+            )
+            runtime["profit_capture_trade_effectiveness_v2"] = dict(trade_effectiveness)
             execution_trace = dict(runtime.get("last_execution_trace") or {})
             partial = dict((runtime.get("last_cycle_summary") or {}).get("partial_candidate_microphase") or {})
             target_lane = str(partial.get("target_lane") or "").upper()
@@ -616,6 +626,7 @@ class PaperAutopilotWorker:
             shadow_protection = {"status": "UNAVAILABLE_FAIL_CLOSED"}
             truth_arbitration = {"status": "UNAVAILABLE_FAIL_CLOSED"}
             multilane_completion = {"status": "UNAVAILABLE_FAIL_CLOSED"}
+            trade_effectiveness = {"status": "UNAVAILABLE_FAIL_CLOSED"}
         # A changed causal fingerprint is a bounded reason to scan now. The
         # canonical worker remains the only scanner owner; unchanged evidence
         # continues to use the normal low-frequency Sentinel interval.
@@ -670,6 +681,7 @@ class PaperAutopilotWorker:
                 "shadow_exit_diagnostics": dict(runtime.get("shadow_exit_diagnostics_v1") or {}),
                 "shadow_exit_analysis_outputs": dict(runtime.get("shadow_exit_analysis_outputs_v1") or {}),
                 "shadow_exit_performance": dict(runtime.get("shadow_exit_performance_v1") or {}),
+                "profit_capture_trade_effectiveness": dict(trade_effectiveness or runtime.get("profit_capture_trade_effectiveness_v2") or {}),
                 "canonical_capacity_fact": dict(lane.get("canonical_capacity_fact") or {}),
                 "current_candidate_traces": [
                     dict(row) for row in list((runtime.get("last_execution_trace") or {}).get("per_candidate_decision_trace") or [])

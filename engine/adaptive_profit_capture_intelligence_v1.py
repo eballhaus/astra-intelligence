@@ -6,10 +6,12 @@ import os
 import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
-from statistics import mean
+from statistics import mean, median
 from typing import Any
 
 VERSION = "1.0.0"
+TRADE_EFFECTIVENESS_V2_SCHEMA = "astra_profit_capture_trade_effectiveness_v2"
+MAX_EFFECTIVENESS_TRUTHS = 80
 MAX_TAIL_BYTES = 1_800_000
 MAX_ROWS = 1500
 
@@ -132,6 +134,372 @@ def _context_key(row: dict[str, Any]) -> str:
         f"{_text(row.get('cap_tier'), 'unknown')}:"
         f"{_text(row.get('horizon_style'), 'unknown')}"
     )
+
+
+def _optional_number(value: Any) -> float | None:
+    if value is None or value == "" or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+        return number if math.isfinite(number) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _first_number(row: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        value = _optional_number(row.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _nested_learning(row: dict[str, Any]) -> dict[str, Any]:
+    learning = row.get("observational_learning_v1")
+    if not isinstance(learning, dict):
+        return {}
+    hold = learning.get("hold_quality_exit_timing_v1")
+    return dict(hold) if isinstance(hold, dict) else {}
+
+
+def _strict_completed_truth(row: dict[str, Any]) -> bool:
+    quality = _text(row.get("truth_quality")).upper()
+    state = _text(row.get("truth_state")).upper()
+    strict = quality == "BROKER_CONFIRMED_COMPLETE" or state in {"STRICT_TRUTH", "BROKER_TRUTH_CONFIRMED"} or bool(row.get("strict_broker_truth"))
+    return bool(strict and _text(row.get("entry_fill_id")) and _text(row.get("exit_fill_id")))
+
+
+def _canonical_lane(row: dict[str, Any]) -> str:
+    return _text(row.get("lane_id") or row.get("lane") or row.get("allocation_lane"), "UNAVAILABLE").upper()
+
+
+def _canonical_horizon(row: dict[str, Any]) -> str:
+    context = row.get("pretrade_context_v1")
+    context = dict(context) if isinstance(context, dict) else {}
+    return _text(
+        row.get("intended_horizon") or row.get("horizon") or row.get("horizon_style")
+        or context.get("intended_horizon") or context.get("horizon") or context.get("paper_entry_horizon_style"),
+        "UNAVAILABLE",
+    )
+
+
+def _mean_optional(values: list[float | None]) -> float | None:
+    clean = [value for value in values if value is not None]
+    return round(mean(clean), 6) if clean else None
+
+
+def _median_optional(values: list[float | None]) -> float | None:
+    clean = [value for value in values if value is not None]
+    return round(float(median(clean)), 6) if clean else None
+
+
+def _peak_evidence_state(row: dict[str, Any]) -> str:
+    for key in ("peak_evidence_freshness", "mfe_evidence_freshness", "excursion_evidence_freshness", "peak_evidence_state"):
+        state = _text(row.get(key)).upper()
+        if state in {"STALE", "RECONSTRUCTED", "DIAGNOSTIC", "HISTORICAL_RECONSTRUCTED"}:
+            return "STALE_OR_RECONSTRUCTED_EVIDENCE"
+    return "CANONICAL_EXCURSION_EVIDENCE"
+
+
+def _exit_effectiveness(*, realized: float | None, peak: float | None, capture: float | None, exit_reason: str, hold_seconds: float | None, expected_hold_seconds: float | None) -> str:
+    if realized is None or peak is None:
+        return "INSUFFICIENT_EVIDENCE"
+    if peak <= 0:
+        if realized < 0 and any(token in exit_reason.upper() for token in ("STOP", "THESIS", "RISK", "LOSS", "INVALIDATION")):
+            return "LOSS_ACCEPTANCE_EFFECTIVE"
+        if realized < 0 and expected_hold_seconds and hold_seconds and hold_seconds > expected_hold_seconds:
+            return "LOSS_HELD_TOO_LONG"
+        return "INSUFFICIENT_EVIDENCE"
+    if capture is None:
+        return "INSUFFICIENT_EVIDENCE"
+    if capture >= 0.80:
+        return "EFFECTIVE"
+    if capture <= 0.20:
+        return "SEVERE_PROFIT_GIVEBACK"
+    if capture < 0.40:
+        return "LATE"
+    return "EFFECTIVE"
+
+
+def _management_attribution(*, realized: float | None, peak: float | None, capture: float | None, exit_effectiveness: str, horizon_assessment: str) -> str:
+    if realized is None or peak is None:
+        return "DATA_OR_TRUTH_INCOMPLETE"
+    if "EXCEEDED" in horizon_assessment.upper() or "MISMATCH" in horizon_assessment.upper():
+        return "HORIZON_MISMATCH"
+    if realized > 0 and capture is not None and capture >= 0.80:
+        return "GOOD_ENTRY_GOOD_MANAGEMENT_GOOD_EXIT"
+    if peak > 0 and exit_effectiveness in {"LATE", "SEVERE_PROFIT_GIVEBACK"}:
+        return "GOOD_ENTRY_LATE_EXIT"
+    if peak > 0 and realized > 0:
+        return "GOOD_ENTRY_POOR_MANAGEMENT"
+    if exit_effectiveness == "LOSS_ACCEPTANCE_EFFECTIVE":
+        return "POOR_ENTRY_EFFECTIVE_LOSS_CONTROL"
+    if realized <= 0:
+        return "POOR_ENTRY_POOR_EXIT"
+    return "INSUFFICIENT_EVIDENCE"
+
+
+def _effectiveness_row(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Derive only from an already-confirmed broker truth and its attached facts."""
+    notes = _nested_learning(row)
+    lifecycle_id = _text(row.get("lifecycle_id"))
+    peak_state = _peak_evidence_state(row)
+    peak = None if peak_state != "CANONICAL_EXCURSION_EVIDENCE" else _first_number(
+        row, "max_favorable_excursion_pct", "maximum_favorable_excursion_pct", "mfe", "peak_return_percent", "peak_unrealized_profit_pct",
+    )
+    if peak is None and peak_state == "CANONICAL_EXCURSION_EVIDENCE":
+        peak = _first_number(notes, "maximum_favorable_excursion_pct", "mfe_pct")
+    realized = _first_number(row, "realized_return", "realized_return_pct", "actual_return_pct", "pnl_pct", "exit_gain_pct")
+    if realized is None:
+        realized = _first_number(notes, "actual_return_pct")
+    hold_seconds = _first_number(row, "hold_duration_seconds", "hold_time_seconds", "actual_hold_seconds")
+    if hold_seconds is None:
+        hold_seconds = _first_number(notes, "hold_duration_seconds")
+    context = row.get("pretrade_context_v1")
+    context = dict(context) if isinstance(context, dict) else {}
+    expected_hold_seconds = _first_number(context, "maximum_hold_seconds", "expected_hold_seconds")
+    if expected_hold_seconds is None:
+        minutes = _first_number(context, "expected_hold_minutes", "maximum_hold_minutes")
+        expected_hold_seconds = minutes * 60.0 if minutes is not None else None
+    peak_timestamp = _text(row.get("peak_timestamp") or row.get("peak_observed_at") or row.get("mfe_timestamp") or row.get("time_of_peak")) or None
+    exit_timestamp = _text(row.get("exit_time") or row.get("exit_timestamp") or row.get("filled_at")) or None
+    time_after_peak = None
+    if peak_timestamp and exit_timestamp:
+        try:
+            peak_dt = datetime.fromisoformat(peak_timestamp.replace("Z", "+00:00"))
+            exit_dt = datetime.fromisoformat(exit_timestamp.replace("Z", "+00:00"))
+            time_after_peak = max(0.0, (exit_dt - peak_dt).total_seconds())
+        except ValueError:
+            time_after_peak = None
+    if time_after_peak is None and hold_seconds is not None:
+        time_to_peak = _first_number(row, "time_to_peak_seconds", "time_to_peak")
+        if time_to_peak is not None:
+            time_after_peak = max(0.0, hold_seconds - time_to_peak)
+
+    never_profitable = peak is not None and peak <= 0
+    capture = None
+    giveback = None
+    giveback_pct = None
+    if peak is not None and peak > 0 and realized is not None:
+        capture = max(0.0, min(1.0, max(0.0, realized) / peak))
+        giveback = max(0.0, peak - realized)
+        giveback_pct = (giveback / peak) * 100.0
+    if never_profitable:
+        capture_label = "NEVER_PROFITABLE"
+    elif capture is None:
+        capture_label = "INSUFFICIENT_EVIDENCE"
+    elif capture >= 0.80:
+        capture_label = "EXCELLENT_CAPTURE"
+    elif capture >= 0.60:
+        capture_label = "GOOD_CAPTURE"
+    elif capture >= 0.40:
+        capture_label = "MODERATE_GIVEBACK"
+    elif capture >= 0.20:
+        capture_label = "HIGH_GIVEBACK"
+    else:
+        capture_label = "SEVERE_GIVEBACK"
+    exit_reason = _text(row.get("exit_reason") or notes.get("exit_reason"), "UNAVAILABLE")
+    horizon_assessment = _text(notes.get("hold_horizon_assessment"), "UNAVAILABLE")
+    exit_effectiveness = _exit_effectiveness(
+        realized=realized, peak=peak, capture=capture, exit_reason=exit_reason,
+        hold_seconds=hold_seconds, expected_hold_seconds=expected_hold_seconds,
+    )
+    signals = {
+        key: value for key, value in {
+            "momentum_deterioration": row.get("momentum_deterioration_score") or notes.get("momentum_state_at_exit"),
+            "thesis_deterioration": notes.get("thesis_state_at_exit"),
+            "return_per_day_decay": row.get("return_per_day_decay") or notes.get("return_per_day"),
+            "opportunity_cost": notes.get("opportunity_cost_state") or row.get("opportunity_cost_state"),
+            "horizon_pressure": horizon_assessment if horizon_assessment != "UNAVAILABLE" else None,
+        }.items() if value not in (None, "", "UNAVAILABLE", "unknown")
+    }
+    opportunity = _text(signals.get("opportunity_cost"), "UNAVAILABLE").upper()
+    opportunity_state = (
+        "HIGH_OPPORTUNITY_COST" if "HIGH" in opportunity else
+        "REPLACEMENT_OPPORTUNITY_PRESENT" if any(token in opportunity for token in ("REPLACE", "OPPORTUNITY")) else
+        "NO_MEANINGFUL_REPLACEMENT" if opportunity in {"NONE", "NO_MEANINGFUL_REPLACEMENT"} else
+        "INSUFFICIENT_EVIDENCE"
+    )
+    integrity_fact = None
+    mfe_marked_available = bool(row.get("mfe_evidence_available"))
+    if peak is None:
+        integrity_fact = {
+            "kind": (
+                "EFFECTIVENESS_PEAK_EVIDENCE_LOSS" if mfe_marked_available and peak_state == "CANONICAL_EXCURSION_EVIDENCE"
+                else "HISTORICAL" if peak_state != "CANONICAL_EXCURSION_EVIDENCE"
+                else "PRODUCER_MISSING"
+            ),
+            "current": peak_state == "CANONICAL_EXCURSION_EVIDENCE",
+            "lifecycle_id": lifecycle_id,
+            "symbol": row.get("symbol"),
+            "lane": _canonical_lane(row),
+            "producer": "canonical lifecycle excursion evidence",
+            "consumer": "adaptive_profit_capture_intelligence_v1.trade_effectiveness_v2",
+            "field": "maximum_favorable_excursion_pct",
+            "producer_value_available": mfe_marked_available,
+            "consumer_value": None,
+            "producer_value": "AVAILABLE" if mfe_marked_available else None,
+            "evidence_timestamp": exit_timestamp,
+            "first_bad_handoff": "canonical lifecycle excursion evidence -> profit-capture effectiveness analysis",
+        }
+    return {
+        "lifecycle_id": lifecycle_id,
+        "truth_id": _text(row.get("truth_id") or row.get("stable_key")) or None,
+        "symbol": _text(row.get("symbol")).upper(),
+        "lane": _canonical_lane(row),
+        "horizon": _canonical_horizon(row),
+        "broker_truth_tier": "BROKER_STRICT_TRUTH",
+        "partial_exit_handling": "FINAL_BROKER_CONFIRMED_REALIZED_RETURN" if bool(row.get("partial_exit_count") or row.get("partial_exit")) else "SINGLE_FINAL_EXIT",
+        "peak_unrealized_return_pct": round(peak, 6) if peak is not None else None,
+        "realized_return_pct": round(realized, 6) if realized is not None else None,
+        "profit_capture_pct": round(capture * 100.0, 6) if capture is not None else None,
+        "profit_giveback_pct": round(giveback, 6) if giveback is not None else None,
+        "profit_giveback_from_peak_pct": round(giveback_pct, 6) if giveback_pct is not None else None,
+        "profit_capture_classification": capture_label,
+        "exit_effectiveness": exit_effectiveness,
+        "entry_management_exit_attribution": _management_attribution(
+            realized=realized, peak=peak, capture=capture, exit_effectiveness=exit_effectiveness, horizon_assessment=horizon_assessment,
+        ),
+        "hold_duration_seconds": round(hold_seconds, 6) if hold_seconds is not None else None,
+        "realized_return_per_day": round(realized / (hold_seconds / 86400.0), 6) if realized is not None and hold_seconds and hold_seconds > 0 else None,
+        "peak_return_per_day": round(peak / (hold_seconds / 86400.0), 6) if peak is not None and hold_seconds and hold_seconds > 0 else None,
+        "peak_timestamp": peak_timestamp,
+        "exit_timestamp": exit_timestamp,
+        "time_after_peak_seconds": round(time_after_peak, 6) if time_after_peak is not None else None,
+        "existing_exit_quality_score": _first_number(row, "exit_quality_score") or _first_number(notes, "exit_quality_score"),
+        "momentum_profit_protection_evidence": signals or "UNAVAILABLE",
+        "opportunity_cost_classification": opportunity_state,
+        "evidence_quality": "BROKER_TRUTH_WITH_CANONICAL_EXCURSION" if peak is not None else peak_state,
+        "provenance": {"truth_record": "broker_truth_records_v1", "excursion": "canonical lifecycle evidence", "shadow_promoted": False},
+    }, integrity_fact
+
+
+def build_profit_capture_trade_effectiveness_v2(
+    broker_truth_records: list[dict[str, Any]] | None,
+    *,
+    shadow_exit_performance: dict[str, Any] | None = None,
+    shadow_exit_outputs: dict[str, Any] | None = None,
+    limit: int = MAX_EFFECTIVENESS_TRUTHS,
+) -> dict[str, Any]:
+    """Bounded, read-only effectiveness summary for completed strict broker truths.
+
+    Shadow aggregates are reported separately and never contribute to official
+    broker-truth metrics or promotion authority.
+    """
+    official_rows: list[dict[str, Any]] = []
+    integrity_facts: list[dict[str, Any]] = []
+    excluded = 0
+    for raw in list(broker_truth_records or [])[-max(1, int(limit)):]:
+        if not isinstance(raw, dict) or not _strict_completed_truth(raw) or _text(raw.get("legacy_status")).upper() == "LEGACY":
+            excluded += 1
+            continue
+        derived, fact = _effectiveness_row(dict(raw))
+        official_rows.append(derived)
+        if fact is not None:
+            integrity_facts.append(fact)
+    captures = [row.get("profit_capture_pct") for row in official_rows]
+    givebacks = [row.get("profit_giveback_from_peak_pct") for row in official_rows]
+    realized_per_day = [row.get("realized_return_per_day") for row in official_rows]
+    after_peak = [row.get("time_after_peak_seconds") for row in official_rows]
+    counts = Counter(_text(row.get("exit_effectiveness"), "INSUFFICIENT_EVIDENCE") for row in official_rows)
+    lanes: dict[str, dict[str, Any]] = {}
+    for lane in ("SCALP", "DAY", "SWING", "CRYPTO"):
+        rows = [row for row in official_rows if row.get("lane") == lane]
+        lanes[lane] = {
+            "completed_broker_truth_sample_size": len(rows),
+            "average_profit_capture_pct": _mean_optional([row.get("profit_capture_pct") for row in rows]),
+            "average_profit_giveback_from_peak_pct": _mean_optional([row.get("profit_giveback_from_peak_pct") for row in rows]),
+            "average_hold_duration_seconds": _mean_optional([row.get("hold_duration_seconds") for row in rows]),
+            "average_time_after_peak_seconds": _mean_optional([row.get("time_after_peak_seconds") for row in rows]),
+            "average_realized_return_per_day": _mean_optional([row.get("realized_return_per_day") for row in rows]),
+            "effective_exit_count": sum(row.get("exit_effectiveness") == "EFFECTIVE" for row in rows),
+            "late_exit_count": sum(row.get("exit_effectiveness") in {"LATE", "SEVERE_PROFIT_GIVEBACK"} for row in rows),
+            "controlled_loss_effective_count": sum(row.get("exit_effectiveness") == "LOSS_ACCEPTANCE_EFFECTIVE" for row in rows),
+        }
+    horizons: dict[str, dict[str, Any]] = {}
+    for horizon in sorted({_text(row.get("horizon"), "UNAVAILABLE") for row in official_rows}):
+        rows = [row for row in official_rows if row.get("horizon") == horizon]
+        horizons[horizon] = {
+            "completed_broker_truth_sample_size": len(rows),
+            "average_profit_capture_pct": _mean_optional([row.get("profit_capture_pct") for row in rows]),
+            "average_profit_giveback_from_peak_pct": _mean_optional([row.get("profit_giveback_from_peak_pct") for row in rows]),
+            "average_realized_return_per_day": _mean_optional([row.get("realized_return_per_day") for row in rows]),
+            "average_time_after_peak_seconds": _mean_optional([row.get("time_after_peak_seconds") for row in rows]),
+        }
+    shadow = dict(shadow_exit_performance or {})
+    shadow_metrics = dict(shadow.get("metrics") or shadow.get("global") or {})
+    sample = int(_to_float(shadow.get("sample_size"), 0))
+    output_by_lifecycle = {
+        _text(row.get("lifecycle_id")): row
+        for row in list(dict(shadow_exit_outputs or {}).get("outputs") or [])
+        if isinstance(row, dict) and _text(row.get("lifecycle_id"))
+    }
+    counterfactual_rows: list[dict[str, Any]] = []
+    for row in official_rows:
+        shadow_row = output_by_lifecycle.get(_text(row.get("lifecycle_id")))
+        if not shadow_row:
+            continue
+        shadow_return = _first_number(shadow_row, "shadow_return_pct", "counterfactual_return_pct")
+        actual_return = _optional_number(row.get("realized_return_pct"))
+        if shadow_return is None or actual_return is None:
+            continue
+        counterfactual_rows.append({
+            "lifecycle_id": row.get("lifecycle_id"), "actual_return_pct": actual_return,
+            "shadow_return_pct": shadow_return, "return_difference_pct": round(shadow_return - actual_return, 6),
+            "shadow_only": True, "execution_authority": "DISABLED", "promotion_status": "NOT_PROMOTED",
+        })
+    official_sample = len(official_rows)
+    evidence_state = "SUFFICIENT_BROKER_TRUTH" if official_sample >= 3 else "INSUFFICIENT_BROKER_TRUTH_SAMPLE"
+    summary = {
+        "schema_version": TRADE_EFFECTIVENESS_V2_SCHEMA,
+        "mode": "paper_only_observational_trade_effectiveness",
+        "completed_broker_truth_sample_size": official_sample,
+        "excluded_nonofficial_or_legacy_rows": excluded,
+        "profitable_trade_count": sum((row.get("realized_return_pct") or 0.0) > 0 for row in official_rows),
+        "losing_trade_count": sum((row.get("realized_return_pct") or 0.0) < 0 for row in official_rows),
+        "average_profit_capture_pct": _mean_optional(captures),
+        "median_profit_capture_pct": _median_optional(captures),
+        "average_profit_giveback_from_peak_pct": _mean_optional(givebacks),
+        "severe_giveback_count": sum(row.get("profit_capture_classification") == "SEVERE_GIVEBACK" for row in official_rows),
+        "effective_exit_count": counts.get("EFFECTIVE", 0),
+        "late_exit_count": counts.get("LATE", 0) + counts.get("SEVERE_PROFIT_GIVEBACK", 0),
+        "effective_controlled_loss_count": counts.get("LOSS_ACCEPTANCE_EFFECTIVE", 0),
+        "average_realized_return_per_day": _mean_optional(realized_per_day),
+        "average_time_after_peak_seconds": _mean_optional(after_peak),
+        "horizon_lane_breakdown": lanes,
+        "horizon_breakdown": horizons,
+        "shadow_exit_sample_size": sample,
+        "shadow_outperformance_rate": shadow_metrics.get("shadow_win_rate") if sample else None,
+        "shadow_evidence_state": "SHADOW_ONLY" if sample else "INSUFFICIENT_SHADOW_EVIDENCE",
+        "counterfactual_exit_comparison_count": len(counterfactual_rows),
+        "counterfactual_exit_comparisons": counterfactual_rows[:12],
+        "evidence_sufficiency_state": evidence_state,
+        "official_metrics_truth_tier": "BROKER_STRICT_TRUTH_ONLY",
+        "shadow_metrics_never_promoted": True,
+        "trade_rows": official_rows[-24:],
+        "integrity_facts": integrity_facts[:12],
+        "cortex_summary": {
+            "completed_broker_truth_sample_size": official_sample,
+            "average_profit_capture_pct": _mean_optional(captures),
+            "average_profit_giveback_from_peak_pct": _mean_optional(givebacks),
+            "late_exit_count": counts.get("LATE", 0) + counts.get("SEVERE_PROFIT_GIVEBACK", 0),
+            "shadow_exit_sample_size": sample,
+            "evidence_sufficiency_state": evidence_state,
+            "advisory_only": True,
+            "automatic_policy_promotion_allowed": False,
+        },
+        "provider_calls_used": 0,
+        "broker_calls_used": 0,
+        "llm_calls_used": 0,
+        "execution_behavior_changed": False,
+        "paper_only_preserved": True,
+        "live_trading_changed": False,
+        "advisory_only": True,
+        "shadow_only": False,
+        "shadow_components_only": True,
+        "generated_at": _now_iso(),
+    }
+    return summary
 
 
 class AdaptiveProfitCaptureIntelligenceV1:

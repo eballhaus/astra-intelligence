@@ -669,6 +669,11 @@ class ContinuousSystemIntegrityScannerV1:
                 "worker_state": worker_state,
             }, limit=limits["max_rows"])
             causal_facts.extend(platform_integrity.get("facts") or [])
+            trade_effectiveness = dict(context.get("profit_capture_trade_effectiveness") or {})
+            causal_facts.extend(
+                dict(row) for row in list(trade_effectiveness.get("integrity_facts") or [])
+                if isinstance(row, dict)
+            )
             causal = classify_causal_handoff_facts_v1(causal_facts, limit=limits["max_rows"])
             signals.extend(causal["signals"])
             waiting.extend(causal["nondefects"])
@@ -724,9 +729,11 @@ class ContinuousSystemIntegrityScannerV1:
                        },
                        "crypto_market_data": crypto_market_data,
                        "governance_summary": {"root_causes": len(active), "human_repair_required": len(human), "safe_corrections": len(corrections), "sentinel_single_scan_owner": True,
-                                              "platform_integrity_status": {key: dict(value).get("status") for key, value in platform_integrity.items() if key in {"price_data_truth", "lifecycle_proof_deadline", "broker_position_execution_truth", "resource_provider_reliability"}}},
+                                              "platform_integrity_status": {key: dict(value).get("status") for key, value in platform_integrity.items() if key in {"price_data_truth", "lifecycle_proof_deadline", "broker_position_execution_truth", "resource_provider_reliability"}},
+                                              "profit_capture_trade_effectiveness_v2": dict(trade_effectiveness.get("cortex_summary") or {})},
                        "cortex_summary": {"system_integrity_summary": status, "highest_impact_root_causes": active[:5], "downstream_symptoms_grouped": True,
                                           "platform_integrity_patterns": {key: dict(value).get("status") for key, value in platform_integrity.items() if key in {"price_data_truth", "lifecycle_proof_deadline", "broker_position_execution_truth", "resource_provider_reliability"}},
+                                          "profit_capture_trade_effectiveness_v2": dict(trade_effectiveness.get("cortex_summary") or {}),
                                           "truth_promotion_allowed": False, "recommended_repair_order": [row.get("root_cause_id") for row in active[:5]], "root_cause_orchestration": True},
                        "dependency_graph": dependency_graph_v1(), "consolidated_repair_queue": [{"priority": index + 1, "root_cause_id": row.get("root_cause_id"), "summary": row.get("smallest_safe_repair"), "systems_affected": row.get("affected_components"), "downstream_blockers_cleared": row.get("downstream_symptoms"), "safe_to_autocorrect": bool(row.get("safe_correction_available")), "recommended_files": row.get("affected_components"), "required_tests": ["scanner root-cause regression"]} for index, row in enumerate(active[:10])],
                        "resource_usage": {"provider_calls_used": 0, "broker_read_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0, "safe_corrections_attempted": len(corrections), "safe_corrections_applied": sum(bool(row.get("applied")) for row in corrections), "issues_grouped": len(active), "duplicate_symptoms_suppressed": max(0, len(signals) - len(active))},
