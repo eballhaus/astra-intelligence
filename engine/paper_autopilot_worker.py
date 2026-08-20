@@ -43,7 +43,10 @@ from engine.astra_multilane_completion_matrix_v1 import AstraMultilaneCompletion
 from engine.astra_operating_health_contract_v1 import AstraOperatingHealthContractV1
 from engine.astra_evidence_accumulation_capacity_v1 import canonical_candidate_capacity_fact
 from engine.candidate_execution_integrity_v1 import derive_crypto_horizon_evidence_v1
-from engine.adaptive_profit_capture_intelligence_v1 import build_profit_capture_trade_effectiveness_v2
+from engine.adaptive_profit_capture_intelligence_v1 import (
+    build_profit_capture_trade_effectiveness_v2,
+    load_bounded_broker_truth_records_v1,
+)
 
 
 # A cycle may contain bounded local persistence work that lasts longer than
@@ -560,8 +563,11 @@ class PaperAutopilotWorker:
             runtime = getattr(self.autopilot, "_runtime_state", {})
             # Strict-truth-only trade effectiveness is a bounded, passive
             # consumer of the current cycle's already-persisted records.
+            truth_rows = [dict(row) for row in list(runtime.get("broker_truth_records_v1") or []) if isinstance(row, dict)]
+            if not truth_rows:
+                truth_rows = load_bounded_broker_truth_records_v1(STATE)
             trade_effectiveness = build_profit_capture_trade_effectiveness_v2(
-                [dict(row) for row in list(runtime.get("broker_truth_records_v1") or []) if isinstance(row, dict)],
+                truth_rows,
                 shadow_exit_performance=dict(runtime.get("shadow_exit_performance_v1") or {}),
                 shadow_exit_outputs=dict(runtime.get("shadow_exit_analysis_outputs_v1") or {}),
             )

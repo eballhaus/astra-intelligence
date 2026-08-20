@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+
 from engine.adaptive_profit_capture_intelligence_v1 import (
     build_profit_capture_trade_effectiveness_v2,
+    load_bounded_broker_truth_records_v1,
 )
 
 
@@ -116,3 +119,15 @@ def test_bundle_one_return_integrity_and_no_external_authority_are_preserved() -
     assert result["provider_calls_used"] == result["broker_calls_used"] == result["llm_calls_used"] == 0
     assert result["execution_behavior_changed"] is False
     assert result["paper_only_preserved"] is True
+
+
+def test_existing_compact_truth_registry_is_bounded_fallback_source(tmp_path) -> None:
+    (tmp_path / "broker_truth_records_v1.json").write_text(
+        json.dumps({"records": [_truth(lifecycle_id="one"), _truth(lifecycle_id="two")]}),
+        encoding="utf-8",
+    )
+    rows = load_bounded_broker_truth_records_v1(str(tmp_path), limit=1)
+    assert [row["lifecycle_id"] for row in rows] == ["two"]
+    result = build_profit_capture_trade_effectiveness_v2(rows)
+    assert result["completed_broker_truth_sample_size"] == 1
+    assert result["full_history_scan_count"] == 0

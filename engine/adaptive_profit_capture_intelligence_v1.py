@@ -77,6 +77,23 @@ def _tail_jsonl(path: str, max_rows: int = MAX_ROWS, max_bytes: int = MAX_TAIL_B
     return rows
 
 
+def load_bounded_broker_truth_records_v1(
+    state_dir: str,
+    *,
+    limit: int = MAX_EFFECTIVENESS_TRUTHS,
+) -> list[dict[str, Any]]:
+    """Read the existing compact canonical registry when runtime has no rows."""
+    try:
+        with open(os.path.join(str(state_dir), "broker_truth_records_v1.json"), "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:
+        return []
+    rows = payload.get("records") if isinstance(payload, dict) else []
+    if not isinstance(rows, list):
+        return []
+    return [dict(row) for row in rows[-max(1, int(limit)):] if isinstance(row, dict)]
+
+
 def _capture_label(capture_ratio: float, peak: float, closed: bool) -> str:
     if not closed:
         return "still_open_learning"
