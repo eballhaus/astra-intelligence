@@ -821,7 +821,7 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
-    from engine.adaptive_profit_capture_intelligence_v1 import AdaptiveProfitCaptureIntelligenceV1
+    from engine.adaptive_profit_capture_intelligence_v1 import AdaptiveProfitCaptureIntelligenceV1, build_profit_capture_trade_effectiveness_v2
 except Exception:
     class AdaptiveProfitCaptureIntelligenceV1:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
@@ -841,6 +841,10 @@ except Exception:
                 "natural_exit_preserved": True,
                 "forced_exits_enabled": False,
             }
+try:
+    from engine.astra_daily_intelligence_summary_v1 import build_astra_daily_intelligence_summary_v1
+except Exception:
+    build_astra_daily_intelligence_summary_v1 = None  # type: ignore[assignment]
 try:
     from engine.profit_capture_peak_decay_exit_validation_suite_v1 import ProfitCapturePeakDecayExitValidationSuiteV1
 except Exception:
@@ -46927,6 +46931,66 @@ def astra_intelligence_effectiveness_learning_velocity_v1(force: bool = False):
             "llm_calls_used": 0,
             "behavior_safe_to_apply": False,
             "paper_only_preserved": True,
+        }
+
+
+@router.get("/api/astra_daily_intelligence_summary_v1")
+def astra_daily_intelligence_summary_v1():
+    """Read-only daily view composed from existing bounded canonical outputs."""
+    if not callable(build_astra_daily_intelligence_summary_v1):
+        return {
+            "endpoint": "/api/astra_daily_intelligence_summary_v1",
+            "status": "INSUFFICIENT_EVIDENCE",
+            "degraded_reason": "daily_summary_builder_unavailable",
+            "provider_calls": 0,
+            "broker_calls": 0,
+            "llm_calls": 0,
+            "paper_only_preserved": True,
+            "reporting_only": True,
+        }
+    try:
+        # These are compact cache/registry snapshots.  The aggregator never
+        # reads lifecycle JSONL, invokes the broker, or invokes a provider.
+        cached = _astra_build_h_cached_statuses_v1()
+        bundle1 = dict(ASTRA_INTELLIGENCE_EFFECTIVENESS.status(statuses=cached, force=False) or {})
+        _all_truths, canonical_truths, _by_asset = _de_broker_truth_records_v1()
+        bundle2 = build_profit_capture_trade_effectiveness_v2(canonical_truths)
+        operating_health = dict(ASTRA_OPERATING_HEALTH_CONTRACT.snapshot() or {})
+        worker_state = _astra_evidence_state_json("astra_worker_runtime_state_v1.json")
+        control_plane = dict(
+            cached.get("system_integrity_scanner_v1")
+            or cached.get("continuous_system_integrity_scanner_v1")
+            or {}
+        )
+        provider_health = dict(
+            cached.get("provider_data_knowledge_v2")
+            or cached.get("provider_consumption_telemetry_v1")
+            or {}
+        )
+        secondary_counts = {}
+        if operating_health.get("strict_truth_total") is not None:
+            secondary_counts["astra_operating_health_contract_v1.strict_truth_total"] = operating_health.get("strict_truth_total")
+        return build_astra_daily_intelligence_summary_v1(
+            canonical_truths=canonical_truths,
+            bundle1=bundle1,
+            bundle2=bundle2,
+            operating_health=operating_health,
+            worker_state=worker_state,
+            control_plane=control_plane,
+            provider_health=provider_health,
+            secondary_truth_counts=secondary_counts,
+            dependency_files_read=3,
+        )
+    except Exception as exc:
+        return {
+            "endpoint": "/api/astra_daily_intelligence_summary_v1",
+            "status": "INSUFFICIENT_EVIDENCE",
+            "degraded_reason": f"daily_summary_unavailable:{str(exc)[:140]}",
+            "provider_calls": 0,
+            "broker_calls": 0,
+            "llm_calls": 0,
+            "paper_only_preserved": True,
+            "reporting_only": True,
         }
 
 
