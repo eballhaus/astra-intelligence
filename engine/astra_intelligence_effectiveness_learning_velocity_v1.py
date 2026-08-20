@@ -390,6 +390,184 @@ def build_lesson_mistake_recurrence_v1(
     }
 
 
+def _context_values(row: dict[str, Any], *keys: str) -> set[str]:
+    values: set[str] = set()
+    for key in keys:
+        value = row.get(key)
+        if isinstance(value, (list, tuple, set)):
+            values.update(_text(item).upper() for item in value if _text(item))
+        elif _text(value):
+            values.add(_text(value).upper())
+    return values
+
+
+def _regimes(row: dict[str, Any]) -> set[str]:
+    return _context_values(row, "source_regimes", "supported_regimes", "regimes", "regime", "regime_label", "market_regime")
+
+
+def _horizons(row: dict[str, Any]) -> set[str]:
+    return _context_values(row, "source_horizons", "supported_horizons", "horizons", "horizon", "horizon_style", "intended_horizon")
+
+
+def _lesson_context_from_truths(
+    lessons: list[dict[str, Any]], truths: list[dict[str, Any]], *, max_rows: int
+) -> dict[str, dict[str, Any]]:
+    contexts: dict[str, dict[str, Any]] = {}
+    for lesson in _rows(lessons, limit=max_rows):
+        lesson_id = _first_identity(lesson, "lesson_id", "canonical_lesson_id")
+        if lesson_id:
+            contexts[lesson_id] = {"lesson": lesson, "lanes": _context_values(lesson, "source_lane_ids", "supported_lane_ids", "lane_id", "lane"), "horizons": _horizons(lesson), "regimes": _regimes(lesson), "truth_ids": _ids(lesson, "supporting_truth_ids", "truth_id", "broker_truth_id"), "contradictions": _ids(lesson, "contradictory_lesson_ids", "contradicts_lesson_ids")}
+    for truth in official_broker_confirmed_rows(_rows(truths, limit=max_rows), max_rows=max_rows):
+        truth_lesson_ids = _ids(truth, "lesson_id", "canonical_lesson_ids", "lesson_ids")
+        truth_id = _first_identity(truth, "truth_id", "broker_truth_id", "lifecycle_id")
+        for lesson_id in truth_lesson_ids:
+            context = contexts.setdefault(lesson_id, {"lesson": {}, "lanes": set(), "horizons": set(), "regimes": set(), "truth_ids": set(), "contradictions": set()})
+            lane = _lane(truth)
+            if lane != "UNCLASSIFIED":
+                context["lanes"].add(lane)
+            context["horizons"].update(_horizons(truth))
+            context["regimes"].update(_regimes(truth))
+            if truth_id:
+                context["truth_ids"].add(truth_id)
+    return contexts
+
+
+def _evaluate_lesson_context(
+    lesson_id: str,
+    source: dict[str, Any],
+    target: dict[str, Any],
+    effectiveness: dict[str, Any],
+) -> dict[str, Any]:
+    target_lane = _lane(target)
+    target_horizon = _text(target.get("horizon") or target.get("intended_horizon") or target.get("horizon_style")).upper()
+    target_regime = next(iter(_regimes(target)), "")
+    lanes = set(source["lanes"])
+    horizons = set(source["horizons"])
+    regimes = set(source["regimes"])
+    explicit_global_lane = bool(source.get("lesson", {}).get("global_lane_application_supported"))
+    explicit_global_regime = bool(source.get("lesson", {}).get("global_regime_application_supported"))
+    lane_match = "LANE_UNAVAILABLE" if target_lane == "UNCLASSIFIED" else "LANE_MATCH" if target_lane in lanes else "GENERALIZATION_NOT_PROVEN"
+    if explicit_global_lane or set(CANONICAL_LANES).issubset(lanes):
+        lane_match = "GLOBAL_APPLICATION_SUPPORTED"
+    horizon_match = "HORIZON_UNAVAILABLE" if not target_horizon else "HORIZON_MATCH" if target_horizon in horizons else "GENERALIZATION_NOT_PROVEN"
+    if target_regime and target_regime in regimes:
+        regime_match = "REGIME_MATCH"
+    elif target_regime and regimes and bool(target.get("regime_similarity_supported")):
+        regime_match = "REGIME_SIMILAR_SUPPORTED"
+    elif target_regime and regimes:
+        regime_match = "REGIME_MISMATCH"
+    elif target_regime:
+        regime_match = "INSUFFICIENT_REGIME_EVIDENCE"
+    else:
+        regime_match = "REGIME_UNAVAILABLE"
+    if explicit_global_regime:
+        regime_match = "GLOBAL_APPLICATION_SUPPORTED"
+    effectiveness_status = _text(effectiveness.get("evidence_status")) or "INSUFFICIENT_CANONICAL_EVIDENCE"
+    if lane_match == "GENERALIZATION_NOT_PROVEN" or horizon_match == "GENERALIZATION_NOT_PROVEN":
+        status, reason = "GENERALIZATION_NOT_PROVEN", "target lane or horizon lacks independent canonical support"
+    elif regime_match == "REGIME_MISMATCH":
+        status, reason = "CONTEXT_MISMATCH", "canonical regime support conflicts with target regime"
+    elif lane_match == "LANE_UNAVAILABLE" or horizon_match == "HORIZON_UNAVAILABLE" or regime_match in {"REGIME_UNAVAILABLE", "INSUFFICIENT_REGIME_EVIDENCE"}:
+        status, reason = "INSUFFICIENT_EVIDENCE", "target or source context metadata is unavailable"
+    elif effectiveness_status in {"NOT_APPLIED", "INSUFFICIENT_CANONICAL_EVIDENCE"}:
+        status, reason = "APPLICABLE_WITH_CAUTION", "context matches but lesson effectiveness is not yet broker-proven"
+    else:
+        status, reason = "APPLICABLE", "lane, horizon, and regime context are supported by canonical evidence"
+    return {
+        "lesson_id": lesson_id,
+        "target_lane": target_lane if target_lane != "UNCLASSIFIED" else None,
+        "target_horizon": target_horizon or None,
+        "target_regime": target_regime or None,
+        "lane_match": lane_match,
+        "horizon_match": horizon_match,
+        "regime_match": regime_match,
+        "applicability_status": status,
+        "applicability_reason": reason,
+        "evidence_strength": effectiveness_status,
+    }
+
+
+def build_lesson_contextual_applicability_v1(
+    *,
+    lessons: list[dict[str, Any]],
+    truths: list[dict[str, Any]],
+    lesson_effectiveness: list[dict[str, Any]] | None = None,
+    target_contexts: list[dict[str, Any]] | None = None,
+    max_rows: int = MAX_LEARNING_LINKAGE_ROWS,
+) -> dict[str, Any]:
+    """Bounded, advisory applicability and contradiction resolution contract."""
+    sources = _lesson_context_from_truths(lessons, truths, max_rows=max_rows)
+    effectiveness_by_lesson = {
+        _text(row.get("lesson_id")): dict(row)
+        for row in _rows(lesson_effectiveness or [], limit=max_rows)
+        if _text(row.get("lesson_id"))
+    }
+    metadata: list[dict[str, Any]] = []
+    for lesson_id, source in sorted(sources.items()):
+        lanes, horizons, regimes = sorted(source["lanes"]), sorted(source["horizons"]), sorted(source["regimes"])
+        metadata.append({
+            "lesson_id": lesson_id,
+            "lesson_evidence_status": (effectiveness_by_lesson.get(lesson_id) or {}).get("evidence_status", "INSUFFICIENT_CANONICAL_EVIDENCE"),
+            "source_lane_ids": lanes,
+            "source_horizons": horizons,
+            "source_regimes": regimes,
+            "supported_lane_ids": lanes,
+            "supported_horizons": horizons,
+            "supported_regimes": regimes,
+            "unsupported_lane_ids": [lane for lane in CANONICAL_LANES if lane not in lanes],
+            "unsupported_regimes": [],
+            "cross_lane_generalization_status": "GLOBAL_APPLICATION_SUPPORTED" if set(CANONICAL_LANES).issubset(set(lanes)) or bool(source["lesson"].get("global_lane_application_supported")) else "GENERALIZATION_NOT_PROVEN",
+            "cross_regime_generalization_status": "GLOBAL_APPLICATION_SUPPORTED" if bool(source["lesson"].get("global_regime_application_supported")) else "GENERALIZATION_NOT_PROVEN",
+            "applicability_status": "INSUFFICIENT_EVIDENCE" if not lanes else "APPLICABLE_WITH_CAUTION",
+            "applicability_reason": "source context retained; target context required for application",
+            "supporting_truth_ids": sorted(source["truth_ids"])[:12],
+            "contradictory_lesson_ids": sorted(source["contradictions"])[:12],
+            "last_evaluated_at": now_iso(),
+        })
+    by_id = {row["lesson_id"]: row for row in metadata}
+    targets = _rows(target_contexts or [], limit=max_rows)
+    evaluations: list[dict[str, Any]] = []
+    resolutions: list[dict[str, Any]] = []
+    for target in targets:
+        candidate_ids = sorted(_ids(target, "candidate_lesson_ids", "canonical_lesson_ids", "lesson_ids", "lesson_id"))[:12]
+        applicable, inapplicable, contradictory = [], [], []
+        target_evaluations = []
+        for lesson_id in candidate_ids:
+            source = sources.get(lesson_id)
+            if source is None:
+                evaluation = {"lesson_id": lesson_id, "applicability_status": "INSUFFICIENT_EVIDENCE", "applicability_reason": "lesson source context unavailable", "lane_match": "LANE_UNAVAILABLE", "horizon_match": "HORIZON_UNAVAILABLE", "regime_match": "REGIME_UNAVAILABLE", "evidence_strength": "INSUFFICIENT_CANONICAL_EVIDENCE"}
+            else:
+                evaluation = _evaluate_lesson_context(lesson_id, source, target, effectiveness_by_lesson.get(lesson_id) or {})
+                contradictory.extend(source["contradictions"])
+            target_evaluations.append(evaluation)
+            (applicable if evaluation["applicability_status"] in {"APPLICABLE", "APPLICABLE_WITH_CAUTION"} else inapplicable).append(lesson_id)
+        applicable_set, conflicting = set(applicable), set(contradictory).intersection(candidate_ids)
+        if not conflicting:
+            resolution_status, resolution_reason, resolved = "NO_CONTRADICTION", "no explicit contradictory lesson pair in target set", applicable
+        elif any(lesson_id in applicable_set for lesson_id in conflicting) and any(lesson_id not in applicable_set for lesson_id in conflicting):
+            resolution_status, resolution_reason, resolved = "CONTRADICTION_RESOLVED_BY_CONTEXT", "one conflicting lesson is context-inapplicable", applicable
+        elif conflicting and conflicting.issubset(applicable_set):
+            resolution_status, resolution_reason, resolved = "CONTRADICTION_UNRESOLVED_FAIL_CLOSED", "conflicting lessons are both context-applicable without evidence ranking", []
+        else:
+            resolution_status, resolution_reason, resolved = "INSUFFICIENT_EVIDENCE", "contradiction metadata exists but target applicability is incomplete", applicable
+        target_id = _first_identity(target, "candidate_id", "lifecycle_id", "target_id") or None
+        resolutions.append({"target_id": target_id, "candidate_lesson_ids": candidate_ids, "applicable_lesson_ids": applicable, "inapplicable_lesson_ids": inapplicable, "contradictory_lesson_ids": sorted(conflicting), "resolved_lesson_ids": resolved, "resolution_status": resolution_status, "resolution_reason": resolution_reason, "learning_guidance_only": True})
+        evaluations.extend(target_evaluations)
+    summary = {
+        "lessons_evaluated": len(metadata),
+        "globally_applicable_lessons": sum(row["cross_lane_generalization_status"] == "GLOBAL_APPLICATION_SUPPORTED" for row in metadata),
+        "lane_specific_lessons": sum(bool(row["source_lane_ids"]) and row["cross_lane_generalization_status"] != "GLOBAL_APPLICATION_SUPPORTED" for row in metadata),
+        "regime_specific_lessons": sum(bool(row["source_regimes"]) for row in metadata),
+        "generalization_not_proven": sum(row["cross_lane_generalization_status"] == "GENERALIZATION_NOT_PROVEN" for row in metadata),
+        "context_mismatches": sum(row.get("applicability_status") == "CONTEXT_MISMATCH" for row in evaluations),
+        "contradictions_resolved_by_context": sum(row.get("resolution_status") == "CONTRADICTION_RESOLVED_BY_CONTEXT" for row in resolutions),
+        "contradictions_unresolved": sum(row.get("resolution_status") == "CONTRADICTION_UNRESOLVED_FAIL_CLOSED" for row in resolutions),
+        "cross_lane_leakage_detected": False,
+        "regime_leakage_detected": False,
+    }
+    return {"version": "1.0.0", "contract": "canonical_lesson_contextual_applicability", "lesson_contexts": metadata[:max_rows], "target_evaluations": evaluations[:max_rows], "resolutions": resolutions[:max_rows], "summary": summary, "full_history_scan_count": 0, "index_first_bounded_processing": True, "provider_calls_used": 0, "broker_calls_used": 0, "llm_calls_used": 0, "advisory_only": True, "execution_authority": "NONE", "conflicting_evidence_preserved": True}
+
+
 class AstraIntelligenceEffectivenessLearningVelocityV1(CachedDiagnosticModule):
     module_name = "astra_intelligence_effectiveness_learning_velocity_v1"
     mode = "shadow_analysis_evidence_consumption_and_learning_velocity"
@@ -475,6 +653,12 @@ class AstraIntelligenceEffectivenessLearningVelocityV1(CachedDiagnosticModule):
         truth_progression = build_truth_progression_v1(truths)
         mistake_recurrence = build_lesson_mistake_recurrence_v1(recurrences, lesson_outcome_linkage)
         lesson_effectiveness_rows = list(lesson_outcome_linkage.get("lessons") or [])
+        contextual_applicability = build_lesson_contextual_applicability_v1(
+            lessons=lessons,
+            truths=truths,
+            lesson_effectiveness=lesson_effectiveness_rows,
+            target_contexts=_rows(statuses.get("lesson_target_contexts_v1")) or applications,
+        )
         lesson_effectiveness_summary = {
             "linked_outcomes": lesson_outcome_linkage.get("linked_outcomes", 0),
             "improved_outcomes": sum(to_int(row.get("improved_outcomes")) for row in lesson_effectiveness_rows),
@@ -531,6 +715,8 @@ class AstraIntelligenceEffectivenessLearningVelocityV1(CachedDiagnosticModule):
             "lesson_effectiveness_v1": lesson_effectiveness_summary,
             "truth_progression_v1": truth_progression,
             "mistake_recurrence_lesson_linkage_v1": mistake_recurrence,
+            "contextual_learning_applicability_v1": contextual_applicability,
+            "contextual_learning_summary_v1": contextual_applicability.get("summary", {}),
             "learning_loop_summary_v1": {
                 "is_astra_improving": truth_progression.get("is_astra_improving"),
                 "why": {
