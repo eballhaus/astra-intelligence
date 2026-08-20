@@ -10,6 +10,10 @@ from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
+from engine.astra_intelligence_effectiveness_learning_velocity_v1 import (
+    build_lesson_mistake_recurrence_v1,
+)
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -77,6 +81,15 @@ class SelfCorrectionController:
             "recommendation_count": int(len(payload.get("recommendation_priority") or [])),
             "health_score": round(_to_float((payload.get("evidence_summary") or {}).get("learning_pipeline_health_score"), 0.0), 2),
         }
+
+    def lesson_recurrence_summary(
+        self,
+        *,
+        recurrence_events: list[dict[str, Any]],
+        lesson_outcome_linkage: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Consume the shared explicit lesson-application linkage without rescanning history."""
+        return build_lesson_mistake_recurrence_v1(recurrence_events, lesson_outcome_linkage)
 
     def recommendations(
         self,

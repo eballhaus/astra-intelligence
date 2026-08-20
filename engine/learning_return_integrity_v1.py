@@ -33,6 +33,42 @@ def _evidence_class(row: Mapping[str, Any]) -> str:
     return "ADVISORY"
 
 
+def _official_exclusion_reason(row: Mapping[str, Any]) -> str:
+    """Return the existing official-metric exclusion reason without mutating truth."""
+    if _evidence_class(row) != "BROKER_CONFIRMED":
+        return "NON_BROKER_CONFIRMED"
+    entry = _number(row.get("entry_price") or row.get("entry"))
+    exit_price = _number(row.get("exit_price") or row.get("exit"))
+    raw_return = _number(row.get("realized_return") if row.get("realized_return") is not None else row.get("return_pct"))
+    if entry is None or entry <= 0:
+        return "ZERO_OR_MISSING_COST_BASIS"
+    if exit_price is not None and exit_price <= 0:
+        return "MALFORMED_EXIT_PRICE"
+    if raw_return is not None and abs(raw_return) > 1000.0:
+        return "RETURN_PLAUSIBILITY_OUTLIER"
+    if raw_return is not None and exit_price is not None:
+        implied_pct = ((exit_price - entry) / entry) * 100.0
+        if abs(raw_return) > 100.0 and abs(raw_return / 100.0 - implied_pct) < 0.01:
+            return "DOUBLE_SCALE_SUSPECT"
+    return ""
+
+
+def official_broker_confirmed_rows(
+    rows: Iterable[Mapping[str, Any]], *, max_rows: int = 500
+) -> list[dict[str, Any]]:
+    """Return bounded official rows using the canonical return-integrity rules."""
+    official: list[dict[str, Any]] = []
+    inspected = 0
+    for raw in rows:
+        if inspected >= max_rows or not isinstance(raw, Mapping):
+            continue
+        inspected += 1
+        row = dict(raw)
+        if not _official_exclusion_reason(row):
+            official.append(row)
+    return official
+
+
 def audit_learning_return_rows(rows: Iterable[Mapping[str, Any]], *, max_rows: int = 500) -> dict[str, Any]:
     """Classify a bounded cache/registry sample without mutating raw evidence."""
     counts = Counter()
@@ -49,26 +85,17 @@ def audit_learning_return_rows(rows: Iterable[Mapping[str, Any]], *, max_rows: i
         row = dict(raw)
         evidence = _evidence_class(row)
         counts[evidence] += 1
-        entry = _number(row.get("entry_price") or row.get("entry"))
-        exit_price = _number(row.get("exit_price") or row.get("exit"))
-        raw_return = _number(row.get("realized_return") if row.get("realized_return") is not None else row.get("return_pct"))
         reason = ""
         if evidence == "BROKER_CONFIRMED":
-            if entry is None or entry <= 0:
+            reason = _official_exclusion_reason(row)
+            if reason == "ZERO_OR_MISSING_COST_BASIS":
                 zero_basis += 1
-                reason = "ZERO_OR_MISSING_COST_BASIS"
-            elif exit_price is not None and exit_price <= 0:
-                reason = "MALFORMED_EXIT_PRICE"
-            elif raw_return is not None and abs(raw_return) > 1000.0:
+            elif reason == "RETURN_PLAUSIBILITY_OUTLIER":
                 # Preserve raw value for review; do not silently rescale it.
                 suspect_rows += 1
                 outliers += 1
-                reason = "RETURN_PLAUSIBILITY_OUTLIER"
-            elif raw_return is not None and exit_price is not None:
-                implied_pct = ((exit_price - entry) / entry) * 100.0
-                if abs(raw_return) > 100.0 and abs(raw_return / 100.0 - implied_pct) < 0.01:
-                    suspect_rows += 1
-                    reason = "DOUBLE_SCALE_SUSPECT"
+            elif reason == "DOUBLE_SCALE_SUSPECT":
+                suspect_rows += 1
             if not reason:
                 eligible += 1
         if reason:
