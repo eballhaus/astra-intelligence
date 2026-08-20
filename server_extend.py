@@ -46953,7 +46953,12 @@ def astra_daily_intelligence_summary_v1():
         # reads lifecycle JSONL, invokes the broker, or invokes a provider.
         cached = _astra_build_h_cached_statuses_v1()
         bundle1 = dict(ASTRA_INTELLIGENCE_EFFECTIVENESS.status(statuses=cached, force=False) or {})
-        _all_truths, canonical_truths, _by_asset = _de_broker_truth_records_v1()
+        all_truths, closed_records, _by_asset = _de_broker_truth_records_v1()
+        # The operating-health contract is the existing strict lifecycle
+        # truth owner. Broad closed records can include legacy rows without
+        # lifecycle/fill lineage and must remain outside official totals.
+        canonical_truths = ASTRA_OPERATING_HEALTH_CONTRACT._strict_truths(all_truths)
+        noncanonical_closed = [row for row in closed_records if row not in canonical_truths]
         bundle2 = build_profit_capture_trade_effectiveness_v2(canonical_truths)
         operating_health = dict(ASTRA_OPERATING_HEALTH_CONTRACT.snapshot() or {})
         worker_state = _astra_evidence_state_json("astra_worker_runtime_state_v1.json")
@@ -46967,9 +46972,6 @@ def astra_daily_intelligence_summary_v1():
             or cached.get("provider_consumption_telemetry_v1")
             or {}
         )
-        secondary_counts = {}
-        if operating_health.get("strict_truth_total") is not None:
-            secondary_counts["astra_operating_health_contract_v1.strict_truth_total"] = operating_health.get("strict_truth_total")
         return build_astra_daily_intelligence_summary_v1(
             canonical_truths=canonical_truths,
             bundle1=bundle1,
@@ -46978,7 +46980,7 @@ def astra_daily_intelligence_summary_v1():
             worker_state=worker_state,
             control_plane=control_plane,
             provider_health=provider_health,
-            secondary_truth_counts=secondary_counts,
+            noncanonical_or_legacy_records=noncanonical_closed,
             dependency_files_read=3,
         )
     except Exception as exc:

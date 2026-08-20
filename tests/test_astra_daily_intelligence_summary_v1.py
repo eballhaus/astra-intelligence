@@ -67,6 +67,13 @@ def test_uses_canonical_truths_and_surfaces_count_disagreement() -> None:
     assert result["contract_disagreements"][0]["canonical_value"] == 2
 
 
+def test_noncanonical_closed_rows_are_separate_from_official_truth_totals() -> None:
+    result = _build(noncanonical_or_legacy_records=[{"symbol": "LEGACY", "closed_indicator": True}])
+    assert result["truth_contract_status"] == "ALIGNED"
+    assert result["canonical_truth_total"] == 2
+    assert result["noncanonical_or_legacy_records"] == {"count": 1, "symbols": ["LEGACY"], "official_metrics_excluded": True}
+
+
 def test_today_filter_uses_report_timezone_and_separates_prior_day_activity() -> None:
     # 02:00Z is still the prior calendar day in America/New_York.
     result = _build(canonical_truths=[_truth("prior", entry="2026-08-19T20:00:00Z", exit="2026-08-20T02:00:00Z")])

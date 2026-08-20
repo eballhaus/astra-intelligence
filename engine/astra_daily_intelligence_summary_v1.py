@@ -148,6 +148,7 @@ def build_astra_daily_intelligence_summary_v1(
     control_plane: dict[str, Any] | None = None,
     provider_health: dict[str, Any] | None = None,
     open_positions: list[dict[str, Any]] | None = None,
+    noncanonical_or_legacy_records: list[dict[str, Any]] | None = None,
     secondary_truth_counts: dict[str, Any] | None = None,
     dependency_files_read: int = 0,
     timezone_name: str = "America/New_York",
@@ -159,6 +160,7 @@ def build_astra_daily_intelligence_summary_v1(
     current = now.astimezone(zone) if now else datetime.now(zone)
     report_date = current.date().isoformat()
     truths = _dedupe_truths(_rows(canonical_truths))
+    noncanonical = _rows(noncanonical_or_legacy_records)
     bundle1, bundle2 = _dict(bundle1), _dict(bundle2)
     health, worker = _dict(operating_health), _dict(worker_state)
     control, providers = _dict(control_plane), _dict(provider_health)
@@ -249,6 +251,10 @@ def build_astra_daily_intelligence_summary_v1(
         "endpoint": "/api/astra_daily_intelligence_summary_v1", "version": VERSION,
         "generated_at": _iso(current.astimezone(timezone.utc)), "report_date": report_date, "timezone": timezone_name,
         "status": system_health, "data_freshness": {"oldest_dependency_generated_at": _iso(oldest), "freshness_seconds": freshness, "stale_dependencies": stale},
+        "truth_contract_status": "ALIGNED" if not contracts else "CONTRACT_DISAGREEMENT",
+        "canonical_truth_total": canonical_count,
+        "truths_by_lane": truths_by_lane,
+        "noncanonical_or_legacy_records": {"count": len(noncanonical), "symbols": sorted({_text(row.get("symbol")).upper() for row in noncanonical if _text(row.get("symbol"))})[:12], "official_metrics_excluded": True},
         "today_at_a_glance": {"trades_entered_today": len(entered_today), "new_canonical_truths_today": len(_dedupe_truths(truth_today)), "total_canonical_truths": canonical_count, "truths_by_lane": truths_by_lane, "current_open_broker_positions": sum(lane["open_positions"] for lane in lanes.values()), "reconciliation_pending_count": len(pending_positions), "learning_pending_count": max(0, canonical_count - _int(health.get("truths_consumed_by_learning_total"))), "today_realized_pnl_dollars": None, **today_metrics},
         "current_canonical_profitability": {"sample_size": overall.get("truth_count"), "win_rate": overall.get("win_rate"), "profit_factor": overall.get("profit_factor"), "average_return": overall.get("average_return"), "median_return": overall.get("median_return"), "winsorized_return": overall.get("winsorized_return"), "average_winner": overall.get("average_winner"), "average_loser": overall.get("average_loser"), "payoff_ratio": None, "best_trade_return": None, "worst_trade_return": None, "average_hold_duration": overall.get("average_hold_duration"), "MFE": overall.get("average_mfe"), "MAE": overall.get("average_mae"), "profit_capture": overall.get("average_profit_capture_ratio"), "giveback": overall.get("average_giveback"), "entry_quality": None, "exit_quality": None, "official_truth_source": progression.get("official_truth_source")},
         "bundle1": {"is_astra_improving": progression.get("is_astra_improving"), "progression_status": overall.get("status"), "early_cohort": _dict(overall.get("cohorts")).get("EARLY", {}), "middle_cohort": _dict(overall.get("cohorts")).get("MIDDLE", {}), "recent_cohort": _dict(overall.get("cohorts")).get("RECENT", {}), "lesson_effectiveness": {"lessons_tracked": len(_rows(linkage.get("lessons"))), "lesson_applied_count": linkage.get("explicit_application_events"), "lessons_with_linked_outcomes": linkage.get("linked_outcomes"), "improved_outcomes": effectiveness.get("improved_outcomes"), "worsened_outcomes": effectiveness.get("worsened_outcomes"), "neutral_outcomes": None, "effective_lessons": effectiveness.get("effective_lessons"), "promising_lessons": None, "mixed_lessons": None, "underperforming_lessons": effectiveness.get("underperforming_lessons"), "insufficient_evidence_lessons": None}, "mistake_recurrence": {"recurrence_after_lesson": recurrence.get("recurrence_after_lesson_count"), "recurrence_reduced": None, "recurrence_persistent": None, "not_yet_measurable": not bool(linkage.get("linked_outcomes"))}},

@@ -15,7 +15,7 @@ from typing import Any
 
 
 VERSION = "1.0.0"
-LANES = ("DAY", "SWING", "CRYPTO")
+LANES = ("DAY", "SCALP", "SWING", "CRYPTO")
 MAX_LEDGER_ROWS = 200
 LATENCY_DELAY_SECONDS = 300.0
 

@@ -29,6 +29,15 @@ class OperatingHealthContractTests(unittest.TestCase):
             )
             self.assertEqual(payload["strict_truth_total"], 0)
 
+    def test_scalp_is_a_canonical_operating_health_lane(self):
+        with tempfile.TemporaryDirectory() as root:
+            payload = AstraOperatingHealthContractV1(root).build(
+                multilane={"lanes": {"SCALP": {"current_stage": "position_monitoring", "first_blocker": "MARKET_CLOSED"}}},
+                worker_state={}, continuous={}, sentinel={},
+            )
+            self.assertIn("SCALP", payload["lanes"])
+            self.assertEqual(payload["lanes"]["SCALP"]["current_lifecycle_stage"], "position_monitoring")
+
     def test_high_sentinel_root_prevents_false_control_plane_agreement(self):
         with tempfile.TemporaryDirectory() as root:
             payload = AstraOperatingHealthContractV1(root).build(
