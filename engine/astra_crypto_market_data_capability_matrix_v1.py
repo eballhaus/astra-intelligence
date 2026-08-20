@@ -84,6 +84,7 @@ class CryptoMarketDataCapabilityMatrixV1:
             spread_present = bool(observed.get("spread_present"))
             last_quote_timestamp = observed.get("quote_timestamp") or old.get("last_quote_timestamp")
             last_bar_timestamp = observed.get("bar_timestamp") or old.get("last_completed_bar_timestamp")
+            completed_bar_observable = bool(observed.get("bar_timestamp"))
             last_spread = observed.get("spread_pct") if observed.get("spread_pct") is not None else old.get("last_spread")
             try:
                 numeric_bid, numeric_ask = float(bid), float(ask)
@@ -101,7 +102,7 @@ class CryptoMarketDataCapabilityMatrixV1:
                 "snapshot_endpoint_supported": True, "latest_quote_observable": received, "snapshot_quote_observable": received,
                 "bid_observable": bid_present, "ask_observable": ask_present, "spread_observable": spread_present,
                 "latest_trade_observable": False, "bar_endpoint_supported": True, "bar_data_observable": bool(observed.get("bars_available")),
-                "completed_bar_observable": bool(observed.get("bars_available")), "completed_volume_observable": bool(observed.get("volume_available")),
+                "completed_bar_observable": completed_bar_observable, "completed_volume_observable": bool(observed.get("volume_available")),
                 "websocket_configured": False, "websocket_observable": False,
                 "quote_freshness_eligible": bool(received and observed.get("quote_timestamp")), "spread_eligible": spread_present,
                 "liquidity_eligible": bool(observed.get("volume_available")), "data_quality_ready": bool(observed.get("candidate_persisted")),
@@ -112,7 +113,7 @@ class CryptoMarketDataCapabilityMatrixV1:
                 "last_bid": bid if bid_present else old.get("last_bid"), "last_ask": ask if ask_present else old.get("last_ask"),
                 "last_spread": last_spread, "last_quote_timestamp": last_quote_timestamp,
                 "last_completed_bar_timestamp": last_bar_timestamp, "last_completed_volume": observed.get("rolling_completed_bar_volume") if observed.get("rolling_completed_bar_volume") is not None else old.get("last_completed_volume"),
-                "quote_failure_streak": streak, "bar_failure_streak": 0 if observed.get("bars_available") else int(old.get("bar_failure_streak") or 0) + (1 if received else 0),
+                "quote_failure_streak": streak, "bar_failure_streak": 0 if completed_bar_observable else int(old.get("bar_failure_streak") or 0) + (1 if received else 0),
                 "failure_classification": classification, "first_bad_handoff": handoff, "confidence": "VERIFIED" if attempted else "MODERATE",
                 "governance_status": "PASS" if classification == "PASS" else "LEGITIMATE_WAITING" if classification.startswith("PROVIDER_") or classification == "LEGITIMATE_NO_CURRENT_DATA" else "UNKNOWN_FAIL_CLOSED",
                 "recommended_action": action, "rotation_position": position, "rotation_cycle_id": ranking_snapshot.get("generated_at"),

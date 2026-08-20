@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from engine import data_orchestrator
@@ -209,6 +210,46 @@ class CryptoDataLifecycleShadowCompletionTests(unittest.TestCase):
         self.assertEqual(payload["market_data_probe_symbol"], "BTC/USD")
         self.assertEqual(payload["broker_actions_used"], 0)
         broker._market_data_request.assert_called_once()
+
+    def test_completed_bar_timestamp_survives_worker_integrity_handoff(self):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        completed_timestamp = (now - timedelta(minutes=30)).isoformat().replace("+00:00", "Z")
+        bars = [
+            {"t": (now - timedelta(minutes=45)).isoformat().replace("+00:00", "Z"), "c": 10.0, "h": 10.2, "l": 9.8, "v": 100.0},
+            {"t": completed_timestamp, "c": 10.1, "h": 10.3, "l": 9.9, "v": 120.0},
+            {"t": (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z"), "c": 10.2, "h": 10.4, "l": 10.0, "v": 110.0},
+        ]
+        broker = Mock()
+        broker.crypto_capability_status.return_value = {"tradable_pairs": ["LINK/USD"], "supported_pairs": ["LINK/USD"]}
+        broker.historical_bars.return_value = {"bars": bars}
+        autopilot = SimpleNamespace(_runtime_state={}, _save_state_file=Mock())
+        quote_row = {
+            "symbol": "LINK/USD", "price": 10.05, "bid": 10.0, "ask": 10.1,
+            "quote_timestamp": now.isoformat().replace("+00:00", "Z"), "quote_age_seconds": 1.0,
+            "quote_provider": "alpaca", "quote_record_id": "quote-link",
+        }
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}, clear=False), patch.object(
+            server_extend, "PAPER_AUTOPILOT", autopilot
+        ), patch.object(server_extend, "ALPACA_PAPER_BROKER", broker), patch.object(
+            server_extend, "_worker_refresh_crypto_capability_v1", return_value={"status": "CURRENT"}
+        ), patch.object(data_orchestrator._router, "get_quote", return_value=_quote()), patch.object(
+            data_orchestrator, "_quote_to_rank_row", return_value=(quote_row, {"provider_used": "alpaca"})
+        ), patch.object(server_extend, "_prioritize_rankings", side_effect=lambda rows, **_kwargs: rows), patch.object(
+            server_extend.PORTFOLIO_INTEL, "apply", side_effect=lambda rows, **_kwargs: rows
+        ), patch.object(server_extend.PORTFOLIO_RISK_ENGINE, "enrich", side_effect=lambda rows, **_kwargs: rows), patch.object(
+            server_extend.PREDICTIVE_MODEL, "annotate_rows", side_effect=lambda rows: rows
+        ), patch.object(server_extend.REGIME_ENGINE, "annotate_rows", side_effect=lambda rows: rows), patch.object(
+            server_extend, "_ensure_persona_fields", side_effect=lambda row: dict(row)
+        ), patch.object(server_extend, "derive_crypto_horizon_evidence_v1", return_value={}), patch.object(
+            server_extend, "derive_crypto_pretrade_forecast_v1", return_value={"forecast_state": "INSUFFICIENT_FORECAST_EVIDENCE"}
+        ), patch.object(server_extend, "_update_last_rankings"), patch.object(server_extend, "RANKINGS_ENDPOINT_CACHE", {}):
+            result = server_extend._refresh_crypto_rankings_snapshot_v1()
+
+        self.assertEqual(result["status"], "CURRENT")
+        integrity = autopilot._runtime_state["crypto_rankings_snapshot_v1"]["crypto_quote_integrity_rows"][0]
+        self.assertEqual(integrity["bar_timestamp"], completed_timestamp)
+        self.assertEqual(integrity["quote_timestamp"], quote_row["quote_timestamp"])
+        self.assertEqual(broker.historical_bars.call_count, 1)
 
     def test_shadow_consumes_only_complete_verified_lifecycle(self):
         payload = build_shadow_profit_loss_protection_validation_v1([

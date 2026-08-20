@@ -80,6 +80,30 @@ class CryptoMarketDataCapabilityMatrixTests(unittest.TestCase):
         self.assertTrue(btc["completed_volume_observable"])
         self.assertTrue(btc["data_quality_ready"])
 
+    def test_completed_bar_timestamp_is_preserved_without_a_false_bar_failure_streak(self):
+        timestamp = "2026-07-19T00:00:00Z"
+        _, payload = self._matrix([{
+            "symbol": "BTC/USD", "quote_received": True, "provider_bid": 10.0, "provider_ask": 10.1,
+            "bid_present": True, "ask_present": True, "spread_present": True, "quote_timestamp": timestamp,
+            "bar_timestamp": timestamp, "bars_available": True, "volume_available": True, "candidate_persisted": True,
+        }])
+        btc = payload["pairs"][0]
+        self.assertEqual(btc["last_completed_bar_timestamp"], timestamp)
+        self.assertEqual(btc["last_bar_success_at"], timestamp)
+        self.assertTrue(btc["completed_bar_observable"])
+        self.assertEqual(btc["bar_failure_streak"], 0)
+
+    def test_missing_completed_bar_timestamp_remains_fail_closed(self):
+        _, payload = self._matrix([{
+            "symbol": "BTC/USD", "quote_received": True, "provider_bid": 10.0, "provider_ask": 10.1,
+            "bid_present": True, "ask_present": True, "spread_present": True, "bars_available": True,
+            "volume_available": False, "candidate_persisted": False,
+        }])
+        btc = payload["pairs"][0]
+        self.assertFalse(btc["completed_bar_observable"])
+        self.assertGreaterEqual(btc["bar_failure_streak"], 1)
+        self.assertFalse(btc["liquidity_eligible"])
+
     def test_missing_volume_and_repeated_unobservable_are_fail_closed_and_bounded(self):
         matrix, first = self._matrix([{"symbol": "BTC/USD", "quote_received": False}])
         matrix.write(first)
