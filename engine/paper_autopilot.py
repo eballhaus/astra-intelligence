@@ -2561,6 +2561,46 @@ class PaperAutopilotEngine:
             pass
         return row
 
+    def _canonical_exit_intent_identity_verified(
+        self,
+        *,
+        client_order_id: str,
+        position_id: str,
+        symbol: str,
+        broker_order_id: str,
+    ) -> bool:
+        """Verify a filled exit against its durable pre-submission intent.
+
+        Alpaca order lookups can omit ``client_order_id`` even when the
+        already-persisted sell intent has the complete canonical lineage.  A
+        missing broker response field is not a contradiction, but it cannot
+        erase exact local lineage.  This deliberately requires one, and only
+        one, non-legacy intent matching every immutable identity.
+        """
+        expected_client_id = str(client_order_id or "").strip()
+        expected_position_id = str(position_id or "").strip()
+        expected_symbol = str(symbol or "").upper().strip()
+        expected_order_id = str(broker_order_id or "").strip()
+        if not all((expected_client_id, expected_position_id, expected_symbol, expected_order_id)):
+            return False
+
+        matches: list[dict[str, Any]] = []
+        for raw in self._paper_sell_order_intents().values():
+            intent = dict(raw or {})
+            if bool(intent.get("legacy_imported_retirement")):
+                continue
+            order = dict(intent.get("order") or {})
+            if str(intent.get("client_order_id") or order.get("client_order_id") or "").strip() != expected_client_id:
+                continue
+            if str(intent.get("position_id") or order.get("position_id") or "").strip() != expected_position_id:
+                continue
+            if str(intent.get("symbol") or order.get("symbol") or "").upper().strip() != expected_symbol:
+                continue
+            if str(intent.get("broker_order_id") or "").strip() != expected_order_id:
+                continue
+            matches.append(intent)
+        return len(matches) == 1
+
     @staticmethod
     def _sell_intent_identity_values(intent: Mapping[str, Any] | None) -> set[str]:
         """Return only canonical lifecycle identities carried by an intent."""
@@ -4227,6 +4267,12 @@ class PaperAutopilotEngine:
             latest = {"symbol": item.get("symbol"), "price": _to_float(order.get("filled_avg_price"), 0.0), "timestamp": _now_iso(), "source": "alpaca_paper_order_fill"}
             filled_qty = _to_float(order.get("filled_qty") or order.get("filled_quantity"), 0.0)
             submitted_qty = _to_float(item.get("normalized_sell_qty") or item.get("submitted_quantity") or item.get("original_requested_qty"), 0.0)
+            canonical_intent_identity_verified = self._canonical_exit_intent_identity_verified(
+                client_order_id=expected_client_order_id,
+                position_id=str(item.get("position_id") or ""),
+                symbol=expected_symbol,
+                broker_order_id=exit_order_id,
+            )
             self._persist_sell_intent(
                 str(item.get("client_order_id") or key), status="SUBMITTED",
                 reconciliation_status="BROKER_FILLED_AWAITING_CLOSURE", broker_order_id=exit_order_id,
@@ -4243,6 +4289,7 @@ class PaperAutopilotEngine:
                 "position_id": str(item.get("position_id") or ""),
                 "client_order_id": expected_client_order_id,
                 "broker_client_order_id": broker_client_order_id,
+                "canonical_intent_identity_verified": canonical_intent_identity_verified,
             })
             if closed.get("ok"):
                 strict = dict(closed.get("strict_broker_truth_persistence") or {})
@@ -10785,12 +10832,21 @@ class PaperAutopilotEngine:
             filled_qty = _to_float(broker_fill.get("filled_qty") or broker_fill.get("quantity"), 0.0)
             submitted_qty = _to_float(broker_fill.get("submitted_qty"), 0.0)
             dust = dict(residual.get("dust_classification") or {})
+            expected_client_order_id = str(broker_fill.get("client_order_id") or "").strip()
+            broker_client_order_id = str(broker_fill.get("broker_client_order_id") or "").strip()
+            client_identity_verified = (
+                not expected_client_order_id
+                or broker_client_order_id == expected_client_order_id
+                or (
+                    not broker_client_order_id
+                    and bool(broker_fill.get("canonical_intent_identity_verified"))
+                )
+            )
             identity_verified = (
                 str(broker_fill.get("position_id") or "") == pid
                 and bool(str(broker_fill.get("exit_order_id") or ""))
                 and bool(str(broker_fill.get("exit_fill_id") or ""))
-                and (not str(broker_fill.get("client_order_id") or "")
-                     or str(broker_fill.get("client_order_id") or "") == str(broker_fill.get("broker_client_order_id") or ""))
+                and client_identity_verified
             )
             dust_safe_closure = bool(
                 str(residual.get("lookup_status") or "") == "DUST_RESIDUAL"

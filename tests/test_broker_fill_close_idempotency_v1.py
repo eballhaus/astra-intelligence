@@ -45,6 +45,9 @@ def _lyft_row() -> dict[str, object]:
 
 
 class _Broker:
+    def __init__(self) -> None:
+        self.submit_calls = 0
+
     def order(self, order_id):
         return {
             "ok": True,
@@ -62,6 +65,26 @@ class _Broker:
         # A successful complete list with no LYFT is authoritative broker zero.
         return {"ok": True, "positions": []}
 
+    def submit_paper_order(self, _order):
+        self.submit_calls += 1
+        raise AssertionError("filled-exit reconciliation must never submit another sell")
+
+
+class _DustResidualBroker(_Broker):
+    def positions(self):
+        # The current broker aggregate includes only a microscopic residual.
+        # A distinct legacy intent proves that same-symbol dust cannot be
+        # attributed to the current lifecycle by symbol alone.
+        return {
+            "ok": True,
+            "positions": [{
+                "symbol": "LYFT",
+                "qty": "0.000002102",
+                "asset_class": "us_equity",
+                "market_value": "0.000036",
+            }],
+        }
+
 
 class _TradeIntel:
     def __init__(self) -> None:
@@ -73,12 +96,17 @@ class _TradeIntel:
 
 
 class BrokerFillCloseIdempotencyTests(unittest.TestCase):
-    def _engine(self, root: pathlib.Path, intel: _TradeIntel) -> PaperAutopilotEngine:
+    def _engine(
+        self,
+        root: pathlib.Path,
+        intel: _TradeIntel,
+        broker: _Broker | None = None,
+    ) -> PaperAutopilotEngine:
         (root / "broker_truth_records_v1.json").write_text('{"records": []}', encoding="utf-8")
         engine = PaperAutopilotEngine(
             db_path=str(root / "paper.db"),
             state_path=str(root / "state.json"),
-            alpaca_paper_broker=_Broker(),
+            alpaca_paper_broker=broker or _Broker(),
             trade_intel=intel,
         )
         engine._position_tracker = None
@@ -143,6 +171,125 @@ class BrokerFillCloseIdempotencyTests(unittest.TestCase):
             self.assertTrue(replay["ok"])
             self.assertTrue(replay["idempotent_broker_fill_reconciliation"])
             self.assertEqual(len(intel.records), 1)
+
+    def test_filled_current_exit_closes_against_dust_when_broker_omits_client_id(self):
+        with tempfile.TemporaryDirectory() as directory, patch("engine.paper_autopilot.close_lifecycle_record", None):
+            root = pathlib.Path(directory)
+            intel = _TradeIntel()
+            broker = _DustResidualBroker()
+            engine = self._engine(root, intel, broker)
+            row = _lyft_row()
+            self._insert(engine, row)
+            current_intent_id = "astra-day-ss-LYFT-current"
+            legacy_intent_id = "legacy-retire:LYFT"
+            engine._runtime_state["paper_sell_order_intents"] = {
+                current_intent_id: {
+                    "order_intent_id": current_intent_id,
+                    "symbol": "LYFT",
+                    "position_id": row["position_id"],
+                    "client_order_id": current_intent_id,
+                    "broker_order_id": "lyft-exit-order",
+                    "status": "SUBMITTED",
+                    "order": {
+                        "symbol": "LYFT",
+                        "position_id": row["position_id"],
+                        "client_order_id": current_intent_id,
+                        "side": "sell",
+                    },
+                },
+                legacy_intent_id: {
+                    "order_intent_id": legacy_intent_id,
+                    "symbol": "LYFT",
+                    "position_id": "legacy-lyft-position",
+                    "client_order_id": legacy_intent_id,
+                    "broker_order_id": "legacy-filled-order",
+                    "status": "BROKER_HELD_DUST",
+                    "legacy_imported_retirement": True,
+                    "reconciliation_status": "ORIGINAL_ORDER_FILLED",
+                    "order": {"symbol": "LYFT", "position_id": "legacy-lyft-position", "side": "sell"},
+                },
+            }
+            engine._runtime_state["authorized_lane_exit_pending"] = {
+                "lyft-exit-order": {
+                    "position_id": row["position_id"],
+                    "symbol": "LYFT",
+                    "lane_id": "DAY",
+                    "order_id": "lyft-exit-order",
+                    "client_order_id": current_intent_id,
+                    "exit_reason": "drawdown_from_peak",
+                    "normalized_sell_qty": row["quantity"],
+                },
+            }
+
+            result = engine._refresh_authorized_lane_exit_pending()
+
+            self.assertEqual(result, {"checked": 1, "filled": 1, "pending": 0})
+            with engine._connect() as conn:
+                status = conn.execute(
+                    "SELECT status FROM paper_positions WHERE position_id=?", (row["position_id"],)
+                ).fetchone()[0]
+            self.assertEqual(status, "CLOSED")
+            current = engine._runtime_state["paper_sell_order_intents"][current_intent_id]
+            legacy = engine._runtime_state["paper_sell_order_intents"][legacy_intent_id]
+            self.assertEqual(current["status"], "CLOSED_DUST_SAFE_RECONCILED")
+            self.assertEqual(legacy["status"], "BROKER_HELD_DUST")
+            self.assertEqual(len(intel.records), 1)
+            self.assertEqual(broker.submit_calls, 0)
+
+            replay = engine._close_position(
+                dict(row),
+                {"symbol": "LYFT", "price": 17.26, "source": "alpaca_paper_order_fill"},
+                "drawdown_from_peak",
+                broker_fill={
+                    "position_id": row["position_id"],
+                    "exit_order_id": "lyft-exit-order",
+                    "exit_fill_id": "lyft-exit-order",
+                },
+            )
+            self.assertTrue(replay["ok"])
+            self.assertTrue(replay["idempotent_broker_fill_reconciliation"])
+            self.assertEqual(len(intel.records), 1)
+
+    def test_dust_residual_without_exact_current_intent_stays_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory, patch("engine.paper_autopilot.close_lifecycle_record", None):
+            root = pathlib.Path(directory)
+            broker = _DustResidualBroker()
+            engine = self._engine(root, _TradeIntel(), broker)
+            row = _lyft_row()
+            self._insert(engine, row)
+            engine._runtime_state["paper_sell_order_intents"] = {
+                "legacy-retire:LYFT": {
+                    "order_intent_id": "legacy-retire:LYFT",
+                    "symbol": "LYFT",
+                    "position_id": "legacy-lyft-position",
+                    "client_order_id": "legacy-retire:LYFT",
+                    "broker_order_id": "legacy-filled-order",
+                    "status": "BROKER_HELD_DUST",
+                    "legacy_imported_retirement": True,
+                },
+            }
+            engine._runtime_state["authorized_lane_exit_pending"] = {
+                "lyft-exit-order": {
+                    "position_id": row["position_id"],
+                    "symbol": "LYFT",
+                    "lane_id": "DAY",
+                    "order_id": "lyft-exit-order",
+                    "client_order_id": "astra-day-ss-LYFT-current",
+                    "exit_reason": "drawdown_from_peak",
+                    "normalized_sell_qty": row["quantity"],
+                },
+            }
+
+            result = engine._refresh_authorized_lane_exit_pending()
+
+            self.assertEqual(result["filled"], 0)
+            self.assertEqual(result["pending"], 1)
+            with engine._connect() as conn:
+                status = conn.execute(
+                    "SELECT status FROM paper_positions WHERE position_id=?", (row["position_id"],)
+                ).fetchone()[0]
+            self.assertEqual(status, "OPEN")
+            self.assertEqual(broker.submit_calls, 0)
 
     def test_different_exit_fill_cannot_close_an_existing_closed_lifecycle(self):
         with tempfile.TemporaryDirectory() as directory, patch("engine.paper_autopilot.close_lifecycle_record", None):
