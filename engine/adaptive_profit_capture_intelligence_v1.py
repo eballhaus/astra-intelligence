@@ -9,11 +9,14 @@ from datetime import datetime, timezone
 from statistics import mean, median
 from typing import Any
 
+from engine.learning_return_integrity_v1 import official_broker_confirmed_rows
+
 VERSION = "1.0.0"
 TRADE_EFFECTIVENESS_V2_SCHEMA = "astra_profit_capture_trade_effectiveness_v2"
 MAX_EFFECTIVENESS_TRUTHS = 80
 MAX_TAIL_BYTES = 1_800_000
 MAX_ROWS = 1500
+MIN_STABLE_RETURN_NORMALIZATION_SECONDS = 60.0
 
 
 def _now_iso() -> str:
@@ -183,6 +186,105 @@ def _canonical_horizon(row: dict[str, Any]) -> str:
     )
 
 
+def _parse_timestamp(value: Any) -> datetime | None:
+    raw = _text(value)
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _exact_hold_seconds(row: dict[str, Any]) -> tuple[float | None, str | None, str | None]:
+    entry_timestamp = _text(row.get("entry_timestamp") or row.get("entry_time") or row.get("entry_filled_at")) or None
+    exit_timestamp = _text(row.get("exit_timestamp") or row.get("exit_time") or row.get("exit_filled_at") or row.get("filled_at")) or None
+    entry_dt = _parse_timestamp(entry_timestamp)
+    exit_dt = _parse_timestamp(exit_timestamp)
+    if entry_dt is None or exit_dt is None:
+        return None, entry_timestamp, exit_timestamp
+    elapsed = (exit_dt - entry_dt).total_seconds()
+    return (elapsed if elapsed > 0 else None), entry_timestamp, exit_timestamp
+
+
+def _dimension_state(value: Any) -> str:
+    raw = _text(value).upper()
+    if raw in {"SUPPORTED_POSITIVE", "POSITIVE", "PASS", "ALIGNED", "EFFECTIVE", "GOOD"}:
+        return "SUPPORTED_POSITIVE"
+    if raw in {"SUPPORTED_NEGATIVE", "NEGATIVE", "FAIL", "MISALIGNED", "POOR", "FAILED", "DETERIORATED"}:
+        return "SUPPORTED_NEGATIVE"
+    if raw in {"NEUTRAL", "MIXED"}:
+        return "NEUTRAL"
+    if raw in {"CONTRADICTORY", "CONFLICT"}:
+        return "CONTRADICTORY"
+    return "UNAVAILABLE"
+
+
+def _dimension(row: dict[str, Any], notes: dict[str, Any], name: str, *keys: str) -> dict[str, Any]:
+    for key in keys:
+        value = row.get(key) if key in row else notes.get(key)
+        if value not in (None, "", "UNAVAILABLE", "unknown"):
+            return {
+                "dimension": name,
+                "state": _dimension_state(value),
+                "value": value,
+                "source": "broker_truth_records_v1" if key in row else "canonical_lifecycle_excursion_v2",
+                "evidence_timestamp": row.get("exit_timestamp") or row.get("exit_time"),
+                "evidence_ids": [value for value in (row.get("truth_id") or row.get("stable_key"), row.get("lifecycle_id")) if value],
+            }
+    return {
+        "dimension": name,
+        "state": "UNAVAILABLE",
+        "value": None,
+        "source": None,
+        "evidence_timestamp": None,
+        "evidence_ids": [],
+    }
+
+
+def _first_driver(dimensions: list[dict[str, Any]], state: str) -> str | None:
+    return next((row["dimension"] for row in dimensions if row.get("state") == state), None)
+
+
+def _loss_anatomy(
+    *,
+    row: dict[str, Any],
+    realized: float | None,
+    peak: float | None,
+    capture_label: str,
+    exit_effectiveness: str,
+    hold_seconds: float | None,
+    expected_hold_seconds: float | None,
+    dimensions: list[dict[str, Any]],
+    exit_timestamp: str | None,
+) -> dict[str, Any]:
+    if realized is None:
+        return {"loss_classification": "INSUFFICIENT_EVIDENCE", "preventability": "NOT_PROVEN", "primary_cause": "missing_realized_return"}
+    if realized >= 0:
+        return {"loss_classification": "NOT_A_LOSS", "preventability": "NOT_PROVEN", "primary_cause": None}
+    exit_reason = _text(row.get("exit_reason")).upper()
+    exit_trigger = _parse_timestamp(row.get("exit_trigger_timestamp") or row.get("deterioration_observed_at"))
+    exit_time = _parse_timestamp(exit_timestamp)
+    if exit_trigger and exit_time and exit_time > exit_trigger:
+        return {"loss_classification": "PREVENTABLE_EXIT_DELAY", "preventability": "PREVENTABLE", "primary_cause": "proven_exit_trigger_before_exit"}
+    deterioration = _parse_timestamp(row.get("momentum_deterioration_observed_at") or row.get("profit_protection_triggered_at"))
+    if peak is not None and peak > 0 and capture_label == "SEVERE_GIVEBACK" and deterioration and exit_time and exit_time > deterioration:
+        return {"loss_classification": "PREVENTABLE_PROFIT_GIVEBACK", "preventability": "PREVENTABLE", "primary_cause": "proven_deterioration_before_severe_giveback"}
+    if expected_hold_seconds and hold_seconds and hold_seconds > expected_hold_seconds:
+        return {"loss_classification": "PREVENTABLE_OVERHOLD", "preventability": "PARTLY_PREVENTABLE", "primary_cause": "proven_expected_horizon_exceeded"}
+    if _text(row.get("execution_error_state")).upper() == "EXECUTION_ERROR":
+        return {"loss_classification": "EXECUTION_ERROR", "preventability": "NOT_PROVEN", "primary_cause": "broker_execution_error_evidence"}
+    if _first_driver(dimensions, "SUPPORTED_NEGATIVE") == "regime_context":
+        return {"loss_classification": "REGIME_MISMATCH", "preventability": "PARTLY_PREVENTABLE", "primary_cause": "supported_regime_mismatch"}
+    if _first_driver(dimensions, "SUPPORTED_NEGATIVE") in {"selection_quality", "entry_timing"}:
+        return {"loss_classification": "PREVENTABLE_ENTRY_ERROR", "preventability": "PARTLY_PREVENTABLE", "primary_cause": "supported_pretrade_entry_quality_failure"}
+    if any(token in exit_reason for token in ("STOP", "THESIS", "RISK", "LOSS", "INVALIDATION")):
+        classification = "THESIS_FAILED_ACCEPTABLE" if "THESIS" in exit_reason or "INVALIDATION" in exit_reason else "CONTROLLED_EXPECTED_LOSS"
+        return {"loss_classification": classification, "preventability": "CONTROLLED", "primary_cause": "authorized_loss_containment_exit"}
+    return {"loss_classification": "INSUFFICIENT_EVIDENCE", "preventability": "NOT_PROVEN", "primary_cause": None}
+
+
 def _mean_optional(values: list[float | None]) -> float | None:
     clean = [value for value in values if value is not None]
     return round(mean(clean), 6) if clean else None
@@ -252,17 +354,28 @@ def _effectiveness_row(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, A
     realized = _first_number(row, "realized_return", "realized_return_pct", "actual_return_pct", "pnl_pct", "exit_gain_pct")
     if realized is None:
         realized = _first_number(notes, "actual_return_pct")
-    hold_seconds = _first_number(row, "hold_duration_seconds", "hold_time_seconds", "actual_hold_seconds")
-    if hold_seconds is None:
-        hold_seconds = _first_number(notes, "hold_duration_seconds")
+    reported_hold_seconds = _first_number(row, "hold_duration_seconds", "hold_time_seconds", "actual_hold_seconds")
+    if reported_hold_seconds is None:
+        reported_hold_seconds = _first_number(notes, "hold_duration_seconds")
+    exact_hold_seconds, entry_timestamp, exact_exit_timestamp = _exact_hold_seconds(row)
+    hold_seconds = exact_hold_seconds if exact_hold_seconds is not None else reported_hold_seconds
     context = row.get("pretrade_context_v1")
     context = dict(context) if isinstance(context, dict) else {}
-    expected_hold_seconds = _first_number(context, "maximum_hold_seconds", "expected_hold_seconds")
+    expected_hold_seconds = _first_number(row, "maximum_hold_seconds", "expected_hold_seconds")
     if expected_hold_seconds is None:
-        minutes = _first_number(context, "expected_hold_minutes", "maximum_hold_minutes")
+        expected_hold_seconds = _first_number(context, "maximum_hold_seconds", "expected_hold_seconds")
+    if expected_hold_seconds is None:
+        minutes = _first_number(row, "expected_hold_minutes", "maximum_hold_minutes")
+        if minutes is None:
+            minutes = _first_number(context, "expected_hold_minutes", "maximum_hold_minutes")
         expected_hold_seconds = minutes * 60.0 if minutes is not None else None
+    if expected_hold_seconds is None:
+        days = _first_number(row, "expected_hold_days")
+        if days is None:
+            days = _first_number(context, "expected_hold_days")
+        expected_hold_seconds = days * 86400.0 if days is not None else None
     peak_timestamp = _text(row.get("peak_timestamp") or row.get("peak_observed_at") or row.get("mfe_timestamp") or row.get("time_of_peak")) or None
-    exit_timestamp = _text(row.get("exit_time") or row.get("exit_timestamp") or row.get("filled_at")) or None
+    exit_timestamp = exact_exit_timestamp or _text(row.get("exit_time") or row.get("exit_timestamp") or row.get("filled_at")) or None
     time_after_peak = None
     if peak_timestamp and exit_timestamp:
         try:
@@ -320,6 +433,43 @@ def _effectiveness_row(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, A
         "NO_MEANINGFUL_REPLACEMENT" if opportunity in {"NONE", "NO_MEANINGFUL_REPLACEMENT"} else
         "INSUFFICIENT_EVIDENCE"
     )
+    dimensions = [
+        _dimension(row, notes, "selection_quality", "selection_quality_state", "ranking_attribution_state"),
+        _dimension(row, notes, "entry_timing", "entry_timing_state", "entry_quality_state"),
+        _dimension(row, notes, "confidence_forecast_alignment", "confidence_forecast_alignment_state", "forecast_alignment_state"),
+        _dimension(row, notes, "regime_context", "regime_attribution_state", "regime_fit_state"),
+        _dimension(row, notes, "catalyst_context", "catalyst_attribution_state", "catalyst_fit_state"),
+        _dimension(row, notes, "sector_context", "sector_attribution_state", "sector_fit_state"),
+        _dimension(row, notes, "momentum_follow_through", "momentum_attribution_state", "follow_through_state"),
+        _dimension(row, notes, "risk_downside", "risk_attribution_state", "risk_envelope_state"),
+        _dimension(row, notes, "execution_quality", "execution_error_state", "slippage_attribution_state"),
+    ]
+    exit_state = "SUPPORTED_NEGATIVE" if exit_effectiveness in {"LATE", "SEVERE_PROFIT_GIVEBACK", "LOSS_HELD_TOO_LONG"} else "SUPPORTED_POSITIVE" if exit_effectiveness in {"EFFECTIVE", "LOSS_ACCEPTANCE_EFFECTIVE"} else "UNAVAILABLE"
+    dimensions.append({"dimension": "exit_timing_quality", "state": exit_state, "value": exit_effectiveness, "source": "adaptive_profit_capture_intelligence_v1.exit_effectiveness", "evidence_timestamp": exit_timestamp, "evidence_ids": [value for value in (row.get("truth_id") or row.get("stable_key"), lifecycle_id) if value]})
+    giveback_state = "SUPPORTED_NEGATIVE" if capture_label in {"HIGH_GIVEBACK", "SEVERE_GIVEBACK"} else "SUPPORTED_POSITIVE" if capture_label in {"EXCELLENT_CAPTURE", "GOOD_CAPTURE"} else "NEUTRAL" if capture_label == "MODERATE_GIVEBACK" else "UNAVAILABLE"
+    dimensions.append({"dimension": "peak_giveback", "state": giveback_state, "value": capture_label, "source": "canonical lifecycle excursion evidence", "evidence_timestamp": peak_timestamp or exit_timestamp, "evidence_ids": [value for value in (row.get("truth_id") or row.get("stable_key"), lifecycle_id) if value]})
+    opportunity_dimension_state = "SUPPORTED_NEGATIVE" if opportunity_state in {"HIGH_OPPORTUNITY_COST", "REPLACEMENT_OPPORTUNITY_PRESENT"} else "NEUTRAL" if opportunity_state == "NO_MEANINGFUL_REPLACEMENT" else "UNAVAILABLE"
+    dimensions.append({"dimension": "opportunity_cost", "state": opportunity_dimension_state, "value": opportunity_state, "source": "canonical lifecycle excursion evidence" if opportunity_state != "INSUFFICIENT_EVIDENCE" else None, "evidence_timestamp": exit_timestamp, "evidence_ids": [lifecycle_id] if lifecycle_id else []})
+    loss_anatomy = _loss_anatomy(
+        row=row, realized=realized, peak=peak, capture_label=capture_label,
+        exit_effectiveness=exit_effectiveness, hold_seconds=hold_seconds,
+        expected_hold_seconds=expected_hold_seconds, dimensions=dimensions,
+        exit_timestamp=exit_timestamp,
+    )
+    supporting = [item for item in dimensions if item.get("state") in {"SUPPORTED_POSITIVE", "SUPPORTED_NEGATIVE"}]
+    attribution_status = "CONTRADICTORY" if any(item.get("state") == "CONTRADICTORY" for item in dimensions) else "SUPPORTED" if supporting else "INSUFFICIENT_EVIDENCE"
+    primary_success_driver = _first_driver(dimensions, "SUPPORTED_POSITIVE") if realized is not None and realized > 0 else None
+    primary_failure_driver = loss_anatomy.get("primary_cause") if realized is not None and realized < 0 else None
+    stable_normalization = bool(exact_hold_seconds and exact_hold_seconds >= MIN_STABLE_RETURN_NORMALIZATION_SECONDS)
+    realized_return_per_hour = round(realized / (exact_hold_seconds / 3600.0), 6) if realized is not None and stable_normalization else None
+    realized_return_per_day = round(realized / (exact_hold_seconds / 86400.0), 6) if realized is not None and stable_normalization else None
+    peak_return_per_day = round(peak / (exact_hold_seconds / 86400.0), 6) if peak is not None and stable_normalization else None
+    committed_capital = _first_number(row, "committed_capital", "capital_committed", "position_capital")
+    realized_pnl = _first_number(row, "realized_pnl", "realized_profit")
+    capital_time_efficiency = (
+        round(realized_pnl / (committed_capital * (exact_hold_seconds / 3600.0)), 8)
+        if realized_pnl is not None and committed_capital and committed_capital > 0 and stable_normalization else None
+    )
     integrity_fact = None
     mfe_marked_available = bool(row.get("mfe_evidence_available"))
     if peak is None:
@@ -345,6 +495,7 @@ def _effectiveness_row(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, A
     return {
         "lifecycle_id": lifecycle_id,
         "truth_id": _text(row.get("truth_id") or row.get("stable_key")) or None,
+        "position_id": _text(row.get("position_id")) or None,
         "symbol": _text(row.get("symbol")).upper(),
         "lane": _canonical_lane(row),
         "horizon": _canonical_horizon(row),
@@ -360,9 +511,33 @@ def _effectiveness_row(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, A
         "entry_management_exit_attribution": _management_attribution(
             realized=realized, peak=peak, capture=capture, exit_effectiveness=exit_effectiveness, horizon_assessment=horizon_assessment,
         ),
-        "hold_duration_seconds": round(hold_seconds, 6) if hold_seconds is not None else None,
-        "realized_return_per_day": round(realized / (hold_seconds / 86400.0), 6) if realized is not None and hold_seconds and hold_seconds > 0 else None,
-        "peak_return_per_day": round(peak / (hold_seconds / 86400.0), 6) if peak is not None and hold_seconds and hold_seconds > 0 else None,
+        "decision_attribution": {
+            "dimensions": dimensions,
+            "primary_success_driver": primary_success_driver,
+            "primary_failure_driver": primary_failure_driver,
+            "secondary_drivers": [item["dimension"] for item in supporting if item["dimension"] not in {primary_success_driver, primary_failure_driver}][:6],
+            "attribution_status": attribution_status,
+            "attribution_confidence": "SUPPORTED_CANONICAL_EVIDENCE" if supporting else "INSUFFICIENT_EVIDENCE",
+        },
+        "loss_anatomy": {
+            **loss_anatomy,
+            "supporting_lifecycle_id": lifecycle_id or None,
+            "supporting_truth_id": _text(row.get("truth_id") or row.get("stable_key")) or None,
+            "expected_loss_pct": _first_number(row, "expected_downside_pct", "expected_loss_pct"),
+            "actual_loss_pct": realized if realized is not None and realized < 0 else None,
+        },
+        "entry_timestamp": entry_timestamp,
+        "hold_duration_seconds": round(exact_hold_seconds, 6) if exact_hold_seconds is not None else None,
+        "reported_hold_duration_seconds": round(reported_hold_seconds, 6) if reported_hold_seconds is not None else None,
+        "hold_minutes": round(exact_hold_seconds / 60.0, 6) if exact_hold_seconds is not None else None,
+        "hold_hours": round(exact_hold_seconds / 3600.0, 6) if exact_hold_seconds is not None else None,
+        "expected_hold_seconds": round(expected_hold_seconds, 6) if expected_hold_seconds is not None else None,
+        "expected_vs_actual_hold_ratio": round(exact_hold_seconds / expected_hold_seconds, 6) if exact_hold_seconds is not None and expected_hold_seconds and expected_hold_seconds > 0 else None,
+        "time_normalization_state": "STABLE" if stable_normalization else "NORMALIZATION_UNSTABLE",
+        "realized_return_per_hour": realized_return_per_hour,
+        "realized_return_per_day": realized_return_per_day,
+        "peak_return_per_day": peak_return_per_day,
+        "capital_time_efficiency": capital_time_efficiency,
         "peak_timestamp": peak_timestamp,
         "exit_timestamp": exit_timestamp,
         "time_after_peak_seconds": round(time_after_peak, 6) if time_after_peak is not None else None,
@@ -388,9 +563,11 @@ def build_profit_capture_trade_effectiveness_v2(
     """
     official_rows: list[dict[str, Any]] = []
     integrity_facts: list[dict[str, Any]] = []
-    excluded = 0
-    for raw in list(broker_truth_records or [])[-max(1, int(limit)):]:
-        if not isinstance(raw, dict) or not _strict_completed_truth(raw) or _text(raw.get("legacy_status")).upper() == "LEGACY":
+    bounded_truths = [dict(raw) for raw in list(broker_truth_records or [])[-max(1, int(limit)):] if isinstance(raw, dict)]
+    return_integrity_truths = official_broker_confirmed_rows(bounded_truths, max_rows=limit)
+    excluded = len(bounded_truths) - len(return_integrity_truths)
+    for raw in return_integrity_truths:
+        if not _strict_completed_truth(raw) or _text(raw.get("legacy_status")).upper() == "LEGACY":
             excluded += 1
             continue
         derived, fact = _effectiveness_row(dict(raw))
@@ -400,8 +577,13 @@ def build_profit_capture_trade_effectiveness_v2(
     captures = [row.get("profit_capture_pct") for row in official_rows]
     givebacks = [row.get("profit_giveback_from_peak_pct") for row in official_rows]
     realized_per_day = [row.get("realized_return_per_day") for row in official_rows]
+    realized_per_hour = [row.get("realized_return_per_hour") for row in official_rows]
     after_peak = [row.get("time_after_peak_seconds") for row in official_rows]
     counts = Counter(_text(row.get("exit_effectiveness"), "INSUFFICIENT_EVIDENCE") for row in official_rows)
+    loss_counts = Counter(_text((row.get("loss_anatomy") or {}).get("loss_classification"), "INSUFFICIENT_EVIDENCE") for row in official_rows)
+    preventability_counts = Counter(_text((row.get("loss_anatomy") or {}).get("preventability"), "NOT_PROVEN") for row in official_rows)
+    success_drivers = Counter(_text((row.get("decision_attribution") or {}).get("primary_success_driver"), "UNAVAILABLE") for row in official_rows)
+    failure_drivers = Counter(_text((row.get("decision_attribution") or {}).get("primary_failure_driver"), "UNAVAILABLE") for row in official_rows)
     lanes: dict[str, dict[str, Any]] = {}
     for lane in ("SCALP", "DAY", "SWING", "CRYPTO"):
         rows = [row for row in official_rows if row.get("lane") == lane]
@@ -412,6 +594,7 @@ def build_profit_capture_trade_effectiveness_v2(
             "average_hold_duration_seconds": _mean_optional([row.get("hold_duration_seconds") for row in rows]),
             "average_time_after_peak_seconds": _mean_optional([row.get("time_after_peak_seconds") for row in rows]),
             "average_realized_return_per_day": _mean_optional([row.get("realized_return_per_day") for row in rows]),
+            "average_realized_return_per_hour": _mean_optional([row.get("realized_return_per_hour") for row in rows]),
             "effective_exit_count": sum(row.get("exit_effectiveness") == "EFFECTIVE" for row in rows),
             "late_exit_count": sum(row.get("exit_effectiveness") in {"LATE", "SEVERE_PROFIT_GIVEBACK"} for row in rows),
             "controlled_loss_effective_count": sum(row.get("exit_effectiveness") == "LOSS_ACCEPTANCE_EFFECTIVE" for row in rows),
@@ -424,6 +607,7 @@ def build_profit_capture_trade_effectiveness_v2(
             "average_profit_capture_pct": _mean_optional([row.get("profit_capture_pct") for row in rows]),
             "average_profit_giveback_from_peak_pct": _mean_optional([row.get("profit_giveback_from_peak_pct") for row in rows]),
             "average_realized_return_per_day": _mean_optional([row.get("realized_return_per_day") for row in rows]),
+            "average_realized_return_per_hour": _mean_optional([row.get("realized_return_per_hour") for row in rows]),
             "average_time_after_peak_seconds": _mean_optional([row.get("time_after_peak_seconds") for row in rows]),
         }
     shadow = dict(shadow_exit_performance or {})
@@ -465,7 +649,16 @@ def build_profit_capture_trade_effectiveness_v2(
         "late_exit_count": counts.get("LATE", 0) + counts.get("SEVERE_PROFIT_GIVEBACK", 0),
         "effective_controlled_loss_count": counts.get("LOSS_ACCEPTANCE_EFFECTIVE", 0),
         "average_realized_return_per_day": _mean_optional(realized_per_day),
+        "average_return_per_hour": _mean_optional(realized_per_hour),
+        "median_return_per_hour": _median_optional(realized_per_hour),
         "average_time_after_peak_seconds": _mean_optional(after_peak),
+        "top_success_drivers": [{"driver": key, "count": value} for key, value in success_drivers.most_common(5) if key != "UNAVAILABLE"],
+        "top_failure_drivers": [{"driver": key, "count": value} for key, value in failure_drivers.most_common(5) if key != "UNAVAILABLE"],
+        "controlled_loss_count": preventability_counts.get("CONTROLLED", 0),
+        "preventable_loss_count": preventability_counts.get("PREVENTABLE", 0),
+        "partly_preventable_loss_count": preventability_counts.get("PARTLY_PREVENTABLE", 0),
+        "losses_not_proven_count": preventability_counts.get("NOT_PROVEN", 0),
+        "loss_anatomy_counts": dict(loss_counts),
         "horizon_lane_breakdown": lanes,
         "horizon_breakdown": horizons,
         "shadow_exit_sample_size": sample,
@@ -483,6 +676,11 @@ def build_profit_capture_trade_effectiveness_v2(
             "average_profit_capture_pct": _mean_optional(captures),
             "average_profit_giveback_from_peak_pct": _mean_optional(givebacks),
             "late_exit_count": counts.get("LATE", 0) + counts.get("SEVERE_PROFIT_GIVEBACK", 0),
+            "top_success_drivers": [{"driver": key, "count": value} for key, value in success_drivers.most_common(3) if key != "UNAVAILABLE"],
+            "top_failure_drivers": [{"driver": key, "count": value} for key, value in failure_drivers.most_common(3) if key != "UNAVAILABLE"],
+            "preventable_loss_count": preventability_counts.get("PREVENTABLE", 0),
+            "controlled_loss_count": preventability_counts.get("CONTROLLED", 0),
+            "average_return_per_hour": _mean_optional(realized_per_hour),
             "shadow_exit_sample_size": sample,
             "evidence_sufficiency_state": evidence_state,
             "advisory_only": True,
@@ -491,6 +689,8 @@ def build_profit_capture_trade_effectiveness_v2(
         "provider_calls_used": 0,
         "broker_calls_used": 0,
         "llm_calls_used": 0,
+        "full_history_scan_count": 0,
+        "records_examined": len(bounded_truths),
         "execution_behavior_changed": False,
         "paper_only_preserved": True,
         "live_trading_changed": False,

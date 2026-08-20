@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from engine.adaptive_profit_capture_intelligence_v1 import build_profit_capture_trade_effectiveness_v2
@@ -10,6 +10,7 @@ from engine.astra_continuous_system_integrity_scanner_v1 import ContinuousSystem
 
 
 NOW = datetime(2026, 8, 19, 16, 0, tzinfo=UTC).isoformat().replace("+00:00", "Z")
+ENTRY = (datetime(2026, 8, 19, 16, 0, tzinfo=UTC) - timedelta(days=1)).isoformat().replace("+00:00", "Z")
 
 
 def _truth(
@@ -31,8 +32,12 @@ def _truth(
         "lane_id": lane,
         "intended_horizon": horizon,
         "truth_quality": "BROKER_CONFIRMED_COMPLETE",
+        "evidence_class": "BROKER_CONFIRMED_COMPLETE",
         "entry_fill_id": f"entry:{lifecycle_id}",
         "exit_fill_id": f"exit:{lifecycle_id}",
+        "entry_price": 100.0,
+        "exit_price": 100.0 + realized,
+        "entry_timestamp": ENTRY,
         "realized_return_pct": realized,
         "max_favorable_excursion_pct": peak,
         "mfe_evidence_available": mfe_available,

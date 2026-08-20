@@ -39,7 +39,11 @@ def _official_exclusion_reason(row: Mapping[str, Any]) -> str:
         return "NON_BROKER_CONFIRMED"
     entry = _number(row.get("entry_price") or row.get("entry"))
     exit_price = _number(row.get("exit_price") or row.get("exit"))
-    raw_return = _number(row.get("realized_return") if row.get("realized_return") is not None else row.get("return_pct"))
+    raw_return = None
+    for key in ("realized_return", "realized_return_pct", "return_pct", "actual_return_pct", "exit_gain_pct", "current_or_exit_profit_pct"):
+        if row.get(key) is not None:
+            raw_return = _number(row.get(key))
+            break
     if entry is None or entry <= 0:
         return "ZERO_OR_MISSING_COST_BASIS"
     if exit_price is not None and exit_price <= 0:
