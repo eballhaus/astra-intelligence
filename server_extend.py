@@ -30943,6 +30943,14 @@ def _evaluate_outcome_label_v1(ledger_row, horizon_minutes=60):
     swing_candidate_learning_flag = bool(overnight_learning_flag)
     base_payload = {
         "ledger_id": str(r.get("ledger_id") or ""),
+        "candidate_decision_snapshot_id": str(r.get("candidate_decision_snapshot_id") or ""),
+        "candidate_id": str(r.get("candidate_id") or ""),
+        "lifecycle_id": str(r.get("lifecycle_id") or ""),
+        # This owner emits later observations separately from the immutable
+        # decision snapshot. It never mutates the original ledger row.
+        "outcome_evidence_class": "UNAVAILABLE",
+        "outcome_observation_timestamp": "",
+        "outcome_evidence_source": "",
         "timestamp_utc": str(r.get("timestamp_utc") or ""),
         "entry_timestamp_utc": str(r.get("timestamp_utc") or ""),
         "exit_timestamp_utc": _now_utc_iso(),
@@ -31059,6 +31067,32 @@ def _evaluate_outcome_label_v1(ledger_row, horizon_minutes=60):
 
     latest = _find_latest_row(symbol, asset_type=asset_type) or {}
     eval_price = _to_float(latest.get("price"), _to_float(latest.get("current_price"), 0.0))
+    observation_timestamp = str(
+        latest.get("market_observation_timestamp")
+        or latest.get("provider_quote_timestamp")
+        or latest.get("quote_timestamp")
+        or latest.get("bar_timestamp")
+        or ""
+    ).strip()
+    observation_source = str(
+        latest.get("quote_source")
+        or latest.get("provider_used")
+        or latest.get("source")
+        or ""
+    ).strip()
+    is_candidate_snapshot = bool(str(r.get("candidate_decision_snapshot_id") or "").strip())
+    # Candidate-decision evidence must have an attributable stored market
+    # observation. Legacy outcome labels retain their existing semantics.
+    if is_candidate_snapshot and (eval_price <= 0.0 or not observation_timestamp):
+        out = dict(base_payload)
+        out.update({
+            "price_at_decision": round(decision_price, 6),
+            "price_at_evaluation": 0.0,
+            "return_pct": 0.0,
+            "outcome_label": "insufficient_data",
+            "outcome_score": 0.0,
+        })
+        return out
     if eval_price <= 0.0:
         out = dict(base_payload)
         out.update({
@@ -31163,6 +31197,13 @@ def _evaluate_outcome_label_v1(ledger_row, horizon_minutes=60):
         "max_adverse_excursion": _to_float(r.get("max_adverse_excursion"), None),
         "outcome_label": str(label),
         "outcome_score": round(outcome_score, 4),
+        "outcome_evidence_class": (
+            "REAL_STORED_LATER_PRICE"
+            if observation_timestamp
+            else "UNVERIFIED_LEGACY_OUTCOME_SOURCE"
+        ),
+        "outcome_observation_timestamp": observation_timestamp,
+        "outcome_evidence_source": observation_source or "existing_rankings_snapshot",
     })
     return out
 

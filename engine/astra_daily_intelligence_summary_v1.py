@@ -171,6 +171,10 @@ def build_astra_daily_intelligence_summary_v1(
     recurrence = _dict(bundle1.get("mistake_recurrence_lesson_linkage_v1"))
     contextual = _dict(bundle1.get("contextual_learning_summary_v1"))
     official_b2 = _dict(bundle2)
+    worker_trace = _dict(worker.get("last_execution_trace"))
+    decision_capture = _dict(worker_trace.get("candidate_decision_evidence_v1"))
+    if not decision_capture:
+        decision_capture = _dict(_dict(worker_trace.get("lane_execution_ledger")).get("candidate_decision_evidence_v1"))
 
     closed_today = [row for row in truths if _today(_timestamp(row, "exit_timestamp", "exit_time", "exit_filled_at", "created_at"), report_date, zone)]
     entered_today = [row for row in truths if _today(_timestamp(row, "entry_timestamp", "entry_time", "entry_filled_at"), report_date, zone)]
@@ -260,6 +264,19 @@ def build_astra_daily_intelligence_summary_v1(
         "bundle1": {"is_astra_improving": progression.get("is_astra_improving"), "progression_status": overall.get("status"), "early_cohort": _dict(overall.get("cohorts")).get("EARLY", {}), "middle_cohort": _dict(overall.get("cohorts")).get("MIDDLE", {}), "recent_cohort": _dict(overall.get("cohorts")).get("RECENT", {}), "lesson_effectiveness": {"lessons_tracked": len(_rows(linkage.get("lessons"))), "lesson_applied_count": linkage.get("explicit_application_events"), "lessons_with_linked_outcomes": linkage.get("linked_outcomes"), "improved_outcomes": effectiveness.get("improved_outcomes"), "worsened_outcomes": effectiveness.get("worsened_outcomes"), "neutral_outcomes": None, "effective_lessons": effectiveness.get("effective_lessons"), "promising_lessons": None, "mixed_lessons": None, "underperforming_lessons": effectiveness.get("underperforming_lessons"), "insufficient_evidence_lessons": None}, "mistake_recurrence": {"recurrence_after_lesson": recurrence.get("recurrence_after_lesson_count"), "recurrence_reduced": None, "recurrence_persistent": None, "not_yet_measurable": not bool(linkage.get("linked_outcomes"))}},
         "bundle2": {"official_truths_eligible_for_attribution": official_b2.get("completed_broker_truth_sample_size"), "official_truths_attributed": official_b2.get("completed_broker_truth_sample_size"), "winners_attributed": official_b2.get("profitable_trade_count"), "losers_attributed": official_b2.get("losing_trade_count"), "top_success_drivers": official_b2.get("top_success_drivers") or [], "top_failure_drivers": official_b2.get("top_failure_drivers") or [], "loss_anatomy": {"controlled": official_b2.get("controlled_loss_count"), "partly_preventable": official_b2.get("partly_preventable_loss_count"), "preventable": official_b2.get("preventable_loss_count"), "not_proven": official_b2.get("losses_not_proven_count")}, "return_per_time": {"average_return_per_hour": official_b2.get("average_return_per_hour"), "median_return_per_hour": official_b2.get("median_return_per_hour"), "average_return_per_day": official_b2.get("average_realized_return_per_day"), "average_hold_duration": None, "overhold_count": None}},
         "bundle3": {**contextual, "learning_context_status": _learning_context_status(contextual)},
+        "candidate_evidence_capture": {
+            "snapshots_today": decision_capture.get("snapshots_today", decision_capture.get("snapshots_written")),
+            "accepted": decision_capture.get("accepted"),
+            "rejected": decision_capture.get("rejected"),
+            "blocked": decision_capture.get("blocked"),
+            "deferred": decision_capture.get("deferred"),
+            "later_outcomes_linked": decision_capture.get("later_outcomes_linked"),
+            "exact_trade_links": decision_capture.get("exact_trade_links"),
+            "unresolved_links": decision_capture.get("unresolved_links"),
+            "by_lane": _dict(decision_capture.get("by_lane")),
+            "outcome_owner": decision_capture.get("outcome_owner") or "outcome_labels_v1.jsonl",
+            "full_history_scan_count": decision_capture.get("full_history_scan_count", 0),
+        },
         "lanes": lanes,
         "current_open_positions": {"broker_confirmed_active": bounded_positions, "reconciliation_pending": [{"symbol": row.get("symbol"), "lifecycle_id": row.get("lifecycle_id") or row.get("position_id"), "reconciliation_state": row.get("reconciliation_state")} for row in pending_positions[:12]], "advisory_only": [], "detail_state": "AVAILABLE" if positions else "UNAVAILABLE_FROM_COMPACT_INPUT"},
         "control_plane": {"sentinel_status": health.get("sentinel_status") or control.get("status"), "governance_status": health.get("governance_status"), "cortex_status": health.get("cortex_status"), "control_plane_agreement": health.get("control_plane_agreement"), "active_root_causes": issues},

@@ -1492,6 +1492,57 @@ def _eligibility_gate_attribution_v1(
     }
 
 
+def _candidate_decision_evidence_v1(
+    candidate: Mapping[str, Any],
+    contract: Mapping[str, Any],
+    gate_meta: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Copy compact pre-decision facts without deriving or defaulting evidence."""
+    row, pretrade, gates = dict(candidate or {}), dict(contract or {}), dict(gate_meta or {})
+    forecast = dict(row.get("crypto_pretrade_forecast_v1") or {})
+    risk = dict(pretrade.get("candidate_risk_envelope_v1") or row.get("candidate_risk_envelope_v1") or {})
+    commitment = dict(gates.get("entry_commitment_trace_v1") or {})
+    return {
+        "candidate_rank": row.get("candidate_rank") if row.get("candidate_rank") is not None else row.get("risk_adjusted_opportunity_rank"),
+        "candidate_score": row.get("ranking_score") if row.get("ranking_score") is not None else row.get("paper_allocation_priority"),
+        "qualification_score": row.get("buy_quality_score") if row.get("buy_quality_score") is not None else row.get("trade_quality_score"),
+        "forecast_state": forecast.get("forecast_state") or row.get("forecast_state"),
+        "forecast_evidence_status": forecast.get("evidence_status") or forecast.get("forecast_evidence_status"),
+        "commitment_state": row.get("buy_eligibility") or row.get("commitment_state"),
+        "commitment_score": gates.get("commitment_score"),
+        "momentum_state": row.get("momentum_state") or row.get("trend_state"),
+        "momentum_score": row.get("momentum_score"),
+        "regime": row.get("market_regime") or row.get("regime_context") or row.get("regime"),
+        "regime_alignment": row.get("regime_alignment_label") or row.get("regime_fit"),
+        "entry_quality": row.get("entry_quality_score") if row.get("entry_quality_score") is not None else row.get("paper_entry_bridge_score"),
+        "expected_return": pretrade.get("expected_return_range") or row.get("expected_return_range") or row.get("expected_return_pct"),
+        "expected_hold": pretrade.get("expected_hold") or row.get("expected_hold") or row.get("expected_max_hold"),
+        "risk_contract_status": pretrade.get("contract_state") or risk.get("risk_envelope_state"),
+        "freshness_status": row.get("quote_freshness_status") or row.get("candidate_snapshot_freshness"),
+        "quote_timestamp": row.get("provider_quote_timestamp") or row.get("quote_timestamp") or row.get("market_observation_timestamp"),
+        "bar_timestamp": row.get("completed_bar_timestamp") or row.get("bar_timestamp"),
+        "duplicate_exposure_state": row.get("duplicate_exposure_state"),
+        "capacity_state": row.get("capacity_decision"),
+        "capital_state": row.get("capital_book_id"),
+        "session_state": row.get("session_state") or row.get("market_session_mode"),
+        "price_at_decision": row.get("price") if row.get("price") is not None else row.get("current_price"),
+        "crypto_gate_evidence": {
+            "completed_bar_continuation": forecast.get("LATEST_COMPLETED_BAR_CONTINUATION"),
+            "completed_bar_trend": forecast.get("BOUNDED_COMPLETED_BAR_TREND"),
+            "forecast_missing_inputs": list(forecast.get("missing_inputs") or forecast.get("missing_fields") or [])[:12],
+            "hot_refresh_attempted": bool(row.get("hot_candidate_quote_refresh_attempted", False)),
+            "hot_refresh_result": row.get("hot_candidate_quote_refresh_result"),
+        },
+        "source_ids": {
+            "source_snapshot_id": row.get("source_snapshot_id"),
+            "source_record_id": row.get("source_record_id"),
+            "ranking_version": row.get("ranking_version"),
+            "risk_envelope_id": risk.get("risk_envelope_id"),
+        },
+        "missing_values_are_unavailable": True,
+    }
+
+
 def _execution_trace_event(row: dict[str, Any], **values: Any) -> dict[str, Any]:
     """Keep blocked candidate traces on the same canonical lineage path.
 
@@ -1537,6 +1588,10 @@ def _execution_trace_event(row: dict[str, Any], **values: Any) -> dict[str, Any]
         "pretrade_decision_contract": dict(normalized.get("pretrade_decision_contract_v1") or {}),
         "pretrade_decision_contract_status": str((normalized.get("pretrade_decision_contract_v1") or {}).get("contract_status") or "INVALID"),
         "equity_risk_evidence_join_v1": dict(normalized.get("equity_risk_evidence_join_v1") or {}),
+        "candidate_decision_evidence_v1": _candidate_decision_evidence_v1(
+            normalized,
+            dict(normalized.get("pretrade_decision_contract_v1") or {}),
+        ),
     }
     trace.update(values)
     trace["eligibility_gate_attribution_v1"] = _eligibility_gate_attribution_v1(
@@ -9862,6 +9917,9 @@ class PaperAutopilotEngine:
             "broker_actions_used": 0,
             "generated_at": _now_iso(),
         }
+        trace["candidate_decision_evidence_v1"] = _candidate_decision_evidence_v1(
+            r, contract, gate_meta
+        )
         trace["eligibility_gate_attribution_v1"] = _eligibility_gate_attribution_v1(
             r,
             reason=reason,
@@ -14269,6 +14327,11 @@ class PaperAutopilotEngine:
                     source_bucket=f"paper_autopilot_{reason}",
                     gate_meta=gate_meta,
                 )
+                # Preserve exact broker/lifecycle lineage for the existing
+                # candidate decision ledger; this is observational only.
+                for field in ("lifecycle_id", "position_id", "broker_order_id", "entry_fill_id", "truth_id"):
+                    if opened_row.get(field) not in (None, ""):
+                        row_trace[field] = opened_row.get(field)
                 row_trace["portfolio_risk_proof_present"] = bool(opened_row.get("portfolio_risk_proof_present", False))
                 row_trace["portfolio_risk_score_used"] = opened_row.get("portfolio_risk_score_used")
                 row_trace["portfolio_risk_label_used"] = str(opened_row.get("portfolio_risk_label_used") or "")

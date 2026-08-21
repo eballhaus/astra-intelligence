@@ -15,6 +15,7 @@ from typing import Any, Iterable, Mapping
 
 LANES = ("SWING", "DAY", "SCALP", "CRYPTO")
 MAX_RECENT_IDS = 500
+MAX_RECENT_DECISION_SNAPSHOT_IDS = 500
 MAX_DAILY_BUCKETS = 31
 COHORTS = ("SWING_EQUITY", "DAY_EQUITY", "DAY_ETF", "SWING_ETF", "SCALP", "CRYPTO")
 
@@ -60,6 +61,97 @@ def _exact_blocker(source: Mapping[str, Any]) -> str:
     )
 
 
+def _decision_state(source: Mapping[str, Any], blocker: str) -> str:
+    """Classify the observed worker result without changing any entry gate."""
+    explicit = _text(source.get("candidate_decision") or source.get("decision"))
+    if explicit.upper() in {"ACCEPTED", "REJECTED", "BLOCKED", "DEFERRED"}:
+        return explicit.upper()
+    if bool(source.get("order_ready")) or bool(source.get("order_attempted")):
+        return "ACCEPTED"
+    if blocker or not bool(source.get("eligible")):
+        return "BLOCKED"
+    return "DEFERRED"
+
+
+def _decision_snapshot_id(source: Mapping[str, Any], state: str, blocker: str) -> str:
+    """Keep one immutable snapshot per candidate decision state, not per cycle."""
+    return "decision:" + _fingerprint((
+        source.get("candidate_id") or source.get("recommendation_id") or source.get("candidate_fingerprint"),
+        source.get("symbol"), source.get("lane_id"), source.get("candidate_generated_at") or source.get("generated_at"),
+        source.get("source_snapshot_id") or source.get("source_record_id"), state, blocker,
+    ))
+
+
+def _decision_snapshot(source: Mapping[str, Any], record: Mapping[str, Any], state: str, blocker: str) -> dict[str, Any]:
+    """Copy bounded decision-time facts only; later outcomes live in outcome labels."""
+    evidence = source.get("candidate_decision_evidence_v1")
+    evidence = dict(evidence) if isinstance(evidence, Mapping) else {}
+    lifecycle_id = _text(source.get("lifecycle_id") or record.get("lifecycle_id"))
+    position_id = _text(source.get("position_id") or record.get("position_id"))
+    truth_id = _text(source.get("truth_id") or record.get("truth_id"))
+    if lifecycle_id and (position_id or truth_id):
+        linkage = "EXACTLY_LINKED"
+    elif lifecycle_id or position_id or truth_id:
+        linkage = "PARTIALLY_LINKED"
+    else:
+        linkage = "UNLINKED"
+    snapshot_id = _decision_snapshot_id(source, state, blocker)
+    return {
+        "schema_version": "astra_candidate_decision_snapshot_v1",
+        "candidate_decision_snapshot_id": snapshot_id,
+        "ledger_id": snapshot_id,
+        "immutable_decision_snapshot": True,
+        "decision_timestamp": _text(record.get("timestamp_utc")),
+        "candidate_id": _text(record.get("candidate_id")) or None,
+        "recommendation_id": _text(record.get("recommendation_id")) or None,
+        "selection_id": _text(source.get("selection_id")) or None,
+        "symbol": _text(record.get("symbol")) or None,
+        "canonical_symbol": _text(record.get("canonical_symbol")) or None,
+        "asset_class": _text(record.get("asset_class")) or None,
+        "asset_type": _text(source.get("asset_type") or record.get("asset_class")) or None,
+        "lane_id": _text(record.get("lane_id")) or None,
+        "horizon": _text(source.get("paper_entry_horizon_style") or source.get("trade_horizon_style") or source.get("intended_horizon")) or None,
+        "decision": state,
+        "first_causal_blocker": blocker or None,
+        "decision_reason": _text(source.get("decision_reason")) or None,
+        "candidate_rank": evidence.get("candidate_rank"),
+        "candidate_score": evidence.get("candidate_score"),
+        "qualification_score": evidence.get("qualification_score"),
+        "forecast_state": evidence.get("forecast_state"),
+        "forecast_evidence_status": evidence.get("forecast_evidence_status"),
+        "commitment_state": evidence.get("commitment_state"),
+        "commitment_score": evidence.get("commitment_score"),
+        "momentum_state": evidence.get("momentum_state"),
+        "momentum_score": evidence.get("momentum_score"),
+        "regime": evidence.get("regime"),
+        "regime_alignment": evidence.get("regime_alignment"),
+        "entry_quality": evidence.get("entry_quality"),
+        "expected_return": evidence.get("expected_return"),
+        "expected_hold": evidence.get("expected_hold"),
+        "risk_contract_status": evidence.get("risk_contract_status"),
+        "freshness_status": evidence.get("freshness_status"),
+        "quote_timestamp": evidence.get("quote_timestamp"),
+        "bar_timestamp": evidence.get("bar_timestamp"),
+        "duplicate_exposure_state": evidence.get("duplicate_exposure_state") or source.get("duplicate_exposure_state"),
+        "capacity_state": evidence.get("capacity_state") or source.get("capacity_decision"),
+        "capital_state": evidence.get("capital_state") or source.get("capital_book_id"),
+        "session_state": evidence.get("session_state") or source.get("session_state") or source.get("market_session_mode"),
+        "crypto_gate_evidence": dict(evidence.get("crypto_gate_evidence") or {}),
+        "source_ids": dict(evidence.get("source_ids") or {}),
+        "price_at_decision": evidence.get("price_at_decision"),
+        "lifecycle_id": lifecycle_id or None,
+        "position_id": position_id or None,
+        "entry_order_id": _text(source.get("broker_order_id") or record.get("broker_order_id")) or None,
+        "entry_fill_id": _text(source.get("entry_fill_id") or record.get("entry_fill_id")) or None,
+        "truth_id": truth_id or None,
+        "trade_linkage_status": linkage,
+        "later_outcome_state": "NOT_ATTACHED",
+        "later_outcome_owner": "outcome_labels_v1.jsonl",
+        "evidence_class": "DECISION_TIME_OBSERVATION",
+        "missing_values_are_unavailable": True,
+    }
+
+
 class LaneExecutionTraceLedgerV1:
     """Bounded index over append-only operational traces; never broker truth."""
 
@@ -67,6 +159,9 @@ class LaneExecutionTraceLedgerV1:
         self.state_dir = str(state_dir or "state")
         self.path = os.path.join(self.state_dir, "lane_execution_trace_v1.jsonl")
         self.summary_path = os.path.join(self.state_dir, "lane_execution_trace_v1.summary.json")
+        # This is the existing canonical candidate ledger. The worker adds
+        # compact decision snapshots; it does not create a second store.
+        self.candidate_decision_ledger_path = os.path.join(self.state_dir, "candidate_decision_ledger_v1.jsonl")
 
     def _empty_summary(self) -> dict[str, Any]:
         return {
@@ -75,6 +170,7 @@ class LaneExecutionTraceLedgerV1:
             "total_trace_rows": 0,
             "duplicate_trace_rows_suppressed": 0,
             "recent_trace_ids": [],
+            "recent_decision_snapshot_ids": [],
             "lanes": {lane: self._empty_lane() for lane in LANES},
             "cohorts": {cohort: self._empty_lane() for cohort in COHORTS},
             # Bounded worker-maintained counters make throughput windows
@@ -98,6 +194,9 @@ class LaneExecutionTraceLedgerV1:
             "reserve_order_ready_count": 0, "reserve_submission_attempt_count": 0,
             "reserve_commitments_requested": 0, "reserve_commitments_released": 0,
             "reserve_commitments_pending": 0, "false_reserve_exhaustion_contradictions": 0,
+            "decision_snapshots": 0, "decision_accepted": 0, "decision_rejected": 0,
+            "decision_blocked": 0, "decision_deferred": 0, "decision_exact_trade_links": 0,
+            "decision_unresolved_links": 0,
         }
 
     def _read_summary(self) -> dict[str, Any]:
@@ -142,6 +241,7 @@ class LaneExecutionTraceLedgerV1:
                     normalized_buckets[str(day)] = self._normalize_bucket(bucket)
                 data["daily_buckets"] = normalized_buckets
                 data.setdefault("recent_trace_ids", [])
+                data.setdefault("recent_decision_snapshot_ids", [])
                 return data
         except Exception:
             pass
@@ -212,6 +312,16 @@ class LaneExecutionTraceLedgerV1:
             and (record.get("lane_active_commitment_count") or 0) == 0
         )
         summary["metadata_failures"] += int(not _text(record.get("candidate_id")) or not _text(record.get("recommendation_id")))
+        snapshot = record.get("candidate_decision_snapshot_v1")
+        if bool(record.get("candidate_decision_snapshot_recorded")) and isinstance(snapshot, Mapping):
+            decision = _text(snapshot.get("decision")).upper()
+            summary["decision_snapshots"] += 1
+            summary["decision_accepted"] += int(decision == "ACCEPTED")
+            summary["decision_rejected"] += int(decision == "REJECTED")
+            summary["decision_blocked"] += int(decision == "BLOCKED")
+            summary["decision_deferred"] += int(decision == "DEFERRED")
+            summary["decision_exact_trade_links"] += int(snapshot.get("trade_linkage_status") == "EXACTLY_LINKED")
+            summary["decision_unresolved_links"] += int(snapshot.get("trade_linkage_status") in {"PARTIALLY_LINKED", "UNLINKED"})
         blocker = _text(record.get("exact_blocker"))
         if blocker:
             blockers = summary.setdefault("top_blockers", {})
@@ -224,13 +334,18 @@ class LaneExecutionTraceLedgerV1:
             json.dump(dict(summary), handle, separators=(",", ":"), ensure_ascii=True)
         os.replace(temp, self.summary_path)
 
-    def record(self, rows: Iterable[Mapping[str, Any]], *, cycle_id: str) -> dict[str, int]:
+    def record(self, rows: Iterable[Mapping[str, Any]], *, cycle_id: str) -> dict[str, Any]:
         """Append unique worker traces and update a bounded daily summary."""
         summary = self._read_summary()
         recent = list(summary.get("recent_trace_ids") or [])[-MAX_RECENT_IDS:]
         known = set(recent)
-        appended = suppressed = 0
+        recent_decisions = list(summary.get("recent_decision_snapshot_ids") or [])[-MAX_RECENT_DECISION_SNAPSHOT_IDS:]
+        known_decisions = set(recent_decisions)
+        appended = suppressed = snapshots_written = snapshots_deduped = 0
         records: list[dict[str, Any]] = []
+        decision_rows: list[dict[str, Any]] = []
+        decision_by_lane: dict[str, int] = {lane: 0 for lane in LANES}
+        decision_by_state: dict[str, int] = {state: 0 for state in ("ACCEPTED", "REJECTED", "BLOCKED", "DEFERRED")}
         for source in rows:
             if not isinstance(source, Mapping):
                 continue
@@ -265,6 +380,7 @@ class LaneExecutionTraceLedgerV1:
                 "submission_result": _text(source.get("order_result")),
                 "broker_order_id": _text(source.get("broker_order_id")), "entry_fill_id": _text(source.get("entry_fill_id")),
                 "position_id": _text(source.get("position_id")), "position_owner": _text(source.get("position_owner")),
+                "lifecycle_id": _text(source.get("lifecycle_id")),
                 "exit_trigger": _text(source.get("exit_trigger")), "exit_order_id": _text(source.get("exit_order_id")),
                 "exit_fill_id": _text(source.get("exit_fill_id")), "truth_id": _text(source.get("truth_id")),
                 "truth_status": _text(source.get("truth_status")), "learning_delivery_status": _text(source.get("learning_delivery_status")),
@@ -313,6 +429,35 @@ class LaneExecutionTraceLedgerV1:
                 "entry_commitment_trace_v1": dict(source.get("entry_commitment_trace_v1") or {}),
                 "pretrade_contract_missing_fields_trace_v1": dict(source.get("pretrade_contract_missing_fields_trace_v1") or {}),
             }
+            decision_state = _decision_state(source, blocker)
+            snapshot = _decision_snapshot(source, record, decision_state, blocker)
+            record["candidate_decision_snapshot_v1"] = snapshot
+            snapshot_id = str(snapshot["candidate_decision_snapshot_id"])
+            if snapshot_id not in known_decisions:
+                # Retain compatibility fields for existing outcome labels while
+                # keeping the immutable contract nested and self-contained.
+                decision_rows.append({
+                    **snapshot,
+                    "timestamp_utc": snapshot["decision_timestamp"],
+                    "canonical_state": decision_state.lower(),
+                    "decision_status": decision_state,
+                    "action": decision_state.lower(),
+                    "final_action": decision_state.lower(),
+                    "was_released": decision_state == "ACCEPTED",
+                    "was_paper_ready": decision_state == "ACCEPTED",
+                    "was_blocked": decision_state in {"REJECTED", "BLOCKED"},
+                    "was_watchlist": decision_state == "DEFERRED",
+                    "candidate_decision_snapshot_v1": dict(snapshot),
+                })
+                known_decisions.add(snapshot_id)
+                recent_decisions.append(snapshot_id)
+                snapshots_written += 1
+                decision_by_lane[lane] = int(decision_by_lane.get(lane, 0)) + 1
+                decision_by_state[decision_state] = int(decision_by_state.get(decision_state, 0)) + 1
+                record["candidate_decision_snapshot_recorded"] = True
+            else:
+                snapshots_deduped += 1
+                record["candidate_decision_snapshot_recorded"] = False
             records.append(record)
             known.add(trace_id)
             recent.append(trace_id)
@@ -331,16 +476,59 @@ class LaneExecutionTraceLedgerV1:
             with open(self.path, "a", encoding="utf-8") as handle:
                 for record in records:
                     handle.write(json.dumps(record, separators=(",", ":"), ensure_ascii=True) + "\n")
+        if decision_rows:
+            # Appending immutable records is observational. A write failure
+            # must not affect the worker's trading result.
+            try:
+                os.makedirs(self.state_dir, exist_ok=True)
+                with open(self.candidate_decision_ledger_path, "a", encoding="utf-8") as handle:
+                    for decision in decision_rows:
+                        handle.write(json.dumps(decision, separators=(",", ":"), ensure_ascii=True) + "\n")
+            except OSError:
+                # Keep the trace record; the summary reports only successful
+                # writes, and no candidate outcome is inferred from failure.
+                snapshots_deduped += snapshots_written
+                snapshots_written = 0
         summary["total_trace_rows"] = int(summary.get("total_trace_rows", 0)) + appended
         summary["duplicate_trace_rows_suppressed"] = int(summary.get("duplicate_trace_rows_suppressed", 0)) + suppressed
         summary["recent_trace_ids"] = recent[-MAX_RECENT_IDS:]
+        summary["recent_decision_snapshot_ids"] = recent_decisions[-MAX_RECENT_DECISION_SNAPSHOT_IDS:]
         summary["daily_buckets"] = {
             day: summary["daily_buckets"][day]
             for day in sorted(summary.get("daily_buckets", {}))[-MAX_DAILY_BUCKETS:]
         }
         summary["generated_at"] = _now()
         self._write_summary(summary)
-        return {"appended": appended, "suppressed": suppressed}
+        today_lanes = dict((summary.get("daily_buckets", {}).get(_now()[:10], {}) or {}).get("lanes", {}) or {})
+        by_lane_today = {
+            lane: int(dict(today_lanes.get(lane) or {}).get("decision_snapshots", 0))
+            for lane in LANES
+        }
+        snapshots_today = sum(by_lane_today.values())
+        return {
+            "appended": appended,
+            "suppressed": suppressed,
+            "candidate_decision_evidence_v1": {
+                "schema_version": "astra_candidate_decision_evidence_v1",
+                "snapshots_written": snapshots_written,
+                "snapshots_deduped": snapshots_deduped,
+                "snapshots_today": snapshots_today,
+                "accepted": int(decision_by_state["ACCEPTED"]),
+                "rejected": int(decision_by_state["REJECTED"]),
+                "blocked": int(decision_by_state["BLOCKED"]),
+                "deferred": int(decision_by_state["DEFERRED"]),
+                "by_lane": by_lane_today,
+                "by_lane_current_cycle": {lane: int(decision_by_lane.get(lane, 0)) for lane in LANES},
+                "later_outcomes_linked": 0,
+                "exact_trade_links": sum(1 for row in decision_rows if row.get("trade_linkage_status") == "EXACTLY_LINKED"),
+                "unresolved_links": sum(1 for row in decision_rows if row.get("trade_linkage_status") != "EXACTLY_LINKED"),
+                "outcome_owner": "outcome_labels_v1.jsonl",
+                "full_history_scan_count": 0,
+                "provider_calls": 0,
+                "broker_calls": 0,
+                "llm_calls": 0,
+            },
+        }
 
     def summary(self) -> dict[str, Any]:
         result = self._read_summary()
