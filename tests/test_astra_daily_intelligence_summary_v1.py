@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from engine.astra_daily_intelligence_summary_v1 import build_astra_daily_intelligence_summary_v1
+from engine.astra_daily_intelligence_summary_v1 import (
+    build_astra_daily_intelligence_summary_v1,
+    bundle1_statuses_with_canonical_truths,
+)
+from engine.astra_intelligence_effectiveness_learning_velocity_v1 import (
+    AstraIntelligenceEffectivenessLearningVelocityV1,
+)
 
 
 NOW = datetime(2026, 8, 20, 16, 0, tzinfo=timezone.utc)
@@ -101,6 +107,30 @@ def test_bundle_outputs_are_consumed_without_recomputing_attribution_or_context(
     assert result["bundle3"]["lane_specific_lessons"] == 1
     assert result["efficiency"]["large_file_full_scans"] == 0
     assert result["efficiency"]["provider_calls"] == result["efficiency"]["broker_calls"] == result["efficiency"]["llm_calls"] == 0
+
+
+def test_bundle1_receives_the_same_canonical_truths_as_daily_summary() -> None:
+    truths = [
+        {
+            **_truth("one"),
+            "evidence_class": "BROKER_CONFIRMED_COMPLETE",
+            "entry_price": 10.0,
+            "exit_price": 11.0,
+            "realized_return": 10.0,
+        },
+        {
+            **_truth("two", lane="DAY", result=-1.0),
+            "evidence_class": "BROKER_CONFIRMED_COMPLETE",
+            "entry_price": 10.0,
+            "exit_price": 9.9,
+            "realized_return": -1.0,
+        },
+    ]
+    statuses = bundle1_statuses_with_canonical_truths({"broker_truth_records_v1": []}, truths)
+
+    result = AstraIntelligenceEffectivenessLearningVelocityV1().status(statuses=statuses, force=True)
+
+    assert result["truth_progression_v1"]["overall"]["truth_count"] == 2
 
 
 def test_lanes_remain_separated_and_zero_truth_lane_is_explicit() -> None:

@@ -842,9 +842,13 @@ except Exception:
                 "forced_exits_enabled": False,
             }
 try:
-    from engine.astra_daily_intelligence_summary_v1 import build_astra_daily_intelligence_summary_v1
+    from engine.astra_daily_intelligence_summary_v1 import (
+        build_astra_daily_intelligence_summary_v1,
+        bundle1_statuses_with_canonical_truths,
+    )
 except Exception:
     build_astra_daily_intelligence_summary_v1 = None  # type: ignore[assignment]
+    bundle1_statuses_with_canonical_truths = None  # type: ignore[assignment]
 try:
     from engine.profit_capture_peak_decay_exit_validation_suite_v1 import ProfitCapturePeakDecayExitValidationSuiteV1
 except Exception:
@@ -46993,13 +46997,18 @@ def astra_daily_intelligence_summary_v1():
         # These are compact cache/registry snapshots.  The aggregator never
         # reads lifecycle JSONL, invokes the broker, or invokes a provider.
         cached = _astra_build_h_cached_statuses_v1()
-        bundle1 = dict(ASTRA_INTELLIGENCE_EFFECTIVENESS.status(statuses=cached, force=False) or {})
         all_truths, closed_records, _by_asset = _de_broker_truth_records_v1()
         # The operating-health contract is the existing strict lifecycle
         # truth owner. Broad closed records can include legacy rows without
         # lifecycle/fill lineage and must remain outside official totals.
         canonical_truths = ASTRA_OPERATING_HEALTH_CONTRACT._strict_truths(all_truths)
         noncanonical_closed = [row for row in closed_records if row not in canonical_truths]
+        bundle1_statuses = (
+            bundle1_statuses_with_canonical_truths(cached, canonical_truths)
+            if callable(bundle1_statuses_with_canonical_truths)
+            else cached
+        )
+        bundle1 = dict(ASTRA_INTELLIGENCE_EFFECTIVENESS.status(statuses=bundle1_statuses, force=False) or {})
         bundle2 = build_profit_capture_trade_effectiveness_v2(canonical_truths)
         operating_health = dict(ASTRA_OPERATING_HEALTH_CONTRACT.snapshot() or {})
         worker_state = _astra_evidence_state_json("astra_worker_runtime_state_v1.json")

@@ -20,6 +20,15 @@ def _rows(value: Any) -> list[dict[str, Any]]:
     return [dict(row) for row in value if isinstance(row, dict)] if isinstance(value, list) else []
 
 
+def bundle1_statuses_with_canonical_truths(
+    statuses: dict[str, Any] | None, canonical_truths: list[dict[str, Any]] | None
+) -> dict[str, Any]:
+    """Give Bundle 1 the same strict truth cohort used by the daily summary."""
+    merged = _dict(statuses)
+    merged["broker_truth_records_v1"] = _rows(canonical_truths)
+    return merged
+
+
 def _text(value: Any) -> str:
     return str(value or "").strip()
 
