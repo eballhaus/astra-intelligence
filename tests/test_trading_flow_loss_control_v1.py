@@ -337,6 +337,80 @@ class TrustedQuoteCandidateFlowTests(unittest.TestCase):
         self.assertFalse(trace["eligible"])
         self.assertEqual(trace["decision_reason"], "PRETRADE_DECISION_CONTRACT_MISSING_FIELDS")
 
+    def test_full_cycle_records_order_ready_before_fail_closed_submit_boundary(self):
+        """A submit-boundary rejection must not erase prior ORDER_READY state."""
+        directory = tempfile.TemporaryDirectory(prefix="astra_order_ready_trace_")
+        self.addCleanup(directory.cleanup)
+        engine = PaperAutopilotEngine(
+            db_path=os.path.join(directory.name, "paper.db"),
+            state_path=os.path.join(directory.name, "state.json"),
+            enabled=True,
+            get_latest_row_fn=lambda *_args: {},
+        )
+        candidate = _candidate("AAVE/USD")
+        candidate.update({
+            "asset_type": "crypto",
+            "asset_class": "crypto",
+            "lane_id": "CRYPTO",
+            "paper_entry_horizon_style": "crypto",
+        })
+        engine._refresh_legacy_swing_canary_pre_submit = lambda _positions: {"market_activity": {}}
+        engine._broker_open_symbols_snapshot = lambda: {
+            "broker_open_symbols": set(), "broker_position_by_symbol": {},
+            "broker_reconciliation_active": True, "broker_positions_fetch_ok": True,
+            "broker_open_positions_count": 0,
+        }
+        engine._fetch_open_positions = lambda: []
+        engine._alpaca_safety_snapshot = lambda: {
+            "paper_mode_verified": True, "broker_execution_enabled": True,
+            "live_endpoint_rejected": True, "open_orders_count": 0,
+        }
+        engine._refresh_legacy_forward_activations = lambda _positions: {}
+        engine._bounded_legacy_quarantine_review_phase = lambda **_kwargs: {}
+        engine._loss_containment_review_phase = lambda **_kwargs: {}
+        engine._profit_protection_review_phase = lambda **_kwargs: {}
+        engine._execution_critical_reconciliation_phase = lambda: {}
+        engine._run_fmp_production_verification_v1 = lambda *_args: {}
+        engine._position_evidence_and_advisory_phase = lambda *_args, **_kwargs: ({}, {}, {}, {})
+        engine._refresh_provider_consumption_telemetry_v1 = lambda *_args: {}
+        engine._reconcile_entry_price_lineage_v1 = lambda _snapshot: {}
+        engine._evidence_capacity_snapshot_v1 = lambda *_args: {
+            "capacity_authority_state": "CURRENT", "position_rows_for_read_only_consumers": [],
+        }
+        engine._duplicate_exposure_snapshot = lambda *_args, **_kwargs: {
+            "blocking_symbols": set(), "internal_meaningful_symbols": set(),
+            "broker_meaningful_symbols": set(), "pending_order_symbols": set(),
+            "reservation_symbols": set(), "broker_dust_symbols": set(),
+            "internal_dust_symbols": set(), "details_by_symbol": {},
+        }
+        engine._collect_candidate_rows = lambda: [dict(candidate)]
+        engine._candidate_trace_row = lambda row, **_kwargs: ({
+            "symbol": row["symbol"], "candidate_id": row["candidate_id"],
+            "recommendation_id": row["recommendation_id"], "lane": "CRYPTO",
+            "candidate_horizon": "crypto", "eligible": True, "selected": False,
+            "order_ready": False, "order_attempted": False,
+            "pretrade_decision_contract": {"order_ready_allowed": True},
+        }, True, "eligible", {"_qualified_candidate_for_submission_v1": dict(row)})
+        engine._request_lane_reserve_commitment = lambda *_args, **_kwargs: {
+            "allowed": True, "commitment_id": "reserve-aave", "commitment_state": "COMMITTED",
+            "reason": "AVAILABLE_FROM_LANE_RESERVE",
+        }
+        opened = []
+        engine._open_position_from_row = lambda row, **_kwargs: opened.append(dict(row)) or {
+            "ok": False, "error": "timestamp_freshness", "paper_order_submission_allowed": False,
+        }
+
+        engine.run_cycle()
+
+        self.assertEqual(len(opened), 1)
+        trace = engine._runtime_state["last_execution_trace"]["per_candidate_decision_trace"][0]
+        self.assertTrue(trace["selected"])
+        self.assertTrue(trace["order_ready"])
+        self.assertEqual(trace["order_readiness_reason"], "ready_for_existing_paper_order_boundary")
+        self.assertFalse(trace["order_attempted"])
+        self.assertEqual(trace["order_result"], "rejected")
+        self.assertEqual(trace["order_rejection_reason"], "timestamp_freshness")
+
 
 class ServerQuoteAdapterTests(unittest.TestCase):
     def test_worker_adapter_preserves_router_native_timestamp_without_utc_fallback(self):

@@ -14322,6 +14322,12 @@ class PaperAutopilotEngine:
                 selected_count += 1
                 row_trace["selected"] = True
                 row_trace["order_attempted"] = False
+                # The candidate has passed canonical qualification and owns a
+                # lane-reserve commitment.  The submit boundary still performs
+                # its own fail-closed checks, so record this distinct stage
+                # before invoking it.
+                row_trace["order_ready"] = True
+                row_trace["order_readiness_reason"] = "ready_for_existing_paper_order_boundary"
                 row_trace["horizon_assignment_confidence"] = round(
                     _to_float(row.get("confidence"), _to_float(row.get("predicted_win_probability"), 0.0)),
                     2,
