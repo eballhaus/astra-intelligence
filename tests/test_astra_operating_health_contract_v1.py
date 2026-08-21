@@ -38,6 +38,19 @@ class OperatingHealthContractTests(unittest.TestCase):
             self.assertIn("SCALP", payload["lanes"])
             self.assertEqual(payload["lanes"]["SCALP"]["current_lifecycle_stage"], "position_monitoring")
 
+    def test_valid_duplicate_exposure_is_not_misclassified_as_a_software_defect(self):
+        with tempfile.TemporaryDirectory() as root:
+            payload = AstraOperatingHealthContractV1(root).build(
+                multilane={"lanes": {"SCALP": {
+                    "first_blocker": "duplicate_active_position",
+                    "first_blocker_validity": "VALID_SAFETY_REJECTION",
+                }}},
+                worker_state={}, continuous={}, sentinel={},
+            )
+            scalp = payload["lanes"]["SCALP"]
+            self.assertEqual(scalp["blocker_validity"], "VALID_SAFETY_REJECTION")
+            self.assertEqual(scalp["waiting_state"], "LEGITIMATE_WAIT")
+
     def test_high_sentinel_root_prevents_false_control_plane_agreement(self):
         with tempfile.TemporaryDirectory() as root:
             payload = AstraOperatingHealthContractV1(root).build(
