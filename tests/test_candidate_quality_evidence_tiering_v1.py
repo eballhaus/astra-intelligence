@@ -10,6 +10,12 @@ from engine.opportunity_cost_learning_v1 import OpportunityCostLearningV1
 
 
 class CandidateQualityEvidenceTieringTests(unittest.TestCase):
+    def test_shadow_counterfactual_return_is_not_real_later_price_evidence(self):
+        self.assertEqual(
+            OpportunityCostLearningV1._real_rejection_outcome({"hypothetical_return": 4.0}),
+            (None, ""),
+        )
+
     def test_quality_proxy_cannot_become_a_missed_or_correct_selection_signal(self):
         with tempfile.TemporaryDirectory() as root:
             state = Path(root)

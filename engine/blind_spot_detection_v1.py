@@ -70,7 +70,6 @@ _REAL_LATER_RETURN_KEYS = (
     "subsequent_return_pct",
     "later_return_after_rejection",
     "rejected_later_return_pct",
-    "hypothetical_return",
     "realized_return_pct",
 )
 

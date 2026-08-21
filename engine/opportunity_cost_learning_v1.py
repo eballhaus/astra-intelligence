@@ -134,7 +134,7 @@ class OpportunityCostLearningV1:
 
     _REAL_LATER_RETURN_KEYS = (
         "subsequent_return", "subsequent_return_pct", "later_return_after_rejection",
-        "rejected_later_return_pct", "hypothetical_return", "realized_return_pct",
+        "rejected_later_return_pct", "realized_return_pct",
     )
 
     @staticmethod
@@ -327,7 +327,7 @@ class OpportunityCostLearningV1:
             recommendation = "review_candidate_suppression_vs_selected" if len(missed) > len(correct) else "preserve_current_selection_bias"
         calculation_method = (
             "opportunity_cost_pct = rejected_return_pct - selected_return_pct; rejected_return_pct uses real later-price "
-            "evidence (subsequent_return, later_return_after_rejection, rejected_later_return_pct, hypothetical_return, "
+            "evidence (subsequent_return, later_return_after_rejection, rejected_later_return_pct, "
             "realized_return_pct) when present, otherwise the proxy ((quality - 70)/18)+((live_quality - 80)/80)-penalty; "
             "selected_return_pct uses same-symbol selected lifecycle if available, otherwise best selected lifecycle return."
         )
