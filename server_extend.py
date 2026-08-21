@@ -46956,7 +46956,7 @@ def astra_intelligence_effectiveness_learning_velocity_v1(force: bool = False):
         base = _astra_build_h_cached_statuses_v1()
         base["astra_build_h_ownership_map_v1"] = ASTRA_BUILD_H_OWNERSHIP_MAP.status(statuses=base, force=True)
         base["astra_knowledge_warehouse_v1"] = ASTRA_KNOWLEDGE_WAREHOUSE.status(statuses=base, force=True)
-        out = dict(ASTRA_INTELLIGENCE_EFFECTIVENESS.status(statuses=base, force=True) or {})
+        out = _astra_effectiveness_with_canonical_truths(base, force=True)
         out["astra_intelligence_effectiveness_learning_velocity_v1"] = True
         out["provider_calls_used"] = 0
         out["broker_calls_used"] = 0
@@ -46977,6 +46977,25 @@ def astra_intelligence_effectiveness_learning_velocity_v1(force: bool = False):
             "behavior_safe_to_apply": False,
             "paper_only_preserved": True,
         }
+
+
+def _astra_effectiveness_with_canonical_truths(
+    statuses: dict | None,
+    *,
+    force: bool,
+    canonical_truths: list[dict] | None = None,
+) -> dict:
+    """Run Bundle 1 against the strict registry, never a stale cache subset."""
+    truths = canonical_truths
+    if truths is None:
+        all_truths, _closed_records, _by_asset = _de_broker_truth_records_v1()
+        truths = ASTRA_OPERATING_HEALTH_CONTRACT._strict_truths(all_truths)
+    input_statuses = (
+        bundle1_statuses_with_canonical_truths(statuses, truths)
+        if callable(bundle1_statuses_with_canonical_truths)
+        else dict(statuses or {})
+    )
+    return dict(ASTRA_INTELLIGENCE_EFFECTIVENESS.status(statuses=input_statuses, force=force) or {})
 
 
 @router.get("/api/astra_daily_intelligence_summary_v1")
@@ -47003,12 +47022,9 @@ def astra_daily_intelligence_summary_v1():
         # lifecycle/fill lineage and must remain outside official totals.
         canonical_truths = ASTRA_OPERATING_HEALTH_CONTRACT._strict_truths(all_truths)
         noncanonical_closed = [row for row in closed_records if row not in canonical_truths]
-        bundle1_statuses = (
-            bundle1_statuses_with_canonical_truths(cached, canonical_truths)
-            if callable(bundle1_statuses_with_canonical_truths)
-            else cached
+        bundle1 = _astra_effectiveness_with_canonical_truths(
+            cached, force=False, canonical_truths=canonical_truths
         )
-        bundle1 = dict(ASTRA_INTELLIGENCE_EFFECTIVENESS.status(statuses=bundle1_statuses, force=False) or {})
         bundle2 = build_profit_capture_trade_effectiveness_v2(canonical_truths)
         operating_health = dict(ASTRA_OPERATING_HEALTH_CONTRACT.snapshot() or {})
         worker_state = _astra_evidence_state_json("astra_worker_runtime_state_v1.json")
@@ -47050,7 +47066,7 @@ def astra_daily_intelligence_summary_v1():
 def astra_shadow_experiment_governance_v1(force: bool = False):
     try:
         base = _astra_build_h_cached_statuses_v1()
-        base["astra_intelligence_effectiveness_learning_velocity_v1"] = ASTRA_INTELLIGENCE_EFFECTIVENESS.status(statuses=base, force=True)
+        base["astra_intelligence_effectiveness_learning_velocity_v1"] = _astra_effectiveness_with_canonical_truths(base, force=True)
         out = dict(ASTRA_SHADOW_EXPERIMENT_GOVERNANCE.status(statuses=base, force=True) or {})
         out["astra_shadow_experiment_governance_v1"] = True
         out["automatic_promotions_enabled"] = False
@@ -47082,7 +47098,7 @@ def build_h_final_validation_v1(force: bool = False):
         base = _astra_build_h_cached_statuses_v1()
         base["astra_build_h_ownership_map_v1"] = ASTRA_BUILD_H_OWNERSHIP_MAP.status(statuses=base, force=True)
         base["astra_knowledge_warehouse_v1"] = ASTRA_KNOWLEDGE_WAREHOUSE.status(statuses=base, force=True)
-        base["astra_intelligence_effectiveness_learning_velocity_v1"] = ASTRA_INTELLIGENCE_EFFECTIVENESS.status(statuses=base, force=True)
+        base["astra_intelligence_effectiveness_learning_velocity_v1"] = _astra_effectiveness_with_canonical_truths(base, force=True)
         base["astra_shadow_experiment_governance_v1"] = ASTRA_SHADOW_EXPERIMENT_GOVERNANCE.status(statuses=base, force=True)
         out = dict(ASTRA_BUILD_H_FINAL_VALIDATION.status(statuses=base, force=True) or {})
         out["build_h_final_validation_v1"] = True
@@ -47200,7 +47216,7 @@ def _astra_build_j_cached_statuses_v1() -> dict:
     base = _astra_build_i_cached_statuses_v1()
     base["replay_counterfactual_learning_v2"] = REPLAY_COUNTERFACTUAL_LEARNING_V2.status(force=False)
     base["realistic_shadow_evidence_learning_lab_v1"] = REALISTIC_SHADOW_EVIDENCE_LEARNING_LAB.status(statuses=base, force=False)
-    base["astra_intelligence_effectiveness_learning_velocity_v1"] = ASTRA_INTELLIGENCE_EFFECTIVENESS.status(statuses=base, force=True)
+    base["astra_intelligence_effectiveness_learning_velocity_v1"] = _astra_effectiveness_with_canonical_truths(base, force=True)
     base["astra_tier2a_librarian_executive_truth_layer_v1"] = ASTRA_TIER2A_LIBRARIAN_EXECUTIVE_TRUTH_LAYER.status(statuses=base, force=False)
     base["crypto_shadow_learning_v1"] = CRYPTO_SHADOW_LEARNING.status(statuses=base, force=False)
     return base
@@ -47221,7 +47237,7 @@ def _astra_build_j_direct_statuses_v1() -> dict:
     if not base.get("realistic_shadow_evidence_learning_lab_v1"):
         base["realistic_shadow_evidence_learning_lab_v1"] = REALISTIC_SHADOW_EVIDENCE_LEARNING_LAB.status(statuses=base, force=False)
     if not base.get("astra_intelligence_effectiveness_learning_velocity_v1"):
-        base["astra_intelligence_effectiveness_learning_velocity_v1"] = ASTRA_INTELLIGENCE_EFFECTIVENESS.status(statuses=base, force=False)
+        base["astra_intelligence_effectiveness_learning_velocity_v1"] = _astra_effectiveness_with_canonical_truths(base, force=False)
     if not base.get("astra_tier2a_librarian_executive_truth_layer_v1"):
         base["astra_tier2a_librarian_executive_truth_layer_v1"] = ASTRA_TIER2A_LIBRARIAN_EXECUTIVE_TRUTH_LAYER.status(statuses=base, force=False)
     if not base.get("crypto_shadow_learning_v1"):
@@ -79537,7 +79553,7 @@ def _learning_acceleration_status_bundle() -> dict:
     except Exception:
         statuses["astra_knowledge_warehouse_v1"] = {}
     try:
-        statuses["astra_intelligence_effectiveness_learning_velocity_v1"] = ASTRA_INTELLIGENCE_EFFECTIVENESS.status(statuses=statuses, force=False)
+        statuses["astra_intelligence_effectiveness_learning_velocity_v1"] = _astra_effectiveness_with_canonical_truths(statuses, force=False)
     except Exception:
         statuses["astra_intelligence_effectiveness_learning_velocity_v1"] = {}
     try:
