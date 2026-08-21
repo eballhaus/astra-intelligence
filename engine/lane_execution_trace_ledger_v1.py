@@ -46,6 +46,12 @@ def _cohort_id(lane: str, asset_class: Any, instrument_type: Any) -> str:
 
 def _exact_blocker(source: Mapping[str, Any]) -> str:
     """Prefer the terminal order rejection without changing earlier gates."""
+    # A partial worker turn intentionally evaluates evidence without reaching
+    # the submission boundary.  Once its gates pass, it is waiting for the
+    # canonical full cycle, not blocked by the stale observation that a final
+    # hot refresh has already replaced.
+    if bool(source.get("partial_cycle_observation_only")) and bool(source.get("eligible")):
+        return "CANDIDATE_ELIGIBLE_AWAITING_FULL_CYCLE"
     for field in (
         "order_rejection_reason",
         "order_submission_rejection_reason",
@@ -66,6 +72,8 @@ def _decision_state(source: Mapping[str, Any], blocker: str) -> str:
     explicit = _text(source.get("candidate_decision") or source.get("decision"))
     if explicit.upper() in {"ACCEPTED", "REJECTED", "BLOCKED", "DEFERRED"}:
         return explicit.upper()
+    if bool(source.get("partial_cycle_observation_only")) and bool(source.get("eligible")):
+        return "DEFERRED"
     if bool(source.get("order_ready")) or bool(source.get("order_attempted")):
         return "ACCEPTED"
     if blocker or not bool(source.get("eligible")):
@@ -361,6 +369,8 @@ class LaneExecutionTraceLedgerV1:
                 suppressed += 1
                 continue
             blocker = _exact_blocker(source)
+            decision_evidence = source.get("candidate_decision_evidence_v1")
+            decision_evidence = dict(decision_evidence) if isinstance(decision_evidence, Mapping) else {}
             record = {
                 "trace_id": trace_id, "timestamp_utc": _now(), "cycle_id": _text(cycle_id),
                 "lane_id": lane, "candidate_id": candidate_id, "recommendation_id": recommendation_id,
@@ -368,7 +378,11 @@ class LaneExecutionTraceLedgerV1:
                 "asset_class": _text(source.get("asset_class") or source.get("asset_type")),
                 "instrument_type": _text(source.get("instrument_type")),
                 "candidate_source": _text(source.get("candidate_source")), "candidate_seen": True,
-                "freshness_result": _text(source.get("candidate_snapshot_freshness") or source.get("freshness_result")),
+                "freshness_result": _text(
+                    decision_evidence.get("freshness_status")
+                    or source.get("candidate_snapshot_freshness")
+                    or source.get("freshness_result")
+                ),
                 "eligibility_result": "PASS" if source.get("eligible") else "BLOCKED",
                 "session_result": "PASS" if source.get("paper_order_submission_allowed") else _text(source.get("session_state") or source.get("market_session_mode") or "BLOCKED"),
                 "capital_result": "PASS" if source.get("lane_activation_contract", {}).get("capital_configured", True) else "BLOCKED",
@@ -385,6 +399,7 @@ class LaneExecutionTraceLedgerV1:
                 "exit_fill_id": _text(source.get("exit_fill_id")), "truth_id": _text(source.get("truth_id")),
                 "truth_status": _text(source.get("truth_status")), "learning_delivery_status": _text(source.get("learning_delivery_status")),
                 "exact_blocker": blocker, "source_fingerprint": source_fingerprint,
+                "partial_cycle_observation_only": bool(source.get("partial_cycle_observation_only")),
                 "source_record_id": _text(source.get("source_record_id")),
                 "ranking_version": _text(source.get("ranking_version")),
                 "generated_at": _text(source.get("generated_at") or source.get("candidate_generated_at")),

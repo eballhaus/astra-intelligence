@@ -114,6 +114,35 @@ class CandidateDecisionEvidencePreservationV1Tests(unittest.TestCase):
             self.assertEqual(result["candidate_decision_evidence_v1"]["by_lane"]["SCALP"], 1)
             self.assertEqual(result["candidate_decision_evidence_v1"]["by_lane"]["SWING"], 1)
 
+    def test_partial_fresh_crypto_observation_is_deferred_not_stale_blocked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = LaneExecutionTraceLedgerV1(directory)
+            source = candidate(
+                candidate_id="cand-aave-1",
+                symbol="AAVE/USD",
+                candidate_generated_at="2026-08-21T21:18:00Z",
+                decision_reason="timestamp_freshness",
+                eligible=True,
+                selected=False,
+                order_ready=False,
+                partial_cycle_observation_only=True,
+                crypto_final_quote_refresh_attempted=True,
+                crypto_final_quote_refresh_result="FRESH",
+                crypto_final_refresh_quote_age_seconds=4.6,
+            )
+            result = ledger.record([source], cycle_id="partial:cycle-1")
+            trace = self._rows(Path(directory) / "lane_execution_trace_v1.jsonl")[0]
+            snapshot = self._rows(Path(directory) / "candidate_decision_ledger_v1.jsonl")[0]
+
+            self.assertEqual(trace["exact_blocker"], "CANDIDATE_ELIGIBLE_AWAITING_FULL_CYCLE")
+            self.assertEqual(trace["freshness_result"], "FRESH")
+            self.assertTrue(trace["partial_cycle_observation_only"])
+            self.assertEqual(snapshot["decision"], "DEFERRED")
+            self.assertEqual(snapshot["first_causal_blocker"], "CANDIDATE_ELIGIBLE_AWAITING_FULL_CYCLE")
+            self.assertEqual(result["candidate_decision_evidence_v1"]["deferred"], 1)
+            self.assertEqual(result["candidate_decision_evidence_v1"]["provider_calls"], 0)
+            self.assertEqual(result["candidate_decision_evidence_v1"]["broker_calls"], 0)
+
     def test_daily_summary_consumes_worker_capture_without_raw_ledger_scan(self):
         summary = build_astra_daily_intelligence_summary_v1(
             canonical_truths=[], bundle1={}, bundle2={}, operating_health={},
