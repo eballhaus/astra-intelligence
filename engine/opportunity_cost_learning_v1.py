@@ -197,12 +197,20 @@ class OpportunityCostLearningV1:
             selected_symbol = _text(matched.get("symbol"), "portfolio_selected").upper()
             selected_return = self._selected_return(matched) if matched else avg_selected
             opportunity_cost = rejected_return - selected_return
-            missed = opportunity_cost > 0.35
-            correct = opportunity_cost <= 0.0
+            rejection_classification = self._classify_rejection(rej, rejected_return, rejected_tier)
+            # A quality proxy is useful for triage but cannot establish that
+            # Astra missed a better candidate or made a correct rejection.
+            missed = (
+                rejection_classification == "MISSED_OPPORTUNITY"
+                and opportunity_cost > 0.35
+            )
+            correct = (
+                rejection_classification == "CORRECT_REJECTION"
+                and opportunity_cost <= 0.0
+            )
             ranking_quality = _clamp(70.0 - max(0.0, opportunity_cost) * 12.0 + (10.0 if correct else 0.0))
             promotion_quality = _clamp(_to_float(rej.get("grade_percent") or rej.get("confidence"), 60.0))
             selection_efficiency = _clamp(100.0 - max(0.0, opportunity_cost) * 15.0)
-            rejection_classification = self._classify_rejection(rej, rejected_return, rejected_tier)
             out.append({
                 "enabled": True,
                 "version": VERSION,
@@ -214,6 +222,9 @@ class OpportunityCostLearningV1:
                 "rejected_return_evidence_tier": rejected_tier,
                 "rejected_return_evidence_key": rejected_key,
                 "rejected_candidate_outcome_classification": rejection_classification,
+                "comparison_evidence_status": (
+                    "REAL_LATER_PRICE" if rejected_tier == "REAL_LATER_PRICE" else "INSUFFICIENT_LATER_OUTCOME"
+                ),
                 "opportunity_cost_pct": _round(opportunity_cost),
                 "missed_better_candidate_flag": bool(missed),
                 "correct_selection_flag": bool(correct),

@@ -65,6 +65,35 @@ def _bucket(row: dict[str, Any], *keys: str) -> str:
     return "unknown"
 
 
+_REAL_LATER_RETURN_KEYS = (
+    "subsequent_return",
+    "subsequent_return_pct",
+    "later_return_after_rejection",
+    "rejected_later_return_pct",
+    "hypothetical_return",
+    "realized_return_pct",
+)
+
+
+def _proven_missed_candidate(row: dict[str, Any]) -> bool:
+    """Keep proxy-quality and legacy flags out of missed-opportunity counts."""
+    classification = _text(row.get("rejected_candidate_outcome_classification")).upper()
+    tier = _text(row.get("rejected_return_evidence_tier")).upper()
+    if classification:
+        return classification == "MISSED_OPPORTUNITY" and tier == "REAL_LATER_PRICE"
+    reasons = " ".join(str(row.get(key) or "") for key in (
+        "blocked_reasons", "rejection_reason", "suppression_reason", "final_blocker_reason",
+    )).lower()
+    if bool(row.get("safety_blocker") or row.get("liquidity_blocker") or row.get("stale_evidence") or row.get("duplicate_exposure")):
+        return False
+    if any(token in reasons for token in ("safety", "liquidity", "stale", "duplicate")):
+        return False
+    later = next((row.get(key) for key in _REAL_LATER_RETURN_KEYS if row.get(key) not in (None, "")), None)
+    if later is None:
+        return False
+    return _to_float(later) > _to_float(row.get("selected_return_pct")) + 0.35
+
+
 class BlindSpotDetectionV1:
     """Shadow-only blind-spot diagnostics from lifecycle and opportunity-cost evidence."""
 
@@ -128,12 +157,7 @@ class BlindSpotDetectionV1:
 
         selected = self._selected_rows()
         rejected = self._rejected_rows()
-        missed = [
-            row for row in rejected
-            if bool(row.get("missed_better_candidate_flag"))
-            or _to_float(row.get("opportunity_cost_pct")) > 0.35
-            or _to_float(row.get("rejected_return_pct")) > _to_float(row.get("selected_return_pct")) + 0.35
-        ]
+        missed = [row for row in rejected if _proven_missed_candidate(row)]
         selected_sector = self._distribution(selected, ("sector", "same_sector"))
         rejected_sector = self._distribution(rejected, ("same_sector", "sector"))
         selected_arch = self._distribution(selected, ("trade_archetype", "same_archetype", "setup_type"))
