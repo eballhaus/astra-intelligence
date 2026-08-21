@@ -10,6 +10,7 @@ from pathlib import Path
 
 from engine.astra_daily_intelligence_summary_v1 import build_astra_daily_intelligence_summary_v1
 from engine.lane_execution_trace_ledger_v1 import LaneExecutionTraceLedgerV1
+from engine.paper_autopilot import PaperAutopilotEngine
 
 
 def candidate(**extra):
@@ -127,6 +128,29 @@ class CandidateDecisionEvidencePreservationV1Tests(unittest.TestCase):
         self.assertEqual(capture["by_lane"]["CRYPTO"], 1)
         self.assertEqual(capture["full_history_scan_count"], 0)
         self.assertEqual(summary["efficiency"]["large_file_full_scans"], 0)
+
+    def test_partial_cycle_trace_uses_existing_candidate_ledger_without_external_actions(self):
+        class Ledger:
+            def __init__(self):
+                self.rows = None
+                self.cycle_id = None
+
+            def record(self, rows, *, cycle_id):
+                self.rows = rows
+                self.cycle_id = cycle_id
+                return {"candidate_decision_evidence_v1": {"snapshots_written": len(rows), "provider_calls": 0, "broker_calls": 0, "llm_calls": 0}}
+
+        engine = PaperAutopilotEngine.__new__(PaperAutopilotEngine)
+        ledger = Ledger()
+        engine.execution_trace_ledger = ledger
+
+        receipt = engine._record_candidate_decision_trace_v1([candidate()], cycle_id="partial:cycle-1")
+
+        self.assertEqual(ledger.cycle_id, "partial:cycle-1")
+        self.assertEqual(ledger.rows[0]["candidate_id"], "cand-btc-1")
+        self.assertEqual(receipt["candidate_decision_evidence_v1"]["snapshots_written"], 1)
+        self.assertEqual(receipt["candidate_decision_evidence_v1"]["provider_calls"], 0)
+        self.assertEqual(receipt["candidate_decision_evidence_v1"]["broker_calls"], 0)
 
     def test_existing_outcome_owner_requires_attributable_stored_price_for_snapshot(self):
         root = Path(__file__).resolve().parents[1]

@@ -9393,6 +9393,22 @@ class PaperAutopilotEngine:
             out["swing_available"] = max(0, _to_int(out.get("swing_available"), 0) - 1)
         return out
 
+    def _record_candidate_decision_trace_v1(
+        self,
+        decision_trace: list[dict[str, Any]],
+        *,
+        cycle_id: str,
+    ) -> dict[str, Any]:
+        """Persist bounded candidate evidence without affecting execution."""
+        if self.execution_trace_ledger is None:
+            return {"appended": 0, "suppressed": 0, "status": "ledger_unavailable"}
+        try:
+            return dict(self.execution_trace_ledger.record(decision_trace, cycle_id=cycle_id))
+        except Exception:
+            # Candidate evidence is observational and must never alter the
+            # existing fail-closed execution result.
+            return {"appended": 0, "suppressed": 0, "status": "ledger_write_failed"}
+
     def _candidate_trace_row(
         self,
         row: dict[str, Any],
@@ -13501,6 +13517,10 @@ class PaperAutopilotEngine:
                         "per_candidate_decision_trace": partial_candidate_traces,
                         "elapsed_ms": elapsed_ms,
                     }
+                    partial_candidate_results["lane_execution_ledger"] = self._record_candidate_decision_trace_v1(
+                        partial_candidate_traces,
+                        cycle_id=f"partial:{self._runtime_state.get('worker_cycle_id') or _now_iso()}",
+                    )
                 except Exception as exc:
                     partial_candidate_results = {"microphase_failed": True, "error": str(exc)[:180]}
                 # Phase rotation: track partial cycle streak
@@ -13538,6 +13558,10 @@ class PaperAutopilotEngine:
                     "orders_attempted": 0, "orders_submitted": 0, "orders_rejected": 0,
                     "final_blocker_reason": str(partial_candidate_results.get("first_causal_blocker") or "legacy_market_evidence_bounded"),
                     "per_candidate_decision_trace": list(partial_candidate_results.get("per_candidate_decision_trace") or []), "legacy_swing_observation": legacy_canary_refresh,
+                    "lane_execution_ledger": dict(partial_candidate_results.get("lane_execution_ledger") or {}),
+                    "candidate_decision_evidence_v1": dict(
+                        dict(partial_candidate_results.get("lane_execution_ledger") or {}).get("candidate_decision_evidence_v1") or {}
+                    ),
                     "broker_reconciliation_active": bool(broker_snapshot.get("broker_reconciliation_active")),
                     "broker_positions_fetch_ok": bool(broker_snapshot.get("broker_positions_fetch_ok")),
                     "broker_open_positions_count": int(_to_int(broker_snapshot.get("broker_open_positions_count"), 0)),

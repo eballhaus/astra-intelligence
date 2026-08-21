@@ -67,6 +67,19 @@ def test_uses_canonical_truths_and_surfaces_count_disagreement() -> None:
     assert result["contract_disagreements"][0]["canonical_value"] == 2
 
 
+def test_bundle_and_operating_health_truth_counts_cannot_claim_alignment_when_stale() -> None:
+    result = _build(
+        bundle1={**_bundle1(), "truth_progression_v1": {**_bundle1()["truth_progression_v1"], "overall": {**_bundle1()["truth_progression_v1"]["overall"], "truth_count": 1}}},
+        operating_health={**_health(), "strict_truth_total": 0},
+    )
+
+    assert result["truth_contract_status"] == "CONTRACT_DISAGREEMENT"
+    assert {row["conflicting_source"] for row in result["contract_disagreements"]} >= {
+        "operating_health.strict_truth_total",
+        "bundle1.truth_progression_v1.overall.truth_count",
+    }
+
+
 def test_noncanonical_closed_rows_are_separate_from_official_truth_totals() -> None:
     result = _build(noncanonical_or_legacy_records=[{"symbol": "LEGACY", "closed_indicator": True}])
     assert result["truth_contract_status"] == "ALIGNED"
@@ -103,6 +116,15 @@ def test_pending_position_is_not_promoted_to_closed_truth() -> None:
     assert result["today_at_a_glance"]["reconciliation_pending_count"] == 1
     assert len(result["daily_activity"]["completed_today"]) == 2
     assert result["current_open_positions"]["broker_confirmed_active"][0]["symbol"] == "PENDING"
+
+
+def test_lane_monitor_counts_are_not_presented_as_canonical_positions_without_position_input() -> None:
+    result = _build(operating_health={**_health(), "lanes": {"SWING": {"broker_confirmed_active_positions": 40}}})
+
+    assert result["today_at_a_glance"]["current_open_broker_positions"] == 0
+    assert result["lanes"]["SWING"]["open_positions"] == 0
+    assert result["lanes"]["SWING"]["lane_monitor_active_count"] == 40
+    assert result["lanes"]["SWING"]["lane_monitor_position_count_status"] == "UNVERIFIED_COMPACT_POSITION_LIST_UNAVAILABLE"
 
 
 def test_shadow_or_replay_input_cannot_enter_official_truth_metrics() -> None:
