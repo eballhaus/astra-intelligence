@@ -6300,6 +6300,17 @@ class PaperAutopilotEngine:
             "current_logic_performance_eligible": True,
             "official_metric_eligible": True, "created_at": _now_iso(), "updated_at": _now_iso(),
         }
+        # Decision evidence is captured before an exit is submitted.  The
+        # broker-confirmed result stays separate in this truth record, so no
+        # later outcome can rewrite what the exit owner knew at the time.
+        record["exit_decision_evidence_v1"] = [
+            dict(item)
+            for item in list(lifecycle_notes.get("exit_decision_evidence_v1") or [])
+            if isinstance(item, Mapping)
+        ][-12:]
+        record["exit_decision_evidence_status"] = (
+            "CAPTURED_PRE_ACTION" if record["exit_decision_evidence_v1"] else "UNAVAILABLE_HISTORICAL_OR_NOT_MATERIAL"
+        )
         # This is a passive snapshot of evidence already present at entry.  It
         # is intentionally outside the strict-truth eligibility predicate.
         frozen_prediction = entry_contract.get("original_pretrade_prediction_snapshot_v1")
@@ -11047,6 +11058,15 @@ class PaperAutopilotEngine:
 
         lifecycle_stage = "completed_winner" if ret > 0 else "completed_loser"
         with self._connect() as conn:
+            # The open-row object is from the beginning of the management
+            # cycle. Preserve decision evidence appended after that fetch
+            # rather than replacing it with this stale copy during closure.
+            persisted_notes_row = conn.execute(
+                "SELECT lifecycle_notes FROM paper_positions WHERE position_id=?",
+                (pid,),
+            ).fetchone()
+            persisted_notes = _safe_json_load(persisted_notes_row[0] if persisted_notes_row else "")
+            notes = {**notes, **persisted_notes}
             update_result = conn.execute(
                 """
                 UPDATE paper_positions
@@ -11413,6 +11433,313 @@ class PaperAutopilotEngine:
 
         return False, "hold"
 
+    def _exact_position_decision_v1(
+        self,
+        state: Mapping[str, Any] | None,
+        *,
+        canonical_position_id: str,
+        symbol: str,
+    ) -> dict[str, Any]:
+        """Return only a decision with the same lifecycle identity.
+
+        Position-management analytics are sometimes also indexed by symbol for
+        display.  Symbol reuse must never attach a prior lifecycle's decision
+        to a new position, so exit-decision evidence accepts an exact position
+        identity only.
+        """
+        if not canonical_position_id:
+            return {}
+        decisions = dict((state or {}).get("decisions") or {})
+        candidates = [dict(decisions.get(canonical_position_id) or {})]
+        candidates.extend(
+            dict(value or {}) for value in decisions.values()
+            if isinstance(value, Mapping) and str(value.get("position_id") or "").strip() == canonical_position_id
+        )
+        expected_symbol = str(symbol or "").upper().strip()
+        for decision in candidates:
+            if not decision:
+                continue
+            if str(decision.get("position_id") or "").strip() != canonical_position_id:
+                continue
+            if expected_symbol and str(decision.get("symbol") or "").upper().strip() != expected_symbol:
+                continue
+            return decision
+        return {}
+
+    @staticmethod
+    def _exact_position_advisory_v1(
+        payload: Mapping[str, Any] | None,
+        *,
+        canonical_position_id: str,
+        symbol: str,
+    ) -> dict[str, Any]:
+        """Select a published advisory only when its lifecycle ID matches."""
+        if not canonical_position_id:
+            return {}
+        expected_symbol = str(symbol or "").upper().strip()
+        for row in list((payload or {}).get("positions") or []):
+            if not isinstance(row, Mapping):
+                continue
+            if str(row.get("canonical_position_id") or row.get("lifecycle_id") or "").strip() != canonical_position_id:
+                continue
+            if expected_symbol and str(row.get("symbol") or "").upper().strip() != expected_symbol:
+                continue
+            return dict(row)
+        return {}
+
+    def _build_exit_decision_evidence_v1(
+        self,
+        open_row: Mapping[str, Any],
+        latest_row: Mapping[str, Any],
+        *,
+        should_close: bool,
+        reason: str,
+        lifecycle_notes: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Capture the bounded, pre-action evidence seen by the exit owner.
+
+        This is an observational handoff record.  It makes an existing
+        execution decision auditable without turning advisory analytics into
+        order authority or backfilling later outcomes into the decision.
+        """
+        notes = dict(lifecycle_notes or _safe_json_load(open_row.get("lifecycle_notes")))
+        entry = _to_float(open_row.get("entry_price"), 0.0)
+        current = _to_float(latest_row.get("price"), 0.0)
+        current_return = ((current - entry) / entry) * 100.0 if entry > 0.0 and current > 0.0 else None
+        peak = _to_float(notes.get("peak_unrealized_pnl_percent"), current_return or 0.0)
+        if current_return is not None:
+            peak = max(peak, current_return)
+        drawdown = max(0.0, peak - current_return) if current_return is not None else None
+        hold_seconds = max(0.0, _to_float(notes.get("hold_seconds"), _to_float(open_row.get("hold_seconds"), 0.0)))
+        return_per_hour = (
+            round(current_return / (hold_seconds / 3600.0), 6)
+            if current_return is not None and hold_seconds > 0.0
+            else None
+        )
+        symbol = str(open_row.get("symbol") or "").upper().strip()
+        canonical_position_id = _pick_first_text(
+            open_row.get("canonical_position_id"),
+            open_row.get("lifecycle_id"),
+            open_row.get("position_id"),
+        )
+        runtime = getattr(self, "_runtime_state", {}) or {}
+        loss = self._exact_position_decision_v1(
+            runtime.get("loss_containment_state_v1"),
+            canonical_position_id=canonical_position_id,
+            symbol=symbol,
+        )
+        profit = self._exact_position_decision_v1(
+            runtime.get("profit_protection_state_v1"),
+            canonical_position_id=canonical_position_id,
+            symbol=symbol,
+        )
+        readiness = self._exact_position_advisory_v1(
+            runtime.get("position_exit_readiness_v1"),
+            canonical_position_id=canonical_position_id,
+            symbol=symbol,
+        )
+        advisory = self._exact_position_advisory_v1(
+            runtime.get("unified_position_advisory_v1"),
+            canonical_position_id=canonical_position_id,
+            symbol=symbol,
+        )
+        loss_state = str(loss.get("threshold_state") or loss.get("canonical_recommendation") or "UNAVAILABLE")
+        profit_state = str(profit.get("canonical_recommendation") or profit.get("profit_state") or "UNAVAILABLE")
+        readiness_action = str(readiness.get("recommendation") or "UNAVAILABLE")
+        advisory_action = str(advisory.get("final_advisory") or "UNAVAILABLE")
+        mfe_raw = notes.get("max_favorable_excursion", notes.get("peak_unrealized_pnl_percent"))
+        mae_raw = notes.get("max_adverse_excursion")
+        mfe = _to_float(mfe_raw, 0.0) if mfe_raw not in (None, "") else None
+        mae = _to_float(mae_raw, 0.0) if mae_raw not in (None, "") else None
+        direct_reason = str(reason or "hold")
+        local_exit_reasons = {
+            "stop_loss_breach",
+            "drawdown_from_peak",
+            "take_profit_lock",
+            "time_stop_underperforming",
+            "max_hold_window_negative",
+            "exit_engine_signal",
+            "exit_learning_high_risk_if_hold",
+            "exit_learning_deterioration_risk",
+        }
+        direct_horizon_reasons = {
+            "time_stop_underperforming",
+            "max_hold_window_negative",
+            "day_lane_session_close_required",
+            "scalp_lane_session_close_required",
+        }
+        material = bool(
+            should_close
+            or direct_reason != "hold"
+            or profit_state in {"PROTECT_PROFIT", "EXIT_REVIEW", "THESIS_BROKEN"}
+            or readiness_action in {"PROTECT_PROFIT", "EXIT_REVIEW", "THESIS_BROKEN", "SAME_SESSION_EXIT_REQUIRED"}
+            or advisory_action in {"PROTECT_PROFIT", "EXIT_REVIEW", "THESIS_BROKEN", "SAME_SESSION_EXIT_REQUIRED"}
+        )
+        fingerprint_payload = {
+            "position_id": canonical_position_id,
+            "return": round(current_return, 4) if current_return is not None else None,
+            "peak": round(peak, 4),
+            "drawdown": round(drawdown, 4) if drawdown is not None else None,
+            "hold_bucket": int(hold_seconds // 60.0),
+            "reason": direct_reason,
+            "loss_state": loss_state,
+            "profit_state": profit_state,
+            "readiness": readiness_action,
+            "advisory": advisory_action,
+        }
+        fingerprint = hashlib.sha256(
+            json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()[:24]
+        return {
+            "schema_version": "astra_exit_decision_evidence_v1",
+            "decision_evidence_id": f"exit-decision:{canonical_position_id}:{fingerprint}" if canonical_position_id else None,
+            "decision_fingerprint": fingerprint,
+            "decision_timestamp": _now_iso(),
+            "materially_relevant": material,
+            "lifecycle_id": canonical_position_id or None,
+            "position_id": str(open_row.get("position_id") or "") or None,
+            "candidate_id": str(open_row.get("source_candidate_id") or "") or None,
+            "recommendation_id": str(open_row.get("source_recommendation_id") or "") or None,
+            "symbol": symbol or None,
+            "lane_id": str(open_row.get("lane_id") or "").upper().strip() or None,
+            "horizon": str(open_row.get("canonical_horizon") or open_row.get("horizon") or "") or None,
+            "trade_state": {
+                "entry_price": entry if entry > 0.0 else None,
+                "current_price": current if current > 0.0 else None,
+                "current_return_pct": round(current_return, 6) if current_return is not None else None,
+                "mfe_pct": mfe,
+                "mae_pct": mae,
+                "peak_return_pct": round(peak, 6) if current_return is not None else None,
+                "drawdown_from_peak_pct": round(drawdown, 6) if drawdown is not None else None,
+                "hold_seconds": round(hold_seconds, 3),
+                "return_per_hour": return_per_hour,
+                "momentum_state": latest_row.get("momentum_state") or notes.get("momentum_state") or "UNAVAILABLE",
+                "thesis_state": latest_row.get("thesis_state") or notes.get("thesis_state") or "UNAVAILABLE",
+                "regime_state": latest_row.get("regime") or latest_row.get("regime_state") or notes.get("regime_state") or "UNAVAILABLE",
+                "opportunity_cost_state": readiness.get("opportunity_cost_state") or "UNAVAILABLE",
+                "replacement_candidate_state": readiness.get("replacement_state") or "UNAVAILABLE",
+            },
+            "analytics_consumption": {
+                "mfe_mae_peak_drawdown": {
+                    "owner": "PaperAutopilot._evaluate_exit",
+                    "computed": current_return is not None,
+                    "received_by_exit_owner": current_return is not None,
+                    "evaluated_by_exit_owner": current_return is not None,
+                    "influenced_this_decision": direct_reason in {"drawdown_from_peak", "take_profit_lock"},
+                    "status": "FULLY_CONNECTED",
+                },
+                "loss_containment": {
+                    "owner": "astra_loss_containment_engine_v1",
+                    "computed": bool(loss),
+                    "received_by_exit_owner": bool(loss),
+                    "evaluated_by_exit_owner": bool(loss),
+                    "influenced_this_decision": direct_reason.startswith("loss_containment_"),
+                    "state": loss_state,
+                    "status": "FULLY_CONNECTED" if loss else "INSUFFICIENT_EVIDENCE",
+                },
+                "profit_protection": {
+                    "owner": "astra_profit_protection_giveback_v1",
+                    "computed": bool(profit),
+                    "published": bool(profit),
+                    "received_by_exit_owner": False,
+                    "evaluated_by_exit_owner": False,
+                    "state": profit_state,
+                    "status": "ADVISORY_ONLY_BY_DESIGN" if profit else "INSUFFICIENT_EVIDENCE",
+                },
+                "exit_readiness": {
+                    "owner": "astra_position_exit_readiness_v1",
+                    "computed": bool(readiness),
+                    "published": bool(readiness),
+                    "received_by_exit_owner": False,
+                    "evaluated_by_exit_owner": False,
+                    "recommended_action": readiness_action,
+                    "status": "ADVISORY_ONLY_BY_DESIGN" if readiness else "INSUFFICIENT_EVIDENCE",
+                },
+                "unified_position_advisory": {
+                    "owner": "astra_unified_position_advisory_v1",
+                    "computed": bool(advisory),
+                    "published": bool(advisory),
+                    "received_by_exit_owner": False,
+                    "evaluated_by_exit_owner": False,
+                    "recommended_action": advisory_action,
+                    "status": "ADVISORY_ONLY_BY_DESIGN" if advisory else "INSUFFICIENT_EVIDENCE",
+                },
+                "horizon": {
+                    "owner": "PaperAutopilot._evaluate_exit",
+                    "computed": hold_seconds > 0.0,
+                    "received_by_exit_owner": hold_seconds > 0.0,
+                    "evaluated_by_exit_owner": hold_seconds > 0.0,
+                    "influenced_this_decision": direct_reason in direct_horizon_reasons,
+                    "status": "PARTIALLY_CONNECTED",
+                },
+                "momentum_thesis": {
+                    "owner": "astra_loss_containment_engine_v1",
+                    "computed": bool(loss) or bool(latest_row.get("momentum_state") or latest_row.get("thesis_state")),
+                    "received_by_exit_owner": bool(loss),
+                    "evaluated_by_exit_owner": bool(loss),
+                    "influenced_this_decision": direct_reason.startswith("loss_containment_"),
+                    "status": "FULLY_CONNECTED" if loss else "ADVISORY_ONLY_BY_DESIGN",
+                },
+                "return_per_time_opportunity_cost": {
+                    "owner": "adaptive_profit_capture_intelligence_v1",
+                    "computed": return_per_hour is not None or readiness.get("opportunity_cost_state") not in (None, "", "MISSING"),
+                    "received_by_exit_owner": False,
+                    "evaluated_by_exit_owner": False,
+                    "status": "ADVISORY_ONLY_BY_DESIGN",
+                },
+            },
+            "exit_owner_decision": {
+                "recommended_action": "EXIT" if should_close else "HOLD",
+                "decision_reason": direct_reason,
+                "direct_execution_rule": direct_reason if direct_reason in local_exit_reasons or direct_reason.startswith("loss_containment_") else None,
+                "execution_authority": "PaperAutopilot._evaluate_exit",
+            },
+            "outcome_status": "PENDING_NATURAL_CLOSURE",
+        }
+
+    def _record_exit_decision_evidence_v1(
+        self,
+        open_row: Mapping[str, Any],
+        latest_row: Mapping[str, Any],
+        *,
+        should_close: bool,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Append a bounded immutable management decision to lifecycle notes."""
+        position_id = str(open_row.get("position_id") or "").strip()
+        if not position_id:
+            return {}
+        try:
+            with self._connect() as conn:
+                persisted = conn.execute(
+                    "SELECT lifecycle_notes FROM paper_positions WHERE position_id=?",
+                    (position_id,),
+                ).fetchone()
+                notes = _safe_json_load(persisted[0] if persisted else open_row.get("lifecycle_notes"))
+                evidence = self._build_exit_decision_evidence_v1(
+                    open_row,
+                    latest_row,
+                    should_close=should_close,
+                    reason=reason,
+                    lifecycle_notes=notes,
+                )
+                if not bool(evidence.get("materially_relevant")):
+                    return evidence
+                events = [dict(item) for item in list(notes.get("exit_decision_evidence_v1") or []) if isinstance(item, Mapping)]
+                if not any(str(item.get("decision_fingerprint") or "") == str(evidence.get("decision_fingerprint") or "") for item in events):
+                    events.append(evidence)
+                    notes["exit_decision_evidence_v1"] = events[-12:]
+                    notes["exit_decision_evidence_updated_at"] = _now_iso()
+                    conn.execute(
+                        "UPDATE paper_positions SET lifecycle_notes=?, updated_at=? WHERE position_id=? AND status='OPEN'",
+                        (_safe_json(notes), _now_iso(), position_id),
+                    )
+                    conn.commit()
+                return evidence
+        except Exception:
+            # Observability must never alter the existing exit path.
+            return {}
+
     def _update_open_row_snapshot(self, open_row: dict[str, Any], latest_row: dict[str, Any]):
         pid = str(open_row.get("position_id") or "").strip()
         if not pid:
@@ -11459,6 +11786,33 @@ class PaperAutopilotEngine:
             hold_seconds=hold_seconds,
         )
         with self._connect() as conn:
+            # A management cycle can receive an older row object while a
+            # prior handoff already appended immutable exit evidence. Merge
+            # the current database notes so snapshot maintenance never erases
+            # an in-flight decision record.
+            persisted_notes_row = conn.execute(
+                "SELECT lifecycle_notes FROM paper_positions WHERE position_id=?",
+                (pid,),
+            ).fetchone()
+            persisted_notes = _safe_json_load(persisted_notes_row[0] if persisted_notes_row else "")
+            lifecycle_notes = {
+                **_safe_json_load(open_row.get("lifecycle_notes")),
+                **persisted_notes,
+                "current_price": current,
+                "current_return_percent": ret,
+                "peak_unrealized_pnl_percent": peak,
+                "drawdown_from_peak_percent": drawdown,
+                "max_favorable_excursion": mfe,
+                "max_adverse_excursion": mae,
+                "quote_quality": latest_row.get("quote_quality"),
+                "provider_used": latest_row.get("provider_used") or latest_row.get("source"),
+                "hold_seconds": round(hold_seconds, 2),
+                "lifecycle_stage": "monitoring",
+                "review_state": review_state,
+                "continuation_flag": continuation_flag,
+                "deterioration_flag": deterioration_flag,
+                "hold_posture": hold_posture,
+            }
             conn.execute(
                 """
                 UPDATE paper_positions
@@ -11467,24 +11821,7 @@ class PaperAutopilotEngine:
                 """,
                 (
                     _safe_json(excursion_row_json),
-                    _safe_json(
-                        {
-                            "current_price": current,
-                            "current_return_percent": ret,
-                            "peak_unrealized_pnl_percent": peak,
-                            "drawdown_from_peak_percent": drawdown,
-                            "max_favorable_excursion": mfe,
-                            "max_adverse_excursion": mae,
-                            "quote_quality": latest_row.get("quote_quality"),
-                            "provider_used": latest_row.get("provider_used") or latest_row.get("source"),
-                            "hold_seconds": round(hold_seconds, 2),
-                            "lifecycle_stage": "monitoring",
-                            "review_state": review_state,
-                            "continuation_flag": continuation_flag,
-                            "deterioration_flag": deterioration_flag,
-                            "hold_posture": hold_posture,
-                        }
-                    ),
+                    _safe_json(lifecycle_notes),
                     now_iso,
                     pid,
                 ),
@@ -11948,6 +12285,7 @@ class PaperAutopilotEngine:
         *,
         should_close: bool,
         reason: str,
+        decision_evidence: Mapping[str, Any] | None = None,
     ) -> None:
         """Attach evaluator disposition to the same bounded quote trace."""
         trace = dict(self._runtime_state.get("executable_exit_quote_trace_v1") or {})
@@ -11977,6 +12315,11 @@ class PaperAutopilotEngine:
                 "delivered_to_evaluate_exit": True,
                 "evaluator_first_blocker": evaluator_blocker,
                 "evaluator_exit_reason": str(reason or "") if should_close else "",
+                "exit_decision_evidence_id": str((decision_evidence or {}).get("decision_evidence_id") or "") or None,
+                "exit_decision_evidence_status": (
+                    "CAPTURED_PRE_ACTION" if bool((decision_evidence or {}).get("materially_relevant"))
+                    else "NOT_MATERIAL_OR_UNAVAILABLE"
+                ),
                 "generated_at": _now_iso(),
             })
             break
@@ -13864,15 +14207,22 @@ class PaperAutopilotEngine:
                         continue
 
                 should_close, reason = self._evaluate_exit(row, latest)
-                self._record_executable_exit_quote_evaluation(
+                forced_lane_reason = self._lane_forced_exit_reason(row)
+                if forced_lane_reason:
+                    should_close, reason = True, forced_lane_reason
+                decision_evidence = self._record_exit_decision_evidence_v1(
                     row,
                     latest,
                     should_close=should_close,
                     reason=reason,
                 )
-                forced_lane_reason = self._lane_forced_exit_reason(row)
-                if forced_lane_reason:
-                    should_close, reason = True, forced_lane_reason
+                self._record_executable_exit_quote_evaluation(
+                    row,
+                    latest,
+                    should_close=should_close,
+                    reason=reason,
+                    decision_evidence=decision_evidence,
+                )
                 if should_close and hold_seconds >= float(min_hold):
                     lane = str(row.get("lane_id") or "").upper().strip()
                     if lane in {"DAY", "SCALP", "SWING", "CRYPTO"}:

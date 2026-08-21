@@ -238,6 +238,11 @@ def build_truth_learning_enrichment_v1(
     elif thesis_state in {"HELD", "VALID", "CONFIRMED"}:
         thesis_outcome = "HELD"
     momentum_state = _text(_first(notes, "momentum_state", "current_momentum_state")) or "UNAVAILABLE"
+    exit_decision_events = [
+        dict(item) for item in list(record.get("exit_decision_evidence_v1") or [])
+        if isinstance(item, Mapping)
+    ]
+    latest_exit_decision = exit_decision_events[-1] if exit_decision_events else {}
     mfe = _number(_first(record, "mfe", "max_favorable_excursion"))
     mae = _number(_first(record, "mae", "max_adverse_excursion"))
     giveback = _number(_first(record, "profit_giveback", "profit_giveback_pct"))
@@ -308,6 +313,14 @@ def build_truth_learning_enrichment_v1(
             "opportunity_cost_state": _first(notes, "opportunity_cost_state", "opportunity_cost") or "UNAVAILABLE",
             "return_per_day": _first(notes, "return_per_day", "return_per_day_pct") or "UNAVAILABLE",
             "exit_timing_assessment": "UNAVAILABLE_WITHOUT_COUNTERFACTUAL_EVIDENCE",
+            # Captured pre-action decision evidence is observational only. It
+            # records the exit owner's actual inputs without promoting a
+            # later broker result into the historical management decision.
+            "exit_decision_consumption_status": (
+                "CAPTURED_PRE_ACTION" if latest_exit_decision else "UNAVAILABLE_HISTORICAL_OR_NOT_MATERIAL"
+            ),
+            "exit_decision_evidence_count": len(exit_decision_events),
+            "last_exit_owner_decision": dict(latest_exit_decision.get("exit_owner_decision") or {}) or "UNAVAILABLE",
         },
         "truth_quality_score_v1": {
             "score": score,
