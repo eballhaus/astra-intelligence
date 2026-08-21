@@ -392,6 +392,8 @@ class LaneExecutionTraceLedgerV1:
                 "order_readiness_result": "ORDER_READY" if source.get("order_ready") else "NOT_READY",
                 "submission_attempted": bool(source.get("order_attempted")),
                 "submission_result": _text(source.get("order_result")),
+                "order_rejection_reason": _text(source.get("order_rejection_reason")),
+                "broker_error_sanitized": _text(source.get("broker_error_sanitized")),
                 "broker_order_id": _text(source.get("broker_order_id")), "entry_fill_id": _text(source.get("entry_fill_id")),
                 "position_id": _text(source.get("position_id")), "position_owner": _text(source.get("position_owner")),
                 "lifecycle_id": _text(source.get("lifecycle_id")),

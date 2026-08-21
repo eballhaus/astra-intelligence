@@ -7711,7 +7711,10 @@ class PaperAutopilotEngine:
             "failed_condition": str(gate_status.get("timestamp_freshness") or ""),
             "provider_used": str(source.get("provider_used") or source.get("quote_provider") or ""),
             "market_source_type": str(source.get("market_source_type") or ""),
-            "cache_bypass_requested": bool(source.get("crypto_final_quote_refresh_cache_bypass_requested", False)),
+            "cache_bypass_requested": bool(
+                source.get("crypto_final_quote_refresh_cache_bypass_requested")
+                or source.get("hot_candidate_quote_refresh_cache_bypass_requested")
+            ),
             "final_quote_authoritative": bool(source.get("final_executable_quote_refresh_authoritative", False)),
         }
 

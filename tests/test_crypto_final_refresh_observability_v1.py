@@ -177,6 +177,7 @@ class CryptoFinalRefreshTraceFlowTests(unittest.TestCase):
                 "candidate_id": "cand-inner", "lifecycle_id": "life-inner", "symbol": "BTC/USD",
                 "lane_id": "CRYPTO", "provider_quote_timestamp": fresh_timestamp,
                 "quote_timestamp": _iso(-30), "quote_age_seconds": 1.0,
+                "hot_candidate_quote_refresh_cache_bypass_requested": True,
                 "final_executable_quote_refresh_authoritative": True,
             },
             {"quote_age_seconds": 1.0, "gate_status": {"timestamp_freshness": "PASS"}},
@@ -185,6 +186,27 @@ class CryptoFinalRefreshTraceFlowTests(unittest.TestCase):
         self.assertEqual(trace["inner_timestamp_source"], "provider_quote_timestamp")
         self.assertEqual(trace["outer_final_quote_timestamp"], fresh_timestamp)
         self.assertEqual(trace["outer_freshness_limit_seconds"], 20.0)
+        self.assertTrue(trace["cache_bypass_requested"])
+
+    def test_terminal_submission_rejection_is_preserved_over_obsolete_pre_refresh_blocker(self):
+        with tempfile.TemporaryDirectory() as root:
+            ledger = LaneExecutionTraceLedgerV1(root)
+            row = {
+                **_base_row(),
+                "eligible": True,
+                "selected": True,
+                "order_ready": True,
+                "order_result": "rejected",
+                "decision_reason": "timestamp_freshness",
+                "order_rejection_reason": "broker_preflight_rejected",
+                "broker_error_sanitized": "broker_preflight_rejected",
+            }
+            ledger.record([row], cycle_id="cycle-terminal-rejection")
+            with open(ledger.path, "r", encoding="utf-8") as handle:
+                record = json.loads(handle.readline())
+            self.assertEqual(record["exact_blocker"], "broker_preflight_rejected")
+            self.assertEqual(record["order_rejection_reason"], "broker_preflight_rejected")
+            self.assertEqual(record["broker_error_sanitized"], "broker_preflight_rejected")
 
     def test_inner_freshness_trace_keeps_missing_native_timestamp_fail_closed(self):
         trace = PaperAutopilotEngine._crypto_inner_freshness_trace_v1(
