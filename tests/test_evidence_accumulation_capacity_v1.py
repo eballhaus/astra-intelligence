@@ -152,6 +152,34 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
         self.assertEqual(capacity["active_strategy_slot_capacity_remaining"], 8)
         self.assertEqual(capacity["swing_capacity_authority"], "ACTIVE_STRATEGY_SLOT_CAPACITY")
 
+    def test_swing_uses_existing_dust_excluded_strategy_slots_when_raw_global_count_is_full(self):
+        positions = [
+            {"symbol": f"DUST{i}", "lane_id": "SWING", "market_value": 0.0001,
+             "is_dust": True, "dust_state": "BROKER_DUST_MONITORED"}
+            for i in range(10)
+        ] + [
+            {"symbol": "ACTIVE", "lane_id": "SWING", "market_value": 100.0},
+        ]
+        capacity = snapshot(positions=positions)
+        result = candidate_capacity_decision(capacity, lane_id="SWING", symbol="NEXT", open_symbols=[])
+        self.assertEqual(capacity["global_capacity_status"], "GLOBAL_CAPACITY_EXHAUSTED")
+        self.assertEqual(capacity["active_strategy_slot_capacity_remaining"], 9)
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["capacity_decision"], "AVAILABLE")
+        self.assertEqual(result["dust_strategy_slot_exclusion_count"], 10)
+
+    def test_swing_remains_blocked_when_material_strategy_slots_are_full_despite_dust(self):
+        positions = [
+            {"symbol": f"ACTIVE{i}", "lane_id": "SWING", "market_value": 100.0}
+            for i in range(10)
+        ] + [
+            {"symbol": "DUST", "lane_id": "SWING", "market_value": 0.0001,
+             "is_dust": True, "dust_state": "BROKER_DUST_MONITORED"},
+        ]
+        result = candidate_capacity_decision(snapshot(positions=positions), lane_id="SWING", symbol="NEXT", open_symbols=[])
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["capacity_decision"], "ACTIVE_STRATEGY_SLOT_CAPACITY_EXHAUSTED")
+
     def test_global_risk_overrides_reserve(self):
         result = candidate_capacity_decision(
             snapshot(risk=False), lane_id="DAY", symbol="NEW", open_symbols=[]

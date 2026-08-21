@@ -543,20 +543,32 @@ def candidate_capacity_decision(
         blockers.append("GLOBAL_RISK_BLOCKED")
     if snapshot.get("broker_reconciliation_status") != "FRESH":
         blockers.append("BROKER_STATE_STALE")
+    # Dust and Governance-approved legacy overlays remain in the broker-wide
+    # risk denominator, but the snapshot already excludes them from strategy
+    # admission slots.  SWING must use that same established slot authority
+    # rather than fail on the raw broker count alone.
+    dust_slot_exclusions = sum(
+        _integer(view.get("dust_strategy_slot_exclusion_count"), 0)
+        for view in (snapshot.get("lanes") or {}).values()
+        if isinstance(view, Mapping)
+    )
+    strategy_slot_exclusions = (
+        _integer(snapshot.get("approved_legacy_slot_exclusion_count"), 0)
+        + dust_slot_exclusions
+    )
+    swing_uses_active_strategy_slots = lane == "SWING" and strategy_slot_exclusions > 0
     if lane == "SWING" and _integer(snapshot.get("global_capacity_remaining"), 0) <= 0:
-        if _integer(snapshot.get("approved_legacy_slot_exclusion_count"), 0) > 0:
+        if swing_uses_active_strategy_slots:
             if _integer(snapshot.get("active_strategy_slot_capacity_remaining"), 0) <= 0:
                 blockers.append("ACTIVE_STRATEGY_SLOT_CAPACITY_EXHAUSTED")
         else:
             blockers.append("GLOBAL_CAPACITY_EXHAUSTED")
     decision = payload.get("capacity_decision") or "FAIL_CLOSED"
-    # When a Governance-approved decreasing-only legacy overlay is present,
-    # current-strategy slot admission uses the dedicated slot view.  Total
-    # account-risk and buying-power checks above still apply to every broker
-    # position, including that legacy exposure.
+    # When an approved legacy overlay or broker dust is excluded from strategy
+    # slots, current-strategy admission uses the dedicated slot view. Total
+    # account-risk and buying-power checks still apply to every broker row.
     if (
-        lane == "SWING"
-        and _integer(snapshot.get("approved_legacy_slot_exclusion_count"), 0) > 0
+        swing_uses_active_strategy_slots
         and _integer(snapshot.get("active_strategy_slot_capacity_remaining"), 0) > 0
         and snapshot.get("broker_reconciliation_status") == "FRESH"
         and not blockers
@@ -585,6 +597,8 @@ def candidate_capacity_decision(
         "active_strategy_slot_capacity_status": snapshot.get("active_strategy_slot_capacity_status"),
         "active_strategy_slot_capacity_remaining": snapshot.get("active_strategy_slot_capacity_remaining"),
         "approved_legacy_slot_exclusion_count": snapshot.get("approved_legacy_slot_exclusion_count", 0),
+        "dust_strategy_slot_exclusion_count": dust_slot_exclusions,
+        "strategy_slot_exclusion_count": strategy_slot_exclusions,
         "lane_reserve_status": payload.get("capacity_decision"),
         "reserve_enabled": bool(payload.get("reserve_enabled", False)),
         "reserve_available": bool(payload.get("reserve_available", False)),

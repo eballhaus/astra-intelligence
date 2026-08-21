@@ -443,6 +443,7 @@ class LaneExecutionTraceLedgerV1:
                 # retained only in this existing bounded lane trace.
                 "entry_commitment_trace_v1": dict(source.get("entry_commitment_trace_v1") or {}),
                 "pretrade_contract_missing_fields_trace_v1": dict(source.get("pretrade_contract_missing_fields_trace_v1") or {}),
+                "crypto_inner_freshness_trace_v1": dict(source.get("crypto_inner_freshness_trace_v1") or {}),
             }
             decision_state = _decision_state(source, blocker)
             snapshot = _decision_snapshot(source, record, decision_state, blocker)

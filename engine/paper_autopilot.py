@@ -7666,6 +7666,55 @@ class PaperAutopilotEngine:
             return True, "crypto_execution_integrity_pending_final_quote_refresh", result
         return bool(result.get("execution_eligible")), (failed[0] if failed else "crypto_execution_integrity_passed"), result
 
+    @staticmethod
+    def _crypto_inner_freshness_trace_v1(
+        row: Mapping[str, Any],
+        integrity: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Persist the bounded evidence consumed by the final crypto gate."""
+        source = dict(row or {})
+        result = dict(integrity or {})
+        provider_timestamp = str(source.get("provider_quote_timestamp") or "").strip()
+        quote_timestamp = str(source.get("quote_timestamp") or "").strip()
+        if provider_timestamp:
+            inner_timestamp = provider_timestamp
+            inner_source = "provider_quote_timestamp"
+        elif quote_timestamp:
+            inner_timestamp = quote_timestamp
+            inner_source = "quote_timestamp"
+        else:
+            inner_timestamp = ""
+            inner_source = "UNAVAILABLE"
+        outer_timestamp = str(
+            source.get("crypto_final_refresh_quote_timestamp")
+            or provider_timestamp
+            or quote_timestamp
+            or ""
+        ).strip()
+        outer_age = source.get("crypto_final_refresh_quote_age_seconds")
+        if outer_age in (None, ""):
+            outer_age = source.get("quote_age_seconds")
+        gate_status = dict(result.get("gate_status") or {})
+        return {
+            "candidate_id": str(source.get("candidate_id") or ""),
+            "lifecycle_id": str(source.get("lifecycle_id") or ""),
+            "symbol": str(source.get("symbol") or "").upper().strip(),
+            "lane_id": str(source.get("lane_id") or "CRYPTO").upper().strip(),
+            "outer_final_quote_timestamp": outer_timestamp,
+            "outer_final_quote_age_seconds": outer_age,
+            "inner_timestamp_used": inner_timestamp,
+            "inner_timestamp_source": inner_source,
+            "inner_age_seconds": result.get("quote_age_seconds"),
+            "freshness_limit_seconds": 120.0,
+            "outer_freshness_limit_seconds": 20.0,
+            "current_utc_time_used": _now_iso(),
+            "failed_condition": str(gate_status.get("timestamp_freshness") or ""),
+            "provider_used": str(source.get("provider_used") or source.get("quote_provider") or ""),
+            "market_source_type": str(source.get("market_source_type") or ""),
+            "cache_bypass_requested": bool(source.get("crypto_final_quote_refresh_cache_bypass_requested", False)),
+            "final_quote_authoritative": bool(source.get("final_executable_quote_refresh_authoritative", False)),
+        }
+
     def _entry_commitment_gate_v1(
         self,
         row: dict[str, Any],
@@ -10238,12 +10287,14 @@ class PaperAutopilotEngine:
                 duplicate_pending=str(r.get("symbol") or "").upper().strip() in set(broker_snapshot.get("broker_open_symbols") or set()),
                 reconciliation_ok=reconciliation_checked,
             )
+            inner_freshness_trace = self._crypto_inner_freshness_trace_v1(integrity_row, integrity)
             if not integrity_ok:
                 return {
                     "ok": False,
                     "paper_order_submitted": False,
                     "error": integrity_reason,
                     "crypto_execution_integrity": integrity,
+                    "crypto_inner_freshness_trace_v1": inner_freshness_trace,
                 }
             order.update({
                 "asset_class": "crypto",
@@ -10269,6 +10320,8 @@ class PaperAutopilotEngine:
             res.setdefault("decision_id", attribution["decision_id"])
             res.setdefault("eligibility_evaluation_id", attribution["eligibility_evaluation_id"])
             res.setdefault("candidate_id", attribution["candidate_id"])
+            if asset_type == "crypto":
+                res["crypto_inner_freshness_trace_v1"] = inner_freshness_trace
             res.setdefault("client_order_id", broker_client_order_id)
             res.setdefault("client_order_attribution_id", attribution_client_order_id)
             broker_payload = dict(res.get("order") or {})
@@ -10293,6 +10346,9 @@ class PaperAutopilotEngine:
                 "portfolio_risk_score_used": (None if risk_score is None else round(float(risk_score), 4)),
                 "portfolio_risk_label_used": risk_label_raw,
                 "portfolio_risk_preflight_reason": preflight_reason,
+                "crypto_inner_freshness_trace_v1": (
+                    inner_freshness_trace if asset_type == "crypto" else {}
+                ),
             }
 
     def _build_entry_context_v1(
@@ -10555,6 +10611,7 @@ class PaperAutopilotEngine:
                 "quote_age_seconds": submit_row.get("quote_age_seconds"),
                 "quote_quality": str(submit_row.get("quote_quality") or ""),
                 "latest_quote_preflight_used": bool(submit_row.get("latest_quote_preflight_used", False)),
+                "crypto_inner_freshness_trace_v1": dict(broker_order.get("crypto_inner_freshness_trace_v1") or {}),
             }
         if broker_order:
             entry_row["alpaca_paper_order"] = broker_order
@@ -10827,6 +10884,7 @@ class PaperAutopilotEngine:
             "quote_age_seconds": submit_row.get("quote_age_seconds"),
             "quote_quality": str(submit_row.get("quote_quality") or ""),
             "latest_quote_preflight_used": bool(submit_row.get("latest_quote_preflight_used", False)),
+            "crypto_inner_freshness_trace_v1": dict(broker_order.get("crypto_inner_freshness_trace_v1") or {}),
         }
 
     def _close_position(
@@ -14384,6 +14442,8 @@ class PaperAutopilotEngine:
                 row_trace["quote_age_seconds"] = opened_row.get("quote_age_seconds", row_trace.get("quote_age_seconds"))
                 row_trace["quote_quality"] = str(opened_row.get("quote_quality") or row_trace.get("quote_quality") or "")
                 row_trace["latest_quote_preflight_used"] = bool(opened_row.get("latest_quote_preflight_used", row_trace.get("latest_quote_preflight_used", False)))
+                if isinstance(opened_row.get("crypto_inner_freshness_trace_v1"), Mapping):
+                    row_trace["crypto_inner_freshness_trace_v1"] = dict(opened_row["crypto_inner_freshness_trace_v1"])
                 row_trace["execution_intent_status"] = str(opened_row.get("execution_intent_status") or row_trace.get("execution_intent_status") or "")
                 row_trace["defer_until_market_confirmation"] = bool(opened_row.get("defer_until_market_confirmation", row_trace.get("defer_until_market_confirmation", False)))
                 row_trace["requires_open_confirmation"] = bool(opened_row.get("requires_open_confirmation", row_trace.get("requires_open_confirmation", True)))

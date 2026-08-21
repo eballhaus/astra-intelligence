@@ -145,8 +145,54 @@ class CryptoFinalRefreshTracePersistenceTests(unittest.TestCase):
             )
             self.assertEqual(record["pretrade_contract_missing_fields_trace_v1"]["contract_lane"], "SCALP")
 
+    def test_inner_freshness_trace_persists_without_quote_payload(self):
+        with tempfile.TemporaryDirectory() as root:
+            ledger = LaneExecutionTraceLedgerV1(root)
+            row = {
+                **_base_row(),
+                "crypto_inner_freshness_trace_v1": {
+                    "candidate_id": "cand-refresh-1",
+                    "inner_timestamp_used": _iso(-1),
+                    "inner_timestamp_source": "provider_quote_timestamp",
+                    "inner_age_seconds": 1.0,
+                    "freshness_limit_seconds": 120.0,
+                    "failed_condition": "PASS",
+                },
+            }
+            ledger.record([row], cycle_id="cycle-inner-freshness")
+            with open(ledger.path, "r", encoding="utf-8") as handle:
+                record = json.loads(handle.readline())
+            trace = record["crypto_inner_freshness_trace_v1"]
+            self.assertEqual(trace["inner_timestamp_source"], "provider_quote_timestamp")
+            self.assertEqual(trace["freshness_limit_seconds"], 120.0)
+            self.assertNotIn("raw_quote", trace)
+
 
 class CryptoFinalRefreshTraceFlowTests(unittest.TestCase):
+
+    def test_inner_freshness_trace_uses_the_provider_timestamp_consumed_by_integrity(self):
+        fresh_timestamp = _iso(-1)
+        trace = PaperAutopilotEngine._crypto_inner_freshness_trace_v1(
+            {
+                "candidate_id": "cand-inner", "lifecycle_id": "life-inner", "symbol": "BTC/USD",
+                "lane_id": "CRYPTO", "provider_quote_timestamp": fresh_timestamp,
+                "quote_timestamp": _iso(-30), "quote_age_seconds": 1.0,
+                "final_executable_quote_refresh_authoritative": True,
+            },
+            {"quote_age_seconds": 1.0, "gate_status": {"timestamp_freshness": "PASS"}},
+        )
+        self.assertEqual(trace["inner_timestamp_used"], fresh_timestamp)
+        self.assertEqual(trace["inner_timestamp_source"], "provider_quote_timestamp")
+        self.assertEqual(trace["outer_final_quote_timestamp"], fresh_timestamp)
+        self.assertEqual(trace["outer_freshness_limit_seconds"], 20.0)
+
+    def test_inner_freshness_trace_keeps_missing_native_timestamp_fail_closed(self):
+        trace = PaperAutopilotEngine._crypto_inner_freshness_trace_v1(
+            {"candidate_id": "cand-missing", "symbol": "BTC/USD", "lane_id": "CRYPTO"},
+            {"quote_age_seconds": -1.0, "gate_status": {"timestamp_freshness": "PENDING_QUOTE_FRESHNESS"}},
+        )
+        self.assertEqual(trace["inner_timestamp_source"], "UNAVAILABLE")
+        self.assertEqual(trace["failed_condition"], "PENDING_QUOTE_FRESHNESS")
     def test_candidate_trace_carries_refresh_fields_into_trace_dict(self):
         directory = tempfile.TemporaryDirectory(prefix="astra_crypto_refresh_flow_")
         self.addCleanup(directory.cleanup)
