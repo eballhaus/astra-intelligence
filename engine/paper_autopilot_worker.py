@@ -84,6 +84,12 @@ class PaperAutopilotWorker:
         self.multilane_completion_matrix = AstraMultilaneCompletionMatrixV1(STATE)
         self.operating_health_contract = AstraOperatingHealthContractV1(STATE)
 
+    @staticmethod
+    def _bounded_broker_truth_rows_v1(runtime: dict[str, Any]) -> list[dict[str, Any]]:
+        """Use the existing canonical fallback when this worker has no in-memory truth rows."""
+        rows = [dict(row) for row in list(runtime.get("broker_truth_records_v1") or []) if isinstance(row, dict)]
+        return rows or load_bounded_broker_truth_records_v1(STATE)
+
     def _base_state(self) -> dict[str, Any]:
         previous = read_snapshot()
         return {
@@ -563,9 +569,7 @@ class PaperAutopilotWorker:
             runtime = getattr(self.autopilot, "_runtime_state", {})
             # Strict-truth-only trade effectiveness is a bounded, passive
             # consumer of the current cycle's already-persisted records.
-            truth_rows = [dict(row) for row in list(runtime.get("broker_truth_records_v1") or []) if isinstance(row, dict)]
-            if not truth_rows:
-                truth_rows = load_bounded_broker_truth_records_v1(STATE)
+            truth_rows = self._bounded_broker_truth_rows_v1(runtime)
             trade_effectiveness = build_profit_capture_trade_effectiveness_v2(
                 truth_rows,
                 shadow_exit_performance=dict(runtime.get("shadow_exit_performance_v1") or {}),
@@ -702,7 +706,7 @@ class PaperAutopilotWorker:
         # One compact worker-written control-plane view keeps lane truth,
         # Sentinel, Governance, and Cortex evidence aligned for GET consumers.
         # It only composes the current cycle's committed records.
-        truth_rows = [dict(row) for row in (runtime.get("broker_truth_records_v1") or []) if isinstance(row, dict)]
+        truth_rows = self._bounded_broker_truth_rows_v1(runtime)
         learning_rows = [dict(row) for row in (runtime.get("canonical_lifecycle_lessons_v1") or []) if isinstance(row, dict)]
         operating_health = self.operating_health_contract.build(
             multilane=multilane_completion,

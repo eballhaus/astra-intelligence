@@ -123,6 +123,13 @@ class PaperAutopilotWorkerProgressTests(unittest.TestCase):
         self.assertIn("ASTRA_PROCESS_ROLE=worker", worker_launch)
         self.assertNotIn("APCA_API_BASE_URL=", worker_launch)
 
+    def test_operating_health_reuses_existing_bounded_truth_fallback_when_runtime_rows_are_empty(self):
+        truth = {"truth_id": "truth-1", "lifecycle_id": "life-1", "strict_broker_truth": True}
+        with patch("engine.paper_autopilot_worker.load_bounded_broker_truth_records_v1", return_value=[truth]):
+            rows = PaperAutopilotWorker._bounded_broker_truth_rows_v1({"broker_truth_records_v1": []})
+
+        self.assertEqual(rows, [truth])
+
 
 if __name__ == "__main__":
     unittest.main()
