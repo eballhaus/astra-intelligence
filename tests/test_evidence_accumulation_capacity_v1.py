@@ -278,6 +278,40 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
         )
         self.assertTrue(candidate_capacity_decision(expired, lane_id="DAY", symbol="DAY2", open_symbols=[])["allowed"])
 
+    def test_terminal_lane_reservations_are_removed_but_live_occupancy_remains(self):
+        engine = object.__new__(PaperAutopilotEngine)
+        expired = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+        future = (datetime.now(UTC) + timedelta(seconds=60)).isoformat()
+        engine._runtime_state = {
+            "lane_reserve_commitments": {
+                "DAY": {
+                    "released": {"commitment_state": "RELEASED"},
+                    "expired": {"commitment_state": "HELD", "expires_at": expired},
+                    "held": {"commitment_state": "HELD", "expires_at": future, "lane_id": "DAY"},
+                },
+                "SCALP": {}, "CRYPTO": {},
+            },
+            "lane_reserve_commitment_stats": {},
+        }
+
+        active = engine._active_lane_reserve_commitments()
+
+        self.assertEqual([row["lane_id"] for row in active], ["DAY"])
+        self.assertEqual(set(engine._runtime_state["lane_reserve_commitments"]["DAY"]), {"held"})
+        self.assertEqual(engine._runtime_state["lane_reserve_commitment_stats"]["expired"], 1)
+
+    def test_open_position_conversion_releases_reservation_ownership(self):
+        engine = object.__new__(PaperAutopilotEngine)
+        engine._runtime_state = {
+            "lane_reserve_commitments": {"DAY": {"c1": {"commitment_state": "HELD"}}, "SCALP": {}, "CRYPTO": {}},
+            "lane_reserve_commitment_stats": {},
+        }
+
+        engine._convert_lane_reserve_commitment("DAY", "c1", "CONVERTED_TO_OPEN_POSITION", "order-1")
+
+        self.assertFalse(engine._runtime_state["lane_reserve_commitments"]["DAY"])
+        self.assertEqual(engine._runtime_state["lane_reserve_commitment_stats"]["converted_to_open_position"], 1)
+
     def test_duplicate_exposure_is_explicit(self):
         result = candidate_capacity_decision(
             snapshot(), lane_id="DAY", symbol="SAME", open_symbols=["SAME"]

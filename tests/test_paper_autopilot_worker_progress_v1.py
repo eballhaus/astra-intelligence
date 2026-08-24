@@ -130,6 +130,27 @@ class PaperAutopilotWorkerProgressTests(unittest.TestCase):
 
         self.assertEqual(rows, [truth])
 
+    def test_resource_memory_telemetry_is_bounded_and_tracks_rss_trend(self):
+        autopilot = _Autopilot()
+        autopilot._runtime_state = {
+            "lane_reserve_commitments": {"DAY": {}, "SCALP": {}, "CRYPTO": {}},
+            "last_execution_trace": {"per_candidate_decision_trace": [{"candidate_id": "one"}]},
+        }
+        with patch("engine.paper_autopilot_worker.read_snapshot", return_value={}):
+            worker = PaperAutopilotWorker(autopilot)
+        for memory_mb in range(500, 520):
+            telemetry = worker._record_resource_memory_telemetry({
+                "worker_process": {"memory_mb": memory_mb},
+                "resource_state": "RESOURCE_NORMAL",
+            })
+
+        self.assertEqual(telemetry["sample_count"], 16)
+        self.assertEqual(len(telemetry["samples"]), 16)
+        self.assertEqual(telemetry["startup_rss_mb"], 500.0)
+        self.assertEqual(telemetry["peak_rss_mb"], 519.0)
+        self.assertEqual(telemetry["rss_trend"], "INCREASING")
+        self.assertEqual(telemetry["owner_counts"]["last_execution_trace_candidates"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

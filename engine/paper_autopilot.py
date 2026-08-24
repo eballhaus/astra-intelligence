@@ -15,6 +15,12 @@ from datetime import UTC, datetime, timedelta, time as datetime_time
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
+
+# Reserve commitments are execution occupancy, not a historical ledger. Their
+# terminal transition is preserved in the candidate trace and aggregate stats;
+# retaining each released record would grow the long-lived worker state forever.
+LANE_RESERVE_ACTIVE_STATES = frozenset({"REQUESTED", "HELD", "CONVERTED_TO_PENDING_ORDER"})
+
 from engine.candidate_execution_integrity_v1 import (
     candidate_execution_integrity,
     native_crypto_exit_execution_integrity,
@@ -9081,6 +9087,12 @@ class PaperAutopilotEngine:
             for commitment_id, record in list(lane_rows.items()):
                 row = dict(record or {})
                 state = str(row.get("commitment_state") or "").upper()
+                if state not in LANE_RESERVE_ACTIVE_STATES:
+                    # Terminal transitions are already reflected in the
+                    # candidate trace and aggregate counters. Keep only live
+                    # occupancy in the worker-owned state.
+                    lane_rows.pop(commitment_id, None)
+                    continue
                 expires_at = str(row.get("expires_at") or "")
                 try:
                     expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
@@ -9089,15 +9101,13 @@ class PaperAutopilotEngine:
                     expired = expiry.astimezone(UTC) <= now
                 except (TypeError, ValueError):
                     expired = True
-                if state in {"REQUESTED", "HELD", "CONVERTED_TO_PENDING_ORDER"} and expired:
+                if expired:
                     if not expire_abandoned:
                         continue
-                    row.update({"commitment_state": "EXPIRED", "state": "EXPIRED", "released_at": _now_iso(), "release_reason": "commitment_ttl_expired"})
-                    lane_rows[commitment_id] = row
+                    lane_rows.pop(commitment_id, None)
                     stats["expired"] = _to_int(stats.get("expired"), 0) + 1
                     continue
-                if state in {"REQUESTED", "HELD", "CONVERTED_TO_PENDING_ORDER"}:
-                    active.append(row)
+                active.append(row)
         return active
 
     def _lane_reserve_commitment_snapshot(self) -> dict[str, Any]:
@@ -9168,15 +9178,20 @@ class PaperAutopilotEngine:
         lane_rows = (self._runtime_state.setdefault("lane_reserve_commitments", {"DAY": {}, "SCALP": {}, "CRYPTO": {}}).get(str(lane).upper()) or {})
         if not commitment_id or commitment_id not in lane_rows:
             return
-        record = dict(lane_rows.get(commitment_id) or {})
-        record.update({"commitment_state": "RELEASED", "state": "RELEASED", "released_at": _now_iso(), "release_reason": str(reason)[:160]})
-        lane_rows[commitment_id] = record
+        lane_rows.pop(commitment_id, None)
         stats = self._runtime_state.setdefault("lane_reserve_commitment_stats", {})
         stats["released"] = _to_int(stats.get("released"), 0) + 1
 
     def _convert_lane_reserve_commitment(self, lane: str, commitment_id: str, state: str, broker_order_id: str = "") -> None:
         lane_rows = (self._runtime_state.setdefault("lane_reserve_commitments", {"DAY": {}, "SCALP": {}, "CRYPTO": {}}).get(str(lane).upper()) or {})
         if not commitment_id or commitment_id not in lane_rows:
+            return
+        if state == "CONVERTED_TO_OPEN_POSITION":
+            # The broker-backed open position now owns occupancy. Retaining
+            # the completed reservation would duplicate that state forever.
+            lane_rows.pop(commitment_id, None)
+            stats = self._runtime_state.setdefault("lane_reserve_commitment_stats", {})
+            stats["converted_to_open_position"] = _to_int(stats.get("converted_to_open_position"), 0) + 1
             return
         record = dict(lane_rows.get(commitment_id) or {})
         record.update({"commitment_state": state, "state": state, "converted_at": _now_iso(), "broker_order_id": str(broker_order_id or "")})

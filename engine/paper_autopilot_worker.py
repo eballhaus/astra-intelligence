@@ -53,6 +53,7 @@ from engine.adaptive_profit_capture_intelligence_v1 import (
 # the nominal scan budget.  Publish liveness independently of that work so a
 # live canonical worker is never misreported as absent or stale.
 ACTIVE_CYCLE_HEARTBEAT_SECONDS = 5.0
+RESOURCE_MEMORY_SAMPLE_LIMIT = 16
 
 
 class PaperAutopilotWorker:
@@ -83,6 +84,12 @@ class PaperAutopilotWorker:
         self.crypto_market_data_matrix = CryptoMarketDataCapabilityMatrixV1(STATE)
         self.multilane_completion_matrix = AstraMultilaneCompletionMatrixV1(STATE)
         self.operating_health_contract = AstraOperatingHealthContractV1(STATE)
+        self._memory_samples: list[dict[str, Any]] = []
+        self._memory_startup_mb: float | None = None
+        self._memory_peak_mb = 0.0
+        self._memory_pause_count = 0
+        self._memory_recovery_count = 0
+        self._last_memory_resource_state = ""
 
     @staticmethod
     def _bounded_broker_truth_rows_v1(runtime: dict[str, Any]) -> list[dict[str, Any]]:
@@ -157,6 +164,8 @@ class PaperAutopilotWorker:
         state["resource_state"] = state["resource"].get("resource_state")
         state["host_load_observed"] = state["resource"].get("host_load_1m")
         state["worker_memory_observed"] = (state["resource"].get("worker_process") or {}).get("memory_mb")
+        if isinstance(state["resource"].get("resource_memory_telemetry_v1"), dict):
+            state["resource_memory_telemetry_v1"] = dict(state["resource"]["resource_memory_telemetry_v1"])
         # Persist the execution owner's state with this snapshot.  Assigning
         # it after write_snapshot made a healthy enabled worker look disabled
         # to read-only status consumers until a later cycle rewrote the file.
@@ -270,7 +279,75 @@ class PaperAutopilotWorker:
         sample["resource_state"] = self.resource_policy["resource_state"]
         sample["resource_reason"] = self.resource_policy["resource_transition_reason"]
         sample["resource_decision"] = self.resource_policy["resource_decision"]
+        sample["resource_memory_telemetry_v1"] = self._record_resource_memory_telemetry(sample)
         return sample, self.resource_policy
+
+    def _resource_memory_owner_counts(self) -> dict[str, int]:
+        """Expose only bounded owner counts; never materialize ledger history."""
+        runtime = getattr(self.autopilot, "_runtime_state", {})
+        runtime = runtime if isinstance(runtime, dict) else {}
+        commitments = runtime.get("lane_reserve_commitments") or {}
+        commitment_rows = [
+            record
+            for lane in ("DAY", "SCALP", "CRYPTO")
+            for record in (dict(commitments.get(lane) or {})).values()
+            if isinstance(record, dict)
+        ]
+        active_states = {"REQUESTED", "HELD", "CONVERTED_TO_PENDING_ORDER"}
+        last_trace = runtime.get("last_execution_trace") or {}
+        return {
+            "lane_reserve_commitments": len(commitment_rows),
+            "lane_reserve_commitments_active": sum(
+                1 for record in commitment_rows
+                if str(record.get("commitment_state") or "").upper() in active_states
+            ),
+            "last_execution_trace_candidates": len(list(dict(last_trace).get("per_candidate_decision_trace") or [])) if isinstance(last_trace, dict) else 0,
+            "legacy_forward_activations": len(dict(runtime.get("legacy_forward_activations") or {})),
+            "legacy_swing_market_evidence": len(dict(runtime.get("legacy_swing_market_evidence") or {})),
+            "legacy_retirement_intents": len(dict((runtime.get("legacy_retirement_execution_v1") or {}).get("intents") or {})),
+            "native_exit_lifecycles": len(dict(runtime.get("native_lane_exit_lifecycle_v1") or {})),
+        }
+
+    def _record_resource_memory_telemetry(self, sample: dict[str, Any]) -> dict[str, Any]:
+        """Keep a fixed-size RSS trend on the existing worker control plane."""
+        try:
+            memory_mb = float((sample.get("worker_process") or {}).get("memory_mb") or 0.0)
+        except (TypeError, ValueError):
+            memory_mb = 0.0
+        if self._memory_startup_mb is None:
+            self._memory_startup_mb = memory_mb
+        self._memory_peak_mb = max(self._memory_peak_mb, memory_mb)
+        resource_state = str(sample.get("resource_state") or "RESOURCE_UNKNOWN_FAIL_CLOSED")
+        paused_states = {"RESOURCE_HIGH_PAUSE", "RESOURCE_MEMORY_PAUSE", "RESOURCE_API_LATENCY_PAUSE"}
+        if resource_state in paused_states and self._last_memory_resource_state != resource_state:
+            self._memory_pause_count += 1
+        if resource_state == "RESOURCE_NORMAL" and self._last_memory_resource_state in paused_states | {"RESOURCE_RECOVERY_COOLDOWN"}:
+            self._memory_recovery_count += 1
+        self._last_memory_resource_state = resource_state
+        self._memory_samples.append({
+            "sampled_at": utc_now(),
+            "rss_mb": round(memory_mb, 2),
+            "resource_state": resource_state,
+            "cycle_count": int(self.cycle_count),
+        })
+        self._memory_samples = self._memory_samples[-RESOURCE_MEMORY_SAMPLE_LIMIT:]
+        baseline = float(self._memory_startup_mb or 0.0)
+        delta = round(memory_mb - baseline, 2)
+        trend = "INSUFFICIENT_SAMPLES" if len(self._memory_samples) < 2 else "INCREASING" if delta > 1.0 else "DECREASING" if delta < -1.0 else "STABLE"
+        return {
+            "schema_version": "astra_worker_resource_memory_telemetry_v1",
+            "sample_limit": RESOURCE_MEMORY_SAMPLE_LIMIT,
+            "sample_count": len(self._memory_samples),
+            "startup_rss_mb": round(baseline, 2),
+            "current_rss_mb": round(memory_mb, 2),
+            "peak_rss_mb": round(self._memory_peak_mb, 2),
+            "rss_delta_since_startup_mb": delta,
+            "rss_trend": trend,
+            "pause_count": self._memory_pause_count,
+            "recovery_count": self._memory_recovery_count,
+            "owner_counts": self._resource_memory_owner_counts(),
+            "samples": list(self._memory_samples),
+        }
 
     def _evidence_summary(self) -> dict[str, Any]:
         """Summarize already-produced worker evidence without new reads or calls."""
