@@ -131,3 +131,28 @@ def test_existing_compact_truth_registry_is_bounded_fallback_source(tmp_path) ->
     result = build_profit_capture_trade_effectiveness_v2(rows)
     assert result["completed_broker_truth_sample_size"] == 1
     assert result["full_history_scan_count"] == 0
+
+
+def test_bounded_truth_fallback_filters_mixed_observations_before_limiting(tmp_path) -> None:
+    """Raw broker observations must not evict older official truths from health."""
+    noncanonical = {
+        "lifecycle_id": "order-only",
+        "symbol": "ABC",
+        "evidence_class": "BROKER_ORDER_SEEN_NOT_CLOSED",
+    }
+    (tmp_path / "broker_truth_records_v1.json").write_text(
+        json.dumps({
+            "records": [
+                _truth(lifecycle_id="one"),
+                _truth(lifecycle_id="two"),
+                noncanonical,
+                {**noncanonical, "lifecycle_id": "order-only-2"},
+                {**noncanonical, "lifecycle_id": "order-only-3"},
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    rows = load_bounded_broker_truth_records_v1(str(tmp_path), limit=2)
+
+    assert [row["lifecycle_id"] for row in rows] == ["one", "two"]

@@ -82,7 +82,7 @@ def load_bounded_broker_truth_records_v1(
     *,
     limit: int = MAX_EFFECTIVENESS_TRUTHS,
 ) -> list[dict[str, Any]]:
-    """Read the existing compact canonical registry when runtime has no rows."""
+    """Read the latest bounded official truth cohort when runtime has no rows."""
     try:
         with open(os.path.join(str(state_dir), "broker_truth_records_v1.json"), "r", encoding="utf-8") as handle:
             payload = json.load(handle)
@@ -91,7 +91,14 @@ def load_bounded_broker_truth_records_v1(
     rows = payload.get("records") if isinstance(payload, dict) else []
     if not isinstance(rows, list):
         return []
-    return [dict(row) for row in rows[-max(1, int(limit)):] if isinstance(row, dict)]
+    # The registry interleaves strict truths with broker-order observations.
+    # Bound the canonical official cohort, not the raw mixed tail, so frequent
+    # non-closed observations cannot silently evict valid truth records.
+    official = official_broker_confirmed_rows(
+        (row for row in rows if isinstance(row, dict)),
+        max_rows=MAX_ROWS,
+    )
+    return official[-max(1, int(limit)):]
 
 
 def _capture_label(capture_ratio: float, peak: float, closed: bool) -> str:
