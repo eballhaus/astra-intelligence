@@ -97,6 +97,28 @@ class RuntimeResourceGovernanceTests(unittest.TestCase):
             self.assertEqual(lease.last_acquire_state, "STALE_LEASE_RECOVERED")
             lease.release()
 
+    def test_dead_active_identity_is_recovered_when_last_known_is_a_predecessor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "worker.lock"
+            state = Path(directory) / "astra_worker_runtime_state_v1.json"
+            lock.write_text('{"pid":999999,"worker_instance_id":"crashed-instance","worker_generation_id":"crashed-generation"}', encoding="utf-8")
+            write_snapshot({
+                "active_worker_present": True,
+                "ownership_state": "SINGLE_WORKER_ACTIVE",
+                "active_worker_pid": 999999,
+                "active_worker_instance_id": "crashed-instance",
+                "active_worker_generation_id": "crashed-generation",
+                "worker_instance_id": "crashed-instance",
+                "worker_generation_id": "crashed-generation",
+                "last_known_worker_instance_id": "predecessor-instance",
+                "last_known_worker_generation_id": "predecessor-generation",
+            }, state)
+            self.assertEqual(worker_lease_integrity(lock, state_path=state)["state"], "STALE_DEAD_LEASE")
+            lease = WorkerLease(lock, state_path=state)
+            self.assertTrue(lease.acquire())
+            self.assertEqual(lease.last_acquire_state, "STALE_LEASE_RECOVERED")
+            lease.release()
+
     def test_live_or_pid_reused_lease_is_never_recovered(self):
         with tempfile.TemporaryDirectory() as directory:
             lock = Path(directory) / "worker.lock"

@@ -645,8 +645,15 @@ class WorkerLease:
         if active_running:
             return False
         active_claimed = bool(state.get("active_worker_present")) or str(state.get("ownership_state") or "") != "NO_WORKER_ACTIVE"
-        expected_instance = str(state.get("last_known_worker_instance_id") or state.get("worker_instance_id") or "")
-        expected_generation = str(state.get("last_known_worker_generation_id") or state.get("worker_generation_id") or "")
+        # A crash can leave the dead worker as the active owner while the
+        # last-known identity still refers to its predecessor. In that narrow
+        # case, the active identity is the only authoritative lease lineage.
+        if active_claimed:
+            expected_instance = str(state.get("active_worker_instance_id") or state.get("worker_instance_id") or "")
+            expected_generation = str(state.get("active_worker_generation_id") or state.get("worker_generation_id") or "")
+        else:
+            expected_instance = str(state.get("last_known_worker_instance_id") or state.get("worker_instance_id") or "")
+            expected_generation = str(state.get("last_known_worker_generation_id") or state.get("worker_generation_id") or "")
         identity_matches = (
             str(metadata.get("worker_instance_id") or "") == expected_instance
             and str(metadata.get("worker_generation_id") or "") == expected_generation
@@ -762,13 +769,20 @@ def worker_lease_integrity(
     elif active_canonical:
         result = "LEASE_PROCESS_OWNERSHIP_CONTRADICTION"
     else:
+        # The current active identity is authoritative when its PID is dead.
+        # A previous worker may remain in last-known fields after a crash.
+        active_identity_matches = (
+            active_pid == pid
+            and str(state.get("active_worker_instance_id") or state.get("worker_instance_id") or "") == str(metadata.get("worker_instance_id") or "")
+            and str(state.get("active_worker_generation_id") or state.get("worker_generation_id") or "") == str(metadata.get("worker_generation_id") or "")
+        )
         known_instance = str(state.get("last_known_worker_instance_id") or state.get("worker_instance_id") or "")
         known_generation = str(state.get("last_known_worker_generation_id") or state.get("worker_generation_id") or "")
         history_matches = (
             known_instance == str(metadata.get("worker_instance_id") or "")
             and known_generation == str(metadata.get("worker_generation_id") or "")
         )
-        result = "STALE_DEAD_LEASE" if history_matches else "LEASE_IDENTITY_AMBIGUOUS"
+        result = "STALE_DEAD_LEASE" if active_identity_matches or history_matches else "LEASE_IDENTITY_AMBIGUOUS"
     return {
         "state": result,
         "current": result not in {"NO_LEASE"},
