@@ -214,7 +214,11 @@ def build_astra_daily_intelligence_summary_v1(
     positions_supplied = open_positions is not None
     positions = _rows(open_positions)
     active_positions = [row for row in positions if bool(row.get("broker_confirmed", True)) and not bool(row.get("advisory_only"))]
-    pending_positions = [row for row in positions if _text(row.get("reconciliation_state")).upper() not in {"", "CLOSED", "BROKER_ZERO_CONFIRMED"}]
+    pending_positions = [
+        row for row in positions
+        if _text(row.get("reconciliation_state")).upper()
+        not in {"", "OPEN", "CLOSED", "BROKER_ZERO_CONFIRMED"}
+    ]
     active_positions_by_lane = {
         lane: sum(1 for row in active_positions if _lane(row) == lane)
         for lane in CANONICAL_LANES

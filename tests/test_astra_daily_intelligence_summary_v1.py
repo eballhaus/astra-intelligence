@@ -177,6 +177,7 @@ def test_exact_open_position_input_sets_lane_active_without_creating_truth() -> 
     assert result["lanes"]["CRYPTO"]["open_positions"] == 1
     assert result["lanes"]["CRYPTO"]["truth_readiness"] == "ACTIVE"
     assert result["today_at_a_glance"]["current_open_broker_positions"] == 1
+    assert result["today_at_a_glance"]["reconciliation_pending_count"] == 0
     assert result["truths_by_lane"]["CRYPTO"] == 0
 
 

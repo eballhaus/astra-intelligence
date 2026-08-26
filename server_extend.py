@@ -47038,12 +47038,12 @@ def astra_daily_intelligence_summary_v1():
             or cached.get("provider_consumption_telemetry_v1")
             or {}
         )
-        # The worker owns mutation, while this read-only endpoint consumes the
-        # same configured SQLite position owner.  Do not substitute a lane
-        # monitor count for exact broker-linked lifecycle rows.
+        # The worker owns mutation.  The existing CRYPTO reader is the only
+        # compact canonical active-position reader here; local equity rows can
+        # include historical compatibility records and must remain unavailable
+        # rather than masquerading as current broker exposure.
         open_positions = []
         try:
-            from engine.astra_canonical_ownership_contract_v1 import is_broker_linked_active_position
             open_positions = [
                 {
                     **dict(row),
@@ -47051,8 +47051,8 @@ def astra_daily_intelligence_summary_v1():
                     "reconciliation_state": "OPEN",
                     "lifecycle_id": row.get("source_lifecycle_id") or row.get("position_id"),
                 }
-                for row in (PAPER_AUTOPILOT.paper_positions() or [])
-                if isinstance(row, dict) and is_broker_linked_active_position(row, allow_dust=True)
+                for row in _paper_autopilot_crypto_open_rows_v1()
+                if isinstance(row, dict)
             ]
         except Exception:
             open_positions = []
