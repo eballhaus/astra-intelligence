@@ -370,6 +370,11 @@ class CortexLifecycleEvidenceMasterTruthV1(CachedDiagnosticModule):
         strict = dict(strict_truth or {})
         strict_truth_id = str(strict.get("stable_key") or strict.get("truth_id") or "").strip()
         strict_linked = bool(strict_truth_id and str(strict.get("lifecycle_id") or "").strip() == str(merged.get("lifecycle_id") or "").strip())
+        source_lane = str(
+            strict.get("lane_id") or strict.get("lane") or base.get("lane_id") or base.get("lane") or ""
+        ).upper().strip()
+        if source_lane not in {"DAY", "SCALP", "SWING", "CRYPTO"}:
+            source_lane = ""
         if strict_linked:
             source_refs[STRICT_TRUTH_REGISTRY] = strict_truth_id
             if STRICT_TRUTH_REGISTRY not in used:
@@ -378,6 +383,10 @@ class CortexLifecycleEvidenceMasterTruthV1(CachedDiagnosticModule):
         return {
             "lesson_id": hashlib.sha1(lesson_id_seed.encode("utf-8", errors="ignore")).hexdigest()[:20],
             **merged,
+            # This is derived from the exact strict truth and keeps future
+            # retrieval lane-scoped without changing that immutable truth.
+            "lane_id": source_lane or None,
+            "source_lane_ids": [source_lane] if source_lane else [],
             "broker_truth_id": strict_truth_id if strict_linked else None,
             "broker_truth_linkage_status": "PROVEN_STRICT_BROKER_TRUTH" if strict_linked else "UNLINKED_OR_NON_STRICT",
             "evidence_class": "BROKER_CONFIRMED_COMPLETE" if strict_linked else prior_evidence_class,

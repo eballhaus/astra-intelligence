@@ -94,6 +94,10 @@ def _decision_snapshot(source: Mapping[str, Any], record: Mapping[str, Any], sta
     """Copy bounded decision-time facts only; later outcomes live in outcome labels."""
     evidence = source.get("candidate_decision_evidence_v1")
     evidence = dict(evidence) if isinstance(evidence, Mapping) else {}
+    retrieval = evidence.get("lesson_retrieval_v1") or source.get("lesson_retrieval_v1")
+    retrieval = dict(retrieval) if isinstance(retrieval, Mapping) else {}
+    application = evidence.get("lesson_application_evidence_v1") or source.get("lesson_application_evidence_v1")
+    application = dict(application) if isinstance(application, Mapping) else {}
     lifecycle_id = _text(source.get("lifecycle_id") or record.get("lifecycle_id"))
     position_id = _text(source.get("position_id") or record.get("position_id"))
     truth_id = _text(source.get("truth_id") or record.get("truth_id"))
@@ -155,6 +159,11 @@ def _decision_snapshot(source: Mapping[str, Any], record: Mapping[str, Any], sta
         "trade_linkage_status": linkage,
         "later_outcome_state": "NOT_ATTACHED",
         "later_outcome_owner": "outcome_labels_v1.jsonl",
+        # Retrieval is informational. Only an explicit, owner-authenticated
+        # application record may later receive effectiveness credit.
+        "canonical_lesson_ids": list(retrieval.get("lesson_ids") or [])[:12],
+        "lesson_retrieval_v1": retrieval,
+        "lesson_application_evidence_v1": application,
         "evidence_class": "DECISION_TIME_OBSERVATION",
         "missing_values_are_unavailable": True,
     }

@@ -96,7 +96,7 @@ def _first_identity(row: dict[str, Any], *keys: str) -> str:
 
 
 def _timestamp(row: dict[str, Any]) -> datetime | None:
-    for key in ("applied_at", "timestamp", "timestamp_utc", "created_at", "truth_timestamp", "exit_timestamp", "completed_at"):
+    for key in ("applied_at", "decision_timestamp", "timestamp", "timestamp_utc", "created_at", "truth_timestamp", "exit_timestamp", "completed_at"):
         raw = _text(row.get(key))
         if not raw:
             continue
@@ -142,6 +142,29 @@ def _application_state(row: dict[str, Any]) -> str:
     if raw in {"LESSON_NOT_APPLICABLE", "NOT_APPLICABLE"}:
         return "LESSON_NOT_APPLICABLE"
     return "APPLICATION_NOT_PROVEN"
+
+
+def _application_validation_error(row: dict[str, Any]) -> str | None:
+    """Require decision-time provenance before crediting a lesson application."""
+    if _application_state(row) != "LESSON_APPLIED":
+        return None
+    if not _ids(row, "lesson_id", "canonical_lesson_id", "canonical_lesson_ids", "lesson_ids"):
+        return "MISSING_LESSON_ID"
+    if not _first_identity(row, "candidate_id", "lifecycle_id", "position_id"):
+        return "MISSING_EXACT_DECISION_IDENTITY"
+    if _lane(row) not in CANONICAL_LANES:
+        return "MISSING_OR_INVALID_LANE"
+    if _timestamp(row) is None:
+        return "MISSING_APPLICATION_TIMESTAMP"
+    if not _text(row.get("decision_owner") or row.get("consumer_owner")):
+        return "MISSING_DECISION_OWNER"
+    if not _text(row.get("decision_type") or row.get("decision")):
+        return "MISSING_DECISION_TYPE"
+    if not _ids(row, "influenced_fields", "influenced_field", "decision_fields_influenced"):
+        return "MISSING_INFLUENCED_FIELD"
+    if row.get("lesson_consumed") is not True and row.get("consumed") is not True:
+        return "LESSON_CONSUMPTION_NOT_ATTESTED"
+    return None
 
 
 def _outcome_effect(application: dict[str, Any], truth: dict[str, Any]) -> str:
@@ -223,10 +246,17 @@ def build_canonical_lesson_outcome_linkage_v1(
             truth_by_identity.setdefault(identity, []).append(truth)
 
     linked_keys: set[tuple[str, str]] = set()
+    application_keys: set[tuple[str, str, str, str]] = set()
+    invalid_application_reasons: dict[str, int] = {}
+    valid_application_events = 0
     links: list[dict[str, Any]] = []
     for event in bounded_events:
         state = _application_state(event)
         event_lessons = _ids(event, "lesson_id", "canonical_lesson_id", "canonical_lesson_ids", "lesson_ids")
+        validation_error = _application_validation_error(event)
+        if validation_error:
+            invalid_application_reasons[validation_error] = invalid_application_reasons.get(validation_error, 0) + 1
+            state = "APPLICATION_NOT_PROVEN"
         for lesson_id in event_lessons:
             stats = lesson_stats.setdefault(lesson_id, {"lesson_id": lesson_id, "availability": "APPLICATION_NOT_PROVEN", "applications_proven": 0, "retrievals_proven": 0, "linked_outcomes": 0, "canonical_outcomes": 0, "shadow_supported_outcomes": 0, "replay_supported_outcomes": 0, "improved_outcomes": 0, "worsened_outcomes": 0, "neutral_or_unclear_outcomes": 0, "first_applied_at": None, "most_recent_applied_at": None, "last_evaluated_at": now_iso(), "context": [], "supporting_truth_ids": []})
             if state == "LESSON_RETRIEVED":
@@ -235,9 +265,19 @@ def build_canonical_lesson_outcome_linkage_v1(
                 continue
             if state != "LESSON_APPLIED":
                 continue
+            applied_at = _timestamp(event)
+            application_key = (
+                lesson_id,
+                _first_identity(event, "candidate_id", "lifecycle_id", "position_id"),
+                _text(event.get("application_id")),
+                applied_at.isoformat() if applied_at else "",
+            )
+            if application_key in application_keys:
+                continue
+            application_keys.add(application_key)
+            valid_application_events += 1
             stats["applications_proven"] += 1
             stats["availability"] = "LESSON_APPLIED"
-            applied_at = _timestamp(event)
             stamp = applied_at.isoformat().replace("+00:00", "Z") if applied_at else None
             if not stats["first_applied_at"] or (stamp and stamp < stats["first_applied_at"]):
                 stats["first_applied_at"] = stamp
@@ -246,6 +286,8 @@ def build_canonical_lesson_outcome_linkage_v1(
             identities = _ids(event, "truth_id", "broker_truth_id", "lifecycle_id", "position_id", "candidate_id")
             candidates = [truth for identity in identities for truth in truth_by_identity.get(identity, [])]
             for truth in candidates:
+                if _lane(event) != _lane(truth):
+                    continue
                 truth_time = _timestamp(truth)
                 if applied_at and truth_time and truth_time < applied_at:
                     continue
@@ -272,7 +314,9 @@ def build_canonical_lesson_outcome_linkage_v1(
         "lessons": list(lesson_stats.values())[:max_rows],
         "links": links[:max_rows],
         "linked_outcomes": len(links),
-        "explicit_application_events": sum(1 for event in bounded_events if _application_state(event) == "LESSON_APPLIED"),
+        "explicit_application_events": valid_application_events,
+        "invalid_application_events": sum(invalid_application_reasons.values()),
+        "invalid_application_reasons": invalid_application_reasons,
         "retrieval_only_events": sum(1 for event in bounded_events if _application_state(event) == "LESSON_RETRIEVED"),
         "canonical_truths_examined": len(official_truths),
         "input_records_examined": len(bounded_lessons) + len(bounded_events) + len(bounded_truths),
@@ -327,7 +371,41 @@ def _progression_for_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     else:
         delta = rounded(to_float(recent.get("median_return")) - to_float(early.get("median_return")))
         status = "IMPROVING" if delta > 0 else "DETERIORATING" if delta < 0 else "FLAT_OR_MIXED"
-    return {"status": status, "truth_count": len(ordered), "recent_vs_early_median_return_delta": delta, "cohorts": cohorts, "evidence_caveat": "chronological descriptive comparison; no policy promotion"}
+    economic_metrics = (
+        "profit_factor",
+        "average_return",
+        "average_winner",
+        "average_loser",
+    )
+    economic_deltas = {
+        metric: rounded(to_float(recent.get(metric)) - to_float(early.get(metric)))
+        for metric in economic_metrics
+        if early.get(metric) is not None and recent.get(metric) is not None
+    }
+    improvements = sum(value > 0 for value in economic_deltas.values())
+    deteriorations = sum(value < 0 for value in economic_deltas.values())
+    if status == "INSUFFICIENT_EVIDENCE" or len(economic_deltas) < 3:
+        economic_status = "INSUFFICIENT_EVIDENCE"
+    elif improvements >= 3 and improvements > deteriorations:
+        economic_status = "IMPROVING_BUT_NOT_PROFITABLE" if to_float(recent.get("average_return")) < 0 else "IMPROVING"
+    elif deteriorations >= 3 and deteriorations > improvements:
+        economic_status = "DETERIORATING"
+    else:
+        economic_status = "MIXED"
+    return {
+        "status": status,
+        "truth_count": len(ordered),
+        "recent_vs_early_median_return_delta": delta,
+        "economic_multi_metric_trend": {
+            "status": economic_status,
+            "deltas": economic_deltas,
+            "improving_metrics": improvements,
+            "deteriorating_metrics": deteriorations,
+            "descriptive_only": True,
+        },
+        "cohorts": cohorts,
+        "evidence_caveat": "chronological descriptive comparison; no policy promotion",
+    }
 
 
 def build_truth_progression_v1(truths: list[dict[str, Any]], *, max_rows: int = MAX_LEARNING_LINKAGE_ROWS) -> dict[str, Any]:
@@ -582,8 +660,34 @@ class AstraIntelligenceEffectivenessLearningVelocityV1(CachedDiagnosticModule):
             truths = _rows(read_json(os.path.join(self.state_dir, "broker_truth_records_v1.json")))
         applications = _rows(statuses.get("lesson_application_events_v1"))
         if not applications:
-            # Existing candidate attachment is advisory retrieval evidence only.
+            def evidence_events(row: dict[str, Any], *, source: str) -> list[dict[str, Any]]:
+                events: list[dict[str, Any]] = []
+                nested = row.get("candidate_decision_snapshot_v1")
+                sources = [row, dict(nested)] if isinstance(nested, dict) else [row]
+                for parent in sources:
+                    for field, default_state in (
+                        ("lesson_application_evidence_v1", "LESSON_APPLIED"),
+                        ("lesson_retrieval_v1", "LESSON_RETRIEVED"),
+                    ):
+                        evidence = parent.get(field)
+                        if not isinstance(evidence, dict):
+                            continue
+                        event = dict(evidence)
+                        for key in ("candidate_id", "lifecycle_id", "position_id", "lane_id", "lane", "horizon", "horizon_style", "regime", "timestamp", "timestamp_utc"):
+                            if event.get(key) in (None, "") and parent.get(key) not in (None, ""):
+                                event[key] = parent.get(key)
+                        event.setdefault("lesson_application_state", default_state)
+                        event["source"] = source
+                        if _ids(event, "lesson_id", "canonical_lesson_id", "canonical_lesson_ids", "lesson_ids"):
+                            events.append(event)
+                return events
+
             for row in tail_jsonl(os.path.join(self.state_dir, "candidate_decision_ledger_v1.jsonl"), max_rows=MAX_LEARNING_LINKAGE_ROWS):
+                extracted = evidence_events(row, source="candidate_decision_ledger_decision_evidence")
+                if extracted:
+                    applications.extend(extracted)
+                    continue
+                # Existing attachments without retrieval detail are advisory only.
                 lesson_ids = list(_ids(row, "canonical_lesson_ids", "lesson_ids"))
                 if lesson_ids:
                     applications.append({
@@ -591,9 +695,14 @@ class AstraIntelligenceEffectivenessLearningVelocityV1(CachedDiagnosticModule):
                         "lesson_application_state": "LESSON_RETRIEVED",
                         "candidate_id": row.get("candidate_id"),
                         "lifecycle_id": row.get("lifecycle_id"),
+                        "lane_id": row.get("lane_id") or row.get("lane"),
                         "timestamp": row.get("timestamp") or row.get("timestamp_utc"),
                         "source": "candidate_decision_ledger_advisory_attachment",
                     })
+            for truth in truths:
+                exit_evidence = truth.get("exit_decision_evidence_v1")
+                if isinstance(exit_evidence, dict):
+                    applications.extend(evidence_events({**truth, **exit_evidence}, source="strict_truth_exit_decision_evidence"))
         recurrences = _rows(statuses.get("lesson_recurrence_events_v1"))
         return lessons, truths, applications, recurrences
 

@@ -82,6 +82,47 @@ class CandidateDecisionEvidencePreservationV1Tests(unittest.TestCase):
             self.assertEqual(again["candidate_decision_evidence_v1"]["snapshots_deduped"], 1)
             self.assertEqual(self._rows(Path(directory) / "candidate_decision_ledger_v1.jsonl")[0]["candidate_score"], 88.0)
 
+    def test_lesson_retrieval_is_preserved_but_not_promoted_to_application(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = LaneExecutionTraceLedgerV1(directory)
+            source = candidate()
+            source["candidate_decision_evidence_v1"]["lesson_retrieval_v1"] = {
+                "lesson_application_state": "LESSON_RETRIEVED",
+                "lesson_ids": ["lesson-day-1"],
+                "decision_owner": "PaperAutopilot._candidate_trace_row",
+                "consumed": False,
+            }
+            ledger.record([source], cycle_id="cycle-1")
+            row = self._rows(Path(directory) / "candidate_decision_ledger_v1.jsonl")[0]
+
+            self.assertEqual(row["canonical_lesson_ids"], ["lesson-day-1"])
+            self.assertEqual(row["lesson_retrieval_v1"]["lesson_application_state"], "LESSON_RETRIEVED")
+            self.assertEqual(row["lesson_application_evidence_v1"], {})
+
+    def test_candidate_retrieval_is_bounded_lane_and_horizon_scoped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lessons_path = Path(directory) / "canonical_lifecycle_lessons_v1.jsonl"
+            lessons_path.write_text(
+                "\n".join([
+                    json.dumps({"lesson_id": "day-lesson", "lane_id": "DAY", "horizon_style": "day_trade", "broker_truth_linkage_status": "PROVEN_STRICT_BROKER_TRUTH"}),
+                    json.dumps({"lesson_id": "crypto-lesson", "lane_id": "CRYPTO", "horizon_style": "crypto", "broker_truth_linkage_status": "PROVEN_STRICT_BROKER_TRUTH"}),
+                ]) + "\n"
+            )
+            engine = PaperAutopilotEngine(
+                db_path=str(Path(directory) / "paper_autopilot.db"),
+                state_path=str(Path(directory) / "paper_autopilot_state.json"),
+                enabled=False,
+            )
+            retrieval = engine._lesson_retrieval_for_candidate_v1({
+                "candidate_id": "candidate-day-1",
+                "lane_id": "DAY",
+                "paper_entry_horizon_style": "day_trade",
+            })
+
+            self.assertEqual(retrieval["lesson_ids"], ["day-lesson"])
+            self.assertEqual(retrieval["lesson_application_state"], "LESSON_RETRIEVED")
+            self.assertFalse(retrieval["consumed"])
+
     def test_accepted_candidate_has_exact_lifecycle_link_without_broker_action(self):
         with tempfile.TemporaryDirectory() as directory:
             ledger = LaneExecutionTraceLedgerV1(directory)

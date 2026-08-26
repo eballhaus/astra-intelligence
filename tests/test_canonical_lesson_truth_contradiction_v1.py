@@ -39,6 +39,7 @@ class CanonicalLessonTruthContradictionTests(unittest.TestCase):
                 profit_giveback=0.75188,
                 hold_duration=15328.407,
                 exit_reason="day_lane_session_close_required",
+                lane_id="DAY",
                 pretrade_context_v1={"paper_entry_horizon_style": "day_trade"},
             )
             Path(root, "broker_truth_records_v1.json").write_text(
@@ -55,6 +56,8 @@ class CanonicalLessonTruthContradictionTests(unittest.TestCase):
         self.assertEqual(lesson["broker_truth_id"], "strict:entry-1:exit-1")
         self.assertEqual(lesson["evidence_class"], "BROKER_CONFIRMED_COMPLETE")
         self.assertEqual(lesson["horizon_style"], "day_trade")
+        self.assertEqual(lesson["lane_id"], "DAY")
+        self.assertEqual(lesson["source_lane_ids"], ["DAY"])
         self.assertEqual(lesson["outcome_label"], "winner")
         self.assertEqual(lesson["mfe_pct"], 0.469925)
         self.assertEqual(lesson["mae_pct"], -0.344612)

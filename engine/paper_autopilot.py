@@ -1547,6 +1547,8 @@ def _candidate_decision_evidence_v1(
             "ranking_version": row.get("ranking_version"),
             "risk_envelope_id": risk.get("risk_envelope_id"),
         },
+        "lesson_retrieval_v1": dict(row.get("lesson_retrieval_v1") or {}),
+        "lesson_application_evidence_v1": dict(row.get("lesson_application_evidence_v1") or {}),
         "missing_values_are_unavailable": True,
     }
 
@@ -9594,6 +9596,98 @@ class PaperAutopilotEngine:
             # existing fail-closed execution result.
             return {"appended": 0, "suppressed": 0, "status": "ledger_write_failed"}
 
+    def _lesson_retrieval_for_candidate_v1(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        """Retrieve bounded, context-matched lessons without changing execution.
+
+        This is deliberately retrieval-only. An existing decision owner must
+        explicitly attest consumption and its affected field before a later
+        strict truth can credit the lesson with effectiveness.
+        """
+        candidate = dict(row or {})
+        lane = str(candidate.get("lane_id") or candidate.get("lane") or "").upper().strip()
+        horizon = str(
+            candidate.get("paper_entry_horizon_style")
+            or candidate.get("trade_horizon_style")
+            or candidate.get("best_horizon_style")
+            or ""
+        ).strip().lower()
+        candidate_id = str(candidate.get("candidate_id") or candidate.get("recommendation_id") or "").strip()
+        if lane not in {"DAY", "SCALP", "SWING", "CRYPTO"} or not horizon or not candidate_id:
+            return {}
+
+        path = os.path.join(os.path.dirname(self.state_path) or "state", "canonical_lifecycle_lessons_v1.jsonl")
+        try:
+            stat = os.stat(path)
+            token = (int(stat.st_mtime_ns), int(stat.st_size))
+        except OSError:
+            return {}
+        cached = dict(self._runtime_state.get("bounded_lesson_retrieval_cache_v1") or {})
+        cache_valid = cached.get("token") == token
+        lessons = list(cached.get("lessons") or []) if cache_valid else []
+        if not cache_valid:
+            try:
+                with open(path, "rb") as handle:
+                    handle.seek(max(0, int(stat.st_size) - 131072))
+                    payload = handle.read().decode("utf-8", errors="ignore")
+                lines = payload.splitlines()
+                if int(stat.st_size) > len(payload.encode("utf-8")):
+                    lines = lines[1:]
+                for line in lines[-64:]:
+                    try:
+                        lesson = json.loads(line)
+                    except (TypeError, ValueError):
+                        continue
+                    if not isinstance(lesson, dict):
+                        continue
+                    lesson_id = str(lesson.get("lesson_id") or "").strip()
+                    if lesson_id:
+                        lessons.append({
+                            "lesson_id": lesson_id,
+                            "lane_id": str(lesson.get("lane_id") or "").upper().strip(),
+                            "source_lane_ids": [str(value).upper().strip() for value in list(lesson.get("source_lane_ids") or []) if str(value).strip()],
+                            "horizon_style": str(lesson.get("horizon_style") or "").strip().lower(),
+                            "regime": str(lesson.get("regime") or "").strip().upper(),
+                            "lesson_category": str(lesson.get("lesson_category") or lesson.get("category") or "").strip(),
+                            "broker_truth_linkage_status": str(lesson.get("broker_truth_linkage_status") or "").strip(),
+                        })
+            except OSError:
+                return {}
+            lessons = lessons[-64:]
+            self._runtime_state["bounded_lesson_retrieval_cache_v1"] = {"token": token, "lessons": lessons}
+
+        regime = str(candidate.get("market_regime") or candidate.get("regime_context") or candidate.get("regime") or "").upper().strip()
+        matched: list[dict[str, Any]] = []
+        for lesson in lessons:
+            source_lanes = set(lesson.get("source_lane_ids") or [])
+            if lane != lesson.get("lane_id") and lane not in source_lanes:
+                continue
+            lesson_horizon = str(lesson.get("horizon_style") or "")
+            if lesson_horizon and lesson_horizon != horizon:
+                continue
+            lesson_regime = str(lesson.get("regime") or "")
+            if regime and lesson_regime and lesson_regime != regime:
+                continue
+            if lesson.get("broker_truth_linkage_status") != "PROVEN_STRICT_BROKER_TRUTH":
+                continue
+            matched.append(lesson)
+        if not matched:
+            return {}
+        return {
+            "schema_version": "astra_lesson_retrieval_evidence_v1",
+            "lesson_application_state": "LESSON_RETRIEVED",
+            "lesson_ids": [lesson["lesson_id"] for lesson in matched[:8]],
+            "lesson_categories": [lesson["lesson_category"] for lesson in matched[:8] if lesson.get("lesson_category")],
+            "candidate_id": candidate_id,
+            "lane_id": lane,
+            "horizon_style": horizon,
+            "regime": regime or None,
+            "decision_timestamp": _now_iso(),
+            "decision_owner": "PaperAutopilot._candidate_trace_row",
+            "decision_type": "ENTRY_EVALUATION",
+            "consumed": False,
+            "retrieval_provenance": "canonical_lifecycle_lessons_v1.jsonl:bounded_lane_horizon_context_match",
+        }
+
     def _candidate_trace_row(
         self,
         row: dict[str, Any],
@@ -9612,6 +9706,9 @@ class PaperAutopilotEngine:
         current_candidates: list[dict[str, Any]] | None = None,
     ) -> tuple[dict[str, Any], bool, str, dict[str, Any]]:
         r = _normalize_paper_entry_bridge(row)
+        retrieval = self._lesson_retrieval_for_candidate_v1(r)
+        if retrieval:
+            r["lesson_retrieval_v1"] = retrieval
         asset = _norm_asset(r.get("asset_type") or "stock")
         r = self._assign_trusted_quote_to_candidate(
             r,
