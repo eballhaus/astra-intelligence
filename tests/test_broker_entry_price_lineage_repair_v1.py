@@ -150,6 +150,14 @@ class BrokerEntryPriceLineageRepairTests(unittest.TestCase):
                 db_path=str(root / "paper.db"), state_path=str(root / "state.json"), alpaca_paper_broker=broker,
             )
             _open_position(engine)
+            with engine._connect() as conn:
+                conn.execute(
+                    """UPDATE paper_positions
+                    SET lane_id='CRYPTO', source_candidate_id='candidate-1',
+                        source_recommendation_id='recommendation-1', source_lifecycle_id='lifecycle-1'
+                    WHERE position_id='position-1'"""
+                )
+                conn.commit()
             snapshot = {"broker_reconciliation_active": True, "broker_position_by_symbol": {}}
             first = engine._reconcile_entry_price_lineage_v1(snapshot)
             second = engine._reconcile_entry_price_lineage_v1(snapshot)
@@ -162,6 +170,9 @@ class BrokerEntryPriceLineageRepairTests(unittest.TestCase):
             self.assertEqual(row["broker_filled_avg_price"], 1.6)
             self.assertEqual(row["entry_price_verified"], 1)
             self.assertEqual(row["entry_price_evidence_class"], "BROKER_CONFIRMED_FILL")
+            trace = engine.execution_trace_ledger.summary()
+            self.assertEqual(trace["lanes"]["CRYPTO"]["filled_entries"], 1)
+            self.assertEqual(trace["lanes"]["CRYPTO"]["candidates_seen"], 0)
 
     def test_pending_entry_activates_only_after_id_linked_broker_fill(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(paper_autopilot_module, "create_lifecycle_record", None):
