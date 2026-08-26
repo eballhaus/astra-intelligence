@@ -114,6 +114,39 @@ def _truth_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _canonical_profitability_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize the supplied canonical strict-truth cohort for reporting."""
+    returns = [value for row in rows if (value := _return(row)) is not None]
+    winners = [value for value in returns if value > 0]
+    losers = [value for value in returns if value < 0]
+    gross_profit, gross_loss = sum(winners), abs(sum(losers))
+    average_winner = sum(winners) / len(winners) if winners else None
+    average_loser = sum(losers) / len(losers) if losers else None
+    return {
+        "sample_size": len(rows),
+        "win_rate": round(len(winners) * 100.0 / len(returns), 6) if returns else None,
+        "profit_factor": round(gross_profit / gross_loss, 6) if gross_loss else (round(gross_profit, 6) if gross_profit else None),
+        "average_return": round(sum(returns) / len(returns), 6) if returns else None,
+        "median_return": round(median(returns), 6) if returns else None,
+        "average_winner": round(average_winner, 6) if average_winner is not None else None,
+        "average_loser": round(average_loser, 6) if average_loser is not None else None,
+        "payoff_ratio": round(average_winner / abs(average_loser), 6) if average_winner is not None and average_loser not in (None, 0) else None,
+        "best_trade_return": round(max(returns), 6) if returns else None,
+        "worst_trade_return": round(min(returns), 6) if returns else None,
+    }
+
+
+def _average_numeric(rows: list[dict[str, Any]], *keys: str) -> float | None:
+    values: list[float] = []
+    for row in rows:
+        for key in keys:
+            value = _number(row.get(key))
+            if value is not None:
+                values.append(value)
+                break
+    return round(sum(values) / len(values), 6) if values else None
+
+
 def _source_timestamp(source: dict[str, Any]) -> datetime | None:
     return _timestamp(source, "generated_at", "updated_at", "timestamp", "heartbeat_at")
 
@@ -191,6 +224,7 @@ def build_astra_daily_intelligence_summary_v1(
     entered_today = [row for row in truths if _today(_timestamp(row, "entry_timestamp", "entry_time", "entry_filled_at"), report_date, zone)]
     truth_today = [row for row in truths if _today(_timestamp(row, "created_at", "persisted_at", "exit_timestamp", "exit_time"), report_date, zone)]
     today_metrics = _truth_metrics(closed_today)
+    canonical_profitability = _canonical_profitability_metrics(truths)
     truths_by_lane = {lane: sum(1 for row in truths if _lane(row) == lane) for lane in (*CANONICAL_LANES, "OTHER")}
     today_truths_by_lane = {lane: sum(1 for row in truth_today if _lane(row) == lane) for lane in (*CANONICAL_LANES, "OTHER")}
 
@@ -311,7 +345,20 @@ def build_astra_daily_intelligence_summary_v1(
         "truths_by_lane": truths_by_lane,
         "noncanonical_or_legacy_records": {"count": len(noncanonical), "symbols": sorted({_text(row.get("symbol")).upper() for row in noncanonical if _text(row.get("symbol"))})[:12], "official_metrics_excluded": True},
         "today_at_a_glance": {"trades_entered_today": len(entered_today), "new_canonical_truths_today": len(_dedupe_truths(truth_today)), "total_canonical_truths": canonical_count, "truths_by_lane": truths_by_lane, "current_open_broker_positions": len(active_positions), "reconciliation_pending_count": len(pending_positions), "learning_pending_count": max(0, canonical_count - _int(health.get("truths_consumed_by_learning_total"))), "today_realized_pnl_dollars": None, **today_metrics},
-        "current_canonical_profitability": {"sample_size": overall.get("truth_count"), "win_rate": overall.get("win_rate"), "profit_factor": overall.get("profit_factor"), "average_return": overall.get("average_return"), "median_return": overall.get("median_return"), "winsorized_return": overall.get("winsorized_return"), "average_winner": overall.get("average_winner"), "average_loser": overall.get("average_loser"), "payoff_ratio": None, "best_trade_return": None, "worst_trade_return": None, "average_hold_duration": overall.get("average_hold_duration"), "MFE": overall.get("average_mfe"), "MAE": overall.get("average_mae"), "profit_capture": overall.get("average_profit_capture_ratio"), "giveback": overall.get("average_giveback"), "entry_quality": None, "exit_quality": None, "official_truth_source": progression.get("official_truth_source")},
+        "current_canonical_profitability": {
+            **canonical_profitability,
+            "winsorized_return": None,
+            "average_hold_duration": _average_numeric(truths, "hold_duration", "hold_duration_seconds"),
+            "MFE": _average_numeric(truths, "mfe", "mfe_pct", "maximum_favorable_excursion_pct"),
+            "MAE": _average_numeric(truths, "mae", "mae_pct", "maximum_adverse_excursion_pct"),
+            "profit_capture": official_b2.get("average_profit_capture_pct"),
+            "giveback": official_b2.get("average_profit_giveback_from_peak_pct"),
+            "return_per_hour": official_b2.get("average_return_per_hour"),
+            "return_per_day": official_b2.get("average_realized_return_per_day"),
+            "entry_quality": None,
+            "exit_quality": None,
+            "official_truth_source": progression.get("official_truth_source"),
+        },
         "bundle1": {"is_astra_improving": progression.get("is_astra_improving"), "progression_status": overall.get("status"), "early_cohort": _dict(overall.get("cohorts")).get("EARLY", {}), "middle_cohort": _dict(overall.get("cohorts")).get("MIDDLE", {}), "recent_cohort": _dict(overall.get("cohorts")).get("RECENT", {}), "lesson_effectiveness": {"lessons_tracked": len(_rows(linkage.get("lessons"))), "lesson_applied_count": linkage.get("explicit_application_events"), "lessons_with_linked_outcomes": linkage.get("linked_outcomes"), "improved_outcomes": effectiveness.get("improved_outcomes"), "worsened_outcomes": effectiveness.get("worsened_outcomes"), "neutral_outcomes": None, "effective_lessons": effectiveness.get("effective_lessons"), "promising_lessons": None, "mixed_lessons": None, "underperforming_lessons": effectiveness.get("underperforming_lessons"), "insufficient_evidence_lessons": None}, "mistake_recurrence": {"recurrence_after_lesson": recurrence.get("recurrence_after_lesson_count"), "recurrence_reduced": None, "recurrence_persistent": None, "not_yet_measurable": not bool(linkage.get("linked_outcomes"))}},
         "bundle2": {"official_truths_eligible_for_attribution": official_b2.get("completed_broker_truth_sample_size"), "official_truths_attributed": official_b2.get("completed_broker_truth_sample_size"), "winners_attributed": official_b2.get("profitable_trade_count"), "losers_attributed": official_b2.get("losing_trade_count"), "top_success_drivers": official_b2.get("top_success_drivers") or [], "top_failure_drivers": official_b2.get("top_failure_drivers") or [], "loss_anatomy": {"controlled": official_b2.get("controlled_loss_count"), "partly_preventable": official_b2.get("partly_preventable_loss_count"), "preventable": official_b2.get("preventable_loss_count"), "not_proven": official_b2.get("losses_not_proven_count")}, "return_per_time": {"average_return_per_hour": official_b2.get("average_return_per_hour"), "median_return_per_hour": official_b2.get("median_return_per_hour"), "average_return_per_day": official_b2.get("average_realized_return_per_day"), "average_hold_duration": None, "overhold_count": None}},
         "bundle3": {**contextual, "learning_context_status": _learning_context_status(contextual)},

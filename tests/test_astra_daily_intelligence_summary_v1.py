@@ -211,11 +211,41 @@ def test_shadow_or_replay_input_cannot_enter_official_truth_metrics() -> None:
     assert result["current_canonical_profitability"]["official_truth_source"] == "BROKER_CONFIRMED_CANONICAL_ONLY"
 
 
+def test_current_profitability_uses_the_supplied_canonical_truth_cohort() -> None:
+    result = _build(canonical_truths=[
+        {**_truth("winner", result=1.5), "hold_duration": 60.0, "mfe": 2.0, "mae": -0.5},
+        {**_truth("loser", result=-0.5), "hold_duration": 120.0, "mfe": 1.0, "mae": -1.0},
+    ], bundle2={
+        **_bundle2(),
+        "average_profit_capture_pct": 60.0,
+        "average_profit_giveback_from_peak_pct": 40.0,
+    })
+
+    profitability = result["current_canonical_profitability"]
+    assert profitability["sample_size"] == 2
+    assert profitability["win_rate"] == 50.0
+    assert profitability["profit_factor"] == 3.0
+    assert profitability["average_return"] == 0.5
+    assert profitability["median_return"] == 0.5
+    assert profitability["average_winner"] == 1.5
+    assert profitability["average_loser"] == -0.5
+    assert profitability["payoff_ratio"] == 3.0
+    assert profitability["best_trade_return"] == 1.5
+    assert profitability["worst_trade_return"] == -0.5
+    assert profitability["average_hold_duration"] == 90.0
+    assert profitability["MFE"] == 1.5
+    assert profitability["MAE"] == -0.75
+    assert profitability["profit_capture"] == 60.0
+    assert profitability["giveback"] == 40.0
+    assert profitability["return_per_hour"] == 0.2
+    assert profitability["return_per_day"] == 1.0
+
+
 def test_stale_or_missing_dependencies_are_exposed_and_optional_metrics_remain_unavailable() -> None:
     result = _build(provider_health={})
     assert "provider_health" in result["data_freshness"]["stale_dependencies"]
     assert result["today_at_a_glance"]["today_realized_pnl_dollars"] is None
-    assert result["current_canonical_profitability"]["best_trade_return"] is None
+    assert result["current_canonical_profitability"]["best_trade_return"] == 1.0
 
 
 def test_summary_is_idempotent_and_reporting_only() -> None:
