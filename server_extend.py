@@ -47038,6 +47038,24 @@ def astra_daily_intelligence_summary_v1():
             or cached.get("provider_consumption_telemetry_v1")
             or {}
         )
+        # The worker owns mutation, while this read-only endpoint consumes the
+        # same configured SQLite position owner.  Do not substitute a lane
+        # monitor count for exact broker-linked lifecycle rows.
+        open_positions = []
+        try:
+            from engine.astra_canonical_ownership_contract_v1 import is_broker_linked_active_position
+            open_positions = [
+                {
+                    **dict(row),
+                    "broker_confirmed": True,
+                    "reconciliation_state": "OPEN",
+                    "lifecycle_id": row.get("source_lifecycle_id") or row.get("position_id"),
+                }
+                for row in (PAPER_AUTOPILOT.paper_positions() or [])
+                if isinstance(row, dict) and is_broker_linked_active_position(row, allow_dust=True)
+            ]
+        except Exception:
+            open_positions = []
         return build_astra_daily_intelligence_summary_v1(
             canonical_truths=canonical_truths,
             bundle1=bundle1,
@@ -47046,6 +47064,7 @@ def astra_daily_intelligence_summary_v1():
             worker_state=worker_state,
             control_plane=control_plane,
             provider_health=provider_health,
+            open_positions=open_positions,
             noncanonical_or_legacy_records=noncanonical_closed,
             dependency_files_read=3,
         )

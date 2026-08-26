@@ -166,6 +166,20 @@ def test_pending_position_is_not_promoted_to_closed_truth() -> None:
     assert result["current_open_positions"]["broker_confirmed_active"][0]["symbol"] == "PENDING"
 
 
+def test_exact_open_position_input_sets_lane_active_without_creating_truth() -> None:
+    position = {
+        "symbol": "ETH/USD", "lane_id": "CRYPTO", "position_id": "life-crypto",
+        "entry_fill_id": "fill-crypto", "broker_confirmed": True,
+        "reconciliation_state": "OPEN", "entry_timestamp": "2026-08-20T15:30:00Z",
+    }
+    result = _build(open_positions=[position])
+
+    assert result["lanes"]["CRYPTO"]["open_positions"] == 1
+    assert result["lanes"]["CRYPTO"]["truth_readiness"] == "ACTIVE"
+    assert result["today_at_a_glance"]["current_open_broker_positions"] == 1
+    assert result["truths_by_lane"]["CRYPTO"] == 0
+
+
 def test_lane_monitor_counts_are_not_presented_as_canonical_positions_without_position_input() -> None:
     result = _build(operating_health={**_health(), "lanes": {"SWING": {"broker_confirmed_active_positions": 40}}})
 
