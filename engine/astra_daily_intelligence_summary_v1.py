@@ -157,6 +157,8 @@ def build_astra_daily_intelligence_summary_v1(
     control_plane: dict[str, Any] | None = None,
     provider_health: dict[str, Any] | None = None,
     open_positions: list[dict[str, Any]] | None = None,
+    open_position_lanes: tuple[str, ...] | list[str] | None = None,
+    open_position_scope: str = "EXACT_BROKER_ACTIVE",
     noncanonical_or_legacy_records: list[dict[str, Any]] | None = None,
     secondary_truth_counts: dict[str, Any] | None = None,
     dependency_files_read: int = 0,
@@ -213,6 +215,12 @@ def build_astra_daily_intelligence_summary_v1(
 
     positions_supplied = open_positions is not None
     positions = _rows(open_positions)
+    position_lanes = {
+        _text(lane).upper()
+        for lane in (open_position_lanes or CANONICAL_LANES)
+        if _text(lane).upper() in CANONICAL_LANES
+    }
+    position_scope = _text(open_position_scope) or "EXACT_BROKER_ACTIVE"
     active_positions = [row for row in positions if bool(row.get("broker_confirmed", True)) and not bool(row.get("advisory_only"))]
     pending_positions = [
         row for row in positions
@@ -230,7 +238,9 @@ def build_astra_daily_intelligence_summary_v1(
         source = _dict(lanes_source.get(lane))
         active = active_positions_by_lane[lane]
         monitor_active = _int(source.get("broker_confirmed_active_positions"))
-        if positions_supplied and monitor_active != active:
+        lane_positions_supplied = positions_supplied and lane in position_lanes
+        scope_difference = position_scope == "CANONICAL_MANAGED_LIFECYCLES"
+        if lane_positions_supplied and monitor_active != active and not scope_difference:
             contracts.append({
                 "status": "CONTRACT_DISAGREEMENT", "field": f"{lane}.broker_confirmed_active_positions",
                 "canonical_value": active, "conflicting_value": monitor_active,
@@ -252,8 +262,9 @@ def build_astra_daily_intelligence_summary_v1(
             "open_positions": active,
             "lane_monitor_active_count": monitor_active,
             "lane_monitor_position_count_status": (
-                "ALIGNED" if positions_supplied and monitor_active == active
-                else "CONTRACT_DISAGREEMENT" if positions_supplied
+                "ALIGNED" if lane_positions_supplied and monitor_active == active
+                else "DIFFERENT_SCOPE_RAW_BROKER_VS_MANAGED" if lane_positions_supplied and scope_difference
+                else "CONTRACT_DISAGREEMENT" if lane_positions_supplied
                 else "UNVERIFIED_COMPACT_POSITION_LIST_UNAVAILABLE"
             ),
             "entries_today": sum(1 for row in entered_today if _lane(row) == lane),
@@ -318,7 +329,7 @@ def build_astra_daily_intelligence_summary_v1(
             "full_history_scan_count": decision_capture.get("full_history_scan_count", 0),
         },
         "lanes": lanes,
-        "current_open_positions": {"broker_confirmed_active": bounded_positions, "reconciliation_pending": [{"symbol": row.get("symbol"), "lifecycle_id": row.get("lifecycle_id") or row.get("position_id"), "reconciliation_state": row.get("reconciliation_state")} for row in pending_positions[:12]], "advisory_only": [], "detail_state": "AVAILABLE" if positions else "UNAVAILABLE_FROM_COMPACT_INPUT"},
+        "current_open_positions": {"broker_confirmed_active": bounded_positions, "reconciliation_pending": [{"symbol": row.get("symbol"), "lifecycle_id": row.get("lifecycle_id") or row.get("position_id"), "reconciliation_state": row.get("reconciliation_state")} for row in pending_positions[:12]], "advisory_only": [], "detail_state": "AVAILABLE" if positions else "UNAVAILABLE_FROM_COMPACT_INPUT", "position_scope": position_scope, "position_lanes": sorted(position_lanes)},
         "control_plane": {"sentinel_status": health.get("sentinel_status") or control.get("status"), "governance_status": health.get("governance_status"), "cortex_status": health.get("cortex_status"), "control_plane_agreement": health.get("control_plane_agreement"), "active_root_causes": issues},
         "provider_data_health": {"equities": _dict(providers.get("equities")), "crypto": _dict(providers.get("crypto")), "source_status": providers.get("status") or "UNAVAILABLE_FROM_CACHE"},
         "daily_activity": {"completed_today": [{"symbol": row.get("symbol"), "lane": _lane(row), "entry_time": row.get("entry_timestamp") or row.get("entry_time"), "entry_price": row.get("entry_price"), "exit_time": row.get("exit_timestamp") or row.get("exit_time"), "exit_price": row.get("exit_price"), "status": "CLOSED", "realized_return": _return(row), "exit_reason": row.get("exit_reason"), "broker_confirmed": True, "canonical_truth_completed": True, "learning_acknowledged": row.get("learning_acknowledged")} for row in closed_today[:24]], "opened_today_still_open": [], "prior_day_still_open": [], "filled_awaiting_reconciliation": []},

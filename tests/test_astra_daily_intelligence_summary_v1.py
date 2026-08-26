@@ -181,6 +181,19 @@ def test_exact_open_position_input_sets_lane_active_without_creating_truth() -> 
     assert result["truths_by_lane"]["CRYPTO"] == 0
 
 
+def test_managed_position_scope_does_not_hide_raw_broker_dust_or_claim_conflict() -> None:
+    position = {"symbol": "ETH/USD", "lane_id": "CRYPTO", "position_id": "life-crypto", "broker_confirmed": True, "reconciliation_state": "OPEN"}
+    health = {**_health(), "lanes": {"CRYPTO": {"broker_confirmed_active_positions": 3}}}
+    result = _build(
+        open_positions=[position], open_position_lanes=("CRYPTO",),
+        open_position_scope="CANONICAL_MANAGED_LIFECYCLES", operating_health=health,
+    )
+
+    assert result["lanes"]["CRYPTO"]["open_positions"] == 1
+    assert result["lanes"]["CRYPTO"]["lane_monitor_position_count_status"] == "DIFFERENT_SCOPE_RAW_BROKER_VS_MANAGED"
+    assert not result["contract_disagreements"]
+
+
 def test_lane_monitor_counts_are_not_presented_as_canonical_positions_without_position_input() -> None:
     result = _build(operating_health={**_health(), "lanes": {"SWING": {"broker_confirmed_active_positions": 40}}})
 

@@ -47065,6 +47065,8 @@ def astra_daily_intelligence_summary_v1():
             control_plane=control_plane,
             provider_health=provider_health,
             open_positions=open_positions,
+            open_position_lanes=("CRYPTO",),
+            open_position_scope="CANONICAL_MANAGED_LIFECYCLES",
             noncanonical_or_legacy_records=noncanonical_closed,
             dependency_files_read=3,
         )
