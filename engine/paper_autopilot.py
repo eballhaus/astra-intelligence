@@ -7737,6 +7737,32 @@ class PaperAutopilotEngine:
             "final_quote_authoritative": bool(source.get("final_executable_quote_refresh_authoritative", False)),
         }
 
+    @staticmethod
+    def _copy_crypto_execution_evidence_to_order(
+        order: dict[str, Any],
+        candidate: Mapping[str, Any],
+    ) -> None:
+        """Preserve the canonical evidence for the broker's repeated integrity check.
+
+        The broker adapter intentionally repeats crypto execution integrity.  Its
+        input must therefore retain the same bounded quote, market-quality, and
+        horizon facts that the pre-submit gate just accepted.  Missing evidence
+        is deliberately not synthesized, so the adapter continues to fail
+        closed on stale or incomplete candidates.
+        """
+        for field in (
+            "provider_quote_timestamp", "quote_timestamp", "quote_age_seconds", "freshness_seconds",
+            "bid", "bid_price", "bp", "ask", "ask_price", "ap", "spread_pct", "bid_ask_spread_pct",
+            "volume_24h", "volume", "quote_volume", "data_quality_score", "quote_quality_score",
+            "volatility_risk_status", "confidence", "ranking_score", "score",
+            "assigned_horizon", "horizon_evidence_status", "horizon_evidence_missing",
+            "horizon_provenance", "horizon_scores", "concentration_status", "budget_status",
+            "base_symbol", "quote_currency",
+        ):
+            value = candidate.get(field)
+            if value not in (None, ""):
+                order[field] = value
+
     def _entry_commitment_gate_v1(
         self,
         row: dict[str, Any],
@@ -10327,6 +10353,7 @@ class PaperAutopilotEngine:
                     "crypto_execution_integrity": integrity,
                     "crypto_inner_freshness_trace_v1": inner_freshness_trace,
                 }
+            self._copy_crypto_execution_evidence_to_order(order, integrity_row)
             order.update({
                 "asset_class": "crypto",
                 "crypto_paper_activation_passed": True,

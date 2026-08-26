@@ -124,6 +124,68 @@ class FinalCandidateFreshCryptoQuoteTests(unittest.TestCase):
             "capacity_concentration", "confidence_ranking", "horizon_assignment",
         })
 
+    def test_fresh_pre_submit_evidence_survives_to_broker_integrity(self):
+        engine = _engine()
+        self.addCleanup(engine._tmpdir.cleanup)
+        candidate = {
+            **_crypto_row(
+                provider_quote_timestamp=_iso(), quote_timestamp=_iso(),
+                bid=100.0, ask=100.1, volume_24h=1000.0, data_quality_score=90.0,
+                confidence=80.0, paper_entry_horizon_style="day_trade",
+                horizon_evidence_status="PERSISTED_CANONICAL",
+                horizon_provenance="crypto_ranking_snapshot_v1",
+                horizon_scores={"day_trade": 80.0},
+            ),
+            "notional": 25.0,
+        }
+        order = {"symbol": "BTC/USD", "asset_class": "crypto", "notional": 25.0}
+
+        engine._copy_crypto_execution_evidence_to_order(order, candidate)
+        result = candidate_execution_integrity(
+            order,
+            supported_pairs={"BTC/USD"},
+            tradable_pairs={"BTC/USD"},
+            lane_state="LANE_PAPER_ACTIVE_BOUNDED",
+            paper_mode_verified=True,
+            capacity_available=True,
+            broker_reconciliation_ok=True,
+            kill_switch_enabled=False,
+        )
+
+        self.assertEqual(order["provider_quote_timestamp"], candidate["provider_quote_timestamp"])
+        self.assertEqual(result["gate_status"]["timestamp_freshness"], "PASS")
+        # The fixture intentionally omits the richer persisted horizon
+        # envelope. The broker must advance past freshness without treating
+        # this unrelated fail-closed requirement as satisfied.
+        self.assertEqual(result["first_causal_blocker"]["gate"], "horizon_assignment")
+
+    def test_missing_pre_submit_native_timestamp_remains_fail_closed(self):
+        engine = _engine()
+        self.addCleanup(engine._tmpdir.cleanup)
+        order = {"symbol": "BTC/USD", "asset_class": "crypto", "notional": 25.0}
+        engine._copy_crypto_execution_evidence_to_order(order, {
+            "bid": 100.0, "ask": 100.1, "volume_24h": 1000.0,
+            "data_quality_score": 90.0, "confidence": 80.0,
+            "paper_entry_horizon_style": "day_trade",
+            "horizon_evidence_status": "PERSISTED_CANONICAL",
+            "horizon_provenance": "crypto_ranking_snapshot_v1",
+            "horizon_scores": {"day_trade": 80.0},
+        })
+        result = candidate_execution_integrity(
+            order,
+            supported_pairs={"BTC/USD"},
+            tradable_pairs={"BTC/USD"},
+            lane_state="LANE_PAPER_ACTIVE_BOUNDED",
+            paper_mode_verified=True,
+            capacity_available=True,
+            broker_reconciliation_ok=True,
+            kill_switch_enabled=False,
+        )
+
+        self.assertNotIn("provider_quote_timestamp", order)
+        self.assertEqual(result["gate_status"]["timestamp_freshness"], "PENDING_QUOTE_FRESHNESS")
+        self.assertFalse(result["execution_eligible"])
+
     def test_stale_quote_still_fails_closed(self):
         merged = self._merge(
             _crypto_row(),
