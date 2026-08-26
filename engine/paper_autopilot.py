@@ -8211,6 +8211,27 @@ class PaperAutopilotEngine:
             if int(cursor.rowcount or 0) <= 0:
                 continue
             repaired += 1
+            # Submission tracing precedes a broker fill. Emit the distinct,
+            # exact fill transition here so compact lane totals reflect a
+            # reconciliation-time fill without replaying the candidate.
+            if self.execution_trace_ledger is not None:
+                try:
+                    reconciled_trace_row = dict(row)
+                    reconciled_trace_row.update({
+                        "status": "OPEN" if str(row.get("status") or "").upper() == "PENDING_ENTRY" else row.get("status"),
+                        "prior_status": row.get("status"),
+                        "entry_order_id": lineage.get("entry_order_id") or entry_order_id,
+                        "source_broker_order_id": lineage.get("entry_order_id") or entry_order_id,
+                        "entry_fill_id": lineage.get("entry_fill_id") or row.get("entry_fill_id"),
+                        "entry_filled_at": lineage.get("entry_filled_at") or row.get("entry_filled_at"),
+                        "entry_price_verified": True,
+                        "entry_price_evidence_class": lineage.get("entry_price_evidence_class"),
+                    })
+                    self.execution_trace_ledger.record_reconciled_entry_fill(reconciled_trace_row)
+                except Exception:
+                    # Observability cannot interfere with broker-confirmed
+                    # position activation or reconciliation.
+                    pass
             if str(row.get("status") or "").upper() == "PENDING_ENTRY":
                 # Pending acknowledgements do not create managed positions.
                 # Activate tracking and the lifecycle only after the broker

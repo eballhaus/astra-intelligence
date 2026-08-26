@@ -335,6 +335,12 @@ class LaneExecutionTraceLedgerV1:
             blockers = summary.setdefault("top_blockers", {})
             blockers[blocker] = int(blockers.get(blocker, 0)) + 1
 
+    @staticmethod
+    def _increment_reconciled_entry_fill(summary: dict[str, Any]) -> None:
+        """Count a broker-confirmed fill without re-counting its candidate."""
+        summary["filled_entries"] += 1
+        summary["open_lane_positions"] += 1
+
     def _write_summary(self, summary: Mapping[str, Any]) -> None:
         os.makedirs(self.state_dir, exist_ok=True)
         temp = f"{self.summary_path}.tmp"
@@ -547,6 +553,74 @@ class LaneExecutionTraceLedgerV1:
                 "llm_calls": 0,
             },
         }
+
+    def record_reconciled_entry_fill(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        """Append the exact broker-fill transition produced after acknowledgement.
+
+        A normal candidate trace is emitted at submission time, before a broker
+        acknowledgement becomes a fill.  Reconciliation must therefore add a
+        distinct, idempotent lifecycle event rather than replaying the candidate
+        and inflating funnel counters or decision evidence.
+        """
+        lane = _text(row.get("lane_id")).upper()
+        position_id = _text(row.get("position_id"))
+        entry_fill_id = _text(row.get("entry_fill_id"))
+        if lane not in LANES or not position_id or not entry_fill_id:
+            return {"appended": 0, "suppressed": 0, "reason": "INCOMPLETE_EXACT_ENTRY_FILL_IDENTITY"}
+        summary = self._read_summary()
+        recent = list(summary.get("recent_trace_ids") or [])[-MAX_RECENT_IDS:]
+        trace_id = "entry_fill_reconciled:" + _fingerprint((lane, position_id, entry_fill_id))
+        if trace_id in set(recent):
+            summary["duplicate_trace_rows_suppressed"] = int(summary.get("duplicate_trace_rows_suppressed", 0)) + 1
+            summary["generated_at"] = _now()
+            self._write_summary(summary)
+            return {"appended": 0, "suppressed": 1, "trace_id": trace_id}
+        symbol = _text(row.get("symbol")).upper()
+        asset_class = _text(row.get("asset_class") or row.get("asset_type"))
+        instrument_type = _text(row.get("instrument_type"))
+        timestamp = _text(row.get("entry_filled_at") or row.get("entry_timestamp")) or _now()
+        record = {
+            "trace_id": trace_id,
+            "timestamp_utc": timestamp,
+            "event_type": "BROKER_ENTRY_FILL_RECONCILED",
+            "lane_id": lane,
+            "candidate_id": _text(row.get("candidate_id") or row.get("source_candidate_id")),
+            "recommendation_id": _text(row.get("recommendation_id") or row.get("source_recommendation_id")),
+            "symbol": symbol,
+            "canonical_symbol": _text(row.get("canonical_symbol") or symbol).upper(),
+            "asset_class": asset_class,
+            "instrument_type": instrument_type,
+            "position_id": position_id,
+            "lifecycle_id": _text(row.get("lifecycle_id") or row.get("source_lifecycle_id") or position_id),
+            "broker_order_id": _text(row.get("entry_order_id") or row.get("source_broker_order_id")),
+            "entry_fill_id": entry_fill_id,
+            "entry_filled_at": _text(row.get("entry_filled_at")),
+            "entry_price_evidence_class": _text(row.get("entry_price_evidence_class")),
+            "entry_price_verified": bool(row.get("entry_price_verified")),
+            "candidate_seen": False,
+            "reconciled_from_pending_entry": _text(row.get("prior_status")).upper() == "PENDING_ENTRY",
+        }
+        os.makedirs(self.state_dir, exist_ok=True)
+        with open(self.path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, separators=(",", ":"), ensure_ascii=True) + "\n")
+        lane_summary = summary["lanes"].setdefault(lane, self._empty_lane())
+        self._increment_reconciled_entry_fill(lane_summary)
+        cohort = _cohort_id(lane, asset_class, instrument_type)
+        cohort_summary = summary["cohorts"].setdefault(cohort, self._empty_lane())
+        self._increment_reconciled_entry_fill(cohort_summary)
+        day = timestamp[:10]
+        bucket = summary.setdefault("daily_buckets", {}).setdefault(day, self._empty_bucket())
+        self._increment_reconciled_entry_fill(bucket["lanes"].setdefault(lane, self._empty_lane()))
+        self._increment_reconciled_entry_fill(bucket["cohorts"].setdefault(cohort, self._empty_lane()))
+        summary["total_trace_rows"] = int(summary.get("total_trace_rows", 0)) + 1
+        summary["recent_trace_ids"] = (recent + [trace_id])[-MAX_RECENT_IDS:]
+        summary["daily_buckets"] = {
+            day: summary["daily_buckets"][day]
+            for day in sorted(summary.get("daily_buckets", {}))[-MAX_DAILY_BUCKETS:]
+        }
+        summary["generated_at"] = _now()
+        self._write_summary(summary)
+        return {"appended": 1, "suppressed": 0, "trace_id": trace_id}
 
     def summary(self) -> dict[str, Any]:
         result = self._read_summary()

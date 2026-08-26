@@ -108,6 +108,29 @@ class MultilaneExecutionIntegrityV1ContractTests(unittest.TestCase):
                 record = json.loads(handle.readline())
             self.assertEqual(record["exact_blocker"], "BROKER_ORDER_REJECTED:duplicate_client_order_id")
 
+    def test_reconciled_entry_fill_updates_only_fill_transition_counters(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            ledger = LaneExecutionTraceLedgerV1(root)
+            row = {
+                "lane_id": "CRYPTO", "position_id": "crypto-position-1", "lifecycle_id": "crypto-position-1",
+                "candidate_id": "candidate-1", "recommendation_id": "recommendation-1", "symbol": "ETH/USD",
+                "asset_type": "crypto", "entry_order_id": "entry-order-1", "entry_fill_id": "entry-fill-1",
+                "entry_filled_at": "2026-08-26T20:20:29Z", "entry_price_verified": True,
+                "entry_price_evidence_class": "BROKER_CONFIRMED_FILL", "prior_status": "PENDING_ENTRY",
+            }
+            self.assertEqual(ledger.record_reconciled_entry_fill(row)["appended"], 1)
+            self.assertEqual(ledger.record_reconciled_entry_fill(row)["suppressed"], 1)
+            summary = ledger.summary()
+            counters = summary["lanes"]["CRYPTO"]
+            self.assertEqual(counters["candidates_seen"], 0)
+            self.assertEqual(counters["filled_entries"], 1)
+            self.assertEqual(counters["open_lane_positions"], 1)
+            with open(ledger.path, "r", encoding="utf-8") as handle:
+                record = json.loads(handle.readline())
+            self.assertEqual(record["event_type"], "BROKER_ENTRY_FILL_RECONCILED")
+            self.assertEqual(record["entry_fill_id"], "entry-fill-1")
+
 
 if __name__ == "__main__":
     unittest.main()
