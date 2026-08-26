@@ -8290,6 +8290,7 @@ class PaperAutopilotEngine:
                     "mismatch_pct": lineage.get("entry_price_mismatch_pct"),
                     "repair_action": "BROKER_FILL_REPLACED_PROVISIONAL_CANONICAL_ENTRY_PRICE",
                 })
+        self._backfill_current_entry_fill_traces_v1()
         return {
             "status": "REPAIRED" if repaired else "AWAITING_BROKER_FILL",
             "reviewed": reviewed, "repaired": repaired, "awaiting": awaiting,
@@ -8297,6 +8298,63 @@ class PaperAutopilotEngine:
             "broker_actions_used": 0, "provider_calls_used": 0, "llm_calls_used": 0,
             "paper_only_preserved": True, "behavior_safe_to_apply": False,
         }
+
+    def _backfill_current_entry_fill_traces_v1(self, *, limit: int = 12) -> dict[str, Any]:
+        """Bridge only current verified fills that predate the trace transition.
+
+        The compact ledger originally observed submission, not a later broker
+        reconciliation fill.  This bounded current-position pass writes one
+        idempotent transition per exact fill and marks the mutable lifecycle
+        note; it never reads historical ledgers or changes position state.
+        """
+        if self.execution_trace_ledger is None:
+            return {"recorded": 0, "suppressed": 0, "reason": "TRACE_LEDGER_UNAVAILABLE"}
+        with self._connect() as conn:
+            rows = [dict(row or {}) for row in conn.execute(
+                """
+                SELECT * FROM paper_positions
+                WHERE status='OPEN'
+                  AND COALESCE(entry_price_verified, 0)=1
+                  AND COALESCE(entry_fill_id, '')<>''
+                  AND COALESCE(lifecycle_notes, '') NOT LIKE '%"entry_fill_trace_v1"%'
+                ORDER BY entry_filled_at DESC, updated_at DESC
+                LIMIT ?
+                """,
+                (max(1, min(12, int(limit or 12))),),
+            ).fetchall()]
+        recorded = suppressed = 0
+        for row in rows:
+            notes = _safe_json_load(row.get("lifecycle_notes"))
+            entry_contract = _safe_json_load(row.get("row_json"))
+            entry_metadata = _safe_json_load(row.get("entry_metadata_json"))
+            trace_row = dict(row)
+            trace_row.update({
+                "candidate_id": entry_contract.get("candidate_id") or notes.get("candidate_id") or row.get("source_candidate_id"),
+                "recommendation_id": entry_contract.get("recommendation_id") or notes.get("recommendation_id") or row.get("source_recommendation_id"),
+                "lifecycle_id": entry_contract.get("lifecycle_id") or entry_metadata.get("lifecycle_id") or row.get("source_lifecycle_id") or row.get("position_id"),
+                "canonical_symbol": entry_contract.get("canonical_symbol") or row.get("symbol"),
+            })
+            try:
+                result = self.execution_trace_ledger.record_reconciled_entry_fill(trace_row)
+            except Exception:
+                continue
+            if not bool(result.get("appended")) and not bool(result.get("suppressed")):
+                continue
+            recorded += int(result.get("appended") or 0)
+            suppressed += int(result.get("suppressed") or 0)
+            notes["entry_fill_trace_v1"] = {
+                "trace_id": str(result.get("trace_id") or ""),
+                "entry_fill_id": str(trace_row.get("entry_fill_id") or ""),
+                "recorded_at": _now_iso(),
+                "owner": "LaneExecutionTraceLedgerV1",
+            }
+            with self._connect() as conn:
+                conn.execute(
+                    "UPDATE paper_positions SET lifecycle_notes=? WHERE position_id=?",
+                    (_safe_json(notes), row.get("position_id")),
+                )
+                conn.commit()
+        return {"recorded": recorded, "suppressed": suppressed, "reviewed": len(rows)}
 
     def _archive_historical_reconciliation_collisions_v1(self) -> dict[str, Any]:
         """Remove retired/dust rows from operational ownership after a reopen.

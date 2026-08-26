@@ -173,6 +173,7 @@ class BrokerEntryPriceLineageRepairTests(unittest.TestCase):
             trace = engine.execution_trace_ledger.summary()
             self.assertEqual(trace["lanes"]["CRYPTO"]["filled_entries"], 1)
             self.assertEqual(trace["lanes"]["CRYPTO"]["candidates_seen"], 0)
+            self.assertIn("entry_fill_trace_v1", json.loads(row["lifecycle_notes"]))
 
     def test_pending_entry_activates_only_after_id_linked_broker_fill(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(paper_autopilot_module, "create_lifecycle_record", None):
