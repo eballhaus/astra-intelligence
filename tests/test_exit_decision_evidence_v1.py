@@ -146,6 +146,31 @@ class ExitDecisionEvidenceTests(unittest.TestCase):
         self.assertEqual(evidence["analytics_consumption"]["profit_protection"]["status"], "INSUFFICIENT_EVIDENCE")
         self.assertEqual(evidence["analytics_consumption"]["exit_readiness"]["status"], "INSUFFICIENT_EVIDENCE")
 
+    def test_exit_owner_retrieves_matching_lesson_without_claiming_application(self):
+        directory, root, engine, row = self._engine_and_row()
+        self.addCleanup(directory.cleanup)
+        (root / "canonical_lifecycle_lessons_v1.jsonl").write_text(
+            json.dumps({
+                "lesson_id": "day-exit-lesson",
+                "lane_id": "DAY",
+                "horizon_style": "day_trade",
+                "broker_truth_linkage_status": "PROVEN_STRICT_BROKER_TRUTH",
+            }) + "\n",
+            encoding="utf-8",
+        )
+        evidence = engine._build_exit_decision_evidence_v1(
+            row,
+            {"symbol": "AAA", "price": 102.0},
+            should_close=False,
+            reason="hold",
+        )
+        retrieval = evidence["lesson_retrieval_v1"]
+
+        self.assertEqual(retrieval["lesson_ids"], ["day-exit-lesson"])
+        self.assertFalse(retrieval["consumed"])
+        self.assertEqual(evidence["analytics_consumption"]["lessons"]["status"], "RETRIEVED_ADVISORY_ONLY")
+        self.assertFalse(evidence["analytics_consumption"]["lessons"]["influenced_this_decision"])
+
 
 if __name__ == "__main__":
     unittest.main()

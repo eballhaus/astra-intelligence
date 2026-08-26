@@ -9611,7 +9611,13 @@ class PaperAutopilotEngine:
             or candidate.get("best_horizon_style")
             or ""
         ).strip().lower()
-        candidate_id = str(candidate.get("candidate_id") or candidate.get("recommendation_id") or "").strip()
+        candidate_id = str(
+            candidate.get("candidate_id")
+            or candidate.get("recommendation_id")
+            or candidate.get("lifecycle_id")
+            or candidate.get("position_id")
+            or ""
+        ).strip()
         if lane not in {"DAY", "SCALP", "SWING", "CRYPTO"} or not horizon or not candidate_id:
             return {}
 
@@ -11763,6 +11769,13 @@ class PaperAutopilotEngine:
             canonical_position_id=canonical_position_id,
             symbol=symbol,
         )
+        lesson_retrieval = self._lesson_retrieval_for_candidate_v1({
+            **dict(open_row),
+            "candidate_id": open_row.get("source_candidate_id") or canonical_position_id,
+            "lane_id": open_row.get("lane_id"),
+            "paper_entry_horizon_style": open_row.get("canonical_horizon") or open_row.get("horizon"),
+            "market_regime": latest_row.get("regime") or latest_row.get("regime_state") or notes.get("regime_state"),
+        })
         loss_state = str(loss.get("threshold_state") or loss.get("canonical_recommendation") or "UNAVAILABLE")
         profit_state = str(profit.get("canonical_recommendation") or profit.get("profit_state") or "UNAVAILABLE")
         readiness_action = str(readiness.get("recommendation") or "UNAVAILABLE")
@@ -11823,6 +11836,7 @@ class PaperAutopilotEngine:
             "symbol": symbol or None,
             "lane_id": str(open_row.get("lane_id") or "").upper().strip() or None,
             "horizon": str(open_row.get("canonical_horizon") or open_row.get("horizon") or "") or None,
+            "lesson_retrieval_v1": lesson_retrieval,
             "trade_state": {
                 "entry_price": entry if entry > 0.0 else None,
                 "current_price": current if current > 0.0 else None,
@@ -11906,6 +11920,14 @@ class PaperAutopilotEngine:
                     "received_by_exit_owner": False,
                     "evaluated_by_exit_owner": False,
                     "status": "ADVISORY_ONLY_BY_DESIGN",
+                },
+                "lessons": {
+                    "owner": "canonical_lifecycle_lessons_v1",
+                    "computed": bool(lesson_retrieval),
+                    "received_by_exit_owner": bool(lesson_retrieval),
+                    "evaluated_by_exit_owner": False,
+                    "influenced_this_decision": False,
+                    "status": "RETRIEVED_ADVISORY_ONLY" if lesson_retrieval else "NO_CONTEXT_MATCH",
                 },
             },
             "exit_owner_decision": {
