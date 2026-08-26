@@ -1412,7 +1412,9 @@ def _eligibility_gate_code_v1(reason: Any) -> tuple[str, str, str]:
     if "unsupported" in raw or "capability" in raw:
         return ("BROKER_ASSET_UNSUPPORTED", "VALID_SAFETY_REJECTION", "paper broker capability gate")
     if "stale" in raw or "freshness" in raw:
-        return ("CANDIDATE_STALE", "STALE_INPUT_DEFECT", "existing candidate freshness gate")
+        # A provider-native timestamp that is genuinely stale is an intended
+        # fail-closed market-data limitation, not evidence of a software fault.
+        return ("CANDIDATE_STALE", "VALID_MARKET_DATA_LIMITATION", "existing candidate freshness gate")
     if "horizon" in raw:
         return ("HORIZON_MISSING", "INCORRECT_METADATA_DEFECT", "trade lane contract")
     if "strategy" in raw:

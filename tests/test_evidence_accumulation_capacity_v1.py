@@ -212,6 +212,16 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
         self.assertEqual(attribution["first_failing_gate"]["code"], "CANDIDATE_STALE")
         self.assertEqual(attribution["first_failing_gate"]["validity"], "MISSING_INPUT_DEFECT")
 
+    def test_stale_provider_timestamp_is_a_market_data_wait_not_a_software_defect(self):
+        trace = _execution_trace_event(
+            {"symbol": "BTC/USD", "asset_class": "crypto", "candidate_id": "btc-stale-provider"},
+            eligible=False,
+            decision_reason="STALE_PROVIDER_NATIVE_TIMESTAMP",
+        )
+        attribution = trace["eligibility_gate_attribution_v1"]
+        self.assertEqual(attribution["first_failing_gate"]["code"], "CANDIDATE_STALE")
+        self.assertEqual(attribution["first_failing_gate"]["validity"], "VALID_MARKET_DATA_LIMITATION")
+
     def test_missing_contract_and_crypto_source_are_not_generic_rejections(self):
         contract_trace = _execution_trace_event(
             {"symbol": "DAY", "candidate_id": "day-contract"},

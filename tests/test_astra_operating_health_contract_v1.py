@@ -51,6 +51,19 @@ class OperatingHealthContractTests(unittest.TestCase):
             self.assertEqual(scalp["blocker_validity"], "VALID_SAFETY_REJECTION")
             self.assertEqual(scalp["waiting_state"], "LEGITIMATE_WAIT")
 
+    def test_stale_provider_timestamp_is_a_legitimate_market_data_wait(self):
+        with tempfile.TemporaryDirectory() as root:
+            payload = AstraOperatingHealthContractV1(root).build(
+                multilane={"lanes": {"SWING": {
+                    "first_blocker": "CANDIDATE_STALE",
+                    "first_blocker_validity": "VALID_MARKET_DATA_LIMITATION",
+                }}},
+                worker_state={}, continuous={}, sentinel={},
+            )
+            swing = payload["lanes"]["SWING"]
+            self.assertEqual(swing["blocker_validity"], "VALID_MARKET_DATA_LIMITATION")
+            self.assertEqual(swing["waiting_state"], "LEGITIMATE_WAIT")
+
     def test_high_sentinel_root_prevents_false_control_plane_agreement(self):
         with tempfile.TemporaryDirectory() as root:
             payload = AstraOperatingHealthContractV1(root).build(

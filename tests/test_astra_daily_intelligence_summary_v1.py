@@ -141,6 +141,24 @@ def test_lanes_remain_separated_and_zero_truth_lane_is_explicit() -> None:
     assert result["lanes"]["CRYPTO"]["truth_readiness"] == "INSUFFICIENT_EVIDENCE"
 
 
+def test_market_data_wait_is_not_reported_as_a_lane_defect() -> None:
+    health = {
+        **_health(),
+        "lanes": {
+            "SWING": {
+                "broker_confirmed_active_positions": 0,
+                "waiting_state": "LEGITIMATE_WAIT",
+                "current_lifecycle_stage": "candidate_freshness",
+                "first_causal_blocker": "CANDIDATE_STALE",
+                "blocker_validity": "VALID_MARKET_DATA_LIMITATION",
+            },
+        },
+    }
+    result = _build(operating_health=health)
+    assert result["lanes"]["SWING"]["status"] == "LEGITIMATE_WAIT"
+    assert result["lanes"]["SWING"]["truth_readiness"] == "WAITING_NATURAL_EVIDENCE"
+
+
 def test_pending_position_is_not_promoted_to_closed_truth() -> None:
     result = _build(open_positions=[{"symbol": "PENDING", "lane_id": "DAY", "lifecycle_id": "open", "broker_confirmed": True, "reconciliation_state": "FILLED_AWAITING_BROKER_ZERO"}])
     assert result["today_at_a_glance"]["reconciliation_pending_count"] == 1

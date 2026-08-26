@@ -209,6 +209,7 @@ class AstraOperatingHealthContractV1:
                 "VALID_SAFETY_REJECTION",
                 "VALID_STRATEGY_REJECTION",
                 "VALID_SCHEDULING_WAIT",
+                "VALID_MARKET_DATA_LIMITATION",
             }
             lanes[lane] = {
                 "lane": lane, "current_lifecycle_stage": row.get("current_stage") or "candidate_discovery",
