@@ -3572,7 +3572,8 @@ FMP_EMERGENCY_STOP_GB = max(FMP_HARD_STOP_GB, _env_float("ASTRA_FMP_EMERGENCY_ST
 FMP_CACHE_ENABLED = str(os.getenv("ASTRA_FMP_CACHE_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
 FMP_NO_REPEAT_CALLS = str(os.getenv("ASTRA_FMP_NO_REPEAT_CALLS", "1")).strip().lower() in {"1", "true", "yes", "on"}
 _FMP_GOVERNOR_LOCK = threading.Lock()
-ALPACA_WS_SYMBOL_CAP = max(10, int(_env_float("ASTRA_ALPACA_WS_SYMBOL_CAP", 30)))
+ALPACA_WS_SYMBOL_CAP = max(10, int(_env_float("ASTRA_ALPACA_WS_MAX_SYMBOLS", _env_float("ASTRA_ALPACA_WS_SYMBOL_CAP", 30))))
+ALPACA_WS_NEAR_ENTRY_SLOTS = max(0, int(_env_float("ASTRA_ALPACA_WS_NEAR_ENTRY_SLOTS", 8)))
 FMP_WS_SYMBOL_CAP = max(5, int(_env_float("ASTRA_FMP_WS_SYMBOL_CAP", 20)))
 
 LAST_RANKINGS = {
@@ -17145,13 +17146,19 @@ def _near_entry_candidates(limit=10):
 def _refresh_alpaca_ws_allocation():
     try:
         now = time.time()
-        open_positions = POSITION_TRACKER.get_open_positions()
+        # Only broker-linked, canonical PaperAutopilot equity positions may
+        # subscribe.  PositionTracker includes legacy rows and broker dust,
+        # which belong to reconciliation rather than live position monitoring.
+        from engine.astra_canonical_ownership_contract_v1 import is_broker_linked_active_position
+        open_positions = PAPER_AUTOPILOT._fetch_open_positions(asset_type="stock")
         open_symbols = [
-            str(r.get("symbol") or "").upper()
+            str(r.get("symbol") or "").upper().strip()
             for r in open_positions
-            if isinstance(r, dict) and r.get("symbol")
+            if isinstance(r, dict)
+            and is_broker_linked_active_position(r, allow_dust=False)
+            and str(r.get("symbol") or "").strip()
         ]
-        near_symbols = _near_entry_candidates(limit=12)
+        near_symbols = _near_entry_candidates(limit=ALPACA_WS_NEAR_ENTRY_SLOTS)
         if not near_symbols:
             # Keep WS useful even with no strict near-entry candidates.
             fallback = []
@@ -17163,7 +17170,7 @@ def _refresh_alpaca_ws_allocation():
                     continue
                 if bool(row.get("live_buy_universe", False)):
                     fallback.append(sym)
-                if len(fallback) >= 8:
+                if len(fallback) >= ALPACA_WS_NEAR_ENTRY_SLOTS:
                     break
             near_symbols = fallback
         signature = f"{','.join(sorted(open_symbols))}|{','.join(sorted(near_symbols))}"

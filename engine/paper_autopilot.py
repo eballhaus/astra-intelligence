@@ -4739,6 +4739,97 @@ class PaperAutopilotEngine:
         self._runtime_state["legacy_swing_fmp_activity"] = activity
         return records, activity
 
+    def _refresh_active_equity_fmp_observations_v1(self) -> dict[str, Any]:
+        """Capture bounded FMP observations for canonical active equities.
+
+        These records supplement broker/IEX observations for management and
+        evidence review only.  They never enter entry freshness, order-ready,
+        or exit execution authority.
+        """
+        now = time.time()
+        prior = dict(self._runtime_state.get("active_equity_fmp_observations_v1") or {})
+        cadence_seconds = 60
+        previous_at = _to_float(prior.get("last_refresh_epoch"), 0.0)
+        try:
+            open_rows = self._fetch_open_positions(asset_type="stock")
+        except TypeError:
+            # Existing test doubles and compatibility readers expose the
+            # legacy no-argument contract; filtering remains local and safe.
+            open_rows = self._fetch_open_positions()
+        rows = [
+            row for row in open_rows
+            if _norm_asset(row.get("asset_type") or "stock") == "stock"
+            if is_broker_linked_active_position(row, allow_dust=False)
+            and str(row.get("lane_id") or row.get("lane") or "").upper() in {"DAY", "SCALP", "SWING"}
+            and str(row.get("lifecycle_id") or "").strip()
+        ]
+        symbols = sorted({str(row.get("symbol") or "").upper().strip() for row in rows if str(row.get("symbol") or "").strip()})
+        state = {
+            "schema_version": "active_equity_fmp_observations_v1",
+            "provider": "FMP",
+            "cadence_seconds": cadence_seconds,
+            "market_observation_only": True,
+            "execution_authority": "UNCHANGED",
+            "entry_freshness_eligible": False,
+            "canonical_active_equity_symbols": symbols,
+            "excluded_broker_dust": True,
+            "excluded_legacy_or_orphan_rows": True,
+            "last_refresh_epoch": previous_at,
+            "last_refresh_utc": prior.get("last_refresh_utc"),
+            "calls_this_refresh": 0,
+            "calls_today_delta": 0,
+            "observations": dict(prior.get("observations") or {}),
+            "errors": [],
+        }
+        if not symbols:
+            state["refresh_state"] = "NO_CANONICAL_ACTIVE_EQUITY_POSITIONS"
+            self._runtime_state["active_equity_fmp_observations_v1"] = state
+            return state
+        if now - previous_at < cadence_seconds:
+            state["refresh_state"] = "CADENCE_NOT_DUE"
+            self._runtime_state["active_equity_fmp_observations_v1"] = state
+            return state
+
+        router = self._legacy_swing_fmp_router
+        observations: dict[str, dict[str, Any]] = {}
+        for symbol in symbols:
+            quote = dict(router.get_quote(
+                symbol,
+                asset_type="stock",
+                preferred_providers=["FMP"],
+                cache_max_age_seconds=0,
+                bypass_cache=True,
+            ) or {})
+            state["calls_this_refresh"] += int(bool(quote.get("attempted_providers") or quote.get("provider_used") == "FMP"))
+            if str(quote.get("provider_used") or "").upper() != "FMP" or _to_float(quote.get("price"), 0.0) <= 0.0:
+                state["errors"].append({"symbol": symbol, "reason": str(quote.get("data_unavailable_reason") or "fmp_quote_unavailable")[:120]})
+                continue
+            observations[symbol] = {
+                "symbol": symbol,
+                "provider": "FMP",
+                "provider_provenance": "FMP_REST_SUPPLEMENTAL_OBSERVATION",
+                "market_observation_only": True,
+                "consolidated_market_truth": False,
+                "price": _to_float(quote.get("price"), 0.0),
+                "bid": quote.get("bid"),
+                "ask": quote.get("ask"),
+                "provider_native_timestamp": quote.get("provider_quote_timestamp") or quote.get("quote_timestamp"),
+                "receive_timestamp": _now_iso(),
+                "quote_age_seconds": quote.get("quote_age_seconds"),
+                "quote_quality": quote.get("quote_quality"),
+                "quote_source": quote.get("quote_source"),
+            }
+        state.update({
+            "refresh_state": "REFRESHED",
+            "last_refresh_epoch": now,
+            "last_refresh_utc": _now_iso(),
+            "observations": observations,
+            "successful_observation_count": len(observations),
+            "failed_observation_count": len(state["errors"]),
+        })
+        self._runtime_state["active_equity_fmp_observations_v1"] = state
+        return state
+
     @staticmethod
     def _legacy_swing_market_record_current(record: dict[str, Any], now: datetime, max_age_seconds: int) -> bool:
         if str(record.get("response_state") or "").upper() != "SUCCESS" or str(record.get("freshness_state") or "").upper() != "CURRENT":
@@ -13979,6 +14070,8 @@ class PaperAutopilotEngine:
                 self._refresh_legacy_forward_activations(preflight_positions)
                 self._note_worker_progress("legacy_market_evidence_preflight")
                 legacy_canary_refresh = self._refresh_legacy_swing_canary_pre_submit(preflight_positions)
+                self._note_worker_progress("active_equity_fmp_observation")
+                self._refresh_active_equity_fmp_observations_v1()
                 self._save_state_file()
             except Exception as exc:
                 legacy_canary_refresh = {"observation_state": "FAILED", "error": str(exc)[:180]}

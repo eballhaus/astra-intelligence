@@ -906,6 +906,13 @@ class PaperAutopilotWorker:
         heartbeat_thread.start()
         try:
             result = dict(self.autopilot.run_cycle() or {})
+            # Keep the one shared IEX observer in sync from the sole mutable
+            # worker.  This is read-only market-data allocation only.
+            try:
+                from server_extend import _refresh_alpaca_ws_allocation
+                _refresh_alpaca_ws_allocation()
+            except Exception:
+                pass
             elapsed = time.monotonic() - started
             trace = dict(getattr(self.autopilot, "_runtime_state", {}).get("last_execution_trace") or {})
             market = dict((result.get("legacy_swing_observation") or {}).get("market_activity") or {})
