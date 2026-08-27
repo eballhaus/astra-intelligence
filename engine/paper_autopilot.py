@@ -1918,6 +1918,9 @@ class PaperAutopilotEngine:
                 "requested": 0, "released": 0, "expired": 0,
                 "converted_to_pending_order": 0, "converted_to_open_position": 0,
             },
+            # A write-once measurement boundary for future DAY strict truths.
+            # It is observational provenance, not a second truth registry.
+            "day_throughput_cohort_v1": {},
         }
 
         self._position_tracker = None
@@ -2142,6 +2145,8 @@ class PaperAutopilotEngine:
                     self._runtime_state["lane_reserve_commitment_stats"].update(
                         dict(payload.get("lane_reserve_commitment_stats") or {})
                     )
+                if isinstance(payload.get("day_throughput_cohort_v1"), dict):
+                    self._runtime_state["day_throughput_cohort_v1"] = dict(payload.get("day_throughput_cohort_v1") or {})
                 if isinstance(payload.get("adaptive_learning_capacity_policy"), dict):
                     persisted_policy = dict(payload.get("adaptive_learning_capacity_policy") or {})
                     persisted_policy["policy_valid"] = bool(
@@ -2238,6 +2243,7 @@ class PaperAutopilotEngine:
                 for lane in ("DAY", "SCALP", "CRYPTO")
             },
             "lane_reserve_commitment_stats": dict(self._runtime_state.get("lane_reserve_commitment_stats") or {}),
+            "day_throughput_cohort_v1": dict(self._runtime_state.get("day_throughput_cohort_v1") or {}),
             "adaptive_learning_capacity_policy": dict(self._adaptive_learning_capacity_policy or {}),
             "last_evidence_capacity_snapshot": dict(self._runtime_state.get("last_evidence_capacity_snapshot") or {}),
             "crypto_rankings_snapshot_v1": dict(self._runtime_state.get("crypto_rankings_snapshot_v1") or {}),
@@ -6310,6 +6316,12 @@ class PaperAutopilotEngine:
             "current_logic_performance_eligible": True,
             "official_metric_eligible": True, "created_at": _now_iso(), "updated_at": _now_iso(),
         }
+        if lane == "DAY":
+            cohort = self._ensure_day_throughput_cohort_v1()
+            if cohort.get("status") == "PROSPECTIVE_MEASUREMENT_BOUNDARY":
+                # Copy the immutable deployment contract onto only future DAY
+                # strict truths. Historical rows are never rewritten.
+                record["day_throughput_cohort_v1"] = dict(cohort)
         # Decision evidence is captured before an exit is submitted.  The
         # broker-confirmed result stays separate in this truth record, so no
         # later outcome can rewrite what the exit owner knew at the time.
@@ -13707,7 +13719,44 @@ class PaperAutopilotEngine:
             "suggested_horizon_mix": {"scalp": 3, "day_trade": 5, "swing_short_swing_max": 7},
         }
 
+    def _ensure_day_throughput_cohort_v1(self) -> dict[str, Any]:
+        """Create one prospective provenance boundary for the approved 2 -> 3 cap.
+
+        The current production cap was already deployed before this observer.
+        This contract therefore makes no retrospective performance claim and
+        never changes candidate selection, capacity, or execution authority.
+        """
+        existing = self._runtime_state.get("day_throughput_cohort_v1")
+        if isinstance(existing, dict) and existing.get("measurement_boundary_at"):
+            return dict(existing)
+        current_limit = int(self.max_new_positions_per_cycle)
+        if current_limit != 3:
+            return {
+                "status": "INACTIVE_NON_APPROVED_THROUGHPUT_CONTRACT",
+                "lane_id": "DAY",
+                "observational_only": True,
+                "current_max_new_positions_per_cycle": current_limit,
+            }
+        cohort = {
+            "schema_version": "astra_day_throughput_cohort_v1",
+            "status": "PROSPECTIVE_MEASUREMENT_BOUNDARY",
+            "lane_id": "DAY",
+            "measurement_boundary_at": _now_iso(),
+            "previous_max_new_positions_per_cycle": 2,
+            "current_max_new_positions_per_cycle": current_limit,
+            "approximate_throughput_increase_percent": 50.0,
+            "change_reason": "approved_bounded_more_qualified_day_opportunities",
+            "throughput_change_causality": "NOT_PROVEN_PREEXISTING_EXPANSION",
+            "deployment_revision": str(os.getenv("ASTRA_DEPLOYED_GIT_REVISION") or "UNAVAILABLE_RUNTIME_DEPLOYMENT_REVISION"),
+            "immutable_for_future_day_strict_truths": True,
+            "observational_only": True,
+            "execution_authority": "UNCHANGED",
+        }
+        self._runtime_state["day_throughput_cohort_v1"] = cohort
+        return dict(cohort)
+
     def run_cycle(self):
+        self._ensure_day_throughput_cohort_v1()
         # The canonical worker makes an empty forward-entry window explicit.
         self._runtime_state["entry_lane_horizon_integrity_v1"] = self.entry_lane_horizon_ledger.ensure_snapshot()
         if not self._enabled:

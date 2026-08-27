@@ -10,6 +10,7 @@ from statistics import mean, median
 from typing import Any
 
 from engine.learning_return_integrity_v1 import official_broker_confirmed_rows
+from engine.astra_truth_learning_enrichment_v1 import build_pretrade_entry_quality_assessment_v1
 
 VERSION = "1.0.0"
 TRADE_EFFECTIVENESS_V2_SCHEMA = "astra_profit_capture_trade_effectiveness_v2"
@@ -365,6 +366,65 @@ def _management_attribution(*, realized: float | None, peak: float | None, captu
     return "INSUFFICIENT_EVIDENCE"
 
 
+def _trade_quality_attribution_v1(
+    *,
+    pretrade_context: dict[str, Any],
+    exit_effectiveness: str,
+    capture_label: str,
+) -> dict[str, Any]:
+    """Separate immutable entry evidence from post-entry management evidence."""
+    entry = build_pretrade_entry_quality_assessment_v1(pretrade_context)
+    entry_state = str(entry.get("classification") or "INSUFFICIENT_EVIDENCE")
+    if exit_effectiveness in {"EFFECTIVE", "LOSS_ACCEPTANCE_EFFECTIVE"} or capture_label in {"EXCELLENT_CAPTURE", "GOOD_CAPTURE"}:
+        management = "GOOD_MANAGEMENT"
+    elif exit_effectiveness in {"LATE", "SEVERE_PROFIT_GIVEBACK", "LOSS_HELD_TOO_LONG"} or capture_label in {"HIGH_GIVEBACK", "SEVERE_GIVEBACK"}:
+        management = "POOR_MANAGEMENT"
+    else:
+        management = "INSUFFICIENT_EVIDENCE"
+    if entry_state == "GOOD_ENTRY" and management == "GOOD_MANAGEMENT":
+        classification = "GOOD_ENTRY_GOOD_MANAGEMENT"
+    elif entry_state == "GOOD_ENTRY" and management == "POOR_MANAGEMENT":
+        classification = "GOOD_ENTRY_POOR_MANAGEMENT"
+    elif entry_state == "POOR_ENTRY" and management == "GOOD_MANAGEMENT":
+        classification = "POOR_ENTRY_GOOD_MANAGEMENT"
+    elif entry_state == "POOR_ENTRY" and management == "POOR_MANAGEMENT":
+        classification = "POOR_ENTRY_POOR_MANAGEMENT"
+    else:
+        classification = "INSUFFICIENT_EVIDENCE"
+    return {
+        "classification": classification,
+        "entry_quality": entry,
+        "management_quality": management,
+        "entry_evidence_lookahead_safe": True,
+        "status": "AVAILABLE" if classification != "INSUFFICIENT_EVIDENCE" else "INSUFFICIENT_EVIDENCE",
+    }
+
+
+def _giveback_root_cause_v1(
+    *, signals: dict[str, Any], capture_label: str, horizon_assessment: str, exit_reason: str,
+    exit_effectiveness: str, advisory: dict[str, Any], realized: float | None,
+) -> str:
+    """Return a bounded cause only when existing lifecycle evidence supports it."""
+    if realized is not None and realized < 0 and "SESSION" in exit_reason.upper():
+        return "SESSION_CLOSE"
+    if "BEYOND" in horizon_assessment.upper() or "EXCEEDED" in horizon_assessment.upper():
+        return "HORIZON_EXCEEDED"
+    opportunity = _text(signals.get("opportunity_cost")).upper()
+    if "HIGH" in opportunity or "REPLACE" in opportunity:
+        return "OPPORTUNITY_COST_ESCALATED"
+    momentum = _text(signals.get("momentum_deterioration")).upper()
+    if any(token in momentum for token in ("FADE", "DETERIOR", "WEAK", "FAILED", "STALL")):
+        return "MOMENTUM_FADED"
+    thesis = _text(signals.get("thesis_deterioration")).upper()
+    if any(token in thesis for token in ("FAIL", "WEAK", "INVALID", "BROKEN")):
+        return "THESIS_WEAKENED"
+    if advisory.get("status") == "CAPTURED_PRE_ACTION" and exit_effectiveness in {"LATE", "SEVERE_PROFIT_GIVEBACK"}:
+        return "EXIT_READINESS_SIGNAL_IGNORED"
+    if capture_label in {"HIGH_GIVEBACK", "SEVERE_GIVEBACK"}:
+        return "INSUFFICIENT_EVIDENCE"
+    return "INSUFFICIENT_EVIDENCE"
+
+
 def _effectiveness_row(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Derive only from an already-confirmed broker truth and its attached facts."""
     notes = _nested_learning(row)
@@ -480,6 +540,23 @@ def _effectiveness_row(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, A
         expected_hold_seconds=expected_hold_seconds, dimensions=dimensions,
         exit_timestamp=exit_timestamp,
     )
+    enrichment = row.get("observational_learning_v1")
+    enrichment = dict(enrichment) if isinstance(enrichment, dict) else {}
+    advisory = dict(enrichment.get("exit_advisory_effectiveness_v1") or {})
+    trade_quality = _trade_quality_attribution_v1(
+        pretrade_context=context,
+        exit_effectiveness=exit_effectiveness,
+        capture_label=capture_label,
+    )
+    giveback_root_cause = _giveback_root_cause_v1(
+        signals=signals,
+        capture_label=capture_label,
+        horizon_assessment=horizon_assessment,
+        exit_reason=exit_reason,
+        exit_effectiveness=exit_effectiveness,
+        advisory=advisory,
+        realized=realized,
+    )
     supporting = [item for item in dimensions if item.get("state") in {"SUPPORTED_POSITIVE", "SUPPORTED_NEGATIVE"}]
     attribution_status = "CONTRADICTORY" if any(item.get("state") == "CONTRADICTORY" for item in dimensions) else "SUPPORTED" if supporting else "INSUFFICIENT_EVIDENCE"
     primary_success_driver = _first_driver(dimensions, "SUPPORTED_POSITIVE") if realized is not None and realized > 0 else None
@@ -535,6 +612,10 @@ def _effectiveness_row(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, A
         "entry_management_exit_attribution": _management_attribution(
             realized=realized, peak=peak, capture=capture, exit_effectiveness=exit_effectiveness, horizon_assessment=horizon_assessment,
         ),
+        "trade_quality_attribution_v1": trade_quality,
+        "giveback_root_cause_v1": giveback_root_cause,
+        "exit_advisory_effectiveness_v1": advisory or {"status": "INSUFFICIENT_EVIDENCE"},
+        "day_throughput_cohort_v1": dict(row.get("day_throughput_cohort_v1") or {}),
         "decision_attribution": {
             "dimensions": dimensions,
             "primary_success_driver": primary_success_driver,
@@ -608,6 +689,9 @@ def build_profit_capture_trade_effectiveness_v2(
     preventability_counts = Counter(_text((row.get("loss_anatomy") or {}).get("preventability"), "NOT_PROVEN") for row in official_rows)
     success_drivers = Counter(_text((row.get("decision_attribution") or {}).get("primary_success_driver"), "UNAVAILABLE") for row in official_rows)
     failure_drivers = Counter(_text((row.get("decision_attribution") or {}).get("primary_failure_driver"), "UNAVAILABLE") for row in official_rows)
+    trade_quality_counts = Counter(_text((row.get("trade_quality_attribution_v1") or {}).get("classification"), "INSUFFICIENT_EVIDENCE") for row in official_rows)
+    giveback_root_causes = Counter(_text(row.get("giveback_root_cause_v1"), "INSUFFICIENT_EVIDENCE") for row in official_rows)
+    advisory_events = [row for row in official_rows if _text((row.get("exit_advisory_effectiveness_v1") or {}).get("status")) == "CAPTURED_PRE_ACTION"]
     lanes: dict[str, dict[str, Any]] = {}
     for lane in ("SCALP", "DAY", "SWING", "CRYPTO"):
         rows = [row for row in official_rows if row.get("lane") == lane]
@@ -622,6 +706,9 @@ def build_profit_capture_trade_effectiveness_v2(
             "effective_exit_count": sum(row.get("exit_effectiveness") == "EFFECTIVE" for row in rows),
             "late_exit_count": sum(row.get("exit_effectiveness") in {"LATE", "SEVERE_PROFIT_GIVEBACK"} for row in rows),
             "controlled_loss_effective_count": sum(row.get("exit_effectiveness") == "LOSS_ACCEPTANCE_EFFECTIVE" for row in rows),
+            "trade_quality_counts": dict(Counter(_text((row.get("trade_quality_attribution_v1") or {}).get("classification"), "INSUFFICIENT_EVIDENCE") for row in rows)),
+            "giveback_root_cause_counts": dict(Counter(_text(row.get("giveback_root_cause_v1"), "INSUFFICIENT_EVIDENCE") for row in rows)),
+            "exit_advisory_event_count": sum(_text((row.get("exit_advisory_effectiveness_v1") or {}).get("status")) == "CAPTURED_PRE_ACTION" for row in rows),
         }
     horizons: dict[str, dict[str, Any]] = {}
     for horizon in sorted({_text(row.get("horizon"), "UNAVAILABLE") for row in official_rows}):
@@ -683,6 +770,9 @@ def build_profit_capture_trade_effectiveness_v2(
         "partly_preventable_loss_count": preventability_counts.get("PARTLY_PREVENTABLE", 0),
         "losses_not_proven_count": preventability_counts.get("NOT_PROVEN", 0),
         "loss_anatomy_counts": dict(loss_counts),
+        "trade_quality_counts": dict(trade_quality_counts),
+        "giveback_root_cause_counts": dict(giveback_root_causes),
+        "exit_advisory_event_count": len(advisory_events),
         "horizon_lane_breakdown": lanes,
         "horizon_breakdown": horizons,
         "shadow_exit_sample_size": sample,

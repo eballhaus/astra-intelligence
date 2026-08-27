@@ -147,6 +147,54 @@ def _average_numeric(rows: list[dict[str, Any]], *keys: str) -> float | None:
     return round(sum(values) / len(values), 6) if values else None
 
 
+def _lane_profitability(rows: list[dict[str, Any]], lane_effectiveness: dict[str, Any]) -> dict[str, Any]:
+    """Keep zero-truth lanes out of whole-Astra profitability calculations."""
+    metrics = _canonical_profitability_metrics(rows)
+    if not rows:
+        return {
+            "status": "NO_EVIDENCE", "official_truth_source": "BROKER_CONFIRMED_CANONICAL_ONLY",
+            **metrics,
+            "MFE": None, "MAE": None, "profit_capture": None, "giveback": None,
+            "hold_duration": None, "return_per_hour": None,
+        }
+    return {
+        "status": "AVAILABLE",
+        "official_truth_source": "BROKER_CONFIRMED_CANONICAL_ONLY",
+        **metrics,
+        "MFE": _average_numeric(rows, "mfe", "mfe_pct", "maximum_favorable_excursion_pct"),
+        "MAE": _average_numeric(rows, "mae", "mae_pct", "maximum_adverse_excursion_pct"),
+        "profit_capture": lane_effectiveness.get("average_profit_capture_pct"),
+        "giveback": lane_effectiveness.get("average_profit_giveback_from_peak_pct"),
+        "hold_duration": lane_effectiveness.get("average_hold_duration_seconds"),
+        "return_per_hour": lane_effectiveness.get("average_realized_return_per_hour"),
+    }
+
+
+def _day_throughput_cohort_summary(rows: list[dict[str, Any]], worker_cohort: dict[str, Any]) -> dict[str, Any]:
+    day_rows = [row for row in rows if _lane(row) == "DAY"]
+    prospective = [row for row in day_rows if isinstance(row.get("day_throughput_cohort_v1"), dict) and row.get("day_throughput_cohort_v1", {}).get("status") == "PROSPECTIVE_MEASUREMENT_BOUNDARY"]
+    preceding = [row for row in day_rows if row not in prospective][-10:]
+    checkpoints = {
+        str(size): {
+            "status": "AVAILABLE" if len(prospective) >= size else "INSUFFICIENT_EVIDENCE",
+            "truth_count": min(len(prospective), size),
+            "metrics": _canonical_profitability_metrics(prospective[:size]),
+        }
+        for size in (10, 20, 30)
+    }
+    return {
+        "status": "PROSPECTIVE_MEASUREMENT_ACTIVE" if worker_cohort.get("status") == "PROSPECTIVE_MEASUREMENT_BOUNDARY" else "NOT_YET_ACTIVATED",
+        "contract": dict(worker_cohort or {}),
+        "historical_day": _canonical_profitability_metrics(day_rows),
+        "preceding_10_day": _canonical_profitability_metrics(preceding),
+        "prospective_day": _canonical_profitability_metrics(prospective),
+        "prospective_truth_count": len(prospective),
+        "checkpoints": checkpoints,
+        "trend_status": "INSUFFICIENT_EVIDENCE" if len(prospective) < 10 else "MEASUREMENT_READY",
+        "no_retrospective_causality_claim": True,
+    }
+
+
 def _source_timestamp(source: dict[str, Any]) -> datetime | None:
     return _timestamp(source, "generated_at", "updated_at", "timestamp", "heartbeat_at")
 
@@ -227,6 +275,17 @@ def build_astra_daily_intelligence_summary_v1(
     canonical_profitability = _canonical_profitability_metrics(truths)
     truths_by_lane = {lane: sum(1 for row in truths if _lane(row) == lane) for lane in (*CANONICAL_LANES, "OTHER")}
     today_truths_by_lane = {lane: sum(1 for row in truth_today if _lane(row) == lane) for lane in (*CANONICAL_LANES, "OTHER")}
+    lane_effectiveness = _dict(official_b2.get("horizon_lane_breakdown"))
+    profitability_by_lane = {
+        lane: _lane_profitability(
+            [row for row in truths if _lane(row) == lane],
+            _dict(lane_effectiveness.get(lane)),
+        )
+        for lane in CANONICAL_LANES
+    }
+    day_throughput_cohort = _day_throughput_cohort_summary(
+        truths, _dict(worker.get("day_throughput_cohort_v1")),
+    )
 
     canonical_count = len(truths)
     contracts = []
@@ -359,6 +418,8 @@ def build_astra_daily_intelligence_summary_v1(
             "exit_quality": None,
             "official_truth_source": progression.get("official_truth_source"),
         },
+        "profitability_by_lane": profitability_by_lane,
+        "day_throughput_profit_retention_v1": day_throughput_cohort,
         "bundle1": {"is_astra_improving": progression.get("is_astra_improving"), "progression_status": overall.get("status"), "early_cohort": _dict(overall.get("cohorts")).get("EARLY", {}), "middle_cohort": _dict(overall.get("cohorts")).get("MIDDLE", {}), "recent_cohort": _dict(overall.get("cohorts")).get("RECENT", {}), "lesson_effectiveness": {"lessons_tracked": len(_rows(linkage.get("lessons"))), "lesson_applied_count": linkage.get("explicit_application_events"), "lessons_with_linked_outcomes": linkage.get("linked_outcomes"), "improved_outcomes": effectiveness.get("improved_outcomes"), "worsened_outcomes": effectiveness.get("worsened_outcomes"), "neutral_outcomes": None, "effective_lessons": effectiveness.get("effective_lessons"), "promising_lessons": None, "mixed_lessons": None, "underperforming_lessons": effectiveness.get("underperforming_lessons"), "insufficient_evidence_lessons": None}, "mistake_recurrence": {"recurrence_after_lesson": recurrence.get("recurrence_after_lesson_count"), "recurrence_reduced": None, "recurrence_persistent": None, "not_yet_measurable": not bool(linkage.get("linked_outcomes"))}},
         "bundle2": {"official_truths_eligible_for_attribution": official_b2.get("completed_broker_truth_sample_size"), "official_truths_attributed": official_b2.get("completed_broker_truth_sample_size"), "winners_attributed": official_b2.get("profitable_trade_count"), "losers_attributed": official_b2.get("losing_trade_count"), "top_success_drivers": official_b2.get("top_success_drivers") or [], "top_failure_drivers": official_b2.get("top_failure_drivers") or [], "loss_anatomy": {"controlled": official_b2.get("controlled_loss_count"), "partly_preventable": official_b2.get("partly_preventable_loss_count"), "preventable": official_b2.get("preventable_loss_count"), "not_proven": official_b2.get("losses_not_proven_count")}, "return_per_time": {"average_return_per_hour": official_b2.get("average_return_per_hour"), "median_return_per_hour": official_b2.get("median_return_per_hour"), "average_return_per_day": official_b2.get("average_realized_return_per_day"), "average_hold_duration": None, "overhold_count": None}},
         "bundle3": {**contextual, "learning_context_status": _learning_context_status(contextual)},

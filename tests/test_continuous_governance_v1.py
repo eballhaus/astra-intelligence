@@ -180,6 +180,17 @@ class ContinuousGovernanceTests(unittest.TestCase):
         self.assertEqual(rows["SWING_CAPACITY_MATCHES_APPROVED_ACTIVE_SLOTS"]["state"], "PASS")
         self.assertEqual(rows["SWING_ENTRY_VELOCITY_BOUNDED"]["state"], "PASS")
 
+    def test_approved_three_per_cycle_velocity_remains_bounded(self):
+        runtime_state = runtime(review=False)
+        state = worker_state()
+        state["limits"] = {"max_new_positions_per_cycle": 3}
+        with tempfile.TemporaryDirectory() as directory:
+            result = ContinuousGovernanceV1(directory).run_worker_cycle(
+                worker_state=state, runtime_state=runtime_state, safety=SAFETY,
+            )
+        rows = {row["invariant_id"]: row for row in result["invariants"]}
+        self.assertEqual(rows["SWING_ENTRY_VELOCITY_BOUNDED"]["state"], "PASS")
+
     def test_sentinel_state_file_bound_uses_safe_integer_conversion(self):
         for value, expected in ((0, "PASS"), ("0", "PASS"), ("1", "WARN"), (None, "PASS"), ("bad", "PASS"), (math.nan, "PASS"), (math.inf, "PASS")):
             runtime_state = runtime(review=False)

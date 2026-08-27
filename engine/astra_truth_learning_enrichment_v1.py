@@ -189,6 +189,43 @@ def build_original_pretrade_prediction_snapshot_v1(
     }
 
 
+def build_pretrade_entry_quality_assessment_v1(
+    pretrade_context: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Classify entry quality from immutable producer evidence only.
+
+    This deliberately does not inspect realized return, excursion, or an exit
+    outcome.  An absent explicit selection assessment is reported as
+    insufficient evidence rather than reverse-engineered from a small cohort.
+    """
+    context = dict(pretrade_context or {})
+    fields = (
+        "entry_quality_state", "selection_quality_state", "candidate_quality_state",
+        "qualification_state", "buy_eligibility", "pretrade_decision_contract_state",
+    )
+    observed = [(key, _text(context.get(key)).upper()) for key in fields if _text(context.get(key))]
+    positive = {"GOOD", "STRONG", "QUALIFIED", "APPROVED", "PASS", "VALID", "ELIGIBLE", "BUY_NOW"}
+    negative = {"POOR", "WEAK", "REJECTED", "FAILED", "INVALID", "INELIGIBLE", "BLOCKED"}
+    for key, value in observed:
+        if value in negative:
+            return {
+                "classification": "POOR_ENTRY", "status": "PRETRADE_EVIDENCE_AVAILABLE",
+                "evidence_field": key, "evidence_value": value,
+                "lookahead_safe": True,
+            }
+    for key, value in observed:
+        if value in positive:
+            return {
+                "classification": "GOOD_ENTRY", "status": "PRETRADE_EVIDENCE_AVAILABLE",
+                "evidence_field": key, "evidence_value": value,
+                "lookahead_safe": True,
+            }
+    return {
+        "classification": "INSUFFICIENT_EVIDENCE", "status": "PRETRADE_EXPLICIT_QUALITY_UNAVAILABLE",
+        "evidence_field": None, "evidence_value": None, "lookahead_safe": True,
+    }
+
+
 def build_truth_learning_enrichment_v1(
     truth: Mapping[str, Any],
     *,
@@ -248,6 +285,30 @@ def build_truth_learning_enrichment_v1(
     giveback = _number(_first(record, "profit_giveback", "profit_giveback_pct"))
     if giveback is None:
         giveback = _number(_first(notes, "drawdown_from_peak_percent", "profit_giveback_pct"))
+    capture_ratio = None
+    if mfe is not None and mfe > 0 and actual_return is not None:
+        capture_ratio = max(0.0, actual_return) / mfe
+    realized_return_per_hour = (
+        round(actual_return / (hold_seconds / 3600.0), 6)
+        if actual_return is not None and hold_seconds is not None and hold_seconds >= 60.0
+        else None
+    )
+    advisory_return = _number(_first(latest_exit_decision, "current_return_percent", "current_return_pct", "return_percent"))
+    advisory_timestamp = _first(latest_exit_decision, "observed_at", "timestamp", "created_at")
+    exit_advisory = {
+        "status": "CAPTURED_PRE_ACTION" if latest_exit_decision else "INSUFFICIENT_EVIDENCE",
+        "lifecycle_id": _text(record.get("lifecycle_id")) or "UNAVAILABLE",
+        "event_timestamp": advisory_timestamp or "UNAVAILABLE",
+        "available_return_at_advisory_pct": advisory_return if advisory_return is not None else "UNAVAILABLE",
+        "event": dict(latest_exit_decision) if latest_exit_decision else "UNAVAILABLE",
+        "actual_realized_return_pct": actual_return if actual_return is not None else "UNAVAILABLE",
+        "actual_vs_advisory_return_delta_pct_points": (
+            round(actual_return - advisory_return, 6)
+            if actual_return is not None and advisory_return is not None else "UNAVAILABLE"
+        ),
+        "counterfactual_evidence_class": "OBSERVATIONAL_COUNTERFACTUAL_NOT_BROKER_TRUTH",
+        "counterfactual_is_official_broker_truth": False,
+    }
 
     learning_complete = bool(learning_acknowledged) if learning_acknowledged is not None else bool(record.get("learning_acknowledged"))
     provenance = _text(_first(record, "source_bucket", "ownership_status", "source")).upper()
@@ -322,6 +383,22 @@ def build_truth_learning_enrichment_v1(
             "exit_decision_evidence_count": len(exit_decision_events),
             "last_exit_owner_decision": dict(latest_exit_decision.get("exit_owner_decision") or {}) or "UNAVAILABLE",
         },
+        "profit_retention_v1": {
+            "status": "AVAILABLE" if actual_return is not None and mfe is not None else "INSUFFICIENT_EVIDENCE",
+            "realized_return_pct": actual_return if actual_return is not None else "UNAVAILABLE",
+            "maximum_favorable_excursion_pct": mfe if mfe is not None else "UNAVAILABLE",
+            "maximum_adverse_excursion_pct": mae if mae is not None else "UNAVAILABLE",
+            "profit_capture_ratio": round(capture_ratio, 6) if capture_ratio is not None else "UNAVAILABLE",
+            "profit_capture_pct": round(capture_ratio * 100.0, 6) if capture_ratio is not None else "UNAVAILABLE",
+            "absolute_giveback_pct_points": giveback if giveback is not None else "UNAVAILABLE",
+            "hold_duration_seconds": hold_seconds if hold_seconds is not None else "UNAVAILABLE",
+            "return_per_hour": realized_return_per_hour if realized_return_per_hour is not None else "UNAVAILABLE",
+            "expected_horizon": _text(_first(context, "horizon", "intended_horizon", "paper_entry_horizon_style")) or "UNAVAILABLE",
+            "horizon_exceedance": horizon_assessment,
+            "units": {"returns": "percentage_points", "profit_capture": "percent_of_mfe", "giveback": "percentage_points"},
+        },
+        "exit_advisory_effectiveness_v1": exit_advisory,
+        "pretrade_entry_quality_v1": build_pretrade_entry_quality_assessment_v1(context),
         "truth_quality_score_v1": {
             "score": score,
             "grade": grade,

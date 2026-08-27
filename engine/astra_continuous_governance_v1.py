@@ -714,19 +714,20 @@ class ContinuousGovernanceV1:
                 "allowed_remediations": ["RESTORE_APPROVED_SWING_CAPACITY"],
             })
         velocity_limit = _integer(_dict(worker_state.get("limits")).get("max_new_positions_per_cycle"), 2)
+        velocity_bounded = 2 <= velocity_limit <= 3
         invariants.append({
             "invariant_id": "SWING_ENTRY_VELOCITY_BOUNDED",
             "owner": "PaperAutopilot.max_new_positions_per_cycle",
             "dependencies": ["SWING"],
-            "state": "PASS" if velocity_limit == 2 else "FAIL",
+            "state": "PASS" if velocity_bounded else "FAIL",
             "observed_value": velocity_limit,
-            "expected_value": 2,
-            "first_failed_at": None if velocity_limit == 2 else _now(),
+            "expected_value": "approved bounded range 2..3",
+            "first_failed_at": None if velocity_bounded else _now(),
             "last_checked_at": _now(),
-            "failure_count": 0 if velocity_limit == 2 else 1,
-            "severity": "INFO" if velocity_limit == 2 else "HIGH",
+            "failure_count": 0 if velocity_bounded else 1,
+            "severity": "INFO" if velocity_bounded else "HIGH",
             "repairability": "DIAGNOSTIC",
-            "exact_blocker": None if velocity_limit == 2 else "SWING_ENTRY_VELOCITY_CONFIGURATION_MISMATCH",
+            "exact_blocker": None if velocity_bounded else "SWING_ENTRY_VELOCITY_CONFIGURATION_MISMATCH",
             "allowed_remediations": [],
         })
         day_capacity = _dict(_dict(capacity.get("lanes")).get("day"))
