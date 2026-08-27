@@ -21370,7 +21370,37 @@ def rankings():
             pass
     try:
         learning_snapshot = _get_enriched_learning_insights_cached()
-        universe_symbols = _load_universe_symbols()
+        configured_universe = _load_universe_symbols()
+        prior_rows = [dict(row) for row in (LAST_RANKINGS.get("stocks") or []) if isinstance(row, dict)]
+        known_duplicate_symbols = {
+            str(row.get("symbol") or "").upper().strip()
+            for row in prior_rows
+            if str(row.get("duplicate_symbol_status") or row.get("duplicate_state") or "").lower() in {"blocked", "duplicate", "active"}
+        }
+        inventory_symbols = list(configured_universe)
+        # The normal universe cache is currently absent in some deployments.
+        # Use the local broad inventory only as symbols, never as market evidence.
+        if len(inventory_symbols) < 100:
+            reader = getattr(BROAD_UNIVERSE_INTAKE_PROMOTION, "inventory_symbols", None)
+            if callable(reader):
+                try:
+                    inventory_symbols.extend(reader())
+                except Exception:
+                    pass
+        selector = getattr(BROAD_UNIVERSE_INTAKE_PROMOTION, "select_rotation", None)
+        if callable(selector):
+            discovery = selector(
+                known_rows=prior_rows,
+                excluded_symbols=known_duplicate_symbols,
+                inventory_symbols=inventory_symbols,
+            )
+            universe_symbols = list(discovery.get("symbols") or configured_universe)
+            discovery_status = dict(discovery.get("status") or {})
+            discovery_sources = dict(discovery.get("source_by_symbol") or {})
+        else:
+            universe_symbols = configured_universe
+            discovery_status = {"mode": "legacy_unbounded_discovery", "rotation_size": len(universe_symbols)}
+            discovery_sources = {}
         funnel = _build_funnel_candidates(
             universe_symbols,
             buy_mode=str(_FUNNEL_RUNTIME.get("active_buy_mode", os.getenv("ASTRA_DEFAULT_BUY_MODE", "balanced"))),
@@ -21383,6 +21413,11 @@ def rankings():
             d for d in data
             if d.get("symbol") and d["symbol"].upper() not in ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB"]
         ]
+        for row in stocks:
+            symbol = str(row.get("symbol") or "").upper()
+            row["discovery_source"] = str(discovery_sources.get(symbol) or "configured_universe_rotation")
+            row["candidate_discovery_source"] = row["discovery_source"]
+            row["adaptive_discovery_v1"] = True
         scored_map = funnel.get("scores_by_symbol", {})
         stocks = [_ensure_persona_fields(s, funnel_hint=scored_map.get(str(s.get("symbol", "")).upper())) for s in stocks]
         ranked = _prioritize_rankings(stocks, learning_snapshot=learning_snapshot)
@@ -21428,6 +21463,8 @@ def rankings():
                 "funnel_stage4_top6_selected": int(min(6, len(output))),
                 "funnel_candidate_count": int(funnel.get("candidate_count", len(candidate_symbols))),
                 "final_ranked_count": len(output),
+                "adaptive_discovery_v1": discovery_status,
+                "discovery_source_counts": dict(Counter(str(row.get("discovery_source") or "unknown") for row in output)),
                 "universe_cap_distribution": funnel.get("universe_cap_distribution", {"large": 0, "mid": 0, "small": 0, "unknown": 0}),
                 "quoted_cap_distribution": funnel.get("quoted_cap_distribution", {"large": 0, "mid": 0, "small": 0, "unknown": 0}),
                 "scored_cap_distribution": funnel.get("scored_cap_distribution", {"large": 0, "mid": 0, "small": 0, "unknown": 0}),
