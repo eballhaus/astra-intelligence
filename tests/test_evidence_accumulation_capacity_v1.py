@@ -366,12 +366,11 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
                 state_path=str(pathlib.Path(tmp) / "state.json"),
                 alpaca_paper_broker=_Broker(),
             )
-            engine._runtime_state["entry_lane_horizon_integrity_v1"] = {
-                "entries": [{
-                    "broker_order_id": "eth-order", "candidate_id": "eth-candidate",
-                    "lane": "CRYPTO", "lifecycle_id": "eth-lifecycle",
-                }],
-            }
+            engine.entry_lane_horizon_ledger.record({
+                "order_intent_id": "eth-intent", "broker_order_id": "eth-order",
+                "candidate_id": "eth-candidate", "lane": "CRYPTO",
+                "lifecycle_id": "eth-lifecycle",
+            }, "BROKER_ACKNOWLEDGED")
             result = engine._evidence_capacity_snapshot_v1(
                 {
                     "broker_reconciliation_active": True,

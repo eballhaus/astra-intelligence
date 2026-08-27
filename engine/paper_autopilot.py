@@ -9023,7 +9023,11 @@ class PaperAutopilotEngine:
             positions = []
             internal_by_symbol = _position_symbol_alias_index_v1(open_rows)
             entry_metadata_by_order: dict[str, dict[str, Any]] = {}
-            for raw in list((self._runtime_state.get("entry_lane_horizon_integrity_v1") or {}).get("entries") or [])[-250:]:
+            runtime_entry_records = list((self._runtime_state.get("entry_lane_horizon_integrity_v1") or {}).get("entries") or [])
+            # The bounded entry ledger is the durable identity owner. The
+            # runtime mirror is intentionally not required after a restart.
+            durable_entry_records = list((self.entry_lane_horizon_ledger.snapshot() or {}).get("entries") or [])
+            for raw in (runtime_entry_records + durable_entry_records)[-500:]:
                 if not isinstance(raw, Mapping):
                     continue
                 entry = dict(raw)
