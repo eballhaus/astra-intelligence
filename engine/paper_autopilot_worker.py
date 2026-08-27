@@ -911,6 +911,7 @@ class PaperAutopilotWorker:
             try:
                 from server_extend import _refresh_alpaca_ws_allocation
                 _refresh_alpaca_ws_allocation()
+                self.autopilot._save_state_file()
             except Exception:
                 pass
             elapsed = time.monotonic() - started

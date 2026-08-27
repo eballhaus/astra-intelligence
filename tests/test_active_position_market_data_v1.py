@@ -129,6 +129,9 @@ class AllocationBoundaryTests(unittest.TestCase):
                 self.kwargs = kwargs
                 return {"ok": True}
 
+            def status(self):
+                return {"running": False, "connection_count": 0}
+
         monitor = Monitor()
         rows = [
             {

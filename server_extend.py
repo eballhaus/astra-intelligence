@@ -17183,6 +17183,9 @@ def _refresh_alpaca_ws_allocation():
             open_position_symbols=open_symbols,
             near_entry_symbols=near_symbols,
         )
+        status_reader = getattr(ALPACA_WS_MONITOR, "status", None)
+        if callable(status_reader):
+            PAPER_AUTOPILOT._runtime_state["alpaca_ws_active_position_monitor_v1"] = dict(status_reader() or {})
         _ALPACA_WS_ALLOC_STATE["signature"] = signature
         _ALPACA_WS_ALLOC_STATE["ts"] = now
     except Exception:
