@@ -366,11 +366,6 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
                 state_path=str(pathlib.Path(tmp) / "state.json"),
                 alpaca_paper_broker=_Broker(),
             )
-            engine.entry_lane_horizon_ledger.record({
-                "order_intent_id": "eth-intent", "broker_order_id": "eth-order",
-                "candidate_id": "eth-candidate", "lane": "CRYPTO",
-                "lifecycle_id": "eth-lifecycle",
-            }, "BROKER_ACKNOWLEDGED")
             result = engine._evidence_capacity_snapshot_v1(
                 {
                     "broker_reconciliation_active": True,
@@ -400,6 +395,11 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
                 state_path=str(pathlib.Path(tmp) / "state.json"),
                 alpaca_paper_broker=_Broker(),
             )
+            engine.entry_lane_horizon_ledger.record({
+                "order_intent_id": "eth-intent", "broker_order_id": "eth-order",
+                "candidate_id": "eth-candidate", "lane": "CRYPTO",
+                "lifecycle_id": "eth-lifecycle",
+            }, "BROKER_ACKNOWLEDGED")
             result = engine._evidence_capacity_snapshot_v1(
                 {
                     "broker_reconciliation_active": True,
@@ -410,7 +410,7 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
                 },
                 [{
                     "symbol": "ETH/USD", "lane_id": "CRYPTO",
-                    "lifecycle_id": "eth-lifecycle", "entry_order_id": "eth-order",
+                    "entry_order_id": "eth-order",
                 }],
                 {"broker_execution_enabled": True},
             )

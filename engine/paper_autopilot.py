@@ -9042,9 +9042,9 @@ class PaperAutopilotEngine:
                     **broker_position,
                 }
                 entry = entry_metadata_by_order.get(_text(
-                    broker_position.get("entry_order_id")
-                    or broker_position.get("broker_order_id")
-                    or broker_position.get("entry_fill_id")
+                    merged.get("entry_order_id")
+                    or merged.get("broker_order_id")
+                    or merged.get("entry_fill_id")
                 ))
                 if entry:
                     for source, target in (
