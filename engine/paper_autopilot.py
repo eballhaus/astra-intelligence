@@ -9022,8 +9022,37 @@ class PaperAutopilotEngine:
         if broker_payload.get("broker_positions_fetch_ok"):
             positions = []
             internal_by_symbol = _position_symbol_alias_index_v1(open_rows)
+            entry_metadata_by_order: dict[str, dict[str, Any]] = {}
+            for raw in list((self._runtime_state.get("entry_lane_horizon_integrity_v1") or {}).get("entries") or [])[-250:]:
+                if not isinstance(raw, Mapping):
+                    continue
+                entry = dict(raw)
+                order_id = _text(entry.get("broker_order_id") or entry.get("entry_order_id") or entry.get("entry_fill_id"))
+                if not order_id or order_id in entry_metadata_by_order:
+                    continue
+                entry_metadata_by_order[order_id] = entry
             for symbol, broker_row in dict(broker_payload.get("broker_position_by_symbol") or {}).items():
-                positions.append({**internal_by_symbol.get(str(symbol).upper().strip(), {}), **dict(broker_row or {})})
+                broker_position = dict(broker_row or {})
+                merged = {
+                    **internal_by_symbol.get(str(symbol).upper().strip(), {}),
+                    **broker_position,
+                }
+                entry = entry_metadata_by_order.get(_text(
+                    broker_position.get("entry_order_id")
+                    or broker_position.get("broker_order_id")
+                    or broker_position.get("entry_fill_id")
+                ))
+                if entry:
+                    for source, target in (
+                        ("lifecycle_id", "lifecycle_id"),
+                        ("candidate_id", "candidate_id"),
+                        ("recommendation_id", "recommendation_id"),
+                        ("lane", "lane_id"),
+                        ("broker_order_id", "entry_order_id"),
+                    ):
+                        if not merged.get(target) and entry.get(source):
+                            merged[target] = entry[source]
+                positions.append(merged)
         else:
             # A stale/unavailable broker snapshot must not authorize capacity.
             positions = []
