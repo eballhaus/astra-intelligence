@@ -2272,6 +2272,8 @@ class PaperAutopilotEngine:
             "position_resolution_reviews": dict(self._runtime_state.get("position_resolution_reviews") or {}),
             "loss_containment_state_v1": dict(self._runtime_state.get("loss_containment_state_v1") or {}),
             "profit_protection_state_v1": dict(self._runtime_state.get("profit_protection_state_v1") or {}),
+            "active_equity_fmp_observations_v1": dict(self._runtime_state.get("active_equity_fmp_observations_v1") or {}),
+            "alpaca_ws_active_position_monitor_v1": dict(self._runtime_state.get("alpaca_ws_active_position_monitor_v1") or {}),
             "legacy_migration_manifest_v1": dict(self._runtime_state.get("legacy_migration_manifest_v1") or {}),
             "legacy_migration_approval_v1": dict(self._runtime_state.get("legacy_migration_approval_v1") or {}),
             "legacy_migration_application_v1": dict(self._runtime_state.get("legacy_migration_application_v1") or {}),

@@ -118,6 +118,16 @@ class ActiveEquityFMPSupplementTests(unittest.TestCase):
         self.assertEqual(state["refresh_state"], "NO_CANONICAL_ACTIVE_EQUITY_POSITIONS")
         self.assertEqual(state["calls_this_refresh"], 0)
 
+    def test_observational_monitor_state_survives_canonical_persistence(self):
+        engine = self._engine()
+        engine._runtime_state["active_equity_fmp_observations_v1"] = {"refresh_state": "REFRESHED"}
+        engine._runtime_state["alpaca_ws_active_position_monitor_v1"] = {"connection_count": 1}
+        engine._save_state_file()
+        with open(engine.state_path, "r", encoding="utf-8") as handle:
+            saved = __import__("json").load(handle)
+        self.assertEqual(saved["active_equity_fmp_observations_v1"]["refresh_state"], "REFRESHED")
+        self.assertEqual(saved["alpaca_ws_active_position_monitor_v1"]["connection_count"], 1)
+
 
 class AllocationBoundaryTests(unittest.TestCase):
     def test_server_allocation_excludes_dust_and_orphan_tracker_rows(self):
