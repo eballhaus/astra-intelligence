@@ -17291,10 +17291,13 @@ def _paper_single_symbol_quote(symbol, asset_type, *, bypass_cache=False):
     # The router normalizes documented provider quote fields and preserves
     # their observation timestamp. Guardian's generic payload deliberately
     # remains unsuitable for executable quote evidence.
+    # Execution-critical US equity quotes follow the canonical ALPACA ->
+    # FINNHUB contract. FMP remains the final bounded fallback for continuity.
+    preferred_providers = ["ALPACA", "FMP"] if kind == "crypto" else ["ALPACA", "FINNHUB", "FMP"]
     quote = PAPER_AUTOPILOT._legacy_swing_fmp_router.get_quote(
         sym,
         asset_type="crypto" if kind == "crypto" else "stock",
-        preferred_providers=["ALPACA", "FMP"],
+        preferred_providers=preferred_providers,
         cache_max_age_seconds=20,
         bypass_cache=bool(bypass_cache),
         protected_tier1=True,
