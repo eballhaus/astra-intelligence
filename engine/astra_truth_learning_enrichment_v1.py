@@ -144,6 +144,11 @@ def build_pretrade_truth_context_v1(
         "evidence_factors", "confidence_attribution",
         "trend_state", "volume_state", "volatility_context", "supporting_evidence",
         "opposing_evidence", "evidence_freshness", "expected_exit_behavior",
+        # Explicit producer quality states remain immutable pre-entry facts.
+        # They enable later selection-vs-management attribution without using
+        # realized P/L or any post-entry observation as an entry proxy.
+        "entry_quality_state", "selection_quality_state", "candidate_quality_state",
+        "qualification_state", "buy_eligibility", "pretrade_decision_contract_state",
     )
     # Preserve original pre-decision evidence as an immutable snapshot. Nested
     # attribution maps remain owned by their producers after entry processing.

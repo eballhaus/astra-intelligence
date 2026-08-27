@@ -8,7 +8,10 @@ from pathlib import Path
 
 from engine.adaptive_profit_capture_intelligence_v1 import build_profit_capture_trade_effectiveness_v2
 from engine.astra_daily_intelligence_summary_v1 import build_astra_daily_intelligence_summary_v1
-from engine.astra_truth_learning_enrichment_v1 import build_truth_learning_enrichment_v1
+from engine.astra_truth_learning_enrichment_v1 import (
+    build_pretrade_truth_context_v1,
+    build_truth_learning_enrichment_v1,
+)
 from engine.paper_autopilot import PaperAutopilotEngine
 
 
@@ -51,6 +54,16 @@ class DayThroughputProfitRetentionTests(unittest.TestCase):
         row = result["trade_rows"][0]
         self.assertEqual(row["trade_quality_attribution_v1"]["entry_quality"]["classification"], "GOOD_ENTRY")
         self.assertEqual(row["trade_quality_attribution_v1"]["classification"], "GOOD_ENTRY_POOR_MANAGEMENT")
+
+    def test_explicit_entry_quality_is_preserved_in_the_frozen_pretrade_context(self) -> None:
+        context = build_pretrade_truth_context_v1(
+            {"symbol": "DAY", "entry_quality_state": "QUALIFIED", "selection_quality_state": "GOOD"},
+            {"qualification_state": "APPROVED", "pretrade_decision_contract_state": "VALID"},
+        )
+        self.assertEqual(context["entry_quality_state"], "QUALIFIED")
+        self.assertEqual(context["selection_quality_state"], "GOOD")
+        self.assertEqual(context["qualification_state"], "APPROVED")
+        self.assertEqual(context["pretrade_decision_contract_state"], "VALID")
 
     def test_future_day_strict_truth_receives_cohort_without_rewriting_history(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
