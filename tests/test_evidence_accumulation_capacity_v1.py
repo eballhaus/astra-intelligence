@@ -384,6 +384,37 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
         self.assertEqual(result["position_rows_for_read_only_consumers"][0]["symbol"], "DAYTEST")
         self.assertNotIn("asset_id", result["position_rows_for_read_only_consumers"][0])
 
+    def test_worker_capacity_snapshot_preserves_crypto_lifecycle_across_compact_broker_symbol(self):
+        class _Broker:
+            def account(self):
+                return {"buying_power": 1000}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = PaperAutopilotEngine(
+                db_path=str(pathlib.Path(tmp) / "paper.db"),
+                state_path=str(pathlib.Path(tmp) / "state.json"),
+                alpaca_paper_broker=_Broker(),
+            )
+            result = engine._evidence_capacity_snapshot_v1(
+                {
+                    "broker_reconciliation_active": True,
+                    "broker_positions_fetch_ok": True,
+                    "broker_position_by_symbol": {
+                        "ETHUSD": {"symbol": "ETHUSD", "qty": "1", "market_value": "100"},
+                    },
+                },
+                [{
+                    "symbol": "ETH/USD", "lane_id": "CRYPTO",
+                    "lifecycle_id": "eth-lifecycle", "entry_order_id": "eth-order",
+                }],
+                {"broker_execution_enabled": True},
+            )
+
+        row = result["position_rows_for_read_only_consumers"][0]
+        self.assertEqual(row["lane_id"], "CRYPTO")
+        self.assertEqual(row["lifecycle_id"], "eth-lifecycle")
+        self.assertEqual(row["entry_order_id"], "eth-order")
+
     def test_worker_capacity_snapshot_does_not_count_lane_unavailable_legacy_as_day(self):
         """The worker must not let a stale local DAY label consume DAY reserve."""
         class _Broker:

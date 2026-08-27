@@ -163,7 +163,7 @@ from engine.astra_provider_consumption_telemetry_v1 import (
 
 
 _LEGACY_MIGRATION_SOURCE_COMMIT_V1 = "e1e30e0739387be274e4e717cf7c7239b42d7890"
-from engine.provider_router import ProviderRouter
+from engine.provider_router import ProviderRouter, canonical_crypto_market_symbol_v1
 try:
     from engine.astra_premarket_certification_v1 import (
         build_pretrade_decision_contract,
@@ -733,6 +733,47 @@ def _safe_json_load(raw: Any) -> dict[str, Any]:
     except Exception:
         pass
     return {}
+
+
+def _broker_position_symbol_aliases_v1(symbol: Any) -> set[str]:
+    """Return bounded broker/internal aliases for a crypto position symbol.
+
+    Alpaca can report crypto positions as ``ETHUSD`` while the managed
+    lifecycle uses ``ETH/USD``. This only normalizes that documented pair
+    representation; equities remain exact-symbol matches.
+    """
+    raw = str(symbol or "").upper().strip()
+    if not raw:
+        return set()
+    aliases = {raw}
+    compact = raw.replace("/", "").replace("-", "").replace("_", "")
+    if compact.endswith("USD") and len(compact) > 3:
+        identity = canonical_crypto_market_symbol_v1(raw)
+        aliases.update({
+            str(identity.get("internal_pair") or "").upper(),
+            str(identity.get("provider_response_compact_key") or "").upper(),
+        })
+    return {alias for alias in aliases if alias}
+
+
+def _position_symbol_alias_index_v1(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Index unique current rows by exact or documented crypto aliases.
+
+    Ambiguous aliases are intentionally removed so normalization cannot turn
+    into a symbol-only lifecycle join.
+    """
+    candidates: dict[str, list[dict[str, Any]]] = {}
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        row = dict(raw)
+        for alias in _broker_position_symbol_aliases_v1(row.get("symbol")):
+            candidates.setdefault(alias, []).append(row)
+    return {
+        alias: values[0]
+        for alias, values in candidates.items()
+        if len(values) == 1
+    }
 
 
 def _entry_price_pct_difference(provisional: Any, canonical: Any) -> float | None:
@@ -8980,11 +9021,7 @@ class PaperAutopilotEngine:
         broker_payload["broker_state_age_seconds"] = 0.0 if broker_payload.get("broker_positions_fetch_ok") else None
         if broker_payload.get("broker_positions_fetch_ok"):
             positions = []
-            internal_by_symbol = {
-                str(row.get("symbol") or "").upper().strip(): dict(row)
-                for row in open_rows
-                if str(row.get("symbol") or "").strip()
-            }
+            internal_by_symbol = _position_symbol_alias_index_v1(open_rows)
             for symbol, broker_row in dict(broker_payload.get("broker_position_by_symbol") or {}).items():
                 positions.append({**internal_by_symbol.get(str(symbol).upper().strip(), {}), **dict(broker_row or {})})
         else:
@@ -9013,11 +9050,11 @@ class PaperAutopilotEngine:
         # Capacity must use the canonical lane recovery result, not a stale
         # historical local label.  A legacy row with lane UNAVAILABLE remains
         # broker exposure but cannot consume a DAY/CRYPTO strategy reserve.
-        recovery_rows_for_capacity = {
-            _text(row.get("symbol")).upper(): dict(row)
+        recovery_rows_for_capacity = _position_symbol_alias_index_v1([
+            dict(row)
             for row in (self._runtime_state.get("position_lane_horizon_recovery_v1") or {}).get("positions", [])
             if isinstance(row, dict) and _text(row.get("symbol"))
-        }
+        ])
         normalized_positions: list[dict[str, Any]] = []
         for position in positions:
             normalized = dict(position)
@@ -9042,11 +9079,7 @@ class PaperAutopilotEngine:
                 normalized["strategy_capacity_exclusion_reason"] = "BROKER_DUST_MONITORED"
             normalized_positions.append(normalized)
         positions = normalized_positions
-        internal_by_symbol = {
-            str(row.get("symbol") or "").upper().strip(): dict(row)
-            for row in open_rows
-            if str(row.get("symbol") or "").strip()
-        }
+        internal_by_symbol = _position_symbol_alias_index_v1(open_rows)
         pending_orders: list[dict[str, Any]] = []
         for broker_order in list(broker_payload.get("broker_pending_orders") or []):
             if not isinstance(broker_order, dict):
@@ -9095,7 +9128,7 @@ class PaperAutopilotEngine:
         safe_position_fields = (
             "symbol", "qty", "quantity", "market_value", "current_price", "lastday_price",
             "avg_entry_price", "asset_class", "asset_type", "lane_id", "position_owner",
-            "lifecycle_id", "candidate_id", "recommendation_id", "entry_fill_id",
+            "lifecycle_id", "candidate_id", "recommendation_id", "entry_order_id", "entry_fill_id",
             "entry_order_fill_id", "entry_timestamp", "unrealized_plpc",
             "classification", "classification_reason", "lifecycle_owner", "exit_owner",
             "capacity_owner", "truth_owner", "original_lane", "original_strategy",
@@ -9112,11 +9145,11 @@ class PaperAutopilotEngine:
             "review_state", "hold_exception_state",
             "is_dust", "dust_reason", "dust_state",
         )
-        recovery_rows = {
-            _text(row.get("symbol")).upper(): dict(row)
+        recovery_rows = _position_symbol_alias_index_v1([
+            dict(row)
             for row in (self._runtime_state.get("position_lane_horizon_recovery_v1") or {}).get("positions", [])
             if isinstance(row, dict) and _text(row.get("symbol"))
-        }
+        ])
         snapshot["position_rows_for_read_only_consumers"] = []
         for row in positions[:100]:
             safe_row = {key: row.get(key) for key in safe_position_fields if row.get(key) not in (None, "")}
@@ -12244,18 +12277,23 @@ class PaperAutopilotEngine:
         ]
         current_by_symbol: dict[str, list[dict[str, Any]]] = {}
         for row in prior_current:
-            symbol = _text(row.get("symbol")).upper()
-            if symbol:
+            current = {
+                **row,
+                "current_reconciled": True,
+                "recovery_source_type": "CURRENT_RECONCILIATION_RECORD",
+            }
+            for symbol in _broker_position_symbol_aliases_v1(row.get("symbol")):
                 current_by_symbol.setdefault(symbol, []).append({
-                    **row,
-                    "current_reconciled": True,
-                    "recovery_source_type": "CURRENT_RECONCILIATION_RECORD",
+                    **current,
                 })
         # Reviews hold governance-owned original-lane metadata.  Join them
         # only to the already current broker-reconciled row, never to history.
         for review in reviews:
-            symbol = _text(review.get("symbol")).upper()
-            current_rows = current_by_symbol.get(symbol) or []
+            current_rows = []
+            for symbol in _broker_position_symbol_aliases_v1(review.get("symbol")):
+                current_rows = current_by_symbol.get(symbol) or []
+                if current_rows:
+                    break
             if len(current_rows) != 1:
                 continue
             current_rows[0].update({
@@ -12271,8 +12309,11 @@ class PaperAutopilotEngine:
         evidence: list[dict[str, Any]] = []
         for raw in db_rows or []:
             row = dict(raw or {})
-            symbol = _text(row.get("symbol")).upper()
-            current_rows = current_by_symbol.get(symbol) or []
+            current_rows = []
+            for symbol in _broker_position_symbol_aliases_v1(row.get("symbol")):
+                current_rows = current_by_symbol.get(symbol) or []
+                if current_rows:
+                    break
             if len(current_rows) != 1:
                 continue
             current = current_rows[0]
@@ -12305,7 +12346,11 @@ class PaperAutopilotEngine:
         for symbol, raw in broker_positions.items():
             broker = dict(raw or {})
             normalized = _text(broker.get("symbol") or symbol).upper()
-            current_rows = current_by_symbol.get(normalized) or []
+            current_rows = []
+            for alias in _broker_position_symbol_aliases_v1(normalized):
+                current_rows = current_by_symbol.get(alias) or []
+                if current_rows:
+                    break
             if len(current_rows) == 1:
                 current = current_rows[0]
                 # These IDs are Astra metadata, not broker financial facts.
