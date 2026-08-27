@@ -152,7 +152,7 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
         self.assertEqual(capacity["active_strategy_slot_capacity_remaining"], 8)
         self.assertEqual(capacity["swing_capacity_authority"], "ACTIVE_STRATEGY_SLOT_CAPACITY")
 
-    def test_swing_uses_existing_dust_excluded_strategy_slots_when_raw_global_count_is_full(self):
+    def test_dust_is_exposure_visible_but_does_not_consume_global_strategy_slots(self):
         positions = [
             {"symbol": f"DUST{i}", "lane_id": "SWING", "market_value": 0.0001,
              "is_dust": True, "dust_state": "BROKER_DUST_MONITORED"}
@@ -162,11 +162,32 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
         ]
         capacity = snapshot(positions=positions)
         result = candidate_capacity_decision(capacity, lane_id="SWING", symbol="NEXT", open_symbols=[])
-        self.assertEqual(capacity["global_capacity_status"], "GLOBAL_CAPACITY_EXHAUSTED")
+        self.assertEqual(capacity["raw_broker_exposure_occupancy"], 11)
+        self.assertEqual(capacity["raw_broker_exposure_excess_over_strategy_slots"], 10)
+        self.assertEqual(capacity["global_current_occupancy"], 1)
+        self.assertEqual(capacity["global_capacity_status"], "AVAILABLE")
+        self.assertEqual(capacity["global_capacity_remaining"], 9)
         self.assertEqual(capacity["active_strategy_slot_capacity_remaining"], 9)
         self.assertTrue(result["allowed"])
         self.assertEqual(result["capacity_decision"], "AVAILABLE")
         self.assertEqual(result["dust_strategy_slot_exclusion_count"], 10)
+
+    def test_active_strategy_slots_remain_global_capacity_owner_when_dust_is_present(self):
+        positions = [
+            {"symbol": f"ACTIVE{i}", "lane_id": "SWING", "market_value": 100.0}
+            for i in range(10)
+        ] + [
+            {"symbol": "DUST", "lane_id": "SWING", "market_value": 0.0001,
+             "is_dust": True, "dust_state": "BROKER_DUST_MONITORED"},
+        ]
+        capacity = snapshot(positions=positions)
+        result = candidate_capacity_decision(capacity, lane_id="SWING", symbol="NEXT", open_symbols=[])
+        self.assertEqual(capacity["raw_broker_exposure_occupancy"], 11)
+        self.assertEqual(capacity["global_current_occupancy"], 10)
+        self.assertEqual(capacity["global_capacity_remaining"], 0)
+        self.assertEqual(capacity["global_capacity_status"], "GLOBAL_CAPACITY_EXHAUSTED")
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["capacity_decision"], "ACTIVE_STRATEGY_SLOT_CAPACITY_EXHAUSTED")
 
     def test_swing_remains_blocked_when_material_strategy_slots_are_full_despite_dust(self):
         positions = [
@@ -499,6 +520,11 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
                 "broker_execution_enabled": True,
                 "live_endpoint_rejected": True,
             }
+            # This test owns capacity selection, not quote production.
+            engine._assign_trusted_quote_to_candidate = lambda row, **_kwargs: {
+                **row, "valid_quote": True, "trusted_quote_for_buys": True,
+                "quote_assignment_state": "FIXTURE_TRUSTED",
+            }
             engine._is_candidate_paper_eligible = lambda row: (True, "eligible", {"commitment_score": 90})
             class _OpenSession:
                 def confirmation_for_candidate(self, *_args, **_kwargs):
@@ -542,6 +568,11 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
                 "paper_mode_verified": True, "paper_endpoint_verified": True,
                 "broker_execution_enabled": True, "live_endpoint_rejected": True,
             }
+            # This test owns capacity selection, not quote production.
+            engine._assign_trusted_quote_to_candidate = lambda row, **_kwargs: {
+                **row, "valid_quote": True, "trusted_quote_for_buys": True,
+                "quote_assignment_state": "FIXTURE_TRUSTED",
+            }
             engine._is_candidate_paper_eligible = lambda row: (True, "eligible", {"commitment_score": 90})
             class _OpenSession:
                 def confirmation_for_candidate(self, *_args, **_kwargs):
@@ -584,6 +615,11 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
             engine._alpaca_safety_snapshot = lambda: {
                 "paper_mode_verified": True, "paper_endpoint_verified": True,
                 "broker_execution_enabled": True, "live_endpoint_rejected": True,
+            }
+            # This test owns capacity selection, not quote production.
+            engine._assign_trusted_quote_to_candidate = lambda row, **_kwargs: {
+                **row, "valid_quote": True, "trusted_quote_for_buys": True,
+                "quote_assignment_state": "FIXTURE_TRUSTED",
             }
             engine._is_candidate_paper_eligible = lambda row: (True, "eligible", {"commitment_score": 90})
 

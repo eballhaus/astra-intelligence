@@ -263,13 +263,6 @@ def build_capacity_snapshot(
     position_details_available = broker.get("position_details_available", True) is not False
     total_open = len(distinct_symbols) if position_details_available else (observed_count if observed_count >= 0 else None)
     global_limit = max(0, _integer(global_position_limit if global_position_limit is not None else values.get("ASTRA_PAPER_GLOBAL_POSITION_LIMIT", DEFAULT_GLOBAL_POSITION_LIMIT), DEFAULT_GLOBAL_POSITION_LIMIT))
-    total_occupancy = (total_open + len(pending_symbols) + len(commitment_symbols)) if total_open is not None else None
-    global_remaining = max(0, global_limit - total_occupancy) if state_fresh and total_occupancy is not None else None
-    global_status = "AVAILABLE" if global_remaining and global_remaining > 0 else "GLOBAL_CAPACITY_EXHAUSTED"
-    if not state_fresh:
-        global_status = "BROKER_STATE_STALE"
-    elif total_open is None:
-        global_status = "BROKER_POSITION_DETAILS_UNAVAILABLE"
     excluded_legacy_symbols = {
         _text(row.get("symbol")).upper() for row in positions
         if _text(row.get("symbol")) and _approved_legacy_slot_exclusion(row)
@@ -299,6 +292,19 @@ def build_capacity_snapshot(
         active_strategy_status = "BROKER_STATE_STALE"
     elif active_strategy_open is None:
         active_strategy_status = "BROKER_POSITION_DETAILS_UNAVAILABLE"
+    # Broker position rows are authoritative for portfolio-risk and
+    # reconciliation, but a canonical dust or approved legacy overlay is not
+    # an admission slot.  Publishing the raw broker row count as global slot
+    # occupancy made a dust-heavy account look full even while the same
+    # canonical snapshot reported strategy slots available.  Keep both facts:
+    # raw exposure remains visible below, while the global capacity contract
+    # uses the one-per-current-strategy-position ownership view.
+    raw_broker_occupancy = (
+        total_open + len(pending_symbols) + len(commitment_symbols)
+        if total_open is not None else None
+    )
+    global_remaining = active_strategy_remaining
+    global_status = active_strategy_status.replace("ACTIVE_STRATEGY_SLOT_CAPACITY_EXHAUSTED", "GLOBAL_CAPACITY_EXHAUSTED")
     lane_rows: dict[str, list[dict[str, Any]]] = {lane: [] for lane in LANES}
     lane_pending: dict[str, list[dict[str, Any]]] = {lane: [] for lane in LANES}
     lane_commitments: dict[str, list[dict[str, Any]]] = {lane: [] for lane in LANES}
@@ -454,7 +460,7 @@ def build_capacity_snapshot(
             "max_loss": config.get("max_loss"),
         }
     snapshot_basis = "|".join([
-        generated_at, str(total_occupancy), str(global_limit), str(buying_power),
+        generated_at, str(active_strategy_occupancy), str(global_limit), str(buying_power),
         str(active_strategy_occupancy), str(len(excluded_legacy_symbols)),
         str(lanes.get("day", {}).get("capacity_decision")), str(lanes.get("crypto", {}).get("capacity_decision")),
     ])
@@ -475,7 +481,16 @@ def build_capacity_snapshot(
         "buying_power": buying_power,
         "cash": cash,
         "total_open_positions": total_open if state_fresh else None,
-        "global_current_occupancy": total_occupancy if state_fresh else None,
+        # Global capacity is an admission-slot fact, not a raw broker-row
+        # count.  Raw exposure remains independently visible for risk and
+        # reconciliation consumers.
+        "global_current_occupancy": active_strategy_occupancy if state_fresh else None,
+        "raw_broker_exposure_occupancy": raw_broker_occupancy if state_fresh else None,
+        "raw_broker_exposure_excess_over_strategy_slots": (
+            max(0, raw_broker_occupancy - active_strategy_occupancy)
+            if state_fresh and raw_broker_occupancy is not None and active_strategy_occupancy is not None
+            else None
+        ),
         "broker_total_exposure_position_count": total_open if state_fresh else None,
         "legacy_existing_exposure_position_count": len(legacy_exposure_symbols) if state_fresh else None,
         "current_managed_exposure_position_count": (len(distinct_symbols - legacy_exposure_symbols) if state_fresh else None),
