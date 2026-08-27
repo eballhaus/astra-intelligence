@@ -17156,6 +17156,9 @@ def _refresh_alpaca_ws_allocation():
             for r in open_positions
             if isinstance(r, dict)
             and is_broker_linked_active_position(r, allow_dust=False)
+            and str(r.get("lane_id") or r.get("lane") or "").upper() in {"DAY", "SCALP", "SWING"}
+            and str(r.get("candidate_id") or "").strip()
+            and str(r.get("lifecycle_id") or "").strip()
             and str(r.get("symbol") or "").strip()
         ]
         near_symbols = _near_entry_candidates(limit=ALPACA_WS_NEAR_ENTRY_SLOTS)

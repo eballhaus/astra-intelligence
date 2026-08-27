@@ -148,6 +148,11 @@ class AllocationBoundaryTests(unittest.TestCase):
                 "symbol": "ORPHAN", "asset_type": "stock", "status": "OPEN", "quantity": 1,
                 "lane_id": "DAY", "lifecycle_id": "life-o",
             },
+            {
+                "symbol": "LEGACY", "asset_type": "stock", "status": "OPEN", "quantity": 1,
+                "lane_id": "UNKNOWN", "candidate_id": "candidate-l", "lifecycle_id": "life-l",
+                "entry_fill_id": "fill-l",
+            },
         ]
         with patch.object(server_extend, "ALPACA_WS_MONITOR", monitor), patch.object(
             server_extend.PAPER_AUTOPILOT, "_fetch_open_positions", return_value=rows
