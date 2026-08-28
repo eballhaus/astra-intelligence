@@ -12651,9 +12651,15 @@ class PaperAutopilotEngine:
             }
             asset_type = _norm_asset(broker_position.get("asset_type") or broker_position.get("asset_class") or "stock")
             cached_observation = dict(active_observations.get(symbol) or {})
+            cached_timestamp = canonical_market_timestamp_v1(
+                cached_observation,
+                source_type=SOURCE_QUOTE,
+                max_age_seconds=20.0,
+            )
             if (
                 cached_observation
                 and _pick_first_text(cached_observation.get("canonical_position_id")) == trace_key
+                and bool(cached_timestamp.get("executable_freshness"))
             ):
                 quote = cached_observation
                 quote.setdefault("provider_used", quote.get("provider"))
@@ -14003,6 +14009,11 @@ class PaperAutopilotEngine:
                 quarantine_review = {"observation_state": "FAILED", "error": str(exc)[:180]}
             loss_containment_review: dict[str, Any] = {}
             try:
+                # The same bounded 60-second supplement can become stale
+                # during a long cycle. Recheck its existing cadence immediately
+                # before management without changing the provider schedule.
+                self._note_worker_progress("active_equity_fmp_observation_pre_management")
+                self._refresh_active_equity_fmp_observations_v1()
                 self._note_worker_progress("loss_containment_review")
                 broker_snapshot = self._broker_open_symbols_snapshot()
                 loss_containment_review = self._loss_containment_review_phase(

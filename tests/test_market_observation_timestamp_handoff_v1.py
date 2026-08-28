@@ -104,6 +104,35 @@ class MarketObservationTimestampHandoffTests(unittest.TestCase):
         result = canonical_market_timestamp_v1(quotes["AAPL"], source_type="QUOTE", max_age_seconds=20)
         self.assertTrue(result["market_observation_unavailable"])
 
+    def test_stale_observation_does_not_suppress_existing_fallback(self):
+        engine = self._engine()
+        calls: list[str] = []
+        engine.get_latest_row_fn = lambda symbol, _asset: calls.append(symbol) or {
+            "symbol": symbol,
+            "provider_used": "ALPACA",
+            "provider_native_timestamp": _iso(-2),
+            "price": 101.0,
+        }
+        engine._runtime_state["active_equity_fmp_observations_v1"] = {
+            "observations": {
+                "AAPL": {
+                    "symbol": "AAPL",
+                    "canonical_position_id": "position-a",
+                    "provider": "FMP",
+                    "provider_native_timestamp": _iso(-60),
+                    "receive_timestamp": _iso(-55),
+                    "price": 100.0,
+                }
+            }
+        }
+        quotes = engine._loss_containment_quote_evidence(
+            {"AAPL": {"asset_type": "stock", "current_price": 99.0}},
+            managed_rows_by_symbol={"AAPL": {"symbol": "AAPL", "position_id": "position-a", "lane_id": "DAY"}},
+        )
+        self.assertEqual(calls, ["AAPL"])
+        self.assertEqual(quotes["AAPL"]["provider_used"], "ALPACA")
+        self.assertTrue(canonical_market_timestamp_v1(quotes["AAPL"], source_type="QUOTE", max_age_seconds=20)["executable_freshness"])
+
 
 if __name__ == "__main__":
     unittest.main()
