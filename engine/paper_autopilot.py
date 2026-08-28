@@ -11,7 +11,9 @@ import time
 import uuid
 from contextlib import contextmanager
 from decimal import Decimal, InvalidOperation
-from datetime import UTC, datetime, timedelta, time as datetime_time
+from datetime import datetime, timedelta, time as datetime_time, timezone
+
+UTC = timezone.utc
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
@@ -1014,6 +1016,15 @@ def _entry_bridge_quality(row: dict[str, Any]):
     if parts:
         return round((sum(parts) / len(parts)) * 0.82, 2), "grade_confidence_compat"
     return None, ""
+
+
+def _paper_selection_priority(row: dict[str, Any]) -> tuple[float, float, str]:
+    """Return the existing allocator's stable cross-cycle comparison key."""
+    return (
+        round(_to_float(row.get("paper_allocation_priority"), 0.0), 2),
+        round(_to_float(row.get("risk_adjusted_profit_score"), 0.0), 2),
+        str(row.get("symbol") or "").upper().strip(),
+    )
 
 
 def _infer_horizon_style(row: dict[str, Any]):
@@ -14900,16 +14911,27 @@ class PaperAutopilotEngine:
                     )
                 except Exception:
                     profit_seeking_exploration_status = {}
-            if horizon_assignment_active:
-                candidates = sorted(
-                    candidates,
-                    key=lambda row: (
-                        round(_to_float(row.get("paper_allocation_priority"), 0.0), 2),
-                        round(_to_float(row.get("risk_adjusted_profit_score"), 0.0), 2),
-                        round(self._horizon_tie_break_score(row, preferred_execution_horizon), 3),
+            # Allocation priority is the canonical comparison score. It must
+            # order every full cycle; otherwise a disabled horizon assignment
+            # leaves scarce slots dependent on source collection order.
+            candidates = sorted(
+                candidates,
+                key=lambda row: (
+                    *_paper_selection_priority(row)[:2],
+                    round(
+                        self._horizon_tie_break_score(row, preferred_execution_horizon)
+                        if horizon_assignment_active
+                        else 0.0,
+                        3,
                     ),
-                    reverse=True,
-                )
+                    _paper_selection_priority(row)[2],
+                ),
+                reverse=True,
+            )
+            for prequalification_rank, row in enumerate(candidates, start=1):
+                row["candidate_prequalification_rank"] = prequalification_rank
+                row["candidate_selection_owner"] = "paper_opportunity_allocation_engine_v1"
+                row["candidate_selection_score_source"] = "paper_allocation_priority"
             for row in candidates:
                 if selected_count >= self.max_new_positions_per_cycle:
                     early_symbol = str(row.get("symbol") or "").upper().strip()
@@ -14926,6 +14948,9 @@ class PaperAutopilotEngine:
                     decision_trace.append(_execution_trace_event(
                         row, eligible=False, selected=False,
                         decision_reason="max_new_positions_per_cycle_reached",
+                        candidate_prequalification_rank=row.get("candidate_prequalification_rank"),
+                        candidate_selection_owner=row.get("candidate_selection_owner"),
+                        selection_reason="cycle_limit_after_higher_ranked_candidates",
                         capacity_decision=early_capacity.get("capacity_decision"),
                         capacity_source=early_capacity.get("capacity_source"),
                         capacity_snapshot_id=early_capacity.get("snapshot_id"),
@@ -15104,6 +15129,9 @@ class PaperAutopilotEngine:
                 row_trace["lane_capital_remaining"] = capacity_decision.get("capital_remaining")
                 row_trace["lane_positions_remaining"] = capacity_decision.get("positions_remaining")
                 row_trace["capacity_blocker"] = (capacity_decision.get("exact_blockers") or [""])[0]
+                row_trace["candidate_prequalification_rank"] = row.get("candidate_prequalification_rank")
+                row_trace["candidate_selection_owner"] = row.get("candidate_selection_owner")
+                row_trace["candidate_selection_score_source"] = row.get("candidate_selection_score_source")
                 if not allowed:
                     exploration_decision = {}
                     if (
@@ -15172,6 +15200,7 @@ class PaperAutopilotEngine:
                         continue
 
                 eligible_count += 1
+                row_trace["candidate_qualified_rank"] = eligible_count
                 submission_row = dict(
                     gate_meta.pop("_qualified_candidate_for_submission_v1", None)
                     or row
@@ -15196,6 +15225,7 @@ class PaperAutopilotEngine:
                     continue
                 selected_count += 1
                 row_trace["selected"] = True
+                row_trace["selection_reason"] = "highest_ranked_qualified_candidate_with_available_commitment"
                 row_trace["order_attempted"] = False
                 # The candidate has passed canonical qualification and owns a
                 # lane-reserve commitment.  The submit boundary still performs

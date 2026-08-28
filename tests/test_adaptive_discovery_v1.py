@@ -6,6 +6,27 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from engine.broad_universe_intake_promotion_v1 import BroadUniverseIntakePromotionV1
+from engine.paper_autopilot import _paper_selection_priority
+
+
+class _FakeDiscoveryRouter:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def fetch_fmp_bounded_discovery(self, *, mode: str, limit: int) -> dict:
+        self.calls.append(mode)
+        if mode == "company_screener":
+            rows = [
+                {"symbol": "AAPL", "isActivelyTrading": True, "isEtf": False, "isFund": False, "marketCap": 3_000_000_000, "price": 100.0, "volume": 2_000_000},
+                {"symbol": "SPY", "isActivelyTrading": True, "isEtf": True, "isFund": False, "marketCap": 3_000_000_000, "price": 500.0, "volume": 2_000_000},
+                {"symbol": "ONDO-USD", "isActivelyTrading": True, "isEtf": False, "isFund": False, "marketCap": 3_000_000_000, "price": 10.0, "volume": 2_000_000},
+                {"symbol": "THIN", "isActivelyTrading": True, "isEtf": False, "isFund": False, "marketCap": 3_000_000_000, "price": 10.0, "volume": 10},
+            ]
+        elif mode == "biggest_gainers":
+            rows = [{"symbol": "NVDA", "changesPercentage": "4.0%", "volume": 3_000_000}]
+        else:
+            rows = [{"symbol": "MSFT", "changesPercentage": 1.0, "volume": 9_000_000}]
+        return {"ok": True, "rows": rows, "status": 200, "response_bytes": 128, "provider": "FMP"}
 
 
 def test_inventory_does_not_inject_synthetic_candidates() -> None:
@@ -59,3 +80,35 @@ def test_prospective_marker_is_write_once() -> None:
         second = owner.select_rotation(inventory_symbols=["MSFT"])["status"]["prospective_cohort"]
         assert first == second
         assert (Path(directory) / "adaptive_discovery_v1.json").exists()
+
+
+def test_authoritative_fmp_universe_keeps_only_liquid_common_stocks() -> None:
+    with TemporaryDirectory() as directory:
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        router = _FakeDiscoveryRouter()
+        owner._provider_router = router
+        assert owner.inventory_symbols() == ["AAPL"]
+        assert router.calls == ["company_screener"]
+
+
+def test_market_indexes_prioritize_real_mover_without_creating_candidate_evidence(monkeypatch) -> None:
+    with TemporaryDirectory() as directory:
+        monkeypatch.setenv("ASTRA_DISCOVERY_ROTATION_SIZE", "8")
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        router = _FakeDiscoveryRouter()
+        owner._provider_router = router
+        market = owner.refresh_market_discovery()
+        result = owner.select_rotation(
+            inventory_symbols=["AAPL", "MSFT", "NVDA", "AMD", "META", "GOOG", "AMZN", "TSLA", "AVGO"],
+            market_rows=market["rows"],
+        )
+        assert result["symbols"][0] == "NVDA"
+        assert result["source_by_symbol"]["NVDA"] == "fmp_biggest_gainers"
+        assert market["executable_evidence"] is False
+        assert all(row["discovery_evidence_only"] is True for row in market["rows"])
+
+
+def test_existing_allocation_score_prefers_stronger_candidate_independent_of_source_order() -> None:
+    weaker = {"symbol": "AAA", "paper_allocation_priority": 61.0, "risk_adjusted_profit_score": 65.0}
+    stronger = {"symbol": "ZZZ", "paper_allocation_priority": 82.0, "risk_adjusted_profit_score": 78.0}
+    assert sorted([weaker, stronger], key=_paper_selection_priority, reverse=True)[0]["symbol"] == "ZZZ"

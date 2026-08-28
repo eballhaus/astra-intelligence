@@ -21378,21 +21378,32 @@ def rankings():
             if str(row.get("duplicate_symbol_status") or row.get("duplicate_state") or "").lower() in {"blocked", "duplicate", "active"}
         }
         inventory_symbols = list(configured_universe)
-        # The normal universe cache is currently absent in some deployments.
-        # Use the local broad inventory only as symbols, never as market evidence.
-        if len(inventory_symbols) < 100:
-            reader = getattr(BROAD_UNIVERSE_INTAKE_PROMOTION, "inventory_symbols", None)
-            if callable(reader):
-                try:
-                    inventory_symbols.extend(reader())
-                except Exception:
-                    pass
+        # Always let the bounded broad-universe owner refresh its authoritative
+        # cache. Its symbols are inventory only; market evidence remains owned
+        # by the existing quote and ranking pipeline.
+        reader = getattr(BROAD_UNIVERSE_INTAKE_PROMOTION, "inventory_symbols", None)
+        if callable(reader):
+            try:
+                inventory_symbols.extend(reader())
+            except Exception:
+                pass
+        inventory_symbols = list(dict.fromkeys(str(symbol).upper().strip() for symbol in inventory_symbols if str(symbol).strip()))
+        market_discovery = {}
+        market_rows = []
+        refresher = getattr(BROAD_UNIVERSE_INTAKE_PROMOTION, "refresh_market_discovery", None)
+        if callable(refresher):
+            try:
+                market_discovery = dict(refresher() or {})
+                market_rows = [dict(row) for row in (market_discovery.get("rows") or []) if isinstance(row, dict)]
+            except Exception:
+                market_discovery = {"error": "market_discovery_refresh_failed"}
         selector = getattr(BROAD_UNIVERSE_INTAKE_PROMOTION, "select_rotation", None)
         if callable(selector):
             discovery = selector(
                 known_rows=prior_rows,
                 excluded_symbols=known_duplicate_symbols,
                 inventory_symbols=inventory_symbols,
+                market_rows=market_rows,
             )
             universe_symbols = list(discovery.get("symbols") or configured_universe)
             discovery_status = dict(discovery.get("status") or {})
@@ -21464,6 +21475,15 @@ def rankings():
                 "funnel_candidate_count": int(funnel.get("candidate_count", len(candidate_symbols))),
                 "final_ranked_count": len(output),
                 "adaptive_discovery_v1": discovery_status,
+                "fmp_market_discovery": {
+                    "provider": str(market_discovery.get("provider") or "FMP"),
+                    "market_index_symbols": len(market_rows),
+                    "calls": int(_to_float(market_discovery.get("calls"), 0.0)),
+                    "cache_hit": bool(market_discovery.get("cache_hit", False)),
+                    "response_bytes": int(_to_float(market_discovery.get("response_bytes"), 0.0)),
+                    "failures": list(market_discovery.get("failures") or [])[:4],
+                    "executable_evidence": False,
+                },
                 "discovery_source_counts": dict(Counter(str(row.get("discovery_source") or "unknown") for row in output)),
                 "universe_cap_distribution": funnel.get("universe_cap_distribution", {"large": 0, "mid": 0, "small": 0, "unknown": 0}),
                 "quoted_cap_distribution": funnel.get("quoted_cap_distribution", {"large": 0, "mid": 0, "small": 0, "unknown": 0}),

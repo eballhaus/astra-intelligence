@@ -132,6 +132,7 @@ _FMP_EFFICIENCY_LOCK = threading.Lock()
 _FMP_RECENT_CALLS: dict[tuple[str, str], float] = {}
 _FMP_RECENT_CALL_TTL_SECONDS = 90.0
 _FMP_LARGE_ENDPOINTS_ALLOW_FLAG = str(os.getenv("ASTRA_FMP_LARGE_ENDPOINTS_ALLOW", "0")).strip().lower() in {"1", "true", "yes", "on"}
+_FMP_BOUNDED_DISCOVERY_ENABLED = str(os.getenv("ASTRA_FMP_BOUNDED_DISCOVERY_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
 _FMP_HISTORICAL_FALLBACK_ENABLED = str(os.getenv("ASTRA_FMP_HISTORICAL_FALLBACK_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
 _FMP_SMART_BUDGET_ENABLED = str(os.getenv("ASTRA_FMP_SMART_BUDGET_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
 _TEMP_FMP_REST_DISABLED_EXPLICIT = "ASTRA_TEMP_FMP_REST_DISABLED" in os.environ
@@ -1119,6 +1120,92 @@ class ProviderRouter:
 
         # MORALIS and unsupported providers return conservative failure.
         return {"ok": False, "error": "provider_not_implemented", "status": None}
+
+    def fetch_fmp_bounded_discovery(self, *, mode: str, limit: int = 250) -> dict[str, Any]:
+        """Fetch bounded FMP discovery data without creating executable evidence.
+
+        Reference and mover rows can determine discovery rotation only. They
+        never satisfy entry freshness or any broker-order evidence contract.
+        """
+        requested_mode = str(mode or "").strip().lower()
+        supported = {"company_screener", "biggest_gainers", "most_actives"}
+        if requested_mode not in supported:
+            return {"ok": False, "error": "unsupported_discovery_mode", "rows": []}
+        if not _FMP_BOUNDED_DISCOVERY_ENABLED:
+            return {"ok": False, "error": "bounded_discovery_disabled", "rows": []}
+        if self._temp_strategy_enabled and self._temp_fmp_rest_disabled:
+            return {"ok": False, "error": "fmp_rest_disabled", "rows": []}
+        key = self._key_for("FMP", "stock")
+        if not key:
+            return {"ok": False, "error": "missing_api_key", "rows": []}
+        if self._provider_in_cooldown("FMP"):
+            return {"ok": False, "error": "provider_cooldown", "rows": []}
+        if self._fmp_probe_hard_limited():
+            return {"ok": False, "error": "fmp_rest_probe_skipped_hard_limit", "rows": []}
+
+        safe_limit = max(1, min(700 if requested_mode == "company_screener" else 250, int(limit or 0)))
+        endpoint = {
+            "company_screener": "company-screener",
+            "biggest_gainers": "biggest-gainers",
+            "most_actives": "most-actives",
+        }[requested_mode]
+        endpoint_template = f"/stable/{endpoint}"
+        params: dict[str, Any] = {"apikey": key}
+        if requested_mode == "company_screener":
+            # Universe eligibility remains broader than trade qualification.
+            # Existing liquidity and spread gates remain authoritative.
+            params.update(
+                {
+                    "marketCapMoreThan": 1_000_000_000,
+                    "priceMoreThan": 5,
+                    "volumeMoreThan": 500_000,
+                    "limit": safe_limit,
+                }
+            )
+        else:
+            params["limit"] = safe_limit
+
+        url = f"https://financialmodelingprep.com{endpoint_template}"
+        data, status, error, latency_ms = self._request("FMP", url, params=params)
+        rows = data.get("_list") if isinstance(data, dict) else []
+        rows = [dict(row) for row in (rows or []) if isinstance(row, dict)]
+        ok = bool(not error and int(status or 0) < 400 and rows)
+        self._mark_result("FMP", ok, _to_float(latency_ms), rate_limited=self._is_rate_limited(status, error))
+        if error:
+            self._set_last_error("FMP", error)
+        bytes_actual = self._request_bytes("FMP", url, params=params)
+        _fmp_efficiency_record(
+            {
+                "endpoint_family": "bounded_discovery",
+                "endpoint_path_template": endpoint_template,
+                "symbol_count": len(rows),
+                "status_code": int(status or 0),
+                "ok": ok,
+                "cache_hit": False,
+                "bytes_estimated": int(bytes_actual),
+                "bytes_actual_if_available": int(bytes_actual),
+                "useful_fields_count": 8 if rows else 0,
+                "useful_score": float(len(rows)),
+                "call_reason": "bounded_equity_discovery",
+                "caller_context": "broad_universe_intake_promotion",
+                "ttl_seconds": 0,
+                "blocked_reason": str(error or ""),
+                "api_calls_delta": 1 if status is not None else 0,
+                "bandwidth_delta": int(bytes_actual),
+                "provider_governor_allowed": bool(status != 429),
+            }
+        )
+        return {
+            "ok": ok,
+            "mode": requested_mode,
+            "rows": rows,
+            "status": status,
+            "error": str(error or ""),
+            "latency_ms": round(_to_float(latency_ms), 3),
+            "response_bytes": int(bytes_actual),
+            "provider": "FMP",
+            "executable_evidence": False,
+        }
 
     def get_quote(
         self,

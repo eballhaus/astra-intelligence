@@ -11,9 +11,14 @@ import json
 import os
 import time
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+
+try:
+    from engine.provider_router import ProviderRouter
+except Exception:  # pragma: no cover - offline import safety
+    ProviderRouter = None  # type: ignore[assignment]
 
 VERSION = "1.0.0"
 FMP_BANDWIDTH_LIMIT_GB = 50.0
@@ -24,6 +29,10 @@ FMP_CALLS_PER_MINUTE_LIMIT = 250
 DEFAULT_ROTATION_SIZE = 24
 MAX_ROTATION_SIZE = 30
 DEFAULT_ROTATION_SECONDS = 300
+AUTHORITATIVE_UNIVERSE_TTL_SECONDS = 86_400
+MARKET_DISCOVERY_TTL_SECONDS = 300
+AUTHORITATIVE_UNIVERSE_LIMIT = 650
+MARKET_DISCOVERY_LIMIT = 250
 
 # A compact built-in seed keeps the engine useful offline. Larger local or
 # provider-backed universes replace this automatically when available.
@@ -77,7 +86,7 @@ ETF_HINTS = {"SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLE", "XLV", "XLY", "XLI
 
 
 def _now_iso() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -148,7 +157,10 @@ class BroadUniverseIntakePromotionV1:
         self.ledger_path = self.state_dir / "candidate_decision_ledger_v1.jsonl"
         self.snapshot_path = self.state_dir / "snapshots" / "stable_top_buys_v1.json"
         self.cohort_path = self.state_dir / "adaptive_discovery_v1.json"
+        self.quality_cohort_path = self.state_dir / "candidate_quality_selection_v1.json"
+        self.market_snapshot_path = self.state_dir / "fmp_market_discovery_snapshot_v1.json"
         self._last_status: dict[str, Any] = {}
+        self._provider_router = ProviderRouter() if ProviderRouter is not None else None
 
     def _existing_symbol_sources(self) -> tuple[list[str], list[str]]:
         symbols: list[str] = []
@@ -217,11 +229,75 @@ class BroadUniverseIntakePromotionV1:
             out.append(obj)
         return out
 
-    def _build_universe(self) -> dict[str, Any]:
+    @staticmethod
+    def _is_liquid_common_stock(row: dict[str, Any]) -> bool:
+        symbol = _norm_symbol(row.get("symbol"))
+        if not _is_equity_inventory_symbol(symbol):
+            return False
+        if row.get("isActivelyTrading") is False:
+            return False
+        if bool(row.get("isEtf")) or bool(row.get("isFund")):
+            return False
+        return (
+            _to_float(row.get("marketCap"), 0.0) >= 1_000_000_000
+            and _to_float(row.get("price"), 0.0) >= 5.0
+            and _to_float(row.get("volume"), 0.0) >= 500_000
+        )
+
+    def _refresh_authoritative_universe(self, cached: dict[str, Any], now: float) -> dict[str, Any] | None:
+        if self._provider_router is None:
+            return None
+        attempted_at = _to_float(cached.get("authoritative_attempted_ts"), 0.0) if isinstance(cached, dict) else 0.0
+        if attempted_at and (now - attempted_at) < 900.0:
+            return None
+        result = self._provider_router.fetch_fmp_bounded_discovery(
+            mode="company_screener",
+            limit=AUTHORITATIVE_UNIVERSE_LIMIT,
+        )
+        if not result.get("ok"):
+            if isinstance(cached, dict):
+                cached["authoritative_attempted_ts"] = now
+                cached["authoritative_last_error"] = str(result.get("error") or "unavailable")[:160]
+                _safe_write_json(self.cache_path, cached)
+            return None
+        accepted = [row for row in (result.get("rows") or []) if self._is_liquid_common_stock(row)]
+        symbols = sorted({_norm_symbol(row.get("symbol")) for row in accepted if _norm_symbol(row.get("symbol"))})
+        if not symbols:
+            return None
+        payload = {
+            "symbols": symbols[:AUTHORITATIVE_UNIVERSE_LIMIT],
+            "universe_source": "fmp_company_screener_liquid_common_stock",
+            "universe_last_updated": _now_iso(),
+            "updated_ts": now,
+            "authoritative_attempted_ts": now,
+            "authoritative_last_error": "",
+            "liquid_filter": {
+                "market_cap_min": 1_000_000_000,
+                "price_min": 5.0,
+                "volume_min": 500_000,
+                "exclude_etf_fund": True,
+                "active_only": True,
+            },
+            "provider": "FMP",
+            "provider_rows_received": len(result.get("rows") or []),
+            "eligible_rows": len(symbols),
+            "response_bytes": _to_int(result.get("response_bytes"), 0),
+        }
+        _safe_write_json(self.cache_path, payload)
+        return payload
+
+    def _build_universe(self, *, allow_provider_refresh: bool = False) -> dict[str, Any]:
         cached = _safe_read_json(self.cache_path, {})
         now = time.time()
         cache_ts = _to_float(cached.get("updated_ts"), 0.0) if isinstance(cached, dict) else 0.0
-        if isinstance(cached, dict) and cached.get("symbols") and (now - cache_ts) < 86400:
+        is_authoritative = str(cached.get("universe_source") or "").startswith("fmp_company_screener") if isinstance(cached, dict) else False
+        if allow_provider_refresh and (not is_authoritative or (now - cache_ts) >= AUTHORITATIVE_UNIVERSE_TTL_SECONDS):
+            refreshed = self._refresh_authoritative_universe(cached if isinstance(cached, dict) else {}, now)
+            if refreshed:
+                cached = refreshed
+                cache_ts = now
+                is_authoritative = True
+        if isinstance(cached, dict) and cached.get("symbols") and (now - cache_ts) < AUTHORITATIVE_UNIVERSE_TTL_SECONDS:
             symbols = [_norm_symbol(s) for s in cached.get("symbols") or []]
             symbols = [s for s in symbols if s]
             return {
@@ -231,6 +307,9 @@ class BroadUniverseIntakePromotionV1:
                 "cache_age_seconds": round(max(0.0, now - cache_ts), 2),
                 "stale": False,
                 "last_updated": str(cached.get("universe_last_updated") or ""),
+                "authoritative": bool(is_authoritative),
+                "provider_rows_received": _to_int(cached.get("provider_rows_received"), 0),
+                "liquid_filter": dict(cached.get("liquid_filter") or {}),
             }
 
         raw_symbols, sources = self._existing_symbol_sources()
@@ -258,7 +337,67 @@ class BroadUniverseIntakePromotionV1:
             "cache_age_seconds": 0.0,
             "stale": False,
             "last_updated": payload["universe_last_updated"],
+            "authoritative": False,
+            "provider_rows_received": 0,
+            "liquid_filter": {},
         }
+
+    @staticmethod
+    def _market_priority(row: dict[str, Any]) -> tuple[float, float, str]:
+        raw_change = row.get("changesPercentage", row.get("changePercentage", row.get("change_percent", 0.0)))
+        try:
+            change = abs(float(str(raw_change or "0").replace("%", "").strip()))
+        except Exception:
+            change = 0.0
+        volume = _to_float(row.get("volume"), 0.0)
+        return (change, volume, _norm_symbol(row.get("symbol")))
+
+    def refresh_market_discovery(self) -> dict[str, Any]:
+        """Fetch two compact FMP mover indexes without emitting executable data."""
+        cached = _safe_read_json(self.market_snapshot_path, {})
+        now = time.time()
+        cached_at = _to_float(cached.get("updated_ts"), 0.0) if isinstance(cached, dict) else 0.0
+        if isinstance(cached, dict) and cached.get("rows") and (now - cached_at) < MARKET_DISCOVERY_TTL_SECONDS:
+            return {**cached, "cache_hit": True, "cache_age_seconds": round(now - cached_at, 2)}
+        if self._provider_router is None:
+            return {"rows": [], "provider": "FMP", "error": "provider_router_unavailable", "cache_hit": False}
+        combined: dict[str, dict[str, Any]] = {}
+        failures: list[str] = []
+        calls = 0
+        bytes_used = 0
+        for mode, source in (("biggest_gainers", "fmp_biggest_gainers"), ("most_actives", "fmp_most_actives")):
+            result = self._provider_router.fetch_fmp_bounded_discovery(mode=mode, limit=MARKET_DISCOVERY_LIMIT)
+            calls += 1 if result.get("status") is not None else 0
+            bytes_used += _to_int(result.get("response_bytes"), 0)
+            if not result.get("ok"):
+                failures.append(f"{mode}:{result.get('error') or 'unavailable'}")
+                continue
+            for raw in result.get("rows") or []:
+                symbol = _norm_symbol(raw.get("symbol"))
+                if not _is_equity_inventory_symbol(symbol):
+                    continue
+                row = dict(raw)
+                row["symbol"] = symbol
+                row["discovery_source"] = source
+                row["candidate_discovery_source"] = source
+                row["discovery_evidence_only"] = True
+                existing = combined.get(symbol)
+                if existing is None or self._market_priority(row) > self._market_priority(existing):
+                    combined[symbol] = row
+        rows = sorted(combined.values(), key=self._market_priority, reverse=True)[:MARKET_DISCOVERY_LIMIT]
+        payload = {
+            "updated_ts": now,
+            "updated_at": _now_iso(),
+            "rows": rows,
+            "provider": "FMP",
+            "calls": calls,
+            "response_bytes": bytes_used,
+            "failures": failures,
+            "executable_evidence": False,
+        }
+        if rows:
+            _safe_write_json(self.market_snapshot_path, payload)
+        return {**payload, "cache_hit": False, "cache_age_seconds": 0.0}
 
     def _fmp_budget(self) -> dict[str, Any]:
         usage = _safe_read_json(self.fmp_usage_path, {})
@@ -322,11 +461,25 @@ class BroadUniverseIntakePromotionV1:
         _safe_write_json(self.cohort_path, marker)
         return marker
 
+    def _record_quality_selection_marker(self) -> dict[str, Any]:
+        existing = _safe_read_json(self.quality_cohort_path, {})
+        if isinstance(existing, dict) and existing.get("change_id") == "CANDIDATE_QUALITY_SELECTION_V1":
+            return existing
+        marker = {
+            "change_id": "CANDIDATE_QUALITY_SELECTION_V1",
+            "activated_at": _now_iso(),
+            "scope": ["DAY", "SCALP", "SWING"],
+            "measurement_checkpoints": [10, 20, 30],
+            "mode": "paper_only_selection_provenance",
+        }
+        _safe_write_json(self.quality_cohort_path, marker)
+        return marker
+
     def inventory_symbols(self) -> list[str]:
         """Return a normalized local symbol inventory without market claims."""
         return [
             symbol
-            for symbol in (self._build_universe().get("symbols") or [])
+            for symbol in (self._build_universe(allow_provider_refresh=True).get("symbols") or [])
             if _is_equity_inventory_symbol(symbol)
         ]
 
@@ -336,6 +489,7 @@ class BroadUniverseIntakePromotionV1:
         known_rows: Iterable[dict[str, Any]] | None = None,
         excluded_symbols: Iterable[str] | None = None,
         inventory_symbols: Iterable[str] | None = None,
+        market_rows: Iterable[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Select inventory symbols only; no candidates or quote evidence are made here."""
         universe = self._build_universe()
@@ -357,14 +511,30 @@ class BroadUniverseIntakePromotionV1:
             rotation_size = min(rotation_size, 16)
 
         ranked_by_symbol: dict[str, float] = {}
+        source_by_ranked_symbol: dict[str, str] = {}
         symbol_set = set(symbols)
+        for row in market_rows or []:
+            if not isinstance(row, dict):
+                continue
+            symbol = _norm_symbol(row.get("symbol"))
+            if symbol not in symbol_set:
+                continue
+            change, volume, _ = self._market_priority(row)
+            # This controls scan order only; it cannot qualify or promote an
+            # entry. Mover and volume values stay discovery provenance.
+            score = (change * 1_000_000.0) + min(volume, 10_000_000_000.0) / 10_000.0
+            if score > ranked_by_symbol.get(symbol, -1.0):
+                ranked_by_symbol[symbol] = score
+                source_by_ranked_symbol[symbol] = str(row.get("discovery_source") or "fmp_market_index")
         for row in known_rows or []:
             if not isinstance(row, dict):
                 continue
             symbol = _norm_symbol(row.get("symbol"))
             score = self._actual_signal_score(row)
             if symbol in symbol_set and score is not None:
-                ranked_by_symbol[symbol] = max(score, ranked_by_symbol.get(symbol, score))
+                if score > ranked_by_symbol.get(symbol, -1.0):
+                    ranked_by_symbol[symbol] = score
+                    source_by_ranked_symbol[symbol] = str(row.get("discovery_source") or "opportunity_weighted_cached_signal")
         ranked = sorted(((score, symbol) for symbol, score in ranked_by_symbol.items()), key=lambda item: (-item[0], item[1]))
         weighted_target = min(len(ranked), int(round(rotation_size * 0.75)))
         weighted = [symbol for _, symbol in ranked[:weighted_target]]
@@ -375,7 +545,7 @@ class BroadUniverseIntakePromotionV1:
         exploration = (remaining[start:] + remaining[:start])[: max(0, rotation_size - len(weighted))]
         selected = weighted + exploration
         source_by_symbol = {
-            symbol: "opportunity_weighted_cached_signal" if symbol in set(weighted) else "exploration_rotation"
+            symbol: source_by_ranked_symbol.get(symbol, "opportunity_weighted_cached_signal") if symbol in set(weighted) else "exploration_rotation"
             for symbol in selected
         }
         return {
@@ -389,6 +559,9 @@ class BroadUniverseIntakePromotionV1:
                 "broad_universe_size": len(inventory),
                 "tradable_universe_size": len(symbols),
                 "universe_source": str(universe.get("source") or "local_cache"),
+                "authoritative_universe": bool(universe.get("authoritative", False)),
+                "authoritative_provider_rows_received": _to_int(universe.get("provider_rows_received"), 0),
+                "universe_liquid_filter": dict(universe.get("liquid_filter") or {}),
                 "universe_cache_hit": bool(universe.get("cache_hit", False)),
                 "universe_cache_age_seconds": _to_float(universe.get("cache_age_seconds"), 0.0),
                 "universe_stale": bool(universe.get("stale", False)),
@@ -399,6 +572,7 @@ class BroadUniverseIntakePromotionV1:
                 "opportunity_weighted_percent": round((len(weighted) / max(1, len(selected))) * 100.0, 2),
                 "exploration_percent": round((len(exploration) / max(1, len(selected))) * 100.0, 2),
                 "known_signal_symbols": len(ranked),
+                "market_index_symbols": len([row for row in (market_rows or []) if isinstance(row, dict)]),
                 "excluded_duplicate_or_active_symbols": len(excluded),
                 "rotation_epoch": epoch,
                 "rotation_seconds": rotation_seconds,
@@ -406,6 +580,7 @@ class BroadUniverseIntakePromotionV1:
                 "promoted_to_top_buys_count": 0,
                 "candidate_evidence_fabricated": False,
                 "prospective_cohort": self._record_cohort_marker(),
+                "quality_selection_cohort": self._record_quality_selection_marker(),
                 **budget,
             },
         }
