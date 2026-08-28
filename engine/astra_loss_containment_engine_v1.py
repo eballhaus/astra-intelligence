@@ -431,7 +431,14 @@ def _resolve_position_inputs(
             "trade_timestamp": broker.get("trade_timestamp") or latest.get("trade_timestamp") or pos.get("trade_timestamp"),
             "retrieval_timestamp": retrieval_timestamp,
         },
-        source_type="QUOTE" if (broker.get("quote_timestamp") or latest.get("quote_timestamp") or pos.get("quote_timestamp")) else None,
+        source_type="QUOTE" if (
+            broker.get("quote_timestamp")
+            or latest.get("quote_timestamp")
+            or pos.get("quote_timestamp")
+            or broker.get("provider_native_timestamp")
+            or latest.get("provider_native_timestamp")
+            or pos.get("provider_native_timestamp")
+        ) else None,
     )
     provider_native_timestamp = provider_native_ts["provider_native_timestamp"]
     provider_native_timestamp_provenance = provider_native_ts["provenance"]

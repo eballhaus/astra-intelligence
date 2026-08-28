@@ -7,6 +7,8 @@ import unittest
 from datetime import UTC, datetime, timedelta
 
 from engine.astra_canonical_market_timestamp_v1 import canonical_market_timestamp_v1
+from engine.astra_loss_containment_engine_v1 import evaluate_position_loss_containment_v1
+from engine.astra_profit_protection_giveback_v1 import evaluate_position_profit_protection_v1
 from engine.paper_autopilot import PaperAutopilotEngine
 
 
@@ -132,6 +134,16 @@ class MarketObservationTimestampHandoffTests(unittest.TestCase):
         self.assertEqual(calls, ["AAPL"])
         self.assertEqual(quotes["AAPL"]["provider_used"], "ALPACA")
         self.assertTrue(canonical_market_timestamp_v1(quotes["AAPL"], source_type="QUOTE", max_age_seconds=20)["executable_freshness"])
+
+    def test_management_consumers_accept_existing_native_timestamp_field(self):
+        position = {"position_id": "position-a", "symbol": "AAPL", "quantity": 1, "entry_price": 100.0}
+        broker = {"symbol": "AAPL", "qty": 1, "avg_entry_price": 100.0, "current_price": 101.0, "provider_native_timestamp": _iso(-2), "retrieval_timestamp": _iso()}
+        loss = evaluate_position_loss_containment_v1(position, broker_position=broker, latest_price={})
+        profit = evaluate_position_profit_protection_v1(position, broker_position=broker)
+        self.assertEqual(loss["provider_native_timestamp"], broker["provider_native_timestamp"])
+        self.assertNotIn("MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE", loss["exact_blockers"])
+        self.assertEqual(profit["provider_native_timestamp"], broker["provider_native_timestamp"])
+        self.assertNotIn("MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE", profit["exact_blockers"])
 
 
 if __name__ == "__main__":

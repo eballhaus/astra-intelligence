@@ -13717,6 +13717,31 @@ class PaperAutopilotEngine:
             pid = _pick_first_text(row.get("canonical_position_id"), row.get("position_id"), row.get("symbol"))
             ownership_map[pid] = resolve_canonical_position_ownership_v1(row)
 
+        canonical_position_ids = {
+            str(row.get("symbol") or "").upper().strip(): _pick_first_text(
+                row.get("canonical_position_id"), row.get("lifecycle_id"), row.get("position_id")
+            )
+            for row in db_rows
+            if str(row.get("symbol") or "").strip()
+        }
+        observations = dict(
+            dict(self._runtime_state.get("active_equity_fmp_observations_v1") or {}).get("observations") or {}
+        )
+        for symbol, observation in observations.items():
+            expected_position_id = canonical_position_ids.get(str(symbol or "").upper().strip())
+            if not expected_position_id or _pick_first_text(observation.get("canonical_position_id")) != expected_position_id:
+                continue
+            broker_row = dict(broker_positions.get(str(symbol or "").upper().strip()) or {})
+            if not broker_row:
+                continue
+            # Preserve the broker mark as the price source. This supplemental
+            # metadata only proves when the independently observed market data
+            # occurred and when Astra received it.
+            broker_row.setdefault("provider_native_timestamp", observation.get("provider_native_timestamp"))
+            broker_row.setdefault("retrieval_timestamp", observation.get("receive_timestamp"))
+            broker_row.setdefault("provider_used", observation.get("provider"))
+            broker_positions[str(symbol or "").upper().strip()] = broker_row
+
         lc_state = self._runtime_state.get("loss_containment_state_v1") or {}
         lc_decisions = dict(lc_state.get("decisions") or {})
 
