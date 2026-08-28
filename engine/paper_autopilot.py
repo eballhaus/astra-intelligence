@@ -4775,9 +4775,22 @@ class PaperAutopilotEngine:
             if _norm_asset(row.get("asset_type") or "stock") == "stock"
             if is_broker_linked_active_position(row, allow_dust=False)
             and str(row.get("lane_id") or row.get("lane") or "").upper() in {"DAY", "SCALP", "SWING"}
-            and str(row.get("lifecycle_id") or "").strip()
+            and _pick_first_text(
+                row.get("canonical_position_id"),
+                row.get("lifecycle_id"),
+                row.get("position_id"),
+            )
         ]
         symbols = sorted({str(row.get("symbol") or "").upper().strip() for row in rows if str(row.get("symbol") or "").strip()})
+        canonical_position_ids = {
+            str(row.get("symbol") or "").upper().strip(): _pick_first_text(
+                row.get("canonical_position_id"),
+                row.get("lifecycle_id"),
+                row.get("position_id"),
+            )
+            for row in rows
+            if str(row.get("symbol") or "").strip()
+        }
         state = {
             "schema_version": "active_equity_fmp_observations_v1",
             "provider": "FMP",
@@ -4820,6 +4833,7 @@ class PaperAutopilotEngine:
                 continue
             observations[symbol] = {
                 "symbol": symbol,
+                "canonical_position_id": canonical_position_ids.get(symbol, ""),
                 "provider": "FMP",
                 "provider_provenance": "FMP_REST_SUPPLEMENTAL_OBSERVATION",
                 "market_observation_only": True,
@@ -12593,6 +12607,9 @@ class PaperAutopilotEngine:
         """
         quotes: dict[str, dict[str, Any]] = {}
         diagnostics: dict[str, dict[str, Any]] = {}
+        active_observations = dict(
+            dict(self._runtime_state.get("active_equity_fmp_observations_v1") or {}).get("observations") or {}
+        )
         managed = {
             str(symbol or "").upper().strip(): dict(row or {})
             for symbol, row in dict(managed_rows_by_symbol or {}).items()
@@ -12633,8 +12650,18 @@ class PaperAutopilotEngine:
                 "generated_at": _now_iso(),
             }
             asset_type = _norm_asset(broker_position.get("asset_type") or broker_position.get("asset_class") or "stock")
-            quote: dict[str, Any] = {}
-            if callable(self.get_latest_row_fn) and index < quote_budget:
+            cached_observation = dict(active_observations.get(symbol) or {})
+            if (
+                cached_observation
+                and _pick_first_text(cached_observation.get("canonical_position_id")) == trace_key
+            ):
+                quote = cached_observation
+                quote.setdefault("provider_used", quote.get("provider"))
+                quote.setdefault("retrieval_timestamp", quote.get("receive_timestamp"))
+                trace_row["quote_request_attempted"] = False
+            else:
+                quote = {}
+            if not quote and callable(self.get_latest_row_fn) and index < quote_budget:
                 try:
                     quote = dict(self.get_latest_row_fn(symbol, asset_type) or {})
                 except Exception as exc:
@@ -12643,7 +12670,7 @@ class PaperAutopilotEngine:
                         "first_causal_blocker": f"LOSS_CONTAINMENT_QUOTE_LOOKUP_FAILED:{type(exc).__name__}",
                         "evaluated_at": _now_iso(),
                     }
-            elif callable(self.get_latest_row_fn):
+            elif not quote and callable(self.get_latest_row_fn):
                 diagnostics[symbol] = {
                     "status": "QUOTE_REFRESH_DEFERRED_BY_BUDGET",
                     "first_causal_blocker": "LOSS_CONTAINMENT_QUOTE_REFRESH_DEFERRED_BY_BUDGET",
@@ -12665,7 +12692,7 @@ class PaperAutopilotEngine:
                 diagnostics[symbol] = {
                     "status": "PROVIDER_QUOTE_AVAILABLE",
                     "provider": str(quote.get("provider_used") or quote.get("provider_name") or quote.get("source") or ""),
-                    "provider_quote_timestamp": str(quote.get("provider_quote_timestamp") or quote.get("quote_timestamp") or quote.get("market_observation_timestamp") or ""),
+                    "provider_quote_timestamp": str(quote.get("provider_quote_timestamp") or quote.get("provider_native_timestamp") or quote.get("quote_timestamp") or quote.get("market_observation_timestamp") or ""),
                     "evaluated_at": _now_iso(),
                 }
             else:
@@ -12923,6 +12950,7 @@ class PaperAutopilotEngine:
         cached = dict(dict(quote_evidence or {}).get(symbol) or {})
         provider_timestamp = str(
             cached.get("provider_quote_timestamp")
+            or cached.get("provider_native_timestamp")
             or cached.get("quote_timestamp")
             or cached.get("market_observation_timestamp")
             or ""

@@ -20,7 +20,7 @@ SOURCE_BROKER_POSITION_SNAPSHOT = "BROKER_POSITION_SNAPSHOT"
 SOURCE_CACHE = "CACHE"
 
 _SOURCE_FIELDS = {
-    SOURCE_QUOTE: ("provider_quote_timestamp", "quote_timestamp", "observation_timestamp", "market_timestamp"),
+    SOURCE_QUOTE: ("provider_quote_timestamp", "provider_native_timestamp", "quote_timestamp", "observation_timestamp", "market_timestamp"),
     SOURCE_TRADE: ("provider_trade_timestamp", "trade_timestamp", "last_trade_timestamp", "observation_timestamp", "market_timestamp"),
     SOURCE_COMPLETED_BAR: ("provider_bar_timestamp", "bar_timestamp", "completed_bar_timestamp", "observation_timestamp"),
     # A cache may retain an already-validated observation, but must never turn
