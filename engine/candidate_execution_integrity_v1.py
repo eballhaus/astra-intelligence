@@ -105,9 +105,13 @@ def derive_crypto_horizon_evidence_v1(candidate: Mapping[str, Any] | None) -> di
         "horizon_evidence_status": "PERSISTED_CANONICAL",
         "horizon_evidence_missing": [],
         "assigned_horizon": "day_trade",
+        "horizon": "day_trade",
         "paper_entry_horizon_style": "day_trade",
         "horizon_scores": {"scalp": 0.0, "day_trade": day_score, "swing_trade": 0.0},
         "horizon_provenance": "crypto_15m_completed_bar_horizon_v1",
+        "horizon_source": "crypto_15m_completed_bar_horizon_v1",
+        "horizon_source_id": _text(row.get("source_snapshot_id") or row.get("ranking_run_id")),
+        "horizon_source_timestamp": _text(row.get("bar_timestamp") or row.get("quote_timestamp")),
         "horizon_assignment_version": "1.0.0",
         "horizon_confidence": day_score,
         "horizon_evidence": {

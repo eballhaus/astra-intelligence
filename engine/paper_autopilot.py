@@ -2469,6 +2469,9 @@ class PaperAutopilotEngine:
         immutable_fields = (
             "same_session_exit_required", "overnight_allowed", "paper_entry_horizon_style",
             "trade_horizon_style", "intended_horizon", "expected_max_hold",
+            "horizon", "horizon_source", "horizon_source_id", "horizon_source_timestamp",
+            "horizon_evidence_status", "horizon_evidence_missing", "horizon_provenance",
+            "horizon_assignment_version", "horizon_confidence", "horizon_evidence",
             "maximum_hold_minutes", "maximum_hold_seconds", "close_session_deadline",
             "entry_contract_id", "entry_contract_identity", "authorization_timestamp",
             "overnight_authorization_id", "overnight_authorization_timestamp",

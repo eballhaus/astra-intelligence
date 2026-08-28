@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import json
 import tempfile
 import unittest
 
@@ -13,6 +14,8 @@ from engine.candidate_execution_integrity_v1 import (
     candidate_execution_integrity,
     derive_crypto_horizon_evidence_v1,
 )
+from engine.astra_entry_lane_horizon_contract_v1 import build_entry_lane_horizon_contract_v1
+from engine.paper_autopilot import PaperAutopilotEngine
 
 
 def _snapshot():
@@ -61,6 +64,60 @@ class CryptoCapacityHorizonIntegrityRepairTests(unittest.TestCase):
             broker_reconciliation_ok=True, capacity_fact=canonical_candidate_capacity_fact(_snapshot(), lane_id="CRYPTO"),
         )
         self.assertEqual(passed["gate_status"]["horizon_assignment"], "PASS")
+
+    def test_horizon_envelope_preserves_canonical_aliases_and_provenance(self):
+        evidence = derive_crypto_horizon_evidence_v1(_candidate(
+            source_snapshot_id="crypto_rankings:123",
+            ranking_run_id="crypto-worker:123",
+            bar_timestamp="2026-08-28T15:00:00Z",
+        ))
+        self.assertEqual(evidence["horizon"], "day_trade")
+        self.assertEqual(evidence["horizon_source"], evidence["horizon_provenance"])
+        self.assertEqual(evidence["horizon_source_id"], "crypto_rankings:123")
+        self.assertEqual(evidence["horizon_source_timestamp"], "2026-08-28T15:00:00Z")
+        contract = build_entry_lane_horizon_contract_v1({
+            **_candidate(), "lane_id": "CRYPTO", "candidate_id": "cand-1",
+            **evidence,
+        })
+        self.assertEqual(contract["horizon"], "day_trade")
+        self.assertEqual(contract["horizon_source_id"], "crypto_rankings:123")
+
+    def test_missing_horizon_remains_unavailable_without_contract_defaults(self):
+        evidence = derive_crypto_horizon_evidence_v1(_candidate(
+            completed_bar_return_pct=0.0,
+        ))
+        self.assertEqual(evidence["horizon_evidence_status"], "INSUFFICIENT_EVIDENCE")
+        self.assertIsNone(evidence["assigned_horizon"])
+        self.assertNotIn("horizon", evidence)
+        contract = build_entry_lane_horizon_contract_v1({
+            "symbol": "BTC/USD", "asset_class": "crypto", "lane_id": "CRYPTO",
+            "candidate_id": "cand-missing", **evidence,
+        })
+        self.assertEqual(contract["horizon"], "UNAVAILABLE")
+        self.assertNotIn("horizon_source_id", contract)
+
+    def test_materialized_position_reads_persisted_horizon_only(self):
+        row = {
+            "symbol": "BTC/USD", "horizon": "day_trade",
+            "horizon_source": "crypto_15m_completed_bar_horizon_v1",
+            "horizon_evidence_status": "PERSISTED_CANONICAL",
+        }
+        materialized = PaperAutopilotEngine._materialize_open_position_entry_contract({
+            "paper_entry_horizon_style": "", "entry_metadata_json": json.dumps(row),
+        })
+        self.assertEqual(materialized["horizon"], "day_trade")
+        self.assertEqual(materialized["horizon_source"], "crypto_15m_completed_bar_horizon_v1")
+        missing = PaperAutopilotEngine._materialize_open_position_entry_contract({
+            "paper_entry_horizon_style": "", "entry_metadata_json": json.dumps({"symbol": "ETH/USD"}),
+        })
+        self.assertNotIn("horizon", missing)
+
+    def test_horizon_evidence_cannot_create_exit_or_strict_truth(self):
+        evidence = derive_crypto_horizon_evidence_v1(_candidate())
+        self.assertEqual(evidence["horizon_evidence_status"], "PERSISTED_CANONICAL")
+        self.assertNotIn("exit_signal", evidence)
+        self.assertNotIn("exit_order_id", evidence)
+        self.assertNotIn("truth_id", evidence)
 
     def test_legacy_capacity_boolean_cannot_override_stale_canonical_fact(self):
         fact = canonical_candidate_capacity_fact({}, lane_id="CRYPTO")

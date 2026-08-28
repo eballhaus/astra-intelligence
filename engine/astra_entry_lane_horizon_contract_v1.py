@@ -100,7 +100,7 @@ def build_entry_lane_horizon_contract_v1(row: Mapping[str, Any] | None) -> dict[
     if not order_intent_id: blockers.append("ENTRY_LANE_HORIZON_IDENTITY_MISSING")
     status = "RESOLVED" if not blockers else "UNAVAILABLE"
     assigned_at = _text(source.get("selection_timestamp") or source.get("candidate_generated_at") or source.get("generated_at") or _now())
-    return {
+    contract = {
         "schema_version": "astra_entry_lane_horizon_contract_v1", "metadata_generation": "V1_MANDATORY",
         "lane": lane or "UNAVAILABLE", "lane_status": status if lane else "UNAVAILABLE",
         "lane_source": lane_source or "UNAVAILABLE", "lane_assignment_id": _stable_id("lane", candidate_id, lane, lane_source) if lane else "",
@@ -116,6 +116,17 @@ def build_entry_lane_horizon_contract_v1(row: Mapping[str, Any] | None) -> dict[
         "symbol": symbol, "asset_class": asset_class, "created_at": assigned_at, "updated_at": _now(),
         "exact_blockers": list(dict.fromkeys(blockers)),
     }
+    # These optional fields are copied only from the producer's explicit,
+    # bounded evidence envelope. Missing evidence remains absent and the
+    # contract stays fail-closed; no horizon is inferred here.
+    for key in (
+        "horizon_evidence_status", "horizon_evidence_missing", "horizon_provenance",
+        "horizon_source", "horizon_source_id", "horizon_source_timestamp",
+        "horizon_assignment_version", "horizon_confidence", "horizon_evidence",
+    ):
+        if key in source and source.get(key) not in (None, "", [], {}):
+            contract[key] = source[key]
+    return contract
 
 
 def validate_entry_submission_contract_v1(contract: Mapping[str, Any] | None) -> dict[str, Any]:
