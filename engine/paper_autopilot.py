@@ -143,6 +143,7 @@ from engine.astra_legacy_portfolio_resolution_v1 import (
 from engine.astra_unified_position_advisory_v1 import (
     build_unified_position_advisory_v1,
     build_position_exit_readiness_v1,
+    load_position_exit_readiness_v1,
     save_position_exit_readiness_v1,
     save_unified_position_advisory_v1,
 )
@@ -12034,6 +12035,11 @@ class PaperAutopilotEngine:
                 "regime_state": latest_row.get("regime") or latest_row.get("regime_state") or notes.get("regime_state") or "UNAVAILABLE",
                 "opportunity_cost_state": readiness.get("opportunity_cost_state") or "UNAVAILABLE",
                 "replacement_candidate_state": readiness.get("replacement_state") or "UNAVAILABLE",
+                "lane_exit_readiness_state": readiness.get("lane_exit_readiness_state") or "UNAVAILABLE",
+                "lane_exit_readiness_score": readiness.get("lane_exit_readiness_score"),
+                "exit_persistence_state": readiness.get("exit_persistence_state") or "UNAVAILABLE",
+                "profit_giveback_pressure": readiness.get("profit_giveback_pressure") or "UNAVAILABLE",
+                "thesis_health": readiness.get("thesis_health") or "UNAVAILABLE",
             },
             "analytics_consumption": {
                 "mfe_mae_peak_drawdown": {
@@ -12971,6 +12977,9 @@ class PaperAutopilotEngine:
         provider loops.  It performs no network, broker, or order operation.
         """
         recovery = dict(self._runtime_state.get("position_lane_horizon_recovery_v1") or {})
+        previous_exit_readiness = load_position_exit_readiness_v1(
+            os.path.dirname(self.position_exit_readiness_state_path) or "state"
+        )
         evidence = build_position_evidence_completeness_v1(
             broker_position_by_symbol,
             recovery,
@@ -13069,6 +13078,8 @@ class PaperAutopilotEngine:
             resolution=resolution,
             shadow_handoff=shadow_handoff,
             recovery=recovery,
+            previous_exit_readiness=previous_exit_readiness,
+            include_lane_exit_funnel=True,
         )
         save_position_exit_readiness_v1(exit_readiness, os.path.dirname(self.position_exit_readiness_state_path) or "state")
         self._runtime_state["position_exit_readiness_v1"] = exit_readiness

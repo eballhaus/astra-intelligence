@@ -15,6 +15,9 @@ from typing import Any, Mapping
 
 
 SCHEMA_VERSION = "astra_unified_position_advisory_v1"
+LANE_EXIT_READINESS_FUNNEL_VERSION = "LANE_EXIT_READINESS_FUNNEL_V1"
+LANE_EXIT_HISTORY_WINDOWS = {"SCALP": 3, "DAY": 5, "SWING": 8}
+MAX_LANE_EXIT_HISTORY = 80
 UNIFIED_PRECEDENCE = [
     "DATA_INCOMPLETE_FAIL_CLOSED", "UNRESOLVED_FAIL_CLOSED", "HARD_BOUNDARY_BREACH",
     "THESIS_BROKEN", "MANDATORY_REVIEW", "EXIT_REVIEW", "PROTECT_PROFIT",
@@ -37,6 +40,134 @@ def _num(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _optional_num(*values: Any) -> float | None:
+    for value in values:
+        if value not in (None, ""):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _lane(recovered: Mapping[str, Any], legacy: Mapping[str, Any]) -> str:
+    value = _text(recovered.get("lane") or recovered.get("lane_id") or legacy.get("lane_id")).upper()
+    return value if value in LANE_EXIT_HISTORY_WINDOWS else ""
+
+
+def _has_state(value: Any, *states: str) -> bool:
+    text = _text(value).upper()
+    return any(state in text for state in states)
+
+
+def _previous_exit_history(previous: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
+    funnel = dict((previous or {}).get("lane_exit_readiness_funnel_v1") or {})
+    return {
+        str(key): dict(value)
+        for key, value in dict(funnel.get("position_history") or {}).items()
+        if isinstance(value, Mapping)
+    }
+
+
+def _lane_exit_factors(
+    item: Mapping[str, Any], legacy: Mapping[str, Any], loss: Mapping[str, Any], profit: Mapping[str, Any],
+    resolution: Mapping[str, Any], recommendation: str,
+) -> dict[str, Any]:
+    """Normalize only existing advisory evidence; this has no order authority."""
+    momentum = _text(item.get("momentum_status") or legacy.get("momentum_state"), "UNAVAILABLE").upper()
+    profit_state = _text(profit.get("canonical_recommendation") or profit.get("profit_state"), "UNAVAILABLE").upper()
+    loss_state = _text(loss.get("canonical_recommendation") or loss.get("threshold_state"), "UNAVAILABLE").upper()
+    thesis = _text(profit.get("thesis_state") or loss.get("thesis_state") or legacy.get("thesis_state") or item.get("thesis_state"), "UNAVAILABLE").upper()
+    opportunity = _text(item.get("opportunity_cost_status"), "UNAVAILABLE").upper()
+    replacement = _text(item.get("replacement_candidate_status"), "UNAVAILABLE").upper()
+    remaining_upside = _optional_num(resolution.get("remaining_expected_upside_pct"), legacy.get("remaining_expected_upside_pct"), profit.get("remaining_expected_upside_pct"))
+    remaining_downside = _optional_num(resolution.get("remaining_expected_downside_pct"), legacy.get("remaining_expected_downside_pct"), loss.get("remaining_expected_downside_pct"))
+    return_per_time = _optional_num(resolution.get("return_per_hour"), legacy.get("return_per_hour"), item.get("return_per_hour"))
+    reasons: list[str] = []
+    score = 0.0
+    thesis_broken = _has_state(thesis, "THESIS_BROKEN") or _has_state(profit_state, "THESIS_BROKEN")
+    if thesis_broken:
+        score, reasons = 100.0, ["EXISTING_THESIS_BROKEN"]
+    else:
+        if _has_state(recommendation, "EXIT_REVIEW") or _has_state(profit_state, "EXIT_REVIEW"):
+            score += 45.0; reasons.append("EXISTING_EXIT_REVIEW")
+        elif _has_state(profit_state, "PROTECT_PROFIT"):
+            score += 25.0; reasons.append("EXISTING_PROFIT_PROTECTION")
+        if _has_state(momentum, "DETERIORATING", "FAILING", "WEAKENING"):
+            score += 15.0; reasons.append("MOMENTUM_DETERIORATING")
+        if _has_state(loss_state, "WATCH", "REVIEW", "THESIS_BROKEN"):
+            score += 15.0; reasons.append("EXISTING_LOSS_CONTAINMENT")
+        if remaining_upside is not None and remaining_downside is not None and abs(remaining_downside) >= max(remaining_upside, 0.0):
+            score += 10.0; reasons.append("REMAINING_ASYMMETRY_WEAK")
+        if return_per_time is not None and return_per_time <= 0.0:
+            score += 8.0; reasons.append("RETURN_PER_TIME_WEAK")
+    weakening = score > 0.0
+    replacement_pressure = _has_state(opportunity, "HIGH", "OPPORTUNITY_COST") or _has_state(replacement, "AVAILABLE", "STRONGER")
+    if replacement_pressure:
+        reasons.append("REPLACEMENT_PRESSURE" if weakening else "REPLACEMENT_OBSERVED")
+        if weakening:
+            score += 8.0
+    return {
+        "score": min(100.0, round(score, 4)), "reason_codes": reasons, "replacement_pressure": replacement_pressure,
+        "thesis_health": "THESIS_BROKEN" if thesis_broken else "THESIS_WEAKENING" if weakening else "THESIS_HEALTHY" if momentum in {"IMPROVING", "STABLE"} else "UNAVAILABLE",
+        "profit_giveback_pressure": "HIGH" if _has_state(profit_state, "EXIT_REVIEW", "THESIS_BROKEN") else "MODERATE" if _has_state(profit_state, "PROTECT_PROFIT") else "UNAVAILABLE",
+        "opportunity_cost_pressure": "ELEVATED" if replacement_pressure and weakening else "OBSERVED" if replacement_pressure else "UNAVAILABLE",
+        "remaining_upside_pct": remaining_upside, "remaining_downside_pct": remaining_downside, "return_per_time": return_per_time,
+    }
+
+
+def _lane_exit_state(lane: str, position_id: str, factors: Mapping[str, Any], recommendation: str, previous: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    prior = dict((previous or {}).get(position_id) or {})
+    history = [dict(row) for row in list(prior.get("history") or []) if isinstance(row, Mapping)]
+    score = _num(factors.get("score"))
+    immediate_thesis_break = _has_state(factors.get("thesis_health"), "THESIS_BROKEN")
+    immediate_review = _has_state(recommendation, "EXIT_REVIEW")
+    provisional = "THESIS_BROKEN" if immediate_thesis_break else "EXIT_REVIEW" if immediate_review else "PROTECT_PROFIT" if _has_state(factors.get("profit_giveback_pressure"), "MODERATE", "HIGH") else "WATCH" if score > 0.0 else "HOLD"
+    history.append({"observed_at": _now(), "score": score, "state": provisional})
+    history = history[-LANE_EXIT_HISTORY_WINDOWS[lane]:]
+    weakening_states = {"WATCH", "PROTECT_PROFIT", "EXIT_REVIEW"}
+    consecutive = 0
+    for row in reversed(history):
+        if _text(row.get("state")).upper() not in weakening_states:
+            break
+        consecutive += 1
+    average = round(sum(_num(row.get("score")) for row in history) / len(history), 4) if history else 0.0
+    persistent = consecutive >= min(2, LANE_EXIT_HISTORY_WINDOWS[lane])
+    if immediate_thesis_break:
+        state = "THESIS_BROKEN"
+    elif immediate_review:
+        state = "EXIT_REVIEW"
+    elif factors.get("replacement_pressure") and persistent and score > 0.0:
+        state = "REPLACE_CANDIDATE"
+    elif provisional == "PROTECT_PROFIT" and persistent and score >= 40.0:
+        state = "EXIT_REVIEW"
+    elif provisional == "PROTECT_PROFIT":
+        state = "PROTECT_PROFIT"
+    elif persistent and average >= 20.0:
+        state = "EXIT_REVIEW"
+    elif score > 0.0:
+        state = "WATCH"
+    else:
+        state = "HOLD"
+    observed_at = history[-1]["observed_at"]
+    record = {
+        "lane": lane, "history": history,
+        "first_watch_at": prior.get("first_watch_at") or (observed_at if state == "WATCH" else None),
+        "first_protect_profit_at": prior.get("first_protect_profit_at") or (observed_at if state == "PROTECT_PROFIT" else None),
+        "first_exit_review_at": prior.get("first_exit_review_at") or (observed_at if state in {"EXIT_REVIEW", "REPLACE_CANDIDATE"} else None),
+    }
+    return {
+        "lane_exit_readiness_score": score, "lane_exit_readiness_state": state,
+        "exit_persistence_state": "PERSISTENT_DETERIORATION" if persistent else "TEMPORARY_NOISE" if score > 0.0 else "STABLE_HEALTH",
+        "exit_persistence_observations": len(history), "exit_recent_average_score": average,
+        "consecutive_weakening_cycles": consecutive, "exit_reason_codes": list(factors.get("reason_codes") or []),
+        "profit_giveback_pressure": factors.get("profit_giveback_pressure"), "thesis_health": factors.get("thesis_health"),
+        "opportunity_cost_pressure": factors.get("opportunity_cost_pressure"), "remaining_upside_pct": factors.get("remaining_upside_pct"),
+        "remaining_downside_pct": factors.get("remaining_downside_pct"), "return_per_time": factors.get("return_per_time"),
+        "exit_execution_authority": "DISABLED", "exit_advisory_only": True,
+    }, record
 
 
 def unified_position_recommendation(
@@ -210,6 +341,8 @@ def build_position_exit_readiness_v1(
     resolution: Mapping[str, Any] | None = None,
     shadow_handoff: Mapping[str, Mapping[str, Any]] | None = None,
     recovery: Mapping[str, Any] | None = None,
+    previous_exit_readiness: Mapping[str, Any] | None = None,
+    include_lane_exit_funnel: bool = False,
 ) -> dict[str, Any]:
     """Persist the existing advisory policy inputs for every broker position.
 
@@ -223,6 +356,9 @@ def build_position_exit_readiness_v1(
     profit_by_symbol = _index(list((profit_protection or {}).get("decisions", {}).values()))
     resolution_by_symbol = _index(list((resolution or {}).get("positions") or []))
     recovery_by_symbol = _recovery_by_symbol(recovery)
+    previous_history = _previous_exit_history(previous_exit_readiness) if include_lane_exit_funnel else {}
+    position_history: dict[str, dict[str, Any]] = {}
+    lane_rows: dict[str, list[dict[str, Any]]] = {lane: [] for lane in LANE_EXIT_HISTORY_WINDOWS}
     rows = []
     for symbol in sorted(broker_positions or {}):
         item, legacy, loss, profit = evidence_by_symbol.get(symbol, {}), triage_by_symbol.get(symbol, {}), loss_by_symbol.get(symbol, {}), profit_by_symbol.get(symbol, {})
@@ -234,7 +370,7 @@ def build_position_exit_readiness_v1(
         generic_recommendation = _text(legacy.get("recommendation")) or _text(policy.get("canonical_recommendation")) or "WATCH"
         recommendation = "SAME_SESSION_EXIT_REQUIRED" if horizon_requirement["status"] == "CANONICAL_SAME_SESSION_EXIT_REQUIRED" else generic_recommendation
         blocker = _text(legacy.get("first_causal_blocker")) or _text(item.get("first_causal_blocker")) or "EVIDENCE_UNAVAILABLE"
-        rows.append({
+        row = {
             "symbol": symbol, "exit_readiness_state": "CANONICAL_SAME_SESSION_EXIT_REQUIRED" if horizon_requirement["status"] == "CANONICAL_SAME_SESSION_EXIT_REQUIRED" else ("EVIDENCE_INCOMPLETE" if blocker != "EVIDENCE_CURRENT" else "ADVISORY_READY"),
             "recommendation": recommendation, "generic_recommendation": generic_recommendation, "confidence": _text(legacy.get("confidence")) or _text(policy.get("confidence")) or "LOW",
             "urgency": "HIGH" if recommendation in {"EXIT_REVIEW", "THESIS_BROKEN", "PROTECT_CAPITAL", "SAME_SESSION_EXIT_REQUIRED"} else "MEDIUM" if recommendation == "WATCH" else "LOW",
@@ -251,11 +387,52 @@ def build_position_exit_readiness_v1(
             **shadow,
             "shadow_only": True, "promotion_status": "NOT_PROMOTED",
             "execution_authority": "DISABLED", "advisory_only": True,
-        })
+        }
+        lane = _lane(recovered, legacy)
+        position_id = _text(row.get("canonical_position_id"))
+        if include_lane_exit_funnel and lane and position_id:
+            factors = _lane_exit_factors(item, legacy, loss, profit, resolution_row, generic_recommendation)
+            funnel_row, history = _lane_exit_state(lane, position_id, factors, generic_recommendation, previous_history)
+            row.update(funnel_row)
+            position_history[position_id] = history
+            lane_rows[lane].append(row)
+        rows.append(row)
+    prior_funnel = dict((previous_exit_readiness or {}).get("lane_exit_readiness_funnel_v1") or {})
+    cohort = dict(prior_funnel.get("prospective_cohort") or {})
+    if include_lane_exit_funnel and not cohort:
+        cohort = {
+            "change_id": LANE_EXIT_READINESS_FUNNEL_VERSION,
+            "activated_at": _now(),
+            "scope": list(LANE_EXIT_HISTORY_WINDOWS),
+            "mode": "paper_only_advisory_exit_evidence",
+            "measurement_checkpoints": [10, 20, 30],
+        }
+    telemetry = {
+        lane: {
+            "open_positions": len(lane_rows[lane]),
+            **{state: sum(_text(row.get("lane_exit_readiness_state")).upper() == state for row in lane_rows[lane]) for state in ("HOLD", "WATCH", "PROTECT_PROFIT", "EXIT_REVIEW", "REPLACE_CANDIDATE", "THESIS_BROKEN")},
+            "average_exit_readiness": round(sum(_num(row.get("lane_exit_readiness_score")) for row in lane_rows[lane]) / len(lane_rows[lane]), 4) if lane_rows[lane] else None,
+            "persistent_deterioration": sum(_text(row.get("exit_persistence_state")) == "PERSISTENT_DETERIORATION" for row in lane_rows[lane]),
+            "high_giveback": sum(_text(row.get("profit_giveback_pressure")) == "HIGH" for row in lane_rows[lane]),
+        }
+        for lane in LANE_EXIT_HISTORY_WINDOWS
+    }
+    funnel = {
+        "schema_version": LANE_EXIT_READINESS_FUNNEL_VERSION,
+        "enabled": bool(include_lane_exit_funnel),
+        "prospective_cohort": cohort if include_lane_exit_funnel else {},
+        "history_windows": dict(LANE_EXIT_HISTORY_WINDOWS),
+        "max_positions_per_lane": MAX_LANE_EXIT_HISTORY,
+        "position_history": dict(list(position_history.items())[:MAX_LANE_EXIT_HISTORY * len(LANE_EXIT_HISTORY_WINDOWS)]),
+        "lanes": telemetry,
+        "execution_authority": "DISABLED", "advisory_only": True,
+        "provider_calls_used": 0, "broker_actions_used": 0, "paper_only_preserved": True,
+    }
     return {"schema_version": "astra_position_exit_readiness_v1", "generated_at": _now(), "broker_position_count": len(broker_positions or {}),
             "positions_reviewed": len(rows), "positions": rows, "silent_drop_count": max(0, len(broker_positions or {}) - len(rows)),
             "execution_authority": "DISABLED", "advisory_only": True, "provider_calls_used": 0, "broker_actions_used": 0, "llm_calls_used": 0,
-            "state_mutations_from_get": 0, "paper_only_preserved": True}
+            "state_mutations_from_get": 0, "paper_only_preserved": True,
+            "lane_exit_readiness_funnel_v1": funnel}
 
 
 def save_position_exit_readiness_v1(payload: Mapping[str, Any], state_dir: str | Path = "state") -> None:
