@@ -35,6 +35,11 @@ MAX_ROWS = 1_000
 CORE_TARGET = 0.55
 MOMENTUM_TARGET = 0.30
 EXPLORATION_TARGET = 0.15
+RANKED_ENTRY_LANES = ("SCALP", "DAY", "SWING")
+LANE_SHORTLIST_LIMIT = 40
+LANE_FINALIST_LIMIT = 10
+LANE_HISTORY_LIMITS = {"SCALP": 3, "DAY": 5, "SWING": 8}
+MAX_RANK_STATE_SYMBOLS_PER_LANE = 80
 
 MEGA_CAP_SYMBOL_FALLBACK = {
     "AAPL", "MSFT", "NVDA", "AMZN", "GOOG", "GOOGL", "META", "TSLA", "AVGO", "BRK.B",
@@ -158,10 +163,82 @@ class PaperOpportunityAllocationEngineV1:
         self.lifecycle_path = os.path.join(self.state_dir, "trade_lifecycle_v1.jsonl")
         self.labels_path = os.path.join(self.state_dir, "outcome_labels_v1.jsonl")
         self.ledger_path = os.path.join(self.state_dir, "candidate_decision_ledger_v1.jsonl")
+        self.ranked_entry_state_path = os.path.join(self.state_dir, "paper_opportunity_allocation_rank_state_v1.json")
+        self.ranked_entry_cohort_path = os.path.join(self.state_dir, "lane_ranked_entry_funnel_v1.json")
         self._outcome_cache: dict[str, Any] | None = None
         self.profit_seeking_exploration = (
             ProfitSeekingAdaptiveExplorationV1(state_dir=self.state_dir) if ProfitSeekingAdaptiveExplorationV1 is not None else None
         )
+
+    @staticmethod
+    def _real_percent(row: dict[str, Any], *keys: str) -> float | None:
+        for key in keys:
+            value = row.get(key)
+            if value in (None, ""):
+                continue
+            try:
+                return float(str(value).replace("%", "").strip())
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def _optional_score(row: dict[str, Any], *keys: str) -> tuple[float | None, str]:
+        for key in keys:
+            if row.get(key) not in (None, ""):
+                return _score01(row.get(key)), key
+        return None, ""
+
+    @staticmethod
+    def _candidate_lane(row: dict[str, Any]) -> str:
+        if _safe_text(row.get("asset_type") or row.get("asset_class")).lower() in {"crypto", "cryptocurrency"}:
+            return ""
+        lane = _safe_text(row.get("lane_id") or row.get("lane")).upper()
+        if lane in RANKED_ENTRY_LANES:
+            return lane
+        horizon = _safe_text(row.get("best_horizon_style") or row.get("trade_horizon_style")).lower()
+        return {"scalp": "SCALP", "day_trade": "DAY", "swing_trade": "SWING"}.get(horizon, "")
+
+    def _load_rank_state(self) -> dict[str, Any]:
+        try:
+            with open(self.ranked_entry_state_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            return payload if isinstance(payload, dict) else {}
+        except Exception:
+            return {}
+
+    def _write_rank_state(self, payload: dict[str, Any]) -> None:
+        try:
+            os.makedirs(self.state_dir, exist_ok=True)
+            temp_path = f"{self.ranked_entry_state_path}.tmp"
+            with open(temp_path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, separators=(",", ":"), sort_keys=True)
+            os.replace(temp_path, self.ranked_entry_state_path)
+        except OSError:
+            pass
+
+    def _ranked_entry_cohort(self) -> dict[str, Any]:
+        try:
+            with open(self.ranked_entry_cohort_path, "r", encoding="utf-8") as handle:
+                existing = json.load(handle)
+            if isinstance(existing, dict) and existing.get("change_id") == "LANE_RANKED_ENTRY_FUNNEL_V1":
+                return existing
+        except Exception:
+            pass
+        marker = {
+            "change_id": "LANE_RANKED_ENTRY_FUNNEL_V1",
+            "activated_at": _now_iso(),
+            "scope": list(RANKED_ENTRY_LANES),
+            "measurement_checkpoints": [10, 20, 30],
+            "mode": "paper_only_soft_ranking_evidence",
+        }
+        try:
+            os.makedirs(self.state_dir, exist_ok=True)
+            with open(self.ranked_entry_cohort_path, "w", encoding="utf-8") as handle:
+                json.dump(marker, handle, separators=(",", ":"), sort_keys=True)
+        except OSError:
+            pass
+        return marker
 
     def _features(self, row: dict[str, Any]) -> dict[str, float | str | bool]:
         r = dict(row or {})
@@ -258,6 +335,201 @@ class PaperOpportunityAllocationEngineV1:
             "paper_allocation_priority": round(priority, 2),
         }
 
+    def _relative_strength_evidence(
+        self,
+        row: dict[str, Any],
+        *,
+        market_return_pct: float | None,
+        sector_return_pct: float | None,
+    ) -> dict[str, Any]:
+        symbol_return = self._real_percent(
+            row,
+            "relative_return_pct",
+            "change_percent",
+            "changesPercentage",
+            "changePercentage",
+            "intraday_change_pct",
+            "day_change_pct",
+        )
+        if symbol_return is None or market_return_pct is None:
+            market_score, market_state, market_delta = None, "UNAVAILABLE", None
+        else:
+            market_delta = round(symbol_return - market_return_pct, 4)
+            market_score = round(_clamp(50.0 + (market_delta * 10.0)), 3)
+            market_state = "AVAILABLE"
+        if symbol_return is None or sector_return_pct is None:
+            sector_score, sector_state, sector_delta = None, "UNAVAILABLE", None
+        else:
+            sector_delta = round(symbol_return - sector_return_pct, 4)
+            sector_score = round(_clamp(50.0 + (sector_delta * 10.0)), 3)
+            sector_state = "AVAILABLE"
+        return {
+            "relative_strength_market_score": market_score,
+            "relative_strength_market_delta_pct": market_delta,
+            "relative_strength_sector_score": sector_score,
+            "relative_strength_sector_delta_pct": sector_delta,
+            "relative_strength_state": "AVAILABLE" if market_state == "AVAILABLE" else "UNAVAILABLE",
+            "relative_strength_sector_state": sector_state,
+        }
+
+    def _lane_soft_evidence(
+        self,
+        row: dict[str, Any],
+        lane: str,
+        relative_strength: dict[str, Any],
+    ) -> dict[str, Any]:
+        rvol, rvol_source = self._optional_score(row, "relative_volume_score", "rvol_score")
+        if rvol is None:
+            current_volume = _to_float(row.get("volume"), 0.0)
+            average_volume = _to_float(row.get("average_volume") or row.get("averageVolume") or row.get("volAvg"), 0.0)
+            if current_volume > 0.0 and average_volume > 0.0:
+                ratio = current_volume / average_volume
+                rvol = round(_clamp(50.0 + (min(3.0, max(0.0, ratio)) - 1.0) * 25.0), 3)
+                rvol_source = "volume_over_average_volume"
+        extension, extension_source = self._optional_score(
+            row,
+            "entry_extension_quality_score",
+            "entry_extension_score",
+            "pullback_quality_score",
+        )
+        if extension is None:
+            chase_risk, chase_source = self._optional_score(row, "entry_extension_risk_score", "chase_risk_score")
+            if chase_risk is not None:
+                extension, extension_source = round(100.0 - chase_risk, 3), f"inverse_{chase_source}"
+        spread, spread_source = self._optional_score(row, "spread_quality_score", "execution_quality_score")
+        freshness, freshness_source = self._optional_score(row, "freshness_quality_score", "quote_freshness_score")
+        relative_strength_score = relative_strength.get("relative_strength_market_score")
+        if lane == "SCALP":
+            lane_fit, lane_fit_source = self._optional_score(row, "scalp_fit_score", "short_horizon_fit_score")
+            signals = [
+                self._optional_score(row, "intraday_acceleration_score", "momentum_expansion_score", "momentum_score")[0],
+                rvol, spread, freshness, extension,
+            ]
+        elif lane == "DAY":
+            lane_fit, lane_fit_source = self._optional_score(row, "day_trade_fit_score", "intraday_fit_score")
+            signals = [
+                self._optional_score(row, "trend_quality_score", "momentum_expansion_score", "momentum_score")[0],
+                rvol, relative_strength_score, extension, freshness,
+            ]
+        else:
+            lane_fit, lane_fit_source = self._optional_score(row, "swing_trade_fit_score", "swing_fit_score", "multi_day_fit_score")
+            signals = [
+                self._optional_score(row, "trend_persistence_score", "trend_quality_score", "momentum_score")[0],
+                relative_strength_score, extension,
+                self._optional_score(row, "expected_return_score", "risk_reward_score", "risk_adjusted_profit_score")[0],
+            ]
+        available = [float(value) for value in signals if value is not None]
+        soft_mean = round(mean(available), 3) if available else None
+        # A small neutral-centered adjustment keeps the established allocator
+        # primary while allowing lane-fit evidence to resolve close candidates.
+        adjustment_inputs = [value for value in (lane_fit, soft_mean) if value is not None]
+        adjustment = round(_clamp((mean(adjustment_inputs) - 50.0) * 0.06, -3.0, 3.0), 3) if adjustment_inputs else 0.0
+        return {
+            "lane_fit_score": lane_fit,
+            "lane_fit_score_source": lane_fit_source,
+            "lane_soft_evidence_score": soft_mean,
+            "lane_soft_evidence_count": len(available),
+            "lane_soft_ranking_adjustment": adjustment,
+            "relative_volume_score": rvol,
+            "relative_volume_source": rvol_source or "UNAVAILABLE",
+            "entry_extension_quality_score": extension,
+            "entry_extension_source": extension_source or "UNAVAILABLE",
+            "spread_quality_score": spread,
+            "spread_quality_source": spread_source or "UNAVAILABLE",
+            "freshness_quality_score": freshness,
+            "freshness_quality_source": freshness_source or "UNAVAILABLE",
+        }
+
+    def _ranked_entry_decorations(self, decorated: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        market_return = None
+        for row in decorated:
+            if _safe_text(row.get("symbol")).upper() == "SPY":
+                market_return = self._real_percent(row, "change_percent", "changesPercentage", "changePercentage")
+                break
+        sector_returns: dict[str, list[float]] = defaultdict(list)
+        for row in decorated:
+            sector = _safe_text(row.get("sector")).lower()
+            value = self._real_percent(row, "change_percent", "changesPercentage", "changePercentage")
+            if sector and value is not None:
+                sector_returns[sector].append(value)
+        sector_benchmarks = {
+            sector: mean(values) for sector, values in sector_returns.items() if len(values) >= 2
+        }
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        passthrough: list[dict[str, Any]] = []
+        for row in decorated:
+            lane = self._candidate_lane(row)
+            if lane not in RANKED_ENTRY_LANES:
+                passthrough.append(row)
+                continue
+            sector = _safe_text(row.get("sector")).lower()
+            relative_strength = self._relative_strength_evidence(
+                row,
+                market_return_pct=market_return,
+                sector_return_pct=sector_benchmarks.get(sector),
+            )
+            soft = self._lane_soft_evidence(row, lane, relative_strength)
+            base_priority = _to_float(row.get("paper_allocation_priority"), 0.0)
+            enriched = {
+                **row,
+                **relative_strength,
+                **soft,
+                "lane_ranked_entry_funnel_v1": True,
+                "lane_ranked_entry_lane": lane,
+                "base_paper_allocation_priority": round(base_priority, 3),
+                "lane_ranked_entry_score": round(base_priority + _to_float(soft.get("lane_soft_ranking_adjustment"), 0.0), 3),
+            }
+            grouped[lane].append(enriched)
+
+        state = self._load_rank_state()
+        lane_state = dict(state.get("lanes") or {})
+        epoch_seconds = max(60, min(900, int(float(os.getenv("ASTRA_DISCOVERY_ROTATION_SECONDS", "300")))))
+        epoch = int(datetime.now(timezone.utc).timestamp() // epoch_seconds)
+        result: list[dict[str, Any]] = list(passthrough)
+        for lane, rows in grouped.items():
+            prior_symbols = dict((lane_state.get(lane) or {}).get("symbols") or {})
+            for row in rows:
+                history = list((prior_symbols.get(_safe_text(row.get("symbol")).upper()) or {}).get("history") or [])
+                recent = [entry for entry in history if isinstance(entry, dict)][-LANE_HISTORY_LIMITS[lane]:]
+                prior_avg = mean([_to_float(entry.get("rank"), 0.0) for entry in recent]) if recent else None
+                stability = 0.0
+                if prior_avg is not None and prior_avg <= 5.0:
+                    stability = 0.75
+                elif prior_avg is not None and prior_avg <= 10.0:
+                    stability = 0.35
+                row["rank_persistence_observations"] = len(recent)
+                row["rank_recent_average"] = round(prior_avg, 3) if prior_avg is not None else None
+                row["rank_stability_adjustment"] = stability
+                row["lane_ranked_entry_score"] = round(_to_float(row.get("lane_ranked_entry_score"), 0.0) + stability, 3)
+            rows.sort(key=lambda row: (_to_float(row.get("lane_ranked_entry_score"), 0.0), _to_float(row.get("base_paper_allocation_priority"), 0.0)), reverse=True)
+            next_symbols: dict[str, Any] = {}
+            for rank, row in enumerate(rows[:LANE_SHORTLIST_LIMIT], start=1):
+                symbol = _safe_text(row.get("symbol")).upper()
+                prior = dict(prior_symbols.get(symbol) or {})
+                history = [entry for entry in (prior.get("history") or []) if isinstance(entry, dict)]
+                if not history or int(_to_float(history[-1].get("epoch"), -1)) != epoch:
+                    history.append({"epoch": epoch, "rank": rank, "score": _to_float(row.get("lane_ranked_entry_score"), 0.0)})
+                else:
+                    history[-1] = {"epoch": epoch, "rank": rank, "score": _to_float(row.get("lane_ranked_entry_score"), 0.0)}
+                history = history[-LANE_HISTORY_LIMITS[lane]:]
+                ranks = [_to_float(item.get("rank"), 0.0) for item in history]
+                current_state = "NEW_CANDIDATE" if len(history) < 2 else "STABLE_LEADER" if mean(ranks) <= 5.0 else "STABLE_CONTENDER" if mean(ranks) <= 10.0 else "FADING_CANDIDATE" if rank > mean(ranks) + 3.0 else "RISING_CANDIDATE"
+                row["lane_shortlist_rank"] = rank
+                row["lane_finalist_rank"] = rank if rank <= LANE_FINALIST_LIMIT else None
+                row["lane_finalist"] = bool(rank <= LANE_FINALIST_LIMIT)
+                row["rank_persistence_state"] = current_state
+                row["finalist_is_not_execution_authority"] = True
+                # Existing PaperAutopilot ordering consumes this canonical
+                # priority. The bounded adjustment is ranking-only and does
+                # not alter any qualification or execution gate.
+                row["paper_allocation_priority"] = _to_float(row.get("lane_ranked_entry_score"), 0.0)
+                next_symbols[symbol] = {"history": history, "last_seen_epoch": epoch}
+            lane_state[lane] = {"symbols": dict(list(next_symbols.items())[:MAX_RANK_STATE_SYMBOLS_PER_LANE]), "last_epoch": epoch}
+            result.extend(rows)
+        state = {"version": VERSION, "lanes": lane_state, "updated_at": _now_iso(), "bounded": True}
+        self._write_rank_state(state)
+        return result
+
     def score_row(self, row: dict[str, Any]) -> dict[str, Any]:
         out = self._features(row)
         out["paper_opportunity_allocation_engine_v1"] = True
@@ -273,7 +545,14 @@ class PaperOpportunityAllocationEngineV1:
             lane_row = apply_trade_lane_contract(row, legacy=False)
             scored = self.score_row(lane_row)
             decorated.append({**lane_row, **scored})
-        decorated.sort(key=lambda r: (_to_float(r.get("paper_allocation_priority"), 0.0), _to_float(r.get("risk_adjusted_profit_score"), 0.0)), reverse=True)
+        decorated = self._ranked_entry_decorations(decorated)
+        decorated.sort(
+            key=lambda r: (
+                _to_float(r.get("paper_allocation_priority"), 0.0),
+                _to_float(r.get("risk_adjusted_profit_score"), 0.0),
+            ),
+            reverse=True,
+        )
         for idx, row in enumerate(decorated, start=1):
             row["risk_adjusted_opportunity_rank"] = idx
         return decorated
@@ -450,6 +729,25 @@ class PaperOpportunityAllocationEngineV1:
             f"exploration {lanes.get('high_upside_exploration', 0)}. Valid exploration candidates {len(approved)}; "
             f"mega-cap concentration {(mega / max(1, total)) * 100.0:.1f}%."
         ) if total else "No paper candidates available for allocation review."
+        ranked_entry_funnel: dict[str, dict[str, Any]] = {}
+        for lane in RANKED_ENTRY_LANES:
+            lane_rows = [row for row in decorated if str(row.get("lane_ranked_entry_lane") or "") == lane]
+            shortlisted = [row for row in lane_rows if row.get("lane_shortlist_rank") is not None]
+            finalists = [row for row in lane_rows if bool(row.get("lane_finalist"))]
+            qualified = [row for row in finalists if bool(row.get("qualified") or row.get("eligible"))]
+            selected = [row for row in finalists if bool(row.get("selected"))]
+            order_ready = [row for row in finalists if bool(row.get("order_ready"))]
+            ranked_entry_funnel[lane] = {
+                "discovered": len(lane_rows),
+                "lane_eligible": len(lane_rows),
+                "shortlisted": len(shortlisted),
+                "deep_ranked": len(shortlisted),
+                "finalists": len(finalists),
+                "qualified": len(qualified),
+                "selected": len(selected),
+                "order_ready": len(order_ready),
+                "starvation_signal": "HEALTHY_DISCOVERY_NO_FINALIST" if lane_rows and not finalists else "NO_LANE_CANDIDATES" if not lane_rows else "NONE",
+            }
         return {
             "enabled": True,
             "version": VERSION,
@@ -469,6 +767,15 @@ class PaperOpportunityAllocationEngineV1:
             "mega_cap_concentration_pct": round((mega / max(1, total)) * 100.0, 2) if total else 0.0,
             "non_mega_candidate_count": int(total - mega),
             "lane_counts": dict(lanes),
+            "lane_ranked_entry_funnel_v1": {
+                "enabled": True,
+                "shortlist_limit": LANE_SHORTLIST_LIMIT,
+                "finalist_limit": LANE_FINALIST_LIMIT,
+                "lanes": ranked_entry_funnel,
+                "prospective_cohort": self._ranked_entry_cohort(),
+                "ranking_only": True,
+                "hard_gate_changes": False,
+            },
             "day_lane_governance_v1": self.day_lane_governance(rows=decorated),
             "market_cap_distribution": dict(cap_counts),
             "allocation_summary": summary,
