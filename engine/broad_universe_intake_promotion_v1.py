@@ -143,6 +143,10 @@ def _is_equity_inventory_symbol(symbol: str) -> bool:
     sym = _norm_symbol(symbol)
     if not sym:
         return False
+    # The authoritative universe is U.S.-listed. Dot-suffixed listings such
+    # as ``.TO`` are foreign listings and are not valid for this workload.
+    if "." in sym:
+        return False
     if sym.endswith(("-USD", "-USDT", "-EUR")):
         return False
     return sym not in {"BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "SHIB", "ONDO"}
@@ -230,13 +234,25 @@ class BroadUniverseIntakePromotionV1:
         return out
 
     @staticmethod
-    def _is_liquid_common_stock(row: dict[str, Any]) -> bool:
+    def _is_common_stock_discovery_row(row: dict[str, Any]) -> bool:
         symbol = _norm_symbol(row.get("symbol"))
         if not _is_equity_inventory_symbol(symbol):
             return False
         if row.get("isActivelyTrading") is False:
             return False
         if bool(row.get("isEtf")) or bool(row.get("isFund")):
+            return False
+        name = str(row.get("name") or row.get("companyName") or "").upper()
+        if any(token in name for token in (" ETF", " FUND", " RIGHTS", " WARRANT", " UNIT", " PREFERRED")):
+            return False
+        exchange = str(row.get("exchangeShortName") or row.get("exchange") or "").upper()
+        if exchange and any(token in exchange for token in ("TORONTO", "TSX", "LONDON", "LSE", "XETRA", "FRANKFURT", "PARIS")):
+            return False
+        return True
+
+    @classmethod
+    def _is_liquid_common_stock(cls, row: dict[str, Any]) -> bool:
+        if not cls._is_common_stock_discovery_row(row):
             return False
         return (
             _to_float(row.get("marketCap"), 0.0) >= 1_000_000_000
@@ -358,7 +374,11 @@ class BroadUniverseIntakePromotionV1:
         now = time.time()
         cached_at = _to_float(cached.get("updated_ts"), 0.0) if isinstance(cached, dict) else 0.0
         if isinstance(cached, dict) and cached.get("rows") and (now - cached_at) < MARKET_DISCOVERY_TTL_SECONDS:
-            return {**cached, "cache_hit": True, "cache_age_seconds": round(now - cached_at, 2)}
+            cached_rows = [
+                dict(row) for row in (cached.get("rows") or [])
+                if isinstance(row, dict) and self._is_common_stock_discovery_row(row)
+            ]
+            return {**cached, "rows": cached_rows, "cache_hit": True, "cache_age_seconds": round(now - cached_at, 2)}
         if self._provider_router is None:
             return {"rows": [], "provider": "FMP", "error": "provider_router_unavailable", "cache_hit": False}
         combined: dict[str, dict[str, Any]] = {}
@@ -374,10 +394,10 @@ class BroadUniverseIntakePromotionV1:
                 continue
             for raw in result.get("rows") or []:
                 symbol = _norm_symbol(raw.get("symbol"))
-                if not _is_equity_inventory_symbol(symbol):
-                    continue
                 row = dict(raw)
                 row["symbol"] = symbol
+                if not self._is_common_stock_discovery_row(row):
+                    continue
                 row["discovery_source"] = source
                 row["candidate_discovery_source"] = source
                 row["discovery_evidence_only"] = True

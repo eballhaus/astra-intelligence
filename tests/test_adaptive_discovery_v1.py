@@ -21,6 +21,8 @@ class _FakeDiscoveryRouter:
                 {"symbol": "SPY", "isActivelyTrading": True, "isEtf": True, "isFund": False, "marketCap": 3_000_000_000, "price": 500.0, "volume": 2_000_000},
                 {"symbol": "ONDO-USD", "isActivelyTrading": True, "isEtf": False, "isFund": False, "marketCap": 3_000_000_000, "price": 10.0, "volume": 2_000_000},
                 {"symbol": "THIN", "isActivelyTrading": True, "isEtf": False, "isFund": False, "marketCap": 3_000_000_000, "price": 10.0, "volume": 10},
+                {"symbol": "SHOP.TO", "exchange": "TSX", "isActivelyTrading": True, "isEtf": False, "isFund": False, "marketCap": 3_000_000_000, "price": 80.0, "volume": 2_000_000},
+                {"symbol": "LEVG", "name": "Leveraged ETF", "isActivelyTrading": True, "isEtf": False, "isFund": False, "marketCap": 3_000_000_000, "price": 80.0, "volume": 2_000_000},
             ]
         elif mode == "biggest_gainers":
             rows = [{"symbol": "NVDA", "changesPercentage": "4.0%", "volume": 3_000_000}]
