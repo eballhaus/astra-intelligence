@@ -129,6 +129,16 @@ def _norm_symbol(raw: Any) -> str:
     return sym
 
 
+def _is_equity_inventory_symbol(symbol: str) -> bool:
+    """Keep crypto ledger symbols out of the equity-discovery workload."""
+    sym = _norm_symbol(symbol)
+    if not sym:
+        return False
+    if sym.endswith(("-USD", "-USDT", "-EUR")):
+        return False
+    return sym not in {"BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "SHIB", "ONDO"}
+
+
 class BroadUniverseIntakePromotionV1:
     def __init__(self, state_dir: str = "state"):
         self.state_dir = Path(state_dir or "state")
@@ -314,7 +324,11 @@ class BroadUniverseIntakePromotionV1:
 
     def inventory_symbols(self) -> list[str]:
         """Return a normalized local symbol inventory without market claims."""
-        return list(self._build_universe().get("symbols") or [])
+        return [
+            symbol
+            for symbol in (self._build_universe().get("symbols") or [])
+            if _is_equity_inventory_symbol(symbol)
+        ]
 
     def select_rotation(
         self,
@@ -332,7 +346,7 @@ class BroadUniverseIntakePromotionV1:
         seen = set()
         for raw in inventory:
             symbol = _norm_symbol(raw)
-            if symbol and symbol not in excluded and symbol not in seen:
+            if _is_equity_inventory_symbol(symbol) and symbol not in excluded and symbol not in seen:
                 seen.add(symbol)
                 symbols.append(symbol)
         requested = _to_int(os.getenv("ASTRA_DISCOVERY_ROTATION_SIZE"), DEFAULT_ROTATION_SIZE)

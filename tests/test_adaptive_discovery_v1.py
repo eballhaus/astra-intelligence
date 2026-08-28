@@ -45,6 +45,13 @@ def test_known_duplicate_is_pruned_before_rotation() -> None:
         assert result["status"]["excluded_duplicate_or_active_symbols"] == 1
 
 
+def test_crypto_pair_is_not_an_equity_discovery_symbol() -> None:
+    with TemporaryDirectory() as directory:
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        result = owner.select_rotation(inventory_symbols=["AAPL", "ONDO-USD", "ETH-USD"])
+        assert result["symbols"] == ["AAPL"]
+
+
 def test_prospective_marker_is_write_once() -> None:
     with TemporaryDirectory() as directory:
         owner = BroadUniverseIntakePromotionV1(state_dir=directory)
