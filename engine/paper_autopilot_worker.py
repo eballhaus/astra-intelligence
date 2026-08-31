@@ -877,6 +877,9 @@ class PaperAutopilotWorker:
         # The canonical truth registry is bounded by its existing loader.  The
         # monitor reads it only to verify truth-to-learning liveness.
         monitor_runtime["broker_truth_records_v1"] = self._bounded_broker_truth_rows_v1(runtime)
+        # Reuse the existing operating-health join so a truth-row acknowledgement
+        # cannot mask a missing canonical learning consumer.
+        monitor_runtime["astra_operating_health_contract_v1"] = self.operating_health_contract.snapshot()
         result = self.trading_readiness.run_if_due(
             runtime_state=monitor_runtime,
             worker_state=read_snapshot(),

@@ -216,15 +216,35 @@ class AstraTradingReadinessV1:
             lanes[lane]["last_exit_time"] = observed_at
             lanes[lane]["last_strict_truth_time"] = observed_at
 
-        learning_rows = _rows(runtime.get("canonical_lifecycle_lessons_v1"))
-        for row in learning_rows:
-            lane = self._lane_from_row(row)
-            if lane:
-                lanes[lane]["last_learning_ingestion_time"] = _text(row.get("created_at") or row.get("ingested_at") or generated_at)
-        for row in truth_rows:
-            lane = self._lane_from_row(row)
-            if lane and _truthy(row.get("learning_acknowledged")):
-                lanes[lane]["last_learning_ingestion_time"] = _text(row.get("learning_acknowledged_at") or row.get("updated_at") or generated_at)
+        operating_health = _dict(runtime.get("astra_operating_health_contract_v1"))
+        learning_ledger = _rows(operating_health.get("truth_to_learning_ledger"))
+        if learning_ledger:
+            # The operating-health contract joins truths to actual learning
+            # records.  Do not treat a truth-row acknowledgement flag as
+            # learning ingestion when that authoritative ledger is present.
+            for lane in LANES:
+                lanes[lane]["last_learning_ingestion_time"] = ""
+            for row in learning_ledger:
+                if _text(row.get("consumption_result")).upper() != "CONSUMED":
+                    continue
+                lane = self._lane_from_row(row)
+                if lane:
+                    lanes[lane]["last_learning_ingestion_time"] = _text(
+                        row.get("learning_acknowledgement_time")
+                        or row.get("cortex_acknowledgement_time")
+                        or row.get("governance_acknowledgement_time")
+                        or generated_at
+                    )
+        else:
+            learning_rows = _rows(runtime.get("canonical_lifecycle_lessons_v1"))
+            for row in learning_rows:
+                lane = self._lane_from_row(row)
+                if lane:
+                    lanes[lane]["last_learning_ingestion_time"] = _text(row.get("created_at") or row.get("ingested_at") or generated_at)
+            for row in truth_rows:
+                lane = self._lane_from_row(row)
+                if lane and _truthy(row.get("learning_acknowledged")):
+                    lanes[lane]["last_learning_ingestion_time"] = _text(row.get("learning_acknowledged_at") or row.get("updated_at") or generated_at)
         return lanes
 
     @staticmethod
@@ -335,11 +355,19 @@ class AstraTradingReadinessV1:
                 "repair_action": "RELOAD_CANONICAL_IDENTITY_STATE",
                 "evidence": str(unresolved_crypto),
             })
-        strict_truths = _rows(runtime.get("broker_truth_records_v1"))
-        unacknowledged = [
-            row for row in strict_truths
-            if not _truthy(row.get("learning_acknowledged"))
-        ]
+        operating_health = _dict(runtime.get("astra_operating_health_contract_v1"))
+        learning_ledger = _rows(operating_health.get("truth_to_learning_ledger"))
+        if learning_ledger:
+            unacknowledged = [
+                row for row in learning_ledger
+                if _text(row.get("consumption_result")).upper() not in {"CONSUMED", "ACKNOWLEDGED"}
+            ]
+        else:
+            strict_truths = _rows(runtime.get("broker_truth_records_v1"))
+            unacknowledged = [
+                row for row in strict_truths
+                if not _truthy(row.get("learning_acknowledged"))
+            ]
         if unacknowledged:
             affected = sorted({self._lane_from_row(row) for row in unacknowledged if self._lane_from_row(row)}) or list(LANES)
             issues.append({
@@ -408,7 +436,7 @@ class AstraTradingReadinessV1:
                     verification = "FAILED"
                 recoveries.append({"fault_type": issue["fault_type"], "repair_action": action, "result": result, "verification_result": verification})
             else:
-                verification = "CODE_REPAIR_REQUIRED" if attempts >= 2 else "NO_SAFE_ACTION_AVAILABLE"
+                verification = "CODE_REPAIR_REQUIRED" if attempts >= 2 or not action else "NO_SAFE_ACTION_AVAILABLE"
             fault_rows[key] = {
                 **issue,
                 "first_seen": prior.get("first_seen") or _now(),

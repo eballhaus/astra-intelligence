@@ -105,6 +105,26 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(result["truth_production_watchdog"]["lanes"]["DAY"]["technical_truth_starvation_status"], "LEARNING_HANDOFF_FAILURE")
         self.assertEqual(result["active_faults"][0]["fault_type"], "STRICT_TRUTH_LEARNING_HANDOFF_FAILURE")
 
+    def test_operating_health_ledger_overrides_truth_row_ack_for_learning_liveness(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "broker_truth_records_v1": [{"lane_id": "DAY", "closed_at": _iso(-5), "learning_acknowledged": True}],
+                "astra_operating_health_contract_v1": {
+                    "truth_to_learning_ledger": [{
+                        "lane": "DAY",
+                        "consumption_result": "AWAITING_LEARNING",
+                        "final_state": "PERSISTED_AWAITING_CONSUMPTION",
+                    }],
+                },
+            },
+            worker_state={},
+        )
+        self.assertEqual(result["strict_truth_integrity"], "FAULT")
+        self.assertTrue(result["code_repair_required"])
+        self.assertEqual(result["truth_production_watchdog"]["lanes"]["DAY"]["technical_truth_starvation_status"], "LEARNING_HANDOFF_FAILURE")
+        self.assertEqual(result["truth_production_watchdog"]["lanes"]["DAY"]["last_learning_ingestion_time"], "")
+
     def test_monitor_result_is_persisted_with_worker_state(self):
         directory = tempfile.TemporaryDirectory(prefix="astra_readiness_persist_")
         self.addCleanup(directory.cleanup)
