@@ -17157,8 +17157,10 @@ def _refresh_alpaca_ws_allocation():
             if isinstance(r, dict)
             and is_broker_linked_active_position(r, allow_dust=False)
             and str(r.get("lane_id") or r.get("lane") or "").upper() in {"DAY", "SCALP", "SWING"}
-            and str(r.get("candidate_id") or "").strip()
-            and str(r.get("lifecycle_id") or "").strip()
+            # Canonical broker-linked positions may predate candidate-id
+            # persistence.  Their canonical lifecycle/position identity is
+            # sufficient for observation-only WS coverage.
+            and str(r.get("canonical_position_id") or r.get("lifecycle_id") or r.get("position_id") or "").strip()
             and str(r.get("symbol") or "").strip()
         ]
         near_symbols = _near_entry_candidates(limit=ALPACA_WS_NEAR_ENTRY_SLOTS)
@@ -17274,8 +17276,6 @@ def _paper_top_buys_snapshot():
     mode_cache = cached.get("mode::balanced", {}) if isinstance(cached, dict) else {}
     if mode_cache.get("data") and (time.time() - float(mode_cache.get("ts", 0.0))) <= TOP_BUYS_TTL_SECONDS:
         return dict(mode_cache.get("data", {}))
-    if str(os.getenv("ASTRA_PROCESS_ROLE", "api")).strip().lower() == "worker":
-        return {}
     try:
         return top_buys()
     except Exception:

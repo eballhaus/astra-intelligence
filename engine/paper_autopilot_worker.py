@@ -41,6 +41,7 @@ from engine.astra_continuous_system_integrity_scanner_v1 import ContinuousSystem
 from engine.astra_crypto_market_data_capability_matrix_v1 import CryptoMarketDataCapabilityMatrixV1
 from engine.astra_multilane_completion_matrix_v1 import AstraMultilaneCompletionMatrixV1
 from engine.astra_operating_health_contract_v1 import AstraOperatingHealthContractV1
+from engine.astra_trading_readiness_v1 import AstraTradingReadinessV1
 from engine.astra_evidence_accumulation_capacity_v1 import canonical_candidate_capacity_fact
 from engine.candidate_execution_integrity_v1 import derive_crypto_horizon_evidence_v1
 from engine.adaptive_profit_capture_intelligence_v1 import (
@@ -84,6 +85,7 @@ class PaperAutopilotWorker:
         self.crypto_market_data_matrix = CryptoMarketDataCapabilityMatrixV1(STATE)
         self.multilane_completion_matrix = AstraMultilaneCompletionMatrixV1(STATE)
         self.operating_health_contract = AstraOperatingHealthContractV1(STATE)
+        self.trading_readiness = AstraTradingReadinessV1(STATE)
         self._memory_samples: list[dict[str, Any]] = []
         self._memory_startup_mb: float | None = None
         self._memory_peak_mb = 0.0
@@ -734,6 +736,15 @@ class PaperAutopilotWorker:
             targeted_reasons = list(dict.fromkeys(
                 f"crypto_first_causal_blocker:{row['gate']}" for row in current_blockers[:3] if row.get("gate")
             ))
+        trading_readiness = dict(runtime.get("astra_trading_readiness_v1") or {})
+        readiness_faults = [
+            dict(row) for row in (trading_readiness.get("active_faults") or [])
+            if isinstance(row, dict)
+        ][:4]
+        targeted_reasons = list(dict.fromkeys([
+            *targeted_reasons,
+            *[f"trading_readiness:{row.get('fault_type')}" for row in readiness_faults if row.get("fault_type")],
+        ]))
         # This scanner owns only bounded state diagnostics. It consumes the
         # facts already gathered by this worker and cannot reach providers,
         # brokers, LLMs, order paths, or mutable lifecycle truth.
@@ -771,6 +782,7 @@ class PaperAutopilotWorker:
                 "shadow_exit_analysis_outputs": dict(runtime.get("shadow_exit_analysis_outputs_v1") or {}),
                 "shadow_exit_performance": dict(runtime.get("shadow_exit_performance_v1") or {}),
                 "profit_capture_trade_effectiveness": dict(trade_effectiveness or runtime.get("profit_capture_trade_effectiveness_v2") or {}),
+                "trading_readiness": trading_readiness,
                 "canonical_capacity_fact": dict(lane.get("canonical_capacity_fact") or {}),
                 "current_candidate_traces": [
                     dict(row) for row in list((runtime.get("last_execution_trace") or {}).get("per_candidate_decision_trace") or [])
@@ -813,7 +825,38 @@ class PaperAutopilotWorker:
             "system_integrity_status": integrity_scan.get("status"),
             "system_integrity_root_cause_count": len(integrity_scan.get("active_root_causes") or []),
             "multilane_completion_status": multilane_completion.get("status"),
+            "trading_integrity_state": trading_readiness.get("trading_integrity_state"),
+            "lane_readiness": dict(trading_readiness.get("lane_readiness") or {}),
+            "technical_no_trade": trading_readiness.get("technical_no_trade"),
+            "trading_readiness_fault_count": len(readiness_faults),
         })
+        return result
+
+    def _run_trading_readiness_v1(self) -> dict[str, Any]:
+        """Run the bounded readiness monitor through the existing worker only."""
+        def rebuild_discovery() -> dict[str, Any]:
+            rebuild = getattr(self.autopilot, "_rebuild_equity_candidate_snapshot_v1", None)
+            return dict(rebuild() or {}) if callable(rebuild) else {}
+
+        def rematerialize_management() -> dict[str, Any]:
+            rematerialize = getattr(self.autopilot, "_rematerialize_active_position_observation_aliases_v1", None)
+            return dict(rematerialize() or {}) if callable(rematerialize) else {}
+
+        def reconcile_ws() -> dict[str, Any]:
+            from server_extend import _refresh_alpaca_ws_allocation
+            _refresh_alpaca_ws_allocation()
+            return {"status": "RECONCILED_EXISTING_SHARED_CONNECTION", "provider_calls_added": 0, "broker_actions_added": 0}
+
+        result = self.trading_readiness.run_if_due(
+            runtime_state=getattr(self.autopilot, "_runtime_state", {}),
+            worker_state=read_snapshot(),
+            actions={
+                "REBUILD_CANONICAL_DISCOVERY_STATE": rebuild_discovery,
+                "REMATERIALIZE_MANAGEMENT_EVIDENCE": rematerialize_management,
+                "RECONCILE_WS_SUBSCRIPTIONS": reconcile_ws,
+            },
+        )
+        self.autopilot._runtime_state["astra_trading_readiness_v1"] = dict(result)
         return result
 
     def _bounded_cycle(self) -> None:
@@ -911,6 +954,7 @@ class PaperAutopilotWorker:
             try:
                 from server_extend import _refresh_alpaca_ws_allocation
                 _refresh_alpaca_ws_allocation()
+                self._run_trading_readiness_v1()
                 self.autopilot._save_state_file()
             except Exception:
                 pass

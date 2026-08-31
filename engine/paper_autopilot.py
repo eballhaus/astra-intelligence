@@ -4794,6 +4794,17 @@ class PaperAutopilotEngine:
             for row in rows
             if str(row.get("symbol") or "").strip()
         }
+        canonical_position_aliases = {
+            str(row.get("symbol") or "").upper().strip(): [
+                value for value in (
+                    _pick_first_text(row.get("canonical_position_id")),
+                    _pick_first_text(row.get("lifecycle_id")),
+                    _pick_first_text(row.get("position_id")),
+                ) if value
+            ]
+            for row in rows
+            if str(row.get("symbol") or "").strip()
+        }
         state = {
             "schema_version": "active_equity_fmp_observations_v1",
             "provider": "FMP",
@@ -4837,6 +4848,7 @@ class PaperAutopilotEngine:
             observations[symbol] = {
                 "symbol": symbol,
                 "canonical_position_id": canonical_position_ids.get(symbol, ""),
+                "canonical_position_aliases": canonical_position_aliases.get(symbol, []),
                 "provider": "FMP",
                 "provider_provenance": "FMP_REST_SUPPLEMENTAL_OBSERVATION",
                 "market_observation_only": True,
@@ -7353,6 +7365,78 @@ class PaperAutopilotEngine:
             except Exception:
                 return dedup
         return dedup
+
+    def _rebuild_equity_candidate_snapshot_v1(self) -> dict[str, Any]:
+        """Bounded recovery read of the existing candidate source only.
+
+        This never promotes a row, changes a gate, or submits an order.  It
+        records whether the worker can see the same canonical equity source
+        used by the ordinary cycle after a stale process-local cache.
+        """
+        rows = self._collect_candidate_rows()
+        equity_rows = [
+            dict(row) for row in rows
+            if isinstance(row, dict)
+            and _norm_asset(row.get("asset_type") or row.get("asset_class") or "stock") == "stock"
+        ]
+        result = {
+            "schema_version": "astra_equity_discovery_rebuild_v1",
+            "generated_at": _now_iso(),
+            "candidate_source_available": bool(equity_rows),
+            "equity_candidate_count": len(equity_rows),
+            "source": "existing_get_top_buys_fn",
+            "provider_calls_added": 0,
+            "broker_actions_added": 0,
+            "trading_policy_changed": False,
+        }
+        self._runtime_state["equity_discovery_rebuild_v1"] = result
+        return result
+
+    def _rematerialize_active_position_observation_aliases_v1(self) -> dict[str, Any]:
+        """Reconnect persisted observation aliases without refreshing market data."""
+        observations_state = dict(self._runtime_state.get("active_equity_fmp_observations_v1") or {})
+        observations = dict(observations_state.get("observations") or {})
+        recovery = dict(self._runtime_state.get("position_lane_horizon_recovery_v1") or {})
+        recovery_by_symbol = {
+            _text(row.get("symbol")).upper(): dict(row)
+            for row in (recovery.get("positions") or [])
+            if isinstance(row, dict) and _text(row.get("symbol"))
+        }
+        updated = 0
+        for symbol, observation in observations.items():
+            row = recovery_by_symbol.get(_text(symbol).upper())
+            if not row or not isinstance(observation, dict):
+                continue
+            aliases = {
+                _pick_first_text(observation.get("canonical_position_id")),
+                _pick_first_text(observation.get("lifecycle_id")),
+                _pick_first_text(observation.get("position_id")),
+                *[_pick_first_text(value) for value in (observation.get("canonical_position_aliases") or [])],
+                _pick_first_text(row.get("canonical_position_id")),
+                _pick_first_text(row.get("lifecycle_id")),
+                _pick_first_text(row.get("position_id")),
+            }
+            normalized_aliases = sorted(value for value in aliases if value)
+            if normalized_aliases != list(observation.get("canonical_position_aliases") or []):
+                observation["canonical_position_aliases"] = normalized_aliases
+                if not _pick_first_text(observation.get("canonical_position_id")):
+                    observation["canonical_position_id"] = _pick_first_text(
+                        row.get("canonical_position_id"), row.get("lifecycle_id"), row.get("position_id"),
+                    )
+                observations[symbol] = observation
+                updated += 1
+        observations_state["observations"] = observations
+        self._runtime_state["active_equity_fmp_observations_v1"] = observations_state
+        result = {
+            "schema_version": "astra_active_position_observation_rematerialization_v1",
+            "generated_at": _now_iso(),
+            "observations_updated": updated,
+            "provider_calls_added": 0,
+            "broker_actions_added": 0,
+            "trading_policy_changed": False,
+        }
+        self._runtime_state["active_position_observation_rematerialization_v1"] = result
+        return result
 
     def _publish_equity_risk_candidate_handoff_v1(
         self,
@@ -12462,11 +12546,13 @@ class PaperAutopilotEngine:
                 and value not in (None, "")
             })
 
-        # Current reconciliation rows establish symbol/timestamp continuity;
-        # they are not independently treated as entry evidence here.  This
-        # prevents the review overlay and the active SQLite row from becoming
-        # two competing symbol-only claims for the same position.
+        # Current reconciliation rows establish symbol/timestamp continuity.
+        # A verified active lifecycle row may also carry the only surviving
+        # entry identity after an older local row has been compacted.  Admit
+        # it only with its explicit broker-linked identity; symbol-only data
+        # remains prohibited.
         evidence: list[dict[str, Any]] = []
+        evidence_current_ids: set[str] = set()
         for raw in db_rows or []:
             row = dict(raw or {})
             current_rows = []
@@ -12501,6 +12587,33 @@ class PaperAutopilotEngine:
                 "current_reconciled": True,
                 "recovery_source_type": "ACTIVE_POSITION_LIFECYCLE",
             })
+            evidence_current_ids.add(_pick_first_text(
+                current.get("canonical_position_id"), current.get("lifecycle_id"), current.get("position_id"),
+            ))
+
+        emitted_current_ids: set[str] = set()
+        for current_rows in current_by_symbol.values():
+            for current in current_rows:
+                current_id = _pick_first_text(
+                    current.get("canonical_position_id"), current.get("lifecycle_id"), current.get("position_id"),
+                )
+                if not current_id or current_id in emitted_current_ids or current_id in evidence_current_ids:
+                    continue
+                emitted_current_ids.add(current_id)
+                if not _pick_first_text(
+                    current.get("entry_fill_id"), current.get("entry_order_id"), current.get("source_broker_order_id"),
+                    current.get("source_client_order_id"),
+                ):
+                    continue
+                if not _text(current.get("lane_id") or current.get("lane")):
+                    continue
+                if not _text(current.get("paper_entry_horizon_style") or current.get("original_horizon") or current.get("horizon")):
+                    continue
+                evidence.append({
+                    **current,
+                    "current_reconciled": True,
+                    "recovery_source_type": "CURRENT_RECONCILIATION_ACTIVE_LIFECYCLE",
+                })
 
         broker_for_recovery: dict[str, dict[str, Any]] = {}
         for symbol, raw in broker_positions.items():
@@ -12659,9 +12772,25 @@ class PaperAutopilotEngine:
                 source_type=SOURCE_QUOTE,
                 max_age_seconds=20.0,
             )
+            managed_identity_aliases = {
+                value for value in (
+                    _pick_first_text(managed_row.get("canonical_position_id")),
+                    _pick_first_text(managed_row.get("lifecycle_id")),
+                    _pick_first_text(managed_row.get("position_id")),
+                    trace_key,
+                ) if value
+            }
+            observation_identity_aliases = {
+                value for value in (
+                    _pick_first_text(cached_observation.get("canonical_position_id")),
+                    _pick_first_text(cached_observation.get("lifecycle_id")),
+                    _pick_first_text(cached_observation.get("position_id")),
+                    *[_pick_first_text(value) for value in (cached_observation.get("canonical_position_aliases") or [])],
+                ) if value
+            }
             if (
                 cached_observation
-                and _pick_first_text(cached_observation.get("canonical_position_id")) == trace_key
+                and bool(managed_identity_aliases & observation_identity_aliases)
                 and bool(cached_timestamp.get("executable_freshness"))
             ):
                 quote = cached_observation
@@ -13720,19 +13849,34 @@ class PaperAutopilotEngine:
             pid = _pick_first_text(row.get("canonical_position_id"), row.get("position_id"), row.get("symbol"))
             ownership_map[pid] = resolve_canonical_position_ownership_v1(row)
 
-        canonical_position_ids = {
-            str(row.get("symbol") or "").upper().strip(): _pick_first_text(
-                row.get("canonical_position_id"), row.get("lifecycle_id"), row.get("position_id")
-            )
-            for row in db_rows
+        identity_rows = [
+            dict(row) for row in (recovery.get("positions") or []) if isinstance(row, dict)
+        ] or [dict(row) for row in db_rows if isinstance(row, dict)]
+        canonical_position_aliases = {
+            str(row.get("symbol") or "").upper().strip(): {
+                value for value in (
+                    _pick_first_text(row.get("canonical_position_id")),
+                    _pick_first_text(row.get("lifecycle_id")),
+                    _pick_first_text(row.get("position_id")),
+                ) if value
+            }
+            for row in identity_rows
             if str(row.get("symbol") or "").strip()
         }
         observations = dict(
             dict(self._runtime_state.get("active_equity_fmp_observations_v1") or {}).get("observations") or {}
         )
         for symbol, observation in observations.items():
-            expected_position_id = canonical_position_ids.get(str(symbol or "").upper().strip())
-            if not expected_position_id or _pick_first_text(observation.get("canonical_position_id")) != expected_position_id:
+            expected_aliases = canonical_position_aliases.get(str(symbol or "").upper().strip(), set())
+            observation_aliases = {
+                value for value in (
+                    _pick_first_text(observation.get("canonical_position_id")),
+                    _pick_first_text(observation.get("lifecycle_id")),
+                    _pick_first_text(observation.get("position_id")),
+                    *[_pick_first_text(value) for value in (observation.get("canonical_position_aliases") or [])],
+                ) if value
+            }
+            if not expected_aliases or not bool(expected_aliases & observation_aliases):
                 continue
             broker_row = dict(broker_positions.get(str(symbol or "").upper().strip()) or {})
             if not broker_row:
