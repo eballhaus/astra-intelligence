@@ -797,6 +797,10 @@ class PaperAutopilotWorker:
         # It only composes the current cycle's committed records.
         truth_rows = self._bounded_broker_truth_rows_v1(runtime)
         learning_rows = [dict(row) for row in (runtime.get("canonical_lifecycle_lessons_v1") or []) if isinstance(row, dict)]
+        trade_intel = getattr(self.autopilot, "trade_intel", None)
+        acknowledgements = getattr(trade_intel, "acknowledgements_for_truths", None)
+        if callable(acknowledgements):
+            learning_rows.extend(acknowledgements(truth_rows, limit=200))
         operating_health = self.operating_health_contract.build(
             multilane=multilane_completion,
             worker_state=worker_state,

@@ -48,14 +48,26 @@ class LifecycleCompletionWatchdogTests(unittest.TestCase):
     def test_trade_intelligence_acknowledges_one_lifecycle_exactly_once(self):
         with tempfile.TemporaryDirectory() as directory:
             engine = TradeIntelligenceEngine(str(pathlib.Path(directory) / "learning.db"))
-            first = engine.record_trade({"trade_id": "life-1", "symbol": "PTON", "return_percent": -4.0})
-            second = engine.record_trade({"trade_id": "life-1", "symbol": "PTON", "return_percent": -4.0})
+            payload = {"trade_id": "life-1", "lifecycle_id": "life-1", "lane_id": "DAY", "symbol": "PTON", "return_percent": -4.0, "strict_truth_stable_key": "strict:in:out"}
+            first = engine.record_trade(payload)
+            second = engine.record_trade(payload)
             self.assertTrue(first["ok"])
             self.assertTrue(second["ok"])
             self.assertTrue(second["deduplicated"])
             with engine._connect() as conn:
-                row = conn.execute("SELECT symbol, return_percent FROM trade_journal WHERE trade_id='life-1'").fetchone()
-            self.assertEqual(tuple(row), ("PTON", -4.0))
+                row = conn.execute("SELECT symbol, return_percent, learning_consumer, learning_provenance, learning_acknowledged_at FROM trade_journal WHERE trade_id='life-1'").fetchone()
+            self.assertEqual(tuple(row[:2]), ("PTON", -4.0))
+            self.assertEqual(row[2], "TradeIntelligenceEngine.record_trade")
+            self.assertEqual(row[3], "broker_truth_records_v1 -> trade_journal")
+            self.assertTrue(row[4])
+            acknowledgements = engine.acknowledgements_for_truths([{
+                "truth_id": "strict:in:out", "lifecycle_id": "life-1", "lane_id": "DAY",
+            }])
+            self.assertEqual(len(acknowledgements), 1)
+            self.assertEqual(acknowledgements[0]["truth_id"], "strict:in:out")
+            self.assertEqual(acknowledgements[0]["lane"], "DAY")
+            self.assertEqual(acknowledgements[0]["consumption_result"], "CONSUMED")
+            self.assertEqual(acknowledgements[0]["source"], "trade_journal")
 
     def test_false_learning_acknowledgement_is_durable_and_retryable(self):
         with tempfile.TemporaryDirectory() as directory, patch("engine.paper_autopilot.close_lifecycle_record", None):

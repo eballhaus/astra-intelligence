@@ -109,6 +109,25 @@ class OperatingHealthContractTests(unittest.TestCase):
             self.assertEqual(ledger["first_delayed_or_unobserved_handoff"], "teacher_handoff")
             self.assertEqual(stages["memory_index_available"]["status"], "UNKNOWN_UNOBSERVED")
 
+    def test_authoritative_trade_journal_ack_clears_learning_wait_without_lesson_application(self):
+        with tempfile.TemporaryDirectory() as root:
+            truth = {
+                "evidence_class": "BROKER_CONFIRMED_COMPLETE", "stable_key": "strict:in:out",
+                "lifecycle_id": "life-1", "lane_id": "DAY", "symbol": "AAPL",
+                "entry_fill_id": "in", "exit_fill_id": "out", "created_at": "2026-08-09T12:00:00Z",
+            }
+            payload = AstraOperatingHealthContractV1(root).build(
+                multilane={"lanes": {}}, worker_state={}, continuous={}, sentinel={},
+                truth_records=[truth], learning_records=[{
+                    "truth_id": "strict:in:out", "lifecycle_id": "life-1", "lane_id": "DAY",
+                    "consumption_result": "CONSUMED", "consumer": "TradeIntelligenceEngine.record_trade",
+                    "source": "trade_journal", "provenance": "broker_truth_records_v1 -> trade_journal",
+                }],
+            )
+            self.assertEqual(payload["lanes"]["DAY"]["truths_consumed_by_learning"], 1)
+            self.assertEqual(payload["truth_to_learning_ledger"][0]["final_state"], "CONSUMED")
+            self.assertEqual(payload["truth_to_learning_ledger"][0]["consumer"], "canonical_lifecycle_learning")
+
 
 if __name__ == "__main__":
     unittest.main()
