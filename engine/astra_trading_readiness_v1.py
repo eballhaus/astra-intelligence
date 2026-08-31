@@ -302,7 +302,26 @@ class AstraTradingReadinessV1:
             })
 
         recovery = _dict(runtime.get("position_lane_horizon_recovery_v1"))
-        crypto_rows = [row for row in (recovery.get("positions") or []) if isinstance(row, Mapping) and str(row.get("asset_type") or row.get("asset_class") or "").lower() in {"crypto", "cryptocurrency"}]
+        capacity_rows = _rows(
+            _dict(runtime.get("last_evidence_capacity_snapshot")).get("position_rows_for_read_only_consumers")
+        )
+        canonical_crypto_symbols = {
+            _text(row.get("symbol")).upper().replace("/", "").replace("-", "").replace("_", "")
+            for row in capacity_rows
+            if str(row.get("asset_type") or row.get("asset_class") or "").lower() in {"crypto", "cryptocurrency"}
+            and not _truthy(row.get("is_dust"))
+            and str(row.get("classification") or "").upper() not in {"BROKER_DUST_MONITORED", "BROKER_DUST", "DUST"}
+            and _text(row.get("symbol"))
+        }
+        crypto_rows = [
+            row for row in (recovery.get("positions") or [])
+            if isinstance(row, Mapping)
+            and str(row.get("asset_type") or row.get("asset_class") or "").lower() in {"crypto", "cryptocurrency"}
+            and (
+                not capacity_rows
+                or _text(row.get("symbol")).upper().replace("/", "").replace("-", "").replace("_", "") in canonical_crypto_symbols
+            )
+        ]
         unresolved_crypto = sum(
             1 for row in crypto_rows
             if str(row.get("horizon_status") or row.get("horizon_evidence_status") or "").upper() in {"UNRESOLVED", "UNAVAILABLE", "MISSING"}
