@@ -173,6 +173,33 @@ class AllocationBoundaryTests(unittest.TestCase):
         self.assertEqual(monitor.kwargs["open_position_symbols"], ["AAPL"])
         self.assertEqual(monitor.kwargs["near_entry_symbols"], ["MSFT"])
 
+    def test_unchanged_allocation_refreshes_async_stream_status(self):
+        class Monitor:
+            def __init__(self):
+                self.configure_calls = 0
+                self.connected = False
+
+            def configure_symbols(self, **_kwargs):
+                self.configure_calls += 1
+                return {"ok": True}
+
+            def status(self):
+                return {"running": self.connected, "connection_count": int(self.connected), "subscribed_symbols": ["AAPL"] if self.connected else []}
+
+        monitor = Monitor()
+        rows = [{"symbol": "AAPL", "asset_type": "stock", "status": "OPEN", "quantity": 1, "lane_id": "DAY", "lifecycle_id": "life-a", "entry_fill_id": "fill-a"}]
+        allocation = {"ts": 0.0, "signature": ""}
+        with patch.object(server_extend, "ALPACA_WS_MONITOR", monitor), patch.object(
+            server_extend.PAPER_AUTOPILOT, "_fetch_open_positions", return_value=rows
+        ), patch.object(server_extend, "_near_entry_candidates", return_value=[]), patch.object(
+            server_extend, "_ALPACA_WS_ALLOC_STATE", allocation
+        ):
+            server_extend._refresh_alpaca_ws_allocation()
+            monitor.connected = True
+            server_extend._refresh_alpaca_ws_allocation()
+        self.assertEqual(monitor.configure_calls, 1)
+        self.assertTrue(server_extend.PAPER_AUTOPILOT._runtime_state["alpaca_ws_active_position_monitor_v1"]["running"])
+
 
 if __name__ == "__main__":
     unittest.main()

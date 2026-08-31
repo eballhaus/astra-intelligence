@@ -17143,7 +17143,7 @@ def _near_entry_candidates(limit=10):
     return (primary + secondary)[: max(0, int(limit))]
 
 
-def _refresh_alpaca_ws_allocation():
+def _refresh_alpaca_ws_allocation(*, force_reconcile=False):
     try:
         now = time.time()
         # Only broker-linked, canonical PaperAutopilot equity positions may
@@ -17180,9 +17180,16 @@ def _refresh_alpaca_ws_allocation():
             near_symbols = fallback
         signature = f"{','.join(sorted(open_symbols))}|{','.join(sorted(near_symbols))}"
         if (
+            not force_reconcile
+            and
             signature == str(_ALPACA_WS_ALLOC_STATE.get("signature") or "")
             and (now - float(_ALPACA_WS_ALLOC_STATE.get("ts", 0.0))) < ALPACA_WS_ALLOC_MIN_REFRESH_SECONDS
         ):
+            # The stream changes state asynchronously. Refresh its status even
+            # when the bounded desired symbol allocation has not changed.
+            status_reader = getattr(ALPACA_WS_MONITOR, "status", None)
+            if callable(status_reader):
+                PAPER_AUTOPILOT._runtime_state["alpaca_ws_active_position_monitor_v1"] = dict(status_reader() or {})
             return
         ALPACA_WS_MONITOR.configure_symbols(
             open_position_symbols=open_symbols,

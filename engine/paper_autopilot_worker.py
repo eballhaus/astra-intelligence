@@ -844,8 +844,33 @@ class PaperAutopilotWorker:
 
         def reconcile_ws() -> dict[str, Any]:
             from server_extend import _refresh_alpaca_ws_allocation
-            _refresh_alpaca_ws_allocation()
+            _refresh_alpaca_ws_allocation(force_reconcile=True)
             return {"status": "RECONCILED_EXISTING_SHARED_CONNECTION", "provider_calls_added": 0, "broker_actions_added": 0}
+
+        def reload_canonical_identity() -> dict[str, Any]:
+            # Reuse only the already broker-reconciled snapshot.  This does
+            # not query a provider or broker, infer a horizon, or alter a
+            # position; unresolved canonical evidence remains fail-closed.
+            capacity = dict(runtime.get("last_evidence_capacity_snapshot") or {})
+            if not bool(capacity.get("broker_reconciliation_active")) or not bool(capacity.get("broker_positions_fetch_ok")):
+                return {"status": "CURRENT_RECONCILIATION_UNAVAILABLE", "provider_calls_added": 0, "broker_actions_added": 0}
+            rows = [dict(row) for row in (capacity.get("position_rows_for_read_only_consumers") or []) if isinstance(row, dict)]
+            broker_rows = {
+                str(row.get("symbol") or "").upper(): row
+                for row in rows if str(row.get("symbol") or "").strip()
+            }
+            recover = getattr(self.autopilot, "_recover_broker_position_lane_horizon_v1", None)
+            fetch_open = getattr(self.autopilot, "_fetch_open_positions", None)
+            if not broker_rows or not callable(recover) or not callable(fetch_open):
+                return {"status": "CANONICAL_IDENTITY_RELOAD_UNAVAILABLE", "provider_calls_added": 0, "broker_actions_added": 0}
+            ledger = dict(recover(broker_rows, list(fetch_open() or [])) or {})
+            return {
+                "status": "REMATERIALIZED_FROM_CURRENT_RECONCILIATION",
+                "position_count": int(ledger.get("position_count") or 0),
+                "unresolved_horizon_count": int(ledger.get("unresolved_horizon_count") or 0),
+                "provider_calls_added": 0,
+                "broker_actions_added": 0,
+            }
 
         runtime = getattr(self.autopilot, "_runtime_state", {})
         monitor_runtime = dict(runtime)
@@ -859,6 +884,7 @@ class PaperAutopilotWorker:
                 "REBUILD_CANONICAL_DISCOVERY_STATE": rebuild_discovery,
                 "REMATERIALIZE_MANAGEMENT_EVIDENCE": rematerialize_management,
                 "RECONCILE_WS_SUBSCRIPTIONS": reconcile_ws,
+                "RELOAD_CANONICAL_IDENTITY_STATE": reload_canonical_identity,
             },
         )
         runtime["astra_trading_readiness_v1"] = dict(result)

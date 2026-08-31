@@ -138,6 +138,22 @@ class TradingReadinessTests(unittest.TestCase):
         )
         self.assertEqual(result["crypto_readiness"], "TECHNICALLY_READY")
 
+    def test_identity_rematerialization_stays_an_explicit_safe_action(self):
+        calls: list[str] = []
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "position_lane_horizon_recovery_v1": {
+                    "positions": [{"symbol": "ETH/USD", "asset_type": "crypto", "horizon_status": "UNAVAILABLE"}],
+                },
+            },
+            worker_state={},
+            actions={"RELOAD_CANONICAL_IDENTITY_STATE": lambda: calls.append("reload") or {"status": "rematerialized"}},
+        )
+        self.assertEqual(calls, ["reload"])
+        self.assertEqual(result["recoveries"][0]["repair_action"], "RELOAD_CANONICAL_IDENTITY_STATE")
+        self.assertEqual(result["broker_actions_used"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
