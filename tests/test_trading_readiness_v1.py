@@ -154,6 +154,20 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(result["recoveries"][0]["repair_action"], "RELOAD_CANONICAL_IDENTITY_STATE")
         self.assertEqual(result["broker_actions_used"], 0)
 
+    def test_canonical_active_equity_list_detects_missing_ws_without_quote_payload(self):
+        calls: list[str] = []
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "active_equity_fmp_observations_v1": {"canonical_active_equity_symbols": ["AAPL"], "observations": {}},
+                "alpaca_ws_active_position_monitor_v1": {"subscribed_symbols": []},
+            },
+            worker_state={},
+            actions={"RECONCILE_WS_SUBSCRIPTIONS": lambda: calls.append("ws") or {"status": "reconciled"}},
+        )
+        self.assertEqual(calls, ["ws"])
+        self.assertEqual(result["active_faults"][0]["fault_type"], "ACTIVE_POSITION_NOT_STREAMED")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -200,6 +200,29 @@ class AllocationBoundaryTests(unittest.TestCase):
         self.assertEqual(monitor.configure_calls, 1)
         self.assertTrue(server_extend.PAPER_AUTOPILOT._runtime_state["alpaca_ws_active_position_monitor_v1"]["running"])
 
+    def test_current_lifecycle_metadata_repairs_horizon_recovery_join(self):
+        engine = PaperAutopilotEngine(
+            db_path=os.path.join(tempfile.mkdtemp(prefix="astra_recovery_"), "paper.db"),
+            state_path=os.path.join(tempfile.mkdtemp(prefix="astra_recovery_state_"), "state.json"),
+            enabled=False,
+        )
+        engine._runtime_state["last_evidence_capacity_snapshot"] = {
+            "position_rows_for_read_only_consumers": [{"symbol": "ETH/USD", "asset_type": "crypto", "entry_timestamp": _iso()}],
+        }
+        result = engine._recover_broker_position_lane_horizon_v1(
+            {"ETH/USD": {"symbol": "ETH/USD", "asset_type": "crypto"}},
+            [{
+                "symbol": "ETH/USD", "status": "OPEN", "asset_type": "crypto",
+                "position_id": "life-eth", "entry_order_id": "order-eth", "entry_fill_id": "fill-eth",
+                "lane_id": "CRYPTO", "paper_entry_horizon_style": "day_trade",
+                "expected_max_hold": "2h-EOD", "same_session_exit_required": False, "overnight_allowed": True,
+            }],
+        )
+        row = result["positions"][0]
+        self.assertEqual(row["lane_status"], "RESOLVED")
+        self.assertEqual(row["horizon_status"], "RESOLVED")
+        self.assertEqual(row["canonical_identity_status"], "RESOLVED")
+
 
 if __name__ == "__main__":
     unittest.main()

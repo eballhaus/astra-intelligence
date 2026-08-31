@@ -12532,6 +12532,38 @@ class PaperAutopilotEngine:
                 current_by_symbol.setdefault(symbol, []).append({
                     **current,
                 })
+        # The compact capacity projection intentionally omits lifecycle JSON,
+        # but the current open lifecycle row contains the explicit broker
+        # identity and lane/horizon contract. Join that metadata only when the
+        # symbol is present in the current broker reconciliation set; financial
+        # facts are never copied from the lifecycle row.
+        lifecycle_metadata_keys = (
+            "position_id", "entry_order_id", "entry_fill_id", "source_broker_order_id",
+            "source_client_order_id", "candidate_id", "lane_id", "lane",
+            "paper_entry_horizon_style", "trade_horizon_style", "intended_horizon",
+            "horizon", "horizon_source", "expected_max_hold",
+            "same_session_exit_required", "overnight_allowed", "position_owner",
+            "exit_policy_owner",
+        )
+        for lifecycle in db_rows or []:
+            row = dict(lifecycle or {})
+            if _text(row.get("status")).upper() not in {"", "OPEN"}:
+                continue
+            symbol = _text(row.get("symbol")).upper()
+            if not symbol or not any(alias in broker_positions for alias in _broker_position_symbol_aliases_v1(symbol)):
+                continue
+            current_rows = []
+            for alias in _broker_position_symbol_aliases_v1(symbol):
+                current_rows = current_by_symbol.get(alias) or []
+                if current_rows:
+                    break
+            if len(current_rows) != 1:
+                continue
+            current_rows[0].update({
+                key: row.get(key)
+                for key in lifecycle_metadata_keys
+                if row.get(key) not in (None, "")
+            })
         # Reviews hold governance-owned original-lane metadata.  Join them
         # only to the already current broker-reconciled row, never to history.
         for review in reviews:

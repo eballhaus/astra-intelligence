@@ -96,8 +96,15 @@ class AstraTradingReadinessV1:
 
     @staticmethod
     def _active_observation_symbols(runtime: Mapping[str, Any]) -> set[str]:
-        observations = _dict(_dict(runtime.get("active_equity_fmp_observations_v1")).get("observations"))
-        return {str(symbol).upper().strip() for symbol in observations if str(symbol).strip()}
+        state = _dict(runtime.get("active_equity_fmp_observations_v1"))
+        observations = _dict(state.get("observations"))
+        symbols = {str(symbol).upper().strip() for symbol in observations if str(symbol).strip()}
+        symbols.update(
+            str(symbol).upper().strip()
+            for symbol in (state.get("canonical_active_equity_symbols") or [])
+            if str(symbol).strip()
+        )
+        return symbols
 
     @staticmethod
     def _position_rows(runtime: Mapping[str, Any]) -> list[dict[str, Any]]:
