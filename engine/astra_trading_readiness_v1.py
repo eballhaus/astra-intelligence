@@ -295,8 +295,11 @@ class AstraTradingReadinessV1:
             })
 
         recovery = _dict(runtime.get("position_lane_horizon_recovery_v1"))
-        unresolved_crypto = int(recovery.get("unresolved_horizon_count") or 0)
         crypto_rows = [row for row in (recovery.get("positions") or []) if isinstance(row, Mapping) and str(row.get("asset_type") or row.get("asset_class") or "").lower() in {"crypto", "cryptocurrency"}]
+        unresolved_crypto = sum(
+            1 for row in crypto_rows
+            if str(row.get("horizon_status") or row.get("horizon_evidence_status") or "").upper() in {"UNRESOLVED", "UNAVAILABLE", "MISSING"}
+        )
         if crypto_rows and unresolved_crypto:
             issues.append({
                 "fault_type": "CRYPTO_HORIZON_PRESENT_BUT_NOT_CONSUMED",
@@ -351,7 +354,10 @@ class AstraTradingReadinessV1:
         session = self._session()
         now = time.monotonic()
         interval = 300.0 if bool(session["equity_session_open"]) or bool(session["preopen_window"]) else 900.0
-        if previous and now - float(previous.get("scan_monotonic") or 0.0) < interval:
+        # A newly deployed watchdog schema must certify immediately rather
+        # than inherit an old interval that contains no truth-stage evidence.
+        previous_watchdog = _dict(previous.get("truth_production_watchdog"))
+        if previous and previous_watchdog and now - float(previous.get("scan_monotonic") or 0.0) < interval:
             return {**previous, "due": False, "provider_calls_used": 0, "broker_actions_used": 0}
 
         actions = dict(actions or {})

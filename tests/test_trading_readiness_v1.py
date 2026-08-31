@@ -118,6 +118,26 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(payload["astra_trading_readiness_v1"]["trading_integrity_state"], "READY")
         self.assertEqual(payload["trading_readiness_last_error_v1"]["error_type"], "None")
 
+    def test_legacy_monitor_record_does_not_delay_new_truth_watchdog(self):
+        monitor = self._monitor()
+        monitor.path.write_text('{"scan_monotonic":999999999,"schema_version":"ASTRA_TRADING_HOURS_INTEGRITY_MONITOR_V1"}', encoding="utf-8")
+        result = monitor.run_if_due(runtime_state={"last_execution_trace": {}}, worker_state={})
+        self.assertTrue(result["due"])
+        self.assertIn("truth_production_watchdog", result)
+
+    def test_global_noncrypto_horizon_count_cannot_degrade_crypto(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "position_lane_horizon_recovery_v1": {
+                    "unresolved_horizon_count": 41,
+                    "positions": [{"symbol": "ETH/USD", "asset_type": "crypto", "horizon_status": "RESOLVED"}],
+                },
+            },
+            worker_state={},
+        )
+        self.assertEqual(result["crypto_readiness"], "TECHNICALLY_READY")
+
 
 if __name__ == "__main__":
     unittest.main()
