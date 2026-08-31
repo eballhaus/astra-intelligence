@@ -35,6 +35,17 @@ def _symbol(value: Any) -> str:
     return _text(value).upper()
 
 
+def _symbol_aliases(value: Any, asset: Any) -> set[str]:
+    """Match only the documented compact/internal representation of crypto pairs."""
+    symbol = _symbol(value)
+    if _asset(asset) != "crypto":
+        return {symbol} if symbol else set()
+    compact = symbol.replace("/", "").replace("-", "").replace("_", "")
+    if compact.endswith("USD") and len(compact) > 3:
+        return {symbol, compact, f"{compact[:-3]}/USD"}
+    return {symbol} if symbol else set()
+
+
 def _asset(value: Any) -> str:
     raw = _text(value).lower()
     if raw in {"stock", "equity", "us_equity", "us equity"}:
@@ -217,17 +228,18 @@ def _claims_for_position(
     evidence_rows: Iterable[Mapping[str, Any]],
 ) -> tuple[list[dict[str, Any]], bool]:
     """Return only exact or uniquely current, timestamp-consistent evidence."""
-    symbol, asset = _symbol(broker.get("symbol")), _asset(broker.get("asset_class") or broker.get("asset_type"))
+    asset = _asset(broker.get("asset_class") or broker.get("asset_type"))
+    broker_symbols = _symbol_aliases(broker.get("symbol"), asset)
     broker_ids = _identifiers(broker)
     matching: list[tuple[Mapping[str, Any], str]] = []
     saw_symbol = False
     for evidence in evidence_rows:
-        if _symbol(evidence.get("symbol")) != symbol:
-            continue
-        saw_symbol = True
         evidence_asset = _asset(evidence.get("asset_class") or evidence.get("asset_type"))
         if asset and evidence_asset and asset != evidence_asset:
             continue
+        if not broker_symbols.intersection(_symbol_aliases(evidence.get("symbol"), evidence_asset or asset)):
+            continue
+        saw_symbol = True
         evidence_ids = _identifiers(evidence)
         if broker_ids and evidence_ids and broker_ids.intersection(evidence_ids):
             matching.append((evidence, "EXACT_ID_LINK"))
