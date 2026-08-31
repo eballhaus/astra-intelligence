@@ -79,6 +79,45 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertTrue(evidence["executable_freshness"])
         self.assertEqual(evidence["provider_native_timestamp"], engine._runtime_state["active_equity_fmp_observations_v1"]["observations"]["AAPL"]["provider_native_timestamp"])
 
+    def test_truth_watchdog_classifies_open_position_without_declaring_a_fault(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "position_lane_horizon_recovery_v1": {"positions": [{"symbol": "AAPL", "lane_id": "DAY", "position_id": "p-1"}]},
+                "position_exit_readiness_v1": {"positions": [{"symbol": "AAPL", "lane_id": "DAY"}]},
+            },
+            worker_state={},
+        )
+        day = result["truth_production_watchdog"]["lanes"]["DAY"]
+        self.assertEqual(day["current_open_positions"], 1)
+        self.assertEqual(day["technical_truth_starvation_status"], "NATURAL_OPEN_POSITION")
+        self.assertEqual(result["day_readiness"], "TECHNICALLY_READY")
+
+    def test_truth_without_learning_acknowledgement_is_an_explicit_fault(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "broker_truth_records_v1": [{"lane_id": "DAY", "closed_at": _iso(-5), "learning_acknowledged": False}],
+            },
+            worker_state={},
+        )
+        self.assertEqual(result["strict_truth_integrity"], "FAULT")
+        self.assertEqual(result["truth_production_watchdog"]["lanes"]["DAY"]["technical_truth_starvation_status"], "LEARNING_HANDOFF_FAILURE")
+        self.assertEqual(result["active_faults"][0]["fault_type"], "STRICT_TRUTH_LEARNING_HANDOFF_FAILURE")
+
+    def test_monitor_result_is_persisted_with_worker_state(self):
+        directory = tempfile.TemporaryDirectory(prefix="astra_readiness_persist_")
+        self.addCleanup(directory.cleanup)
+        state_path = os.path.join(directory.name, "state.json")
+        engine = PaperAutopilotEngine(db_path=os.path.join(directory.name, "paper.db"), state_path=state_path, enabled=False)
+        engine._runtime_state["astra_trading_readiness_v1"] = {"trading_integrity_state": "READY"}
+        engine._runtime_state["trading_readiness_last_error_v1"] = {"error_type": "None"}
+        engine._save_state_file()
+        with open(state_path, "r", encoding="utf-8") as handle:
+            payload = __import__("json").load(handle)
+        self.assertEqual(payload["astra_trading_readiness_v1"]["trading_integrity_state"], "READY")
+        self.assertEqual(payload["trading_readiness_last_error_v1"]["error_type"], "None")
+
 
 if __name__ == "__main__":
     unittest.main()

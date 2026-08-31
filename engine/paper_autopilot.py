@@ -2305,6 +2305,8 @@ class PaperAutopilotEngine:
             "equity_risk_envelopes_snapshot_v1": dict(self._runtime_state.get("equity_risk_envelopes_snapshot_v1") or {}),
             "truth_arbitration_v1": dict(self._runtime_state.get("truth_arbitration_v1") or {}),
             "system_integrity_scanner_v1": dict(self._runtime_state.get("system_integrity_scanner_v1") or {}),
+            "astra_trading_readiness_v1": dict(self._runtime_state.get("astra_trading_readiness_v1") or {}),
+            "trading_readiness_last_error_v1": dict(self._runtime_state.get("trading_readiness_last_error_v1") or {}),
             "last_execution_trace": {
                 **dict(self._runtime_state.get("last_execution_trace") or {}),
                 "per_candidate_decision_trace": list(

@@ -847,8 +847,13 @@ class PaperAutopilotWorker:
             _refresh_alpaca_ws_allocation()
             return {"status": "RECONCILED_EXISTING_SHARED_CONNECTION", "provider_calls_added": 0, "broker_actions_added": 0}
 
+        runtime = getattr(self.autopilot, "_runtime_state", {})
+        monitor_runtime = dict(runtime)
+        # The canonical truth registry is bounded by its existing loader.  The
+        # monitor reads it only to verify truth-to-learning liveness.
+        monitor_runtime["broker_truth_records_v1"] = self._bounded_broker_truth_rows_v1(runtime)
         result = self.trading_readiness.run_if_due(
-            runtime_state=getattr(self.autopilot, "_runtime_state", {}),
+            runtime_state=monitor_runtime,
             worker_state=read_snapshot(),
             actions={
                 "REBUILD_CANONICAL_DISCOVERY_STATE": rebuild_discovery,
@@ -856,7 +861,8 @@ class PaperAutopilotWorker:
                 "RECONCILE_WS_SUBSCRIPTIONS": reconcile_ws,
             },
         )
-        self.autopilot._runtime_state["astra_trading_readiness_v1"] = dict(result)
+        runtime["astra_trading_readiness_v1"] = dict(result)
+        runtime["trading_readiness_last_error_v1"] = {}
         return result
 
     def _bounded_cycle(self) -> None:
@@ -956,8 +962,19 @@ class PaperAutopilotWorker:
                 _refresh_alpaca_ws_allocation()
                 self._run_trading_readiness_v1()
                 self.autopilot._save_state_file()
-            except Exception:
-                pass
+            except Exception as exc:
+                # Preserve a bounded diagnostic rather than silently losing a
+                # readiness check. This never changes trading behavior.
+                self.autopilot._runtime_state["trading_readiness_last_error_v1"] = {
+                    "at": utc_now(),
+                    "component": "PaperAutopilotWorker.post_cycle_readiness",
+                    "error_type": type(exc).__name__,
+                    "message": str(exc)[:160],
+                }
+                try:
+                    self.autopilot._save_state_file()
+                except Exception:
+                    pass
             elapsed = time.monotonic() - started
             trace = dict(getattr(self.autopilot, "_runtime_state", {}).get("last_execution_trace") or {})
             market = dict((result.get("legacy_swing_observation") or {}).get("market_activity") or {})
