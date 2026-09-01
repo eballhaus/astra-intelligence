@@ -214,3 +214,15 @@ class ContinuousSystemIntegrityScannerTests(unittest.TestCase):
         self.assertTrue(cortex["cross_layer_readiness_consistency_v1"]["all_lanes_technically_ready"])
         self.assertTrue(cortex["active_exit_blockers"] or cortex["active_truth_blockers"])
         self.assertTrue(cortex["natural_evidence_pending"])
+
+    def test_cycle_failure_is_reported_as_active_infrastructure_without_relaxing_governance(self):
+        payload = self._scan(
+            continuous_governance={"invariants": [{
+                "invariant_id": "CYCLE_WITHIN_BOUNDS", "state": "FAIL",
+                "owner": "astra_runtime_governance_v1",
+                "exact_blocker": "cycle exceeded limit or failed safe",
+                "observed_value": 30.0,
+            }]},
+        )
+        self.assertTrue(payload["cortex_summary"]["active_infrastructure_blockers"])
+        self.assertEqual(payload["cortex_summary"]["system_integrity_summary"], "CRITICAL")

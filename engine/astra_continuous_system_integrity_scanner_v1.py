@@ -230,6 +230,7 @@ class ContinuousSystemIntegrityScannerV1:
         critical_invariants = {
             "CANONICAL_WORKER_ABSENT", "WORKER_HEARTBEAT_STALE",
             "DAY_POSITION_HORIZON_BREACH", "LOSS_THRESHOLD_BREACH_NOT_EXIT_READY",
+            "CYCLE_WITHIN_BOUNDS",
         }
         for invariant in list(governance.get("invariants") or [])[:max_rows]:
             if not isinstance(invariant, dict):
@@ -614,7 +615,10 @@ class ContinuousSystemIntegrityScannerV1:
                          "state": "RECURRENT" if prior and prior.get("state") == "RESOLVED" else "OPEN", "consistent_observations": 0})
             known[str(item["root_cause_id"])] = item
         for key, item in known.items():
-            if key in active or item.get("state") == "RESOLVED":
+            if key in active:
+                continue
+            if item.get("state") == "RESOLVED":
+                item.setdefault("resolved_at", item.get("last_detected_at") or now)
                 continue
             item["consistent_observations"] = _number(item.get("consistent_observations")) + 1
             item["last_detected_at"] = now
