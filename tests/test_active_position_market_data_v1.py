@@ -50,6 +50,26 @@ class AlpacaWSMonitorTests(unittest.TestCase):
         monitor._read_messages(QuietConnection())
         self.assertEqual(monitor.status()["stats"]["errors"], 0)
 
+    def test_reconnect_storm_is_unhealthy_and_reconnect_request_is_bounded(self):
+        class Connection:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        monitor = AlpacaWSMonitor()
+        connection = Connection()
+        monitor._connection = connection
+        monitor._desired_symbols = {"AAPL"}
+        monitor._subscribed_symbols = {"AAPL"}
+        monitor._stats.update({"errors": 8, "reconnects": 8, "messages_received": 0})
+        self.assertEqual(monitor.status()["transport_health"], "UNHEALTHY")
+        result = monitor.request_reconnect()
+        self.assertTrue(connection.closed)
+        self.assertEqual(result["provider_calls_added"], 0)
+        self.assertEqual(result["broker_actions_added"], 0)
+
 
 class ActiveEquityFMPSupplementTests(unittest.TestCase):
     def _engine(self) -> PaperAutopilotEngine:

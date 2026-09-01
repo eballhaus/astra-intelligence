@@ -57,6 +57,44 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(result["provider_calls_used"], 0)
         self.assertEqual(result["broker_actions_used"], 0)
 
+    def test_exact_management_timestamp_blocker_cannot_report_ready(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "active_equity_fmp_observations_v1": {"observations": {"AAPL": {"provider_native_timestamp": _iso(-1)}}},
+                "alpaca_ws_active_position_monitor_v1": {"subscribed_symbols": ["AAPL"]},
+                "loss_containment_state_v1": {
+                    "decisions": {"AAPL": {"symbol": "AAPL", "exact_blockers": ["MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE"]}},
+                },
+            },
+            worker_state={},
+        )
+        self.assertEqual(result["position_management_integrity"], "FAULT")
+        self.assertNotEqual(result["trading_integrity_state"], "READY")
+
+    def test_ws_reconnect_storm_cannot_report_ready(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "active_equity_fmp_observations_v1": {"observations": {"AAPL": {"provider_native_timestamp": _iso(-1)}}},
+                "alpaca_ws_active_position_monitor_v1": {
+                    "subscribed_symbols": ["AAPL"],
+                    "stats": {"errors": 8, "reconnects": 8, "messages_received": 0, "last_error": "no close frame received or sent"},
+                },
+            },
+            worker_state={},
+        )
+        self.assertEqual(result["active_faults"][0]["fault_type"], "WS_TRANSPORT_UNHEALTHY")
+        self.assertNotEqual(result["trading_integrity_state"], "READY")
+
+    def test_backend_health_failure_cannot_report_ready(self):
+        result = self._monitor().run_if_due(
+            runtime_state={"last_execution_trace": {}},
+            worker_state={"resource": {"backend_health_latency_ms": None}},
+        )
+        self.assertEqual(result["active_faults"][0]["fault_type"], "BACKEND_UNHEALTHY")
+        self.assertNotEqual(result["trading_integrity_state"], "READY")
+
     def test_alias_matched_observation_preserves_native_timestamp(self):
         directory = tempfile.TemporaryDirectory(prefix="astra_alias_")
         self.addCleanup(directory.cleanup)

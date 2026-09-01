@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 from engine.astra_canonical_market_timestamp_v1 import canonical_market_timestamp_v1
 from engine.astra_loss_containment_engine_v1 import evaluate_position_loss_containment_v1
@@ -69,6 +70,35 @@ class MarketObservationTimestampHandoffTests(unittest.TestCase):
         self.assertEqual(quote["retrieval_timestamp"], quote["receive_timestamp"])
         self.assertTrue(canonical_market_timestamp_v1(quote, source_type="QUOTE", max_age_seconds=20)["executable_freshness"])
         self.assertEqual(engine._open_position_review_quote_v1({"symbol": "AAPL", "asset_type": "stock"}, {}, quotes), quote)
+
+    def test_profit_management_replaces_missing_broker_timestamp_from_fmp_observation(self):
+        engine = self._engine()
+        native_timestamp = _iso(-2)
+        engine._runtime_state["position_lane_horizon_recovery_v1"] = {
+            "positions": [{"symbol": "AAPL", "asset_type": "stock", "position_id": "position-a", "lane_id": "DAY"}],
+        }
+        engine._runtime_state["active_equity_fmp_observations_v1"] = {
+            "observations": {
+                "AAPL": {
+                    "symbol": "AAPL",
+                    "canonical_position_id": "position-a",
+                    "provider": "FMP",
+                    "provider_native_timestamp": native_timestamp,
+                    "receive_timestamp": _iso(),
+                    "price": 100.0,
+                }
+            }
+        }
+        with patch("engine.paper_autopilot.run_profit_protection_review_v1", return_value={"decisions": {}}) as review:
+            engine._profit_protection_review_phase(
+                open_rows=[{"symbol": "AAPL", "asset_type": "stock", "position_id": "position-a", "lane_id": "DAY"}],
+                broker_position_by_symbol={"AAPL": {"symbol": "AAPL", "current_price": 100.0, "provider_native_timestamp": None}},
+                broker_fetch_succeeded=True,
+            )
+        broker_row = review.call_args.kwargs["broker_positions"]["AAPL"]
+        self.assertEqual(broker_row["provider_native_timestamp"], native_timestamp)
+        self.assertEqual(broker_row["provider_used"], "FMP")
+        self.assertNotEqual(broker_row["retrieval_timestamp"], native_timestamp)
 
     def test_fmp_observation_accepts_canonical_position_id_without_legacy_lifecycle_id(self):
         engine = self._engine()

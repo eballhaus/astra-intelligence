@@ -238,12 +238,16 @@ class AlpacaWSMonitor:
                     self._stats["last_connected_utc"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
                 self._send(connection, {"action": "auth", "key": key, "secret": secret})
                 self._sync_subscriptions(connection)
-                retry_seconds = 1.0
                 while not self._stop.is_set():
                     if self._wake.is_set():
                         self._wake.clear()
                         self._sync_subscriptions(connection)
+                    with self._lock:
+                        messages_before = int(self._stats.get("messages_received") or 0)
                     self._read_messages(connection)
+                    with self._lock:
+                        if int(self._stats.get("messages_received") or 0) > messages_before:
+                            retry_seconds = 1.0
             except Exception as exc:
                 with self._lock:
                     self._stats["errors"] += 1
@@ -282,6 +286,29 @@ class AlpacaWSMonitor:
             subscribed = sorted(self._subscribed_symbols)
             stats = dict(self._stats)
             priorities = {"open_positions": len(self._open_symbols), "near_entry": len(self._near_entry_symbols)}
+        now = time.time()
+        connected_at = _utc_epoch(stats.get("last_connected_utc"))
+        last_message_at = _utc_epoch(stats.get("last_message_utc"))
+        connected_age = max(0.0, now - connected_at) if connected_at is not None else None
+        message_age = max(0.0, now - last_message_at) if last_message_at is not None else None
+        stale_stream = bool(desired and connected and (
+            (last_message_at is None and connected_age is not None and connected_age > 30.0)
+            or (message_age is not None and message_age > 60.0)
+        ))
+        reconnect_storm = bool(
+            desired
+            and int(stats.get("errors") or 0) >= 3
+            and int(stats.get("reconnects") or 0) >= 3
+            and int(stats.get("messages_received") or 0) == 0
+        )
+        transport_health = "IDLE"
+        if desired:
+            if reconnect_storm or not connected:
+                transport_health = "UNHEALTHY"
+            elif stale_stream:
+                transport_health = "DEGRADED"
+            else:
+                transport_health = "HEALTHY"
         return {
             "enabled": _enabled("ASTRA_ALPACA_WS_ENABLED", False),
             "running": bool(connected),
@@ -294,6 +321,10 @@ class AlpacaWSMonitor:
             "subscribed_symbols": subscribed,
             "desired_symbols": desired,
             "priority_classes": priorities,
+            "transport_health": transport_health,
+            "stale_stream": stale_stream,
+            "connected_age_seconds": round(connected_age, 3) if connected_age is not None else None,
+            "last_message_age_seconds": round(message_age, 3) if message_age is not None else None,
             "stats": stats,
         }
 
@@ -313,6 +344,23 @@ class AlpacaWSMonitor:
         if restart:
             self._ensure_thread()
         return {"ok": True, "restart_requested": bool(restart), "connection_count": self.status()["connection_count"]}
+
+    def request_reconnect(self) -> dict[str, Any]:
+        """Request one bounded reconnect on the existing monitor thread."""
+        with self._lock:
+            connection = self._connection
+        self._wake.set()
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:
+                pass
+        return {
+            "status": "RECONNECT_REQUESTED",
+            "connection_count": self.status()["connection_count"],
+            "provider_calls_added": 0,
+            "broker_actions_added": 0,
+        }
 
 
 ALPACA_WS_MONITOR = AlpacaWSMonitor()

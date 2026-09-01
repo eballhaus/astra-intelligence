@@ -270,6 +270,7 @@ class AstraTradingReadinessV1:
         trace = _dict(runtime.get("last_execution_trace"))
         market = _dict(_dict(trace.get("legacy_swing_observation")).get("market_activity"))
         source_state = _dict(runtime.get("equity_discovery_rebuild_v1"))
+        worker_state = _dict(runtime.get("_worker_state"))
         issues: list[dict[str, Any]] = []
         source_blocker = str(trace.get("final_blocker_reason") or trace.get("cycle_reason") or "")
         equity_source_missing = (
@@ -305,12 +306,58 @@ class AstraTradingReadinessV1:
                 "evidence": ",".join(missing_ws[:12]),
             })
 
-        loss = _dict(runtime.get("loss_containment_state_v1"))
-        decisions = _dict(loss.get("decisions"))
-        timestamp_failures = [
-            row for row in decisions.values() if isinstance(row, Mapping)
-            and "MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE" in str(row.get("first_causal_blocker") or row.get("reason") or "")
-        ]
+        ws_stats = _dict(ws.get("stats"))
+        ws_transport = _text(ws.get("transport_health")).upper()
+        ws_storm = (
+            int(ws_stats.get("errors") or 0) >= 3
+            and int(ws_stats.get("reconnects") or 0) >= 3
+            and int(ws_stats.get("messages_received") or 0) == 0
+        )
+        if active_symbols and (ws_transport == "UNHEALTHY" or ws_storm):
+            issues.append({
+                "fault_type": "WS_TRANSPORT_UNHEALTHY",
+                "component": "AlpacaWS.transport",
+                "lanes": ["DAY", "SCALP", "SWING"],
+                "severity": "HIGH",
+                "repair_action": "RECONNECT_ALPACA_WS",
+                "evidence": _text(ws_stats.get("last_error")) or ws_transport or "reconnect_storm",
+            })
+
+        resource = _dict(worker_state.get("resource"))
+        backend_latency_present = "backend_health_latency_ms" in resource
+        backend_unhealthy = (
+            (backend_latency_present and resource.get("backend_health_latency_ms") is None)
+            or worker_state.get("backend_health") is False
+            or worker_state.get("backend_http_status") not in (None, 200, "200")
+        )
+        if backend_unhealthy:
+            issues.append({
+                "fault_type": "BACKEND_UNHEALTHY",
+                "component": "backend_health_probe",
+                "lanes": list(LANES),
+                "severity": "HIGH",
+                "repair_action": "",
+                "evidence": "backend_health_probe_failed",
+            })
+
+        decision_sets = (
+            _dict(_dict(runtime.get("loss_containment_state_v1")).get("decisions")),
+            _dict(_dict(runtime.get("profit_protection_state_v1")).get("decisions")),
+        )
+        timestamp_failures = []
+        for decisions in decision_sets:
+            for row in decisions.values():
+                if not isinstance(row, Mapping):
+                    continue
+                symbol = _text(row.get("symbol")).upper()
+                if active_symbols and symbol not in active_symbols:
+                    continue
+                blockers = {str(blocker) for blocker in (row.get("exact_blockers") or [])}
+                if (
+                    "MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE" in str(row.get("first_causal_blocker") or row.get("reason") or "")
+                    or "MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE" in blockers
+                ):
+                    timestamp_failures.append(row)
         if active_symbols and timestamp_failures:
             issues.append({
                 "fault_type": "PRODUCER_FRESH_CONSUMER_UNAVAILABLE",
@@ -415,7 +462,9 @@ class AstraTradingReadinessV1:
             return {**previous, "due": False, "provider_calls_used": 0, "broker_actions_used": 0}
 
         actions = dict(actions or {})
-        issues = self._issues(runtime_state, session)
+        observed_runtime = dict(runtime_state)
+        observed_runtime["_worker_state"] = dict(worker_state or {})
+        issues = self._issues(observed_runtime, session)
         previous_faults = _dict(previous.get("faults"))
         fault_rows: dict[str, dict[str, Any]] = {}
         recoveries: list[dict[str, Any]] = []
@@ -451,7 +500,7 @@ class AstraTradingReadinessV1:
         # Recovery is bounded to one action per fault. Re-evaluate committed
         # runtime state once so a local cache/subscription repair is never
         # reported as healthy without evidence.
-        remaining_issues = self._issues(runtime_state, session) if recoveries else issues
+        remaining_issues = self._issues(observed_runtime, session) if recoveries else issues
         remaining_keys = {
             f"{row['fault_type']}:{row['component']}" for row in remaining_issues
         }

@@ -851,6 +851,13 @@ class PaperAutopilotWorker:
             _refresh_alpaca_ws_allocation(force_reconcile=True)
             return {"status": "RECONCILED_EXISTING_SHARED_CONNECTION", "provider_calls_added": 0, "broker_actions_added": 0}
 
+        def reconnect_ws() -> dict[str, Any]:
+            from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
+            reconnect = getattr(ALPACA_WS_MONITOR, "request_reconnect", None)
+            if not callable(reconnect):
+                return {"status": "RECONNECT_UNAVAILABLE", "provider_calls_added": 0, "broker_actions_added": 0}
+            return dict(reconnect() or {})
+
         def reload_canonical_identity() -> dict[str, Any]:
             # Reuse only the already broker-reconciled snapshot.  This does
             # not query a provider or broker, infer a horizon, or alter a
@@ -877,6 +884,11 @@ class PaperAutopilotWorker:
             }
 
         runtime = getattr(self.autopilot, "_runtime_state", {})
+        try:
+            from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
+            runtime["alpaca_ws_active_position_monitor_v1"] = dict(ALPACA_WS_MONITOR.status() or {})
+        except Exception:
+            pass
         monitor_runtime = dict(runtime)
         # The canonical truth registry is bounded by its existing loader.  The
         # monitor reads it only to verify truth-to-learning liveness.
@@ -891,6 +903,7 @@ class PaperAutopilotWorker:
                 "REBUILD_CANONICAL_DISCOVERY_STATE": rebuild_discovery,
                 "REMATERIALIZE_MANAGEMENT_EVIDENCE": rematerialize_management,
                 "RECONCILE_WS_SUBSCRIPTIONS": reconcile_ws,
+                "RECONNECT_ALPACA_WS": reconnect_ws,
                 "RELOAD_CANONICAL_IDENTITY_STATE": reload_canonical_identity,
             },
         )

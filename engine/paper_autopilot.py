@@ -13996,9 +13996,12 @@ class PaperAutopilotEngine:
             # Preserve the broker mark as the price source. This supplemental
             # metadata only proves when the independently observed market data
             # occurred and when Astra received it.
-            broker_row.setdefault("provider_native_timestamp", observation.get("provider_native_timestamp"))
-            broker_row.setdefault("retrieval_timestamp", observation.get("receive_timestamp"))
-            broker_row.setdefault("provider_used", observation.get("provider"))
+            if observation.get("provider_native_timestamp") and not broker_row.get("provider_native_timestamp"):
+                broker_row["provider_native_timestamp"] = observation.get("provider_native_timestamp")
+            if observation.get("receive_timestamp") and not broker_row.get("retrieval_timestamp"):
+                broker_row["retrieval_timestamp"] = observation.get("receive_timestamp")
+            if observation.get("provider") and not broker_row.get("provider_used"):
+                broker_row["provider_used"] = observation.get("provider")
             broker_positions[str(symbol or "").upper().strip()] = broker_row
 
         lc_state = self._runtime_state.get("loss_containment_state_v1") or {}
@@ -14489,8 +14492,19 @@ class PaperAutopilotEngine:
                 try:
                     self._note_worker_progress("loss_containment_review")
                     broker_position_by_symbol = dict(broker_snapshot.get("broker_position_by_symbol") or {})
+                    partial_open_rows = list(self._fetch_open_positions() or [])
+                    latest_price_by_symbol_partial = self._loss_containment_quote_evidence(
+                        broker_position_by_symbol,
+                        managed_rows_by_symbol={
+                            str((row or {}).get("symbol") or "").upper().strip(): dict(row or {})
+                            for row in partial_open_rows
+                            if str((row or {}).get("symbol") or "").strip()
+                        },
+                    )
                     loss_containment_review_partial = self._loss_containment_review_phase(
+                        open_rows=partial_open_rows,
                         broker_position_by_symbol=broker_position_by_symbol,
+                        latest_price_by_symbol=latest_price_by_symbol_partial,
                         max_positions=100,
                         broker_fetch_succeeded=bool(broker_snapshot.get("broker_positions_fetch_ok", False)),
                     )
