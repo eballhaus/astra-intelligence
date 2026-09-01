@@ -13,6 +13,41 @@ from zoneinfo import ZoneInfo
 VERSION = "ASTRA_TRADING_HOURS_INTEGRITY_MONITOR_V1"
 RECOVERY_VERSION = "ASTRA_SAFE_RUNTIME_RECOVERY_V1"
 LANES = ("DAY", "SCALP", "SWING", "CRYPTO")
+TRUTH_PATH_STAGES = (
+    "DISCOVERY",
+    "CANDIDATE",
+    "SHORTLIST",
+    "FINALIST",
+    "QUALIFIED",
+    "ORDER_READY",
+    "ENTRY_SUBMITTED",
+    "ENTRY_FILLED",
+    "OBSERVATION",
+    "MANAGEMENT",
+    "NATURAL_EXIT",
+    "EXIT_READINESS",
+    "EXIT_AUTHORITY",
+    "EXIT_FILLED",
+    "RECONCILIATION",
+    "STRICT_TRUTH",
+    "LEARNING",
+)
+_MATRIX_STAGE_MAP = {
+    "market_data": "DISCOVERY",
+    "candidate_discovery": "CANDIDATE",
+    "candidate_freshness": "CANDIDATE",
+    "eligibility": "QUALIFIED",
+    "order_ready": "ORDER_READY",
+    "paper_order": "ENTRY_SUBMITTED",
+    "entry_fill": "ENTRY_FILLED",
+    "position_monitoring": "MANAGEMENT",
+    "exit_readiness": "EXIT_READINESS",
+    "exit_order": "EXIT_AUTHORITY",
+    "exit_fill": "EXIT_FILLED",
+    "broker_reconciliation": "RECONCILIATION",
+    "complete_broker_truth": "STRICT_TRUTH",
+    "learning_consumption": "LEARNING",
+}
 _ET = ZoneInfo("America/New_York")
 
 
@@ -39,6 +74,15 @@ def _lane(value: Any) -> str:
 
 def _truthy(value: Any) -> bool:
     return value is True or str(value or "").strip().lower() in {"1", "true", "yes", "ready", "qualified", "selected", "filled"}
+
+
+def _event_time(*values: Any) -> str:
+    """Return an existing event timestamp; never substitute monitor time."""
+    for value in values:
+        text = _text(value)
+        if text:
+            return text
+    return ""
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -125,14 +169,110 @@ class AstraTradingReadinessV1:
     def _lane_from_row(row: Mapping[str, Any]) -> str:
         return _lane(row.get("lane_id") or row.get("lane") or row.get("horizon_lane") or row.get("strategy_lane"))
 
+    def _completion_matrix(self, runtime: Mapping[str, Any]) -> dict[str, Any]:
+        matrix = _dict(runtime.get("multilane_completion_matrix"))
+        if not matrix:
+            matrix = _dict(runtime.get("astra_multilane_completion_matrix_v1"))
+        if not matrix:
+            matrix = _read(self.state_dir / "astra_multilane_completion_matrix_v1.json")
+        return matrix
+
+    @staticmethod
+    def _stage_record(
+        status: str = "NOT_PROVEN",
+        *,
+        blocker: str = "",
+        source: str = "",
+        observed_at: str = "",
+    ) -> dict[str, str]:
+        return {
+            "status": status,
+            "blocker": blocker,
+            "source": source,
+            "observed_at": observed_at,
+        }
+
+    @staticmethod
+    def _matrix_stage_record(info: Mapping[str, Any], matrix_time: str) -> dict[str, str]:
+        status = _text(info.get("status") or info.get("status_classification")).upper()
+        blocker = _text(
+            info.get("first_bad_handoff")
+            or info.get("upstream_blocker")
+            or info.get("insufficient_evidence_reason")
+            or info.get("legitimate_waiting_reason")
+        )
+        if status in {"PASS", "READY", "COMPLETED", "CURRENT"}:
+            mapped = "PROVEN_READY"
+        elif status in {"CURRENTLY_ACTIVE", "ACTIVE", "IN_PROGRESS"}:
+            mapped = "CURRENTLY_ACTIVE"
+        elif status in {"LEGITIMATE_WAITING", "LEGITIMATE_WAITING_STATE", "NATURAL_WAITING", "NATURAL_WAIT"}:
+            mapped = "NATURAL_WAIT"
+        elif status.startswith("FAIL") or status in {"ERROR", "TECHNICAL_BLOCKED"}:
+            mapped = "TECHNICAL_BLOCKED"
+        elif status == "INSUFFICIENT_EVIDENCE":
+            mapped = "NATURAL_WAIT" if blocker else "NOT_PROVEN"
+        else:
+            mapped = "NOT_PROVEN"
+        return AstraTradingReadinessV1._stage_record(
+            mapped,
+            blocker=blocker,
+            source="astra_multilane_completion_matrix_v1",
+            observed_at=matrix_time,
+        )
+
+    @staticmethod
+    def _set_stage(
+        stages: dict[str, dict[str, str]],
+        stage: str,
+        status: str,
+        *,
+        blocker: str = "",
+        source: str = "",
+        observed_at: str = "",
+    ) -> None:
+        if stage in stages:
+            stages[stage] = AstraTradingReadinessV1._stage_record(
+                status,
+                blocker=blocker,
+                source=source,
+                observed_at=observed_at,
+            )
+
     def _stage_ledger(self, runtime: Mapping[str, Any], previous: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
-        """Update only observed stages; unknown data never becomes synthetic success."""
+        """Record bounded stage evidence without inventing event timestamps."""
         prior = _dict(previous.get("truth_production_watchdog"))
         prior_lanes = _dict(prior.get("lanes"))
-        generated_at = _now()
+        trace = _dict(runtime.get("last_execution_trace"))
+        partial = _dict(_dict(runtime.get("last_cycle_summary")).get("partial_candidate_microphase"))
+        trace_time = _event_time(
+            trace.get("last_autopilot_cycle_at"),
+            trace.get("generated_at"),
+            runtime.get("last_cycle_utc"),
+            runtime.get("last_full_cycle_at"),
+            runtime.get("worker_cycle_completed_at"),
+        )
+        partial_time = _event_time(partial.get("completed_at"), partial.get("generated_at"), trace_time)
+        matrix = self._completion_matrix(runtime)
+        matrix_time = _event_time(matrix.get("generated_at"))
         lanes: dict[str, dict[str, Any]] = {}
         for lane in LANES:
             old = _dict(prior_lanes.get(lane))
+            # Records written before the source-timestamp contract cannot be
+            # trusted as event history because the old monitor used check time.
+            if not isinstance(old.get("stage_status"), Mapping):
+                old = {}
+            stage_status = {stage: self._stage_record() for stage in TRUTH_PATH_STAGES}
+            lane_matrix = _dict(_dict(matrix.get("lanes")).get(lane))
+            matrix_stages = _dict(lane_matrix.get("stages"))
+            for matrix_stage, watchdog_stage in _MATRIX_STAGE_MAP.items():
+                info = _dict(matrix_stages.get(matrix_stage))
+                if info:
+                    stage_status[watchdog_stage] = self._matrix_stage_record(info, matrix_time)
+            matrix_blocked = [
+                (stage, item)
+                for stage, item in stage_status.items()
+                if item.get("status") == "TECHNICAL_BLOCKED"
+            ]
             lanes[lane] = {
                 "last_discovery_time": _text(old.get("last_discovery_time")),
                 "last_candidate_time": _text(old.get("last_candidate_time")),
@@ -149,79 +289,150 @@ class AstraTradingReadinessV1:
                 "current_open_positions": 0,
                 "technical_readiness": "TECHNICALLY_READY",
                 "current_earliest_blocked_stage": "",
+                "current_earliest_blocker": "",
                 "technical_no_trade_status": "NATURAL_NO_TRADE_OR_ACTIVITY_PRESENT",
                 "technical_truth_starvation_status": "NATURAL_NO_QUALIFYING_ENTRY",
+                "truth_starvation_duration_seconds": old.get("truth_starvation_duration_seconds"),
+                "stage_status": stage_status,
+                "matrix_earliest_blocked_stage": matrix_blocked[0][0] if matrix_blocked else "",
+                "matrix_earliest_blocker": matrix_blocked[0][1].get("blocker", "") if matrix_blocked else "",
             }
 
-        trace = _dict(runtime.get("last_execution_trace"))
         decisions = _rows(trace.get("per_candidate_decision_trace"))
-        partial = _dict(_dict(runtime.get("last_cycle_summary")).get("partial_candidate_microphase"))
-        target_lane = _lane(partial.get("target_lane"))
+        partial_lane = _lane(partial.get("target_lane"))
         for row in decisions:
-            lane = self._lane_from_row(row) or target_lane
+            lane = self._lane_from_row(row) or partial_lane
             if not lane:
                 continue
             state = lanes[lane]
-            state["last_discovery_time"] = generated_at
-            state["last_candidate_time"] = generated_at
+            observed_at = _event_time(row.get("observed_at"), row.get("timestamp"), row.get("created_at"), trace_time)
+            if observed_at:
+                state["last_discovery_time"] = observed_at
+                state["last_candidate_time"] = observed_at
+                self._set_stage(state["stage_status"], "DISCOVERY", "PROVEN_READY", source="candidate_decision_trace", observed_at=observed_at)
+                self._set_stage(state["stage_status"], "CANDIDATE", "PROVEN_READY", source="candidate_decision_trace", observed_at=observed_at)
+            if _truthy(row.get("shortlisted")) or _truthy(row.get("is_shortlisted")):
+                self._set_stage(state["stage_status"], "SHORTLIST", "PROVEN_READY", source="candidate_decision_trace", observed_at=observed_at)
             if _truthy(row.get("finalist")) or _truthy(row.get("is_finalist")):
-                state["last_finalist_time"] = generated_at
+                if observed_at:
+                    state["last_finalist_time"] = observed_at
+                self._set_stage(state["stage_status"], "FINALIST", "PROVEN_READY", source="candidate_decision_trace", observed_at=observed_at)
             if _truthy(row.get("qualified")) or _truthy(row.get("qualification_passed")):
-                state["last_qualified_time"] = generated_at
+                if observed_at:
+                    state["last_qualified_time"] = observed_at
+                self._set_stage(state["stage_status"], "QUALIFIED", "PROVEN_READY", source="candidate_decision_trace", observed_at=observed_at)
             if _truthy(row.get("order_ready")) or _text(row.get("stage")).upper() == "ORDER_READY":
-                state["last_order_ready_time"] = generated_at
+                if observed_at:
+                    state["last_order_ready_time"] = observed_at
+                self._set_stage(state["stage_status"], "ORDER_READY", "PROVEN_READY", source="candidate_decision_trace", observed_at=observed_at)
+            if _truthy(row.get("selected")) or _truthy(row.get("selected_for_entry")):
+                self._set_stage(state["stage_status"], "ENTRY_SUBMITTED", "CURRENTLY_ACTIVE", source="candidate_decision_trace", observed_at=observed_at)
 
         funnel = _dict(runtime.get("lane_ranked_entry_funnel_v1"))
         for lane in LANES:
             lane_funnel = _dict(funnel.get(lane) or funnel.get(lane.lower()))
             if not lane_funnel:
                 continue
+            funnel_time = _event_time(
+                lane_funnel.get("updated_at"),
+                lane_funnel.get("generated_at"),
+                lane_funnel.get("as_of"),
+                trace_time,
+            )
             if int(lane_funnel.get("discovered") or lane_funnel.get("candidate_count") or 0) > 0:
-                lanes[lane]["last_discovery_time"] = generated_at
-                lanes[lane]["last_candidate_time"] = generated_at
+                if funnel_time:
+                    lanes[lane]["last_discovery_time"] = funnel_time
+                    lanes[lane]["last_candidate_time"] = funnel_time
+                self._set_stage(lanes[lane]["stage_status"], "DISCOVERY", "PROVEN_READY", source="lane_ranked_entry_funnel_v1", observed_at=funnel_time)
+                self._set_stage(lanes[lane]["stage_status"], "CANDIDATE", "PROVEN_READY", source="lane_ranked_entry_funnel_v1", observed_at=funnel_time)
+            if int(lane_funnel.get("shortlisted") or lane_funnel.get("shortlist_count") or 0) > 0:
+                self._set_stage(lanes[lane]["stage_status"], "SHORTLIST", "PROVEN_READY", source="lane_ranked_entry_funnel_v1", observed_at=funnel_time)
             if int(lane_funnel.get("finalists") or lane_funnel.get("finalist_count") or 0) > 0:
-                lanes[lane]["last_finalist_time"] = generated_at
+                if funnel_time:
+                    lanes[lane]["last_finalist_time"] = funnel_time
+                self._set_stage(lanes[lane]["stage_status"], "FINALIST", "PROVEN_READY", source="lane_ranked_entry_funnel_v1", observed_at=funnel_time)
             if int(lane_funnel.get("qualified") or lane_funnel.get("qualified_count") or 0) > 0:
-                lanes[lane]["last_qualified_time"] = generated_at
+                if funnel_time:
+                    lanes[lane]["last_qualified_time"] = funnel_time
+                self._set_stage(lanes[lane]["stage_status"], "QUALIFIED", "PROVEN_READY", source="lane_ranked_entry_funnel_v1", observed_at=funnel_time)
+            if int(lane_funnel.get("order_ready") or lane_funnel.get("order_ready_count") or 0) > 0:
+                if funnel_time:
+                    lanes[lane]["last_order_ready_time"] = funnel_time
+                self._set_stage(lanes[lane]["stage_status"], "ORDER_READY", "PROVEN_READY", source="lane_ranked_entry_funnel_v1", observed_at=funnel_time)
+
+        partial_count = int(partial.get("candidates_evaluated") or partial.get("candidate_rows_loaded") or 0)
+        if partial_lane and partial.get("microphase_completed") and partial_count > 0:
+            if partial_time:
+                lanes[partial_lane]["last_discovery_time"] = partial_time
+                lanes[partial_lane]["last_candidate_time"] = partial_time
+            self._set_stage(lanes[partial_lane]["stage_status"], "DISCOVERY", "PROVEN_READY", source="partial_candidate_microphase", observed_at=partial_time)
+            self._set_stage(lanes[partial_lane]["stage_status"], "CANDIDATE", "PROVEN_READY", source="partial_candidate_microphase", observed_at=partial_time)
 
         positions = self._position_rows(runtime)
         for row in positions:
             lane = self._lane_from_row(row)
-            if lane:
-                lanes[lane]["current_open_positions"] += 1
-                lanes[lane]["last_management_evaluation_time"] = generated_at
-                lanes[lane]["last_exit_evaluation_time"] = generated_at
+            if not lane:
+                continue
+            lanes[lane]["current_open_positions"] += 1
+            observed_at = _event_time(
+                row.get("management_evaluation_time"),
+                row.get("evaluated_at"),
+                row.get("updated_at"),
+                row.get("as_of"),
+                trace_time,
+            )
+            if observed_at:
+                lanes[lane]["last_management_evaluation_time"] = observed_at
+                lanes[lane]["last_exit_evaluation_time"] = observed_at
+            self._set_stage(lanes[lane]["stage_status"], "ENTRY_FILLED", "PROVEN_READY", source="canonical_position_state", observed_at=observed_at)
+            self._set_stage(lanes[lane]["stage_status"], "NATURAL_EXIT", "NATURAL_WAIT", blocker="open_position_wait", source="canonical_position_state", observed_at=observed_at)
 
         readiness = _dict(runtime.get("position_exit_readiness_v1"))
         advisory = _dict(runtime.get("unified_position_advisory_v1"))
         for row in _rows(readiness.get("positions")) + _rows(advisory.get("positions")):
             lane = self._lane_from_row(row)
-            if lane:
-                lanes[lane]["last_management_evaluation_time"] = generated_at
-                lanes[lane]["last_exit_evaluation_time"] = generated_at
+            if not lane:
+                continue
+            observed_at = _event_time(
+                row.get("evaluated_at"),
+                row.get("evaluation_time"),
+                row.get("updated_at"),
+                row.get("generated_at"),
+                trace_time,
+            )
+            if observed_at:
+                lanes[lane]["last_management_evaluation_time"] = observed_at
+                lanes[lane]["last_exit_evaluation_time"] = observed_at
+            self._set_stage(lanes[lane]["stage_status"], "OBSERVATION", "CURRENTLY_ACTIVE", source="position_exit_readiness_v1", observed_at=observed_at)
+            self._set_stage(lanes[lane]["stage_status"], "MANAGEMENT", "CURRENTLY_ACTIVE", source="position_exit_readiness_v1", observed_at=observed_at)
+            self._set_stage(lanes[lane]["stage_status"], "EXIT_READINESS", "CURRENTLY_ACTIVE", source="position_exit_readiness_v1", observed_at=observed_at)
 
         capacity = _dict(runtime.get("last_evidence_capacity_snapshot"))
-        reconciliation_at = _text(capacity.get("generated_at") or capacity.get("reconciled_at"))
+        reconciliation_at = _event_time(capacity.get("generated_at"), capacity.get("reconciled_at"))
         if reconciliation_at:
             for lane in LANES:
                 lanes[lane]["last_reconciliation_time"] = reconciliation_at
+                self._set_stage(lanes[lane]["stage_status"], "RECONCILIATION", "PROVEN_READY", source="capacity_reconciliation", observed_at=reconciliation_at)
 
         truth_rows = _rows(runtime.get("broker_truth_records_v1"))
         for row in truth_rows:
             lane = self._lane_from_row(row)
             if not lane:
                 continue
-            observed_at = _text(row.get("closed_at") or row.get("exit_filled_at") or row.get("created_at") or generated_at)
-            lanes[lane]["last_fill_time"] = observed_at
-            lanes[lane]["last_exit_time"] = observed_at
-            lanes[lane]["last_strict_truth_time"] = observed_at
+            observed_at = _event_time(row.get("closed_at"), row.get("exit_filled_at"), row.get("created_at"))
+            if observed_at:
+                lanes[lane]["last_fill_time"] = observed_at
+                lanes[lane]["last_exit_time"] = observed_at
+                lanes[lane]["last_strict_truth_time"] = observed_at
+            self._set_stage(lanes[lane]["stage_status"], "EXIT_FILLED", "PROVEN_READY", source="broker_truth_records_v1", observed_at=observed_at)
+            self._set_stage(lanes[lane]["stage_status"], "RECONCILIATION", "PROVEN_READY", source="broker_truth_records_v1", observed_at=observed_at)
+            self._set_stage(lanes[lane]["stage_status"], "STRICT_TRUTH", "PROVEN_READY", source="broker_truth_records_v1", observed_at=observed_at)
 
         operating_health = _dict(runtime.get("astra_operating_health_contract_v1"))
         learning_ledger = _rows(operating_health.get("truth_to_learning_ledger"))
         if learning_ledger:
-            # The operating-health contract joins truths to actual learning
-            # records.  Do not treat a truth-row acknowledgement flag as
-            # learning ingestion when that authoritative ledger is present.
+            # A consumed ledger row without an acknowledgement timestamp is
+            # still consumed, but it does not prove when ingestion occurred.
             for lane in LANES:
                 lanes[lane]["last_learning_ingestion_time"] = ""
             for row in learning_ledger:
@@ -229,37 +440,78 @@ class AstraTradingReadinessV1:
                     continue
                 lane = self._lane_from_row(row)
                 if lane:
-                    lanes[lane]["last_learning_ingestion_time"] = _text(
-                        row.get("learning_acknowledgement_time")
-                        or row.get("cortex_acknowledgement_time")
-                        or row.get("governance_acknowledgement_time")
-                        or generated_at
+                    acknowledged_at = _event_time(
+                        row.get("learning_acknowledgement_time"),
+                        row.get("cortex_acknowledgement_time"),
+                        row.get("governance_acknowledgement_time"),
                     )
+                    lanes[lane]["last_learning_ingestion_time"] = acknowledged_at
+                    self._set_stage(lanes[lane]["stage_status"], "LEARNING", "PROVEN_READY", source="truth_to_learning_ledger", observed_at=acknowledged_at)
         else:
             learning_rows = _rows(runtime.get("canonical_lifecycle_lessons_v1"))
             for row in learning_rows:
                 lane = self._lane_from_row(row)
                 if lane:
-                    lanes[lane]["last_learning_ingestion_time"] = _text(row.get("created_at") or row.get("ingested_at") or generated_at)
+                    acknowledged_at = _event_time(row.get("created_at"), row.get("ingested_at"))
+                    lanes[lane]["last_learning_ingestion_time"] = acknowledged_at
+                    self._set_stage(lanes[lane]["stage_status"], "LEARNING", "PROVEN_READY", source="canonical_lifecycle_lessons_v1", observed_at=acknowledged_at)
             for row in truth_rows:
                 lane = self._lane_from_row(row)
                 if lane and _truthy(row.get("learning_acknowledged")):
-                    lanes[lane]["last_learning_ingestion_time"] = _text(row.get("learning_acknowledged_at") or row.get("updated_at") or generated_at)
+                    acknowledged_at = _event_time(row.get("learning_acknowledged_at"), row.get("updated_at"))
+                    lanes[lane]["last_learning_ingestion_time"] = acknowledged_at
+                    self._set_stage(lanes[lane]["stage_status"], "LEARNING", "PROVEN_READY", source="broker_truth_records_v1", observed_at=acknowledged_at)
         return lanes
 
     @staticmethod
     def _truth_starvation_cause(lane: str, stage: Mapping[str, Any], issues: list[dict[str, Any]]) -> tuple[str, str]:
         lane_issues = [row for row in issues if lane in (row.get("lanes") or [])]
-        if any(row["fault_type"] == "STRICT_TRUTH_LEARNING_HANDOFF_FAILURE" for row in lane_issues):
-            return "LEARNING_HANDOFF_FAILURE", "LEARNING"
-        if any(row["fault_type"].startswith("DISCOVERY") for row in lane_issues):
-            return "ENTRY_PIPELINE_TECHNICAL_FAILURE", "DISCOVERY"
-        if any(row["fault_type"] == "PRODUCER_FRESH_CONSUMER_UNAVAILABLE" for row in lane_issues):
-            return "MARKET_OBSERVATION_FAILURE", "MARKET_OBSERVATION"
-        if any(row["fault_type"] == "ACTIVE_POSITION_NOT_STREAMED" for row in lane_issues):
-            return "MARKET_OBSERVATION_FAILURE", "WS_COVERAGE"
-        if any(row["fault_type"].startswith("CRYPTO_") for row in lane_issues):
-            return "POSITION_IDENTITY_FAILURE", "POSITION_IDENTITY"
+        issue_stage_order = {
+            "DISCOVERY": 0,
+            "CANDIDATE": 1,
+            "QUALIFIED": 2,
+            "ORDER_READY": 3,
+            "OBSERVATION": 4,
+            "MANAGEMENT": 5,
+            "EXIT_READINESS": 6,
+            "RECONCILIATION": 7,
+            "STRICT_TRUTH": 8,
+            "LEARNING": 9,
+        }
+        technical_issues = []
+        for issue in lane_issues:
+            fault = _text(issue.get("fault_type")).upper()
+            if fault == "STRICT_TRUTH_LEARNING_HANDOFF_FAILURE":
+                category, issue_stage = "LEARNING_HANDOFF_FAILURE", "LEARNING"
+            elif fault in {"CAUSAL_HANDOFF_LOSS", "RECONCILIATION_FAILURE"}:
+                category, issue_stage = "RECONCILIATION_FAILURE", "RECONCILIATION"
+            elif fault == "PRODUCER_FRESH_CONSUMER_UNAVAILABLE" or fault in {"ACTIVE_POSITION_NOT_STREAMED", "WS_TRANSPORT_UNHEALTHY"}:
+                category, issue_stage = "MARKET_OBSERVATION_FAILURE", "OBSERVATION"
+            elif fault.startswith("CRYPTO_"):
+                category, issue_stage = "POSITION_IDENTITY_FAILURE", "OBSERVATION"
+            elif fault.startswith("DISCOVERY") or fault in {"BACKEND_UNHEALTHY", "ENTRY_FUNNEL_STAGE_BLOCKED"}:
+                matrix_stage = _text(issue.get("component")).rsplit(".", 1)[-1]
+                issue_stage = _MATRIX_STAGE_MAP.get(matrix_stage, "QUALIFIED") if fault == "ENTRY_FUNNEL_STAGE_BLOCKED" else "DISCOVERY"
+                category = "ENTRY_PIPELINE_TECHNICAL_FAILURE"
+            elif fault == "WORKER_CYCLE_BOUNDARY_EXCEEDED":
+                category, issue_stage = "MANAGEMENT_TECHNICAL_FAILURE", "MANAGEMENT"
+            else:
+                continue
+            technical_issues.append((issue_stage_order.get(issue_stage, 99), category, issue_stage, issue))
+        if technical_issues:
+            _, category, issue_stage, _ = min(technical_issues, key=lambda item: item[0])
+            return category, issue_stage
+        matrix_stage = _text(stage.get("matrix_earliest_blocked_stage"))
+        if matrix_stage:
+            if matrix_stage in {"RECONCILIATION"}:
+                return "RECONCILIATION_FAILURE", matrix_stage
+            if matrix_stage in {"OBSERVATION", "MANAGEMENT", "EXIT_READINESS"}:
+                return "MARKET_OBSERVATION_FAILURE", matrix_stage
+            if matrix_stage in {"STRICT_TRUTH"}:
+                return "STRICT_TRUTH_PROMOTION_FAILURE", matrix_stage
+            if matrix_stage in {"LEARNING"}:
+                return "LEARNING_HANDOFF_FAILURE", matrix_stage
+            return "ENTRY_PIPELINE_TECHNICAL_FAILURE", matrix_stage
         if int(stage.get("current_open_positions") or 0) > 0:
             return "NATURAL_OPEN_POSITION", "NATURAL_EXIT"
         if _text(stage.get("last_qualified_time")):
@@ -272,6 +524,62 @@ class AstraTradingReadinessV1:
         source_state = _dict(runtime.get("equity_discovery_rebuild_v1"))
         worker_state = _dict(runtime.get("_worker_state"))
         issues: list[dict[str, Any]] = []
+
+        # The completion matrix and integrity scanner are existing diagnostic
+        # owners.  Surface only current, explicit failures here so a lane
+        # cannot remain green when its own recorded stage is broken.
+        matrix = self._completion_matrix(runtime)
+        for lane, lane_matrix in _dict(matrix.get("lanes")).items():
+            lane_name = _lane(lane)
+            if not lane_name:
+                continue
+            for matrix_stage, info_value in _dict(lane_matrix.get("stages")).items():
+                info = _dict(info_value)
+                status = _text(info.get("status") or info.get("status_classification")).upper()
+                if not (status.startswith("FAIL") and _text(info.get("verification_state")).upper() == "CURRENT"):
+                    continue
+                issues.append({
+                    "fault_type": "ENTRY_FUNNEL_STAGE_BLOCKED",
+                    "component": f"completion_matrix.{lane_name}.{matrix_stage}",
+                    "lanes": [lane_name],
+                    "severity": "HIGH",
+                    "repair_action": "",
+                    "evidence": _text(
+                        info.get("first_bad_handoff")
+                        or info.get("upstream_blocker")
+                        or info.get("insufficient_evidence_reason")
+                        or status
+                    ),
+                })
+
+        scanner = _dict(runtime.get("system_integrity_scanner_v1"))
+        for root in _rows(scanner.get("active_root_causes")):
+            category = _text(root.get("category")).upper()
+            state = _text(root.get("state")).upper()
+            current = _text(root.get("current_vs_historical")).upper()
+            if state in {"RESOLVED", "CLOSED"} or current not in {"", "CURRENT"}:
+                continue
+            causal = _dict(root.get("causal_handoff_integrity_v1"))
+            if category == "CAUSAL_HANDOFF_LOSS":
+                lane = _lane(causal.get("lane") or root.get("lane"))
+                issues.append({
+                    "fault_type": "RECONCILIATION_FAILURE",
+                    "component": _text(root.get("likely_owner") or causal.get("consumer")) or "canonical_lifecycle_closure",
+                    "lanes": [lane] if lane else list(LANES),
+                    "severity": _text(root.get("severity")).upper() or "HIGH",
+                    "repair_action": "",
+                    "evidence": _text(root.get("first_bad_handoff") or causal.get("first_bad_handoff") or root.get("finding_id")),
+                })
+            elif category == "CYCLE_WITHIN_BOUNDS":
+                issues.append({
+                    "fault_type": "WORKER_CYCLE_BOUNDARY_EXCEEDED",
+                    "component": _text(root.get("likely_owner")) or "canonical_worker_cycle",
+                    "lanes": list(LANES),
+                    "severity": _text(root.get("severity")).upper() or "HIGH",
+                    "repair_action": "",
+                    "evidence": _text(root.get("smallest_safe_repair") or root.get("finding_id") or "cycle_limit_exceeded"),
+                })
+
         source_blocker = str(trace.get("final_blocker_reason") or trace.get("cycle_reason") or "")
         equity_source_missing = (
             bool(session.get("equity_session_open"))
@@ -543,16 +851,61 @@ class AstraTradingReadinessV1:
         active_faults = [row for key, row in fault_rows.items() if key in remaining_keys]
         readiness = self._readiness(issues, session, runtime_state)
         stages = self._stage_ledger(runtime_state, previous)
+        natural_causes = {
+            "NATURAL_NO_QUALIFYING_ENTRY",
+            "NATURAL_OPEN_POSITION",
+            "NATURAL_NO_EXIT_SIGNAL",
+            "CAPACITY_LEGITIMATELY_FULL",
+        }
         for lane, stage in stages.items():
             cause, earliest = self._truth_starvation_cause(lane, stage, issues)
             stage["technical_readiness"] = readiness[lane]
             stage["current_earliest_blocked_stage"] = earliest
             stage["technical_truth_starvation_status"] = cause
-            stage["technical_no_trade_status"] = (
-                "TECHNICAL_NO_TRADE" if readiness[lane] == "BLOCKED" else "NATURAL_NO_TRADE_OR_ACTIVITY_PRESENT"
+            lane_issues = [row for row in issues if lane in (row.get("lanes") or [])]
+            matching_issue = next(
+                (
+                    row for row in lane_issues
+                    if _text(row.get("fault_type")).upper() in {
+                        "DISCOVERY_LEGACY_BYPASS",
+                        "ENTRY_FUNNEL_STAGE_BLOCKED",
+                        "WORKER_CYCLE_BOUNDARY_EXCEEDED",
+                        "PRODUCER_FRESH_CONSUMER_UNAVAILABLE",
+                        "ACTIVE_POSITION_NOT_STREAMED",
+                        "WS_TRANSPORT_UNHEALTHY",
+                        "BACKEND_UNHEALTHY",
+                        "RECONCILIATION_FAILURE",
+                        "CRYPTO_HORIZON_PRESENT_BUT_NOT_CONSUMED",
+                        "STRICT_TRUTH_LEARNING_HANDOFF_FAILURE",
+                    }
+                ),
+                None,
             )
-        equity_fault = any("DAY" in row.get("lanes", []) for row in issues)
-        technical_no_trade = bool(session["equity_session_open"] and equity_fault)
+            if cause not in natural_causes:
+                stage["technical_no_trade_status"] = "TECHNICAL_NO_TRADE"
+                stage_status = _dict(stage.get("stage_status")).get(earliest)
+                if isinstance(stage_status, dict):
+                    stage_status.update({
+                        "status": "TECHNICAL_BLOCKED",
+                        "blocker": _text(
+                            (matching_issue or {}).get("evidence")
+                            or stage_status.get("blocker")
+                            or stage.get("matrix_earliest_blocker")
+                            or cause
+                        ),
+                        "source": _text((matching_issue or {}).get("component") or stage_status.get("source") or "readiness_watchdog"),
+                    })
+                stage["current_earliest_blocker"] = _text(
+                    (matching_issue or {}).get("evidence")
+                    or stage.get("matrix_earliest_blocker")
+                    or cause
+                )
+            else:
+                stage["technical_no_trade_status"] = "NATURAL_NO_TRADE_OR_ACTIVITY_PRESENT"
+        technical_no_trade = any(
+            stage.get("technical_no_trade_status") == "TECHNICAL_NO_TRADE"
+            for stage in stages.values()
+        ) and bool(session["equity_session_open"] or session.get("check_phase") == "CRYPTO_CONTINUOUS_CHECK")
         summary = {
             "schema_version": VERSION,
             "recovery_schema_version": RECOVERY_VERSION,

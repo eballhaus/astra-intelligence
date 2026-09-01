@@ -281,6 +281,115 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(calls, ["ws"])
         self.assertEqual(result["active_faults"][0]["fault_type"], "ACTIVE_POSITION_NOT_STREAMED")
 
+    def test_watchdog_tracks_bounded_stage_status_without_synthetic_learning_time(self):
+        event_time = _iso(-2)
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {
+                    "last_autopilot_cycle_at": event_time,
+                    "per_candidate_decision_trace": [{
+                        "lane_id": "DAY",
+                        "finalist": True,
+                        "qualified": True,
+                        "order_ready": True,
+                    }],
+                },
+                "astra_operating_health_contract_v1": {
+                    "truth_to_learning_ledger": [{
+                        "lane": "DAY",
+                        "consumption_result": "CONSUMED",
+                        "learning_acknowledgement_time": None,
+                    }],
+                },
+            },
+            worker_state={},
+        )
+        day = result["truth_production_watchdog"]["lanes"]["DAY"]
+        self.assertEqual(day["last_discovery_time"], event_time)
+        self.assertEqual(day["last_finalist_time"], event_time)
+        self.assertEqual(day["last_qualified_time"], event_time)
+        self.assertEqual(day["last_order_ready_time"], event_time)
+        self.assertEqual(day["last_learning_ingestion_time"], "")
+        self.assertEqual(day["stage_status"]["FINALIST"]["status"], "PROVEN_READY")
+        self.assertEqual(day["stage_status"]["LEARNING"]["observed_at"], "")
+
+    def test_current_matrix_failure_degrades_only_affected_lane(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "astra_multilane_completion_matrix_v1": {
+                    "generated_at": _iso(-1),
+                    "lanes": {
+                        "SWING": {
+                            "stages": {
+                                "eligibility": {
+                                    "status": "FAIL_UNKNOWN_CLOSED",
+                                    "status_classification": "FAIL_UNKNOWN_CLOSED",
+                                    "verification_state": "CURRENT",
+                                    "first_bad_handoff": "candidate contract -> eligibility gate",
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            worker_state={},
+        )
+        swing = result["truth_production_watchdog"]["lanes"]["SWING"]
+        self.assertEqual(result["swing_readiness"], "DEGRADED")
+        self.assertEqual(swing["current_earliest_blocked_stage"], "QUALIFIED")
+        self.assertEqual(swing["technical_truth_starvation_status"], "ENTRY_PIPELINE_TECHNICAL_FAILURE")
+        self.assertEqual(result["active_faults"][0]["fault_type"], "ENTRY_FUNNEL_STAGE_BLOCKED")
+        self.assertEqual(result["day_readiness"], "TECHNICALLY_READY")
+
+    def test_current_scanner_reconciliation_failure_is_attributed_to_day(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "system_integrity_scanner_v1": {
+                    "active_root_causes": [{
+                        "category": "CAUSAL_HANDOFF_LOSS",
+                        "state": "OPEN",
+                        "current_vs_historical": "CURRENT",
+                        "severity": "CRITICAL",
+                        "likely_owner": "canonical lifecycle closure",
+                        "first_bad_handoff": "broker-confirmed exit fill -> canonical lifecycle closure",
+                        "causal_handoff_integrity_v1": {
+                            "lane": "DAY",
+                            "first_bad_handoff": "broker-confirmed exit fill -> canonical lifecycle closure",
+                        },
+                    }],
+                },
+            },
+            worker_state={},
+        )
+        day = result["truth_production_watchdog"]["lanes"]["DAY"]
+        self.assertEqual(result["day_readiness"], "BLOCKED")
+        self.assertEqual(day["current_earliest_blocked_stage"], "RECONCILIATION")
+        self.assertEqual(day["technical_truth_starvation_status"], "RECONCILIATION_FAILURE")
+        self.assertEqual(result["active_faults"][0]["fault_type"], "RECONCILIATION_FAILURE")
+
+    def test_consumed_learning_without_ack_timestamp_does_not_claim_event_time(self):
+        event_time = _iso(-10)
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {"last_autopilot_cycle_at": event_time},
+                "astra_operating_health_contract_v1": {
+                    "truth_to_learning_ledger": [{
+                        "lane": "DAY",
+                        "consumption_result": "CONSUMED",
+                        "learning_acknowledgement_time": None,
+                        "cortex_acknowledgement_time": None,
+                        "governance_acknowledgement_time": None,
+                    }],
+                },
+            },
+            worker_state={},
+        )
+        day = result["truth_production_watchdog"]["lanes"]["DAY"]
+        self.assertEqual(day["last_learning_ingestion_time"], "")
+        self.assertEqual(day["stage_status"]["LEARNING"]["observed_at"], "")
+
 
 if __name__ == "__main__":
     unittest.main()
