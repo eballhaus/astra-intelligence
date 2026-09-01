@@ -319,8 +319,8 @@ class AstraTradingReadinessV1:
                 "relevant_test_owners": ["tests/test_astra_multilane_operational_completion_v1.py"],
             },
             "RECONCILIATION_FAILURE": {
-                "owner_file": "SOURCE_OWNER_NOT_PERSISTED_IN_CURRENT_FACT",
-                "owner_function": _text(issue.get("component")) or "canonical lifecycle reconciliation",
+                "owner_file": "engine/paper_autopilot.py",
+                "owner_function": "PaperAutopilot._refresh_authorized_lane_exit_pending",
                 "failing_invariant": "BROKER_FILLED_EXIT_RECONCILES_TO_CANONICAL_LIFECYCLE",
                 "expected_contract": "the target lifecycle is reconciled using its own authoritative broker fill identity",
                 "smallest_repair_scope": "resolve lifecycle-specific reconciliation without assigning aggregate residuals",

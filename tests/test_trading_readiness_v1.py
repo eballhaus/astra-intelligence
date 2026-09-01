@@ -425,6 +425,34 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(package["minimal_reproduction_evidence"]["fingerprint"], result["active_faults"][0]["evidence_fingerprint"])
         self.assertEqual(result["autonomous_control_loop"]["state"], "CODE_REPAIR_REQUIRED")
 
+    def test_reconciliation_repair_package_names_live_owner(self):
+        monitor = self._monitor()
+        issue = {
+            "fault_type": "RECONCILIATION_FAILURE",
+            "component": "authorized lane exit broker reconciliation",
+            "lanes": ["DAY"],
+            "evidence": "broker-confirmed exit fill -> canonical lifecycle closure",
+            "owner_file": "engine/paper_autopilot.py",
+            "owner_function": "PaperAutopilot._refresh_authorized_lane_exit_pending",
+            "failing_invariant": "BROKER_FILLED_EXIT_RECONCILES_TO_CANONICAL_LIFECYCLE",
+            "expected_contract": "the target lifecycle is reconciled using its own authoritative broker fill identity",
+            "smallest_repair_scope": "resolve lifecycle-specific reconciliation without assigning aggregate residuals",
+            "earliest_stage": "RECONCILIATION",
+            "evidence_fingerprint": "test-fingerprint",
+            "relevant_test_owners": ["tests/test_astra_canonical_natural_lifecycle_v1.py"],
+        }
+        row = {
+            "first_seen": "2026-09-01T23:37:01.943163Z",
+            "last_seen": "2026-09-01T23:37:01.943163Z",
+            "occurrence_count": 1,
+            "duration_seconds": 0.0,
+            "recovery_attempt_history": [],
+            "worker_pid": 42,
+        }
+        package = monitor._repair_package(issue, row, {})
+        self.assertEqual(package["owner_file"], "engine/paper_autopilot.py")
+        self.assertEqual(package["owner_function"], "PaperAutopilot._refresh_authorized_lane_exit_pending")
+
     def test_unchanged_code_repair_evidence_is_not_reinvestigated(self):
         monitor = self._monitor()
         runtime = {"last_execution_trace": {"final_blocker_reason": "legacy_market_evidence_bounded"}}
