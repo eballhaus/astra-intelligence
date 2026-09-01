@@ -215,6 +215,21 @@ class ContinuousSystemIntegrityScannerTests(unittest.TestCase):
         self.assertTrue(cortex["active_exit_blockers"] or cortex["active_truth_blockers"])
         self.assertTrue(cortex["natural_evidence_pending"])
 
+    def test_cortex_does_not_describe_degraded_readiness_as_all_ready(self):
+        payload = self._scan(
+            trading_readiness={
+                "trading_integrity_state": "DEGRADED",
+                "lane_readiness": {
+                    "DAY": "DEGRADED", "SCALP": "DEGRADED",
+                    "SWING": "DEGRADED", "CRYPTO": "TECHNICALLY_READY",
+                },
+            },
+        )
+        cross_layer = payload["cortex_summary"]["cross_layer_readiness_consistency_v1"]
+        self.assertFalse(cross_layer["all_lanes_technically_ready"])
+        self.assertIn("degraded or blocked", cross_layer["explanation"])
+        self.assertNotIn("All lanes are technically entry-ready", cross_layer["explanation"])
+
     def test_cycle_failure_is_reported_as_active_infrastructure_without_relaxing_governance(self):
         payload = self._scan(
             continuous_governance={"invariants": [{

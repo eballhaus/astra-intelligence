@@ -738,6 +738,9 @@ class ContinuousSystemIntegrityScannerV1:
             current_readiness = _dict(context.get("trading_readiness"))
             lane_readiness = _dict(current_readiness.get("lane_readiness"))
             readiness_lanes = {"DAY", "SCALP", "SWING", "CRYPTO"}
+            all_lanes_technically_ready = bool(lane_readiness) and readiness_lanes.issubset(lane_readiness) and all(
+                str(lane_readiness.get(lane)).upper() == "TECHNICALLY_READY" for lane in readiness_lanes
+            )
             blocking_classes = {
                 "ACTIVE_TRADING_BLOCKER", "ACTIVE_MANAGEMENT_BLOCKER", "ACTIVE_EXIT_BLOCKER",
                 "ACTIVE_TRUTH_BLOCKER", "ACTIVE_LEARNING_BLOCKER", "ACTIVE_INFRASTRUCTURE_BLOCKER",
@@ -746,14 +749,16 @@ class ContinuousSystemIntegrityScannerV1:
             cross_layer = {
                 "schema_version": "CROSS_LAYER_READINESS_CONSISTENCY_V1",
                 "lane_readiness": {lane: lane_readiness.get(lane, "UNAVAILABLE") for lane in sorted(readiness_lanes)},
-                "all_lanes_technically_ready": bool(lane_readiness) and readiness_lanes.issubset(lane_readiness) and all(
-                    str(lane_readiness.get(lane)).upper() == "TECHNICALLY_READY" for lane in readiness_lanes
-                ),
+                "all_lanes_technically_ready": all_lanes_technically_ready,
                 "active_blocker_count": len(current_blockers),
                 "state": "CONSISTENT" if current_blockers or not lane_readiness else "CONTRADICTION_EXPLAINED",
                 "explanation": (
                     "All lanes are technically entry-ready; current lifecycle/infrastructure findings remain separately fail-closed."
-                    if current_blockers and lane_readiness else "Readiness facts unavailable."
+                    if all_lanes_technically_ready and current_blockers else
+                    "All lanes are technically entry-ready and no active blocker is currently published."
+                    if all_lanes_technically_ready else
+                    "One or more lanes are degraded or blocked; readiness is not READY."
+                    if lane_readiness else "Readiness facts unavailable."
                 ),
             }
             human = [self._repair_package(row) for row in active if row.get("human_repair_required")]
