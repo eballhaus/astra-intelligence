@@ -450,6 +450,7 @@ class AstraTradingReadinessV1:
         runtime_state: Mapping[str, Any],
         worker_state: Mapping[str, Any],
         actions: Mapping[str, Callable[[], Mapping[str, Any] | None]] | None = None,
+        refresh_runtime: Callable[[], Mapping[str, Any]] | None = None,
     ) -> dict[str, Any]:
         previous = _read(self.path)
         session = self._session()
@@ -487,11 +488,11 @@ class AstraTradingReadinessV1:
                 attempts += 1
                 try:
                     result = _dict(actions[action]())
-                    verification = "VERIFYING" if result else "FAILED"
+                    verification = "ACTION_DISPATCHED" if result else "RECOVERY_FAILED"
                 except Exception as exc:
                     result = {"error": str(exc)[:160]}
-                    verification = "FAILED"
-                recoveries.append({"fault_type": issue["fault_type"], "repair_action": action, "result": result, "verification_result": verification})
+                    verification = "RECOVERY_FAILED"
+                recoveries.append({"fault_type": issue["fault_type"], "component": issue["component"], "repair_action": action, "result": result, "verification_result": verification})
             else:
                 verification = "CODE_REPAIR_REQUIRED" if attempts >= 2 or not action else "NO_SAFE_ACTION_AVAILABLE"
             fault_rows[key] = {
@@ -505,17 +506,41 @@ class AstraTradingReadinessV1:
                 "recurrent": count >= 3,
             }
 
-        # Recovery is bounded to one action per fault. Re-evaluate committed
-        # runtime state once so a local cache/subscription repair is never
-        # reported as healthy without evidence.
+        # Recovery is bounded to one action plus one retry per fault.
+        # Re-evaluate a fresh committed runtime snapshot so dispatch alone is
+        # never reported as a successful repair.
+        if recoveries and callable(refresh_runtime):
+            try:
+                refreshed_runtime = refresh_runtime()
+                if isinstance(refreshed_runtime, Mapping):
+                    observed_runtime = dict(refreshed_runtime)
+                    observed_runtime["_worker_state"] = dict(worker_state or {})
+            except Exception:
+                # A failed refresh cannot manufacture a healthy verification;
+                # retain the pre-action snapshot and leave recovery pending.
+                pass
         remaining_issues = self._issues(observed_runtime, session) if recoveries else issues
         remaining_keys = {
             f"{row['fault_type']}:{row['component']}" for row in remaining_issues
         }
+        for recovery in recoveries:
+            key = f"{recovery.get('fault_type')}:{recovery.get('component')}"
+            if key not in remaining_keys and recovery.get("verification_result") == "ACTION_DISPATCHED":
+                recovery["verification_result"] = "RECOVERY_SUCCEEDED"
+            elif key in remaining_keys and recovery.get("verification_result") == "ACTION_DISPATCHED":
+                recovery["verification_result"] = "RECOVERY_VERIFYING"
         for key, row in fault_rows.items():
-            if key not in remaining_keys and row.get("verification_result") == "VERIFYING":
-                row["verification_result"] = "PASSED"
+            if key not in remaining_keys and row.get("verification_result") in {"ACTION_DISPATCHED", "RECOVERY_VERIFYING"}:
+                row["verification_result"] = "RECOVERY_SUCCEEDED"
+            elif key in remaining_keys and row.get("verification_result") == "ACTION_DISPATCHED":
+                row["verification_result"] = "RECOVERY_VERIFYING"
+            if key in remaining_keys and int(row.get("repair_attempt_count") or 0) >= 2 and row.get("verification_result") == "RECOVERY_VERIFYING":
+                row["verification_result"] = "CODE_REPAIR_REQUIRED"
+                for recovery in recoveries:
+                    if f"{recovery.get('fault_type')}:{recovery.get('component')}" == key:
+                        recovery["verification_result"] = "RECOVERY_FAILED"
         issues = remaining_issues
+        active_faults = [row for key, row in fault_rows.items() if key in remaining_keys]
         readiness = self._readiness(issues, session, runtime_state)
         stages = self._stage_ledger(runtime_state, previous)
         for lane, stage in stages.items():
@@ -556,11 +581,11 @@ class AstraTradingReadinessV1:
                 "diagnoses_are_non_decisioning": True,
             },
             "faults": fault_rows,
-            "active_faults": list(fault_rows.values()),
+            "active_faults": active_faults,
             "self_heal_attempts": len(recoveries),
-            "self_heal_successes": sum(1 for row in recoveries if row.get("verification_result") == "VERIFYING"),
-            "recurrent_faults": [row for row in fault_rows.values() if row.get("recurrent")],
-            "code_repair_required": any(row.get("verification_result") == "CODE_REPAIR_REQUIRED" for row in fault_rows.values()),
+            "self_heal_successes": sum(1 for row in recoveries if row.get("verification_result") == "RECOVERY_SUCCEEDED"),
+            "recurrent_faults": [row for row in active_faults if row.get("recurrent")],
+            "code_repair_required": any(row.get("verification_result") == "CODE_REPAIR_REQUIRED" for row in active_faults),
             "recoveries": recoveries,
             "last_full_successful_check": previous.get("last_full_successful_check") if issues else _now(),
             "safe_rollback_capability": "SAFE_ROLLBACK_UNAVAILABLE",

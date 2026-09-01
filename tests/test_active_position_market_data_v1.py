@@ -138,6 +138,28 @@ class ActiveEquityFMPSupplementTests(unittest.TestCase):
         self.assertEqual(state["refresh_state"], "NO_CANONICAL_ACTIVE_EQUITY_POSITIONS")
         self.assertEqual(state["calls_this_refresh"], 0)
 
+    def test_stale_fmp_price_is_not_persisted_as_live_observation(self):
+        engine = self._engine()
+
+        class Router:
+            def get_quote(self, symbol, **kwargs):
+                return {
+                    "provider_used": "FMP", "price": 100.0,
+                    "provider_quote_timestamp": "2000-01-01T00:00:00Z",
+                    "quote_quality": "live", "attempted_providers": ["FMP"],
+                }
+
+        engine._legacy_swing_fmp_router = Router()
+        engine._fetch_open_positions = lambda asset_type=None: [{
+            "symbol": "AAPL", "asset_type": "stock", "status": "OPEN", "quantity": 1,
+            "lane_id": "DAY", "lifecycle_id": "life-a", "entry_fill_id": "fill-a",
+        }]
+        state = engine._refresh_active_equity_fmp_observations_v1()
+        self.assertEqual(state["successful_observation_count"], 0)
+        self.assertEqual(state["failed_observation_count"], 1)
+        self.assertEqual(state["observations"], {})
+        self.assertEqual(state["errors"][0]["reason"], "STALE_PROVIDER_NATIVE_TIMESTAMP")
+
     def test_observational_monitor_state_survives_canonical_persistence(self):
         engine = self._engine()
         engine._runtime_state["active_equity_fmp_observations_v1"] = {"refresh_state": "REFRESHED"}

@@ -4891,6 +4891,20 @@ class PaperAutopilotEngine:
             if str(quote.get("provider_used") or "").upper() != "FMP" or _to_float(quote.get("price"), 0.0) <= 0.0:
                 state["errors"].append({"symbol": symbol, "reason": str(quote.get("data_unavailable_reason") or "fmp_quote_unavailable")[:120]})
                 continue
+            provider_native_timestamp = quote.get("provider_quote_timestamp") or quote.get("quote_timestamp")
+            timestamp_evidence = canonical_market_timestamp_v1(
+                {**quote, "provider_native_timestamp": provider_native_timestamp},
+                source_type=SOURCE_QUOTE,
+                max_age_seconds=20.0,
+            )
+            if not bool(timestamp_evidence.get("executable_freshness")):
+                state["errors"].append({
+                    "symbol": symbol,
+                    "reason": str(timestamp_evidence.get("first_causal_blocker") or "MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE")[:120],
+                    "provider_native_timestamp": provider_native_timestamp,
+                    "quote_age_seconds": timestamp_evidence.get("age_seconds"),
+                })
+                continue
             observations[symbol] = {
                 "symbol": symbol,
                 "canonical_position_id": canonical_position_ids.get(symbol, ""),
@@ -4902,9 +4916,9 @@ class PaperAutopilotEngine:
                 "price": _to_float(quote.get("price"), 0.0),
                 "bid": quote.get("bid"),
                 "ask": quote.get("ask"),
-                "provider_native_timestamp": quote.get("provider_quote_timestamp") or quote.get("quote_timestamp"),
+                "provider_native_timestamp": provider_native_timestamp,
                 "receive_timestamp": _now_iso(),
-                "quote_age_seconds": quote.get("quote_age_seconds"),
+                "quote_age_seconds": timestamp_evidence.get("age_seconds"),
                 "quote_quality": quote.get("quote_quality"),
                 "quote_source": quote.get("quote_source"),
             }
@@ -5505,16 +5519,15 @@ class PaperAutopilotEngine:
             })
             activity["scheduler"]["per_symbol"][activation_id] = schedule_row
             registry[activation_id] = record
-            # Persist each bounded symbol result.  A later slow provider call
-            # or restart cannot discard an already validated bar batch.
+            # Hold each bounded symbol result in memory and persist once at
+            # cycle end. Repeating the full state write for every symbol made
+            # the bounded market phase exceed the worker's cycle budget.
             self._runtime_state["legacy_swing_market_evidence"] = records
             self._runtime_state["legacy_swing_market_activity"] = activity
             activity["symbols_completed"].append(symbol)
             activity["records_persisted_this_cycle"] += 1
             activity["last_checkpoint_at"] = _now_iso()
             activity["elapsed_seconds"] = round(time.monotonic() - cycle_started_monotonic, 3)
-            if getattr(self, "state_path", None):
-                self._save_state_file()
             if activity["cycle_state"] == "CYCLE_PARTIAL_PROVIDER_LIMIT":
                 break
         for activation_id, raw in registry_items:

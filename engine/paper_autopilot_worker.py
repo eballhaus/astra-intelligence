@@ -884,21 +884,24 @@ class PaperAutopilotWorker:
             }
 
         runtime = getattr(self.autopilot, "_runtime_state", {})
-        try:
-            from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
-            runtime["alpaca_ws_active_position_monitor_v1"] = dict(ALPACA_WS_MONITOR.status() or {})
-        except Exception:
-            pass
-        monitor_runtime = dict(runtime)
-        # The canonical truth registry is bounded by its existing loader.  The
-        # monitor reads it only to verify truth-to-learning liveness.
-        monitor_runtime["broker_truth_records_v1"] = self._bounded_broker_truth_rows_v1(runtime)
-        # Reuse the existing operating-health join so a truth-row acknowledgement
-        # cannot mask a missing canonical learning consumer.
-        monitor_runtime["astra_operating_health_contract_v1"] = self.operating_health_contract.snapshot()
+        def readiness_runtime() -> dict[str, Any]:
+            current = dict(runtime)
+            try:
+                from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
+                current["alpaca_ws_active_position_monitor_v1"] = dict(ALPACA_WS_MONITOR.status() or {})
+            except Exception:
+                pass
+            # The canonical truth registry is bounded by its existing loader.
+            # These reads are local and only support post-repair verification.
+            current["broker_truth_records_v1"] = self._bounded_broker_truth_rows_v1(runtime)
+            current["astra_operating_health_contract_v1"] = self.operating_health_contract.snapshot()
+            return current
+
+        monitor_runtime = readiness_runtime()
         result = self.trading_readiness.run_if_due(
             runtime_state=monitor_runtime,
             worker_state=read_snapshot(),
+            refresh_runtime=readiness_runtime,
             actions={
                 "REBUILD_CANONICAL_DISCOVERY_STATE": rebuild_discovery,
                 "REMATERIALIZE_MANAGEMENT_EVIDENCE": rematerialize_management,
@@ -1006,8 +1009,12 @@ class PaperAutopilotWorker:
             try:
                 from server_extend import _refresh_alpaca_ws_allocation
                 _refresh_alpaca_ws_allocation()
-                self._run_trading_readiness_v1()
-                self.autopilot._save_state_file()
+                readiness_result = self._run_trading_readiness_v1()
+                # A not-due check returns the prior durable result and does not
+                # change engine evidence; avoid a full-state write on every
+                # otherwise-normal bounded cycle.
+                if bool(readiness_result.get("due")):
+                    self.autopilot._save_state_file()
             except Exception as exc:
                 # Preserve a bounded diagnostic rather than silently losing a
                 # readiness check. This never changes trading behavior.

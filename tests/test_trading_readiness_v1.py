@@ -43,6 +43,44 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(result["active_faults"][0]["fault_type"], "DISCOVERY_LEGACY_BYPASS")
         self.assertEqual(result["recoveries"][0]["repair_action"], "REBUILD_CANONICAL_DISCOVERY_STATE")
 
+    def test_recovery_dispatch_is_not_counted_as_success(self):
+        runtime = {"last_execution_trace": {"final_blocker_reason": "legacy_market_evidence_bounded"}}
+        result = self._monitor().run_if_due(
+            runtime_state=runtime,
+            worker_state={},
+            actions={"REBUILD_CANONICAL_DISCOVERY_STATE": lambda: {"status": "dispatched"}},
+            refresh_runtime=lambda: runtime,
+        )
+        self.assertEqual(result["recoveries"][0]["verification_result"], "RECOVERY_VERIFYING")
+        self.assertEqual(result["self_heal_successes"], 0)
+        self.assertTrue(result["active_faults"])
+
+    def test_recovery_counts_only_after_fresh_runtime_verification(self):
+        runtime = {"last_execution_trace": {"final_blocker_reason": "legacy_market_evidence_bounded"}}
+
+        def rebuild():
+            runtime["equity_discovery_rebuild_v1"] = {"candidate_source_available": True}
+            return {"status": "rebuilt"}
+
+        result = self._monitor().run_if_due(
+            runtime_state=runtime,
+            worker_state={},
+            actions={"REBUILD_CANONICAL_DISCOVERY_STATE": rebuild},
+            refresh_runtime=lambda: runtime,
+        )
+        self.assertEqual(result["recoveries"][0]["verification_result"], "RECOVERY_SUCCEEDED")
+        self.assertEqual(result["self_heal_successes"], 1)
+        self.assertEqual(result["active_faults"], [])
+
+    def test_failed_recovery_is_not_counted_as_success(self):
+        result = self._monitor().run_if_due(
+            runtime_state={"last_execution_trace": {"final_blocker_reason": "legacy_market_evidence_bounded"}},
+            worker_state={},
+            actions={"REBUILD_CANONICAL_DISCOVERY_STATE": lambda: {}},
+        )
+        self.assertEqual(result["recoveries"][0]["verification_result"], "RECOVERY_FAILED")
+        self.assertEqual(result["self_heal_successes"], 0)
+
     def test_missing_active_symbol_is_reconciled_without_provider_or_broker_action(self):
         calls: list[str] = []
         result = self._monitor().run_if_due(

@@ -148,6 +148,14 @@ class LegacySwingBrokerMarketEvidenceTests(unittest.TestCase):
         self.assertEqual(len(activity["symbols_attempted"]), 1)
         self.assertLessEqual(activity["provider_requests_this_cycle"], 12)
 
+    def test_bounded_legacy_loop_persists_once_after_batch(self):
+        engine = _engine(_MarketDataFixture())
+        engine.state_path = "state.json"
+        saves: list[str] = []
+        engine._save_state_file = lambda: saves.append("save")  # type: ignore[method-assign]
+        engine._refresh_legacy_swing_broker_market_evidence(_registry_with_backlog())
+        self.assertEqual(saves, ["save"])
+
     def test_existing_fmp_router_normalizes_hourly_historical_response(self):
         router = ProviderRouter()
         router._stock_keys["FMP"] = "test-key"
