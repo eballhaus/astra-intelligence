@@ -70,6 +70,26 @@ def _dict(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _operational_class(root: dict[str, Any]) -> str:
+    """Classify a finding for current Cortex context without changing severity."""
+    if str(root.get("state") or "").upper() == "RESOLVED":
+        return "HISTORICAL_RESOLVED"
+    category = str(root.get("category") or "").upper()
+    if category in {"DAY_POSITION_HORIZON_BREACH", "LOSS_THRESHOLD_BREACH_NOT_EXIT_READY"}:
+        return "ACTIVE_EXIT_BLOCKER"
+    if category in {"CAUSAL_HANDOFF_LOSS", "BROKER_FILLED_CLOSURE_PENDING", "CLOSED_POSITION_TRUTH_NOT_CREATED"}:
+        return "ACTIVE_TRUTH_BLOCKER"
+    if category in {"CRYPTO_MARKET_EVIDENCE_NOT_READY", "CRYPTO_PROVIDER_ABSENCE"}:
+        return "NATURAL_EVIDENCE_PENDING"
+    if category in {"DISCOVERY_LEGACY_BYPASS", "CANDIDATE_DISCOVERY_FAILURE"}:
+        return "ACTIVE_TRADING_BLOCKER"
+    if category in {"ACTIVE_POSITION_NOT_STREAMED", "PRODUCER_FRESH_CONSUMER_UNAVAILABLE"}:
+        return "ACTIVE_MANAGEMENT_BLOCKER"
+    if category in {"WORKER_LEASE_PROCESS_OWNERSHIP_CONTRADICTION", "CYCLE_WITHIN_BOUNDS"}:
+        return "ACTIVE_INFRASTRUCTURE_BLOCKER"
+    return "MONITORING_ONLY"
+
+
 class ContinuousSystemIntegrityScannerV1:
     """Bounded scanner run by PaperAutopilotWorker only.
 
@@ -702,6 +722,36 @@ class ContinuousSystemIntegrityScannerV1:
                 (row for row in root_state.get("root_causes") or [] if row.get("state") not in {"RESOLVED"}),
                 key=_root_priority,
             )
+            classified_active = [
+                {**dict(row), "operational_class": _operational_class(dict(row))}
+                for row in active
+            ]
+            historical_resolved = [
+                {**dict(row), "operational_class": "HISTORICAL_RESOLVED"}
+                for row in (root_state.get("root_causes") or [])
+                if str(row.get("state") or "").upper() == "RESOLVED"
+            ][-limits["max_issues"]:]
+            current_readiness = _dict(context.get("trading_readiness"))
+            lane_readiness = _dict(current_readiness.get("lane_readiness"))
+            readiness_lanes = {"DAY", "SCALP", "SWING", "CRYPTO"}
+            blocking_classes = {
+                "ACTIVE_TRADING_BLOCKER", "ACTIVE_MANAGEMENT_BLOCKER", "ACTIVE_EXIT_BLOCKER",
+                "ACTIVE_TRUTH_BLOCKER", "ACTIVE_LEARNING_BLOCKER", "ACTIVE_INFRASTRUCTURE_BLOCKER",
+            }
+            current_blockers = [row for row in classified_active if row["operational_class"] in blocking_classes]
+            cross_layer = {
+                "schema_version": "CROSS_LAYER_READINESS_CONSISTENCY_V1",
+                "lane_readiness": {lane: lane_readiness.get(lane, "UNAVAILABLE") for lane in sorted(readiness_lanes)},
+                "all_lanes_technically_ready": bool(lane_readiness) and readiness_lanes.issubset(lane_readiness) and all(
+                    str(lane_readiness.get(lane)).upper() == "TECHNICALLY_READY" for lane in readiness_lanes
+                ),
+                "active_blocker_count": len(current_blockers),
+                "state": "CONSISTENT" if current_blockers or not lane_readiness else "CONTRADICTION_EXPLAINED",
+                "explanation": (
+                    "All lanes are technically entry-ready; current lifecycle/infrastructure findings remain separately fail-closed."
+                    if current_blockers and lane_readiness else "Readiness facts unavailable."
+                ),
+            }
             human = [self._repair_package(row) for row in active if row.get("human_repair_required")]
             corrections: list[dict[str, Any]] = []
             for root in active[:limits["max_corrections"]]:
@@ -718,7 +768,8 @@ class ContinuousSystemIntegrityScannerV1:
                        "deep_scan_monotonic": time.monotonic() if mode == "DEEP" else previous_summary.get("deep_scan_monotonic"),
                        "scan_runtime_ms": elapsed, "critical_facts_checked": min(len(registry), limits["max_facts"]), "consumers_checked": min(len(compliance), limits["max_consumers"]),
                        "contracts_checked": min(len(registry), limits["max_facts"]), "files_read": static_scan["files_read"], "rows_read": min(len(signals) + len(compliance), limits["max_rows"]), "static_scan": static_scan,
-                       "active_root_causes": active[:limits["max_issues"]], "downstream_symptoms": [symptom for root in active for symptom in root.get("downstream_symptoms") or []][:limits["max_issues"] * 4],
+                        "active_root_causes": classified_active[:limits["max_issues"]], "historical_resolved_findings": historical_resolved,
+                        "downstream_symptoms": [symptom for root in active for symptom in root.get("downstream_symptoms") or []][:limits["max_issues"] * 4],
                        "downstream_symptoms_suppressed": max(0, sum(len(root.get("downstream_symptoms") or []) for root in active) - len(active)),
                        "safe_corrections_applied": [row for row in corrections if row.get("applied")], "safe_corrections_verifying": [row for row in corrections if row.get("verification_state") == "VERIFYING"],
                        "human_repairs_required": human[:limits["max_issues"]], "recurrent_defects": [row for row in active if row.get("state") == "RECURRENT"],
@@ -738,8 +789,27 @@ class ContinuousSystemIntegrityScannerV1:
                        "governance_summary": {"root_causes": len(active), "human_repair_required": len(human), "safe_corrections": len(corrections), "sentinel_single_scan_owner": True,
                                               "platform_integrity_status": {key: dict(value).get("status") for key, value in platform_integrity.items() if key in {"price_data_truth", "lifecycle_proof_deadline", "broker_position_execution_truth", "resource_provider_reliability"}},
                                               "profit_capture_trade_effectiveness_v2": dict(trade_effectiveness.get("cortex_summary") or {})},
-                       "cortex_summary": {"system_integrity_summary": status, "highest_impact_root_causes": active[:5], "downstream_symptoms_grouped": True,
-                                          "platform_integrity_patterns": {key: dict(value).get("status") for key, value in platform_integrity.items() if key in {"price_data_truth", "lifecycle_proof_deadline", "broker_position_execution_truth", "resource_provider_reliability"}},
+                        "cortex_summary": {"system_integrity_summary": status, "highest_impact_root_causes": classified_active[:5], "downstream_symptoms_grouped": True,
+                                           "overall_trading_readiness": current_readiness.get("trading_integrity_state") or "UNAVAILABLE",
+                                           "day_readiness": current_readiness.get("day_readiness") or "UNAVAILABLE",
+                                           "scalp_readiness": current_readiness.get("scalp_readiness") or "UNAVAILABLE",
+                                           "swing_readiness": current_readiness.get("swing_readiness") or "UNAVAILABLE",
+                                           "crypto_readiness": current_readiness.get("crypto_readiness") or "UNAVAILABLE",
+                                           "active_trading_blockers": [row for row in classified_active if row["operational_class"] == "ACTIVE_TRADING_BLOCKER"],
+                                           "active_management_blockers": [row for row in classified_active if row["operational_class"] == "ACTIVE_MANAGEMENT_BLOCKER"],
+                                           "active_exit_blockers": [row for row in classified_active if row["operational_class"] == "ACTIVE_EXIT_BLOCKER"],
+                                           "active_truth_blockers": [row for row in classified_active if row["operational_class"] == "ACTIVE_TRUTH_BLOCKER"],
+                                           "active_learning_blockers": [row for row in classified_active if row["operational_class"] == "ACTIVE_LEARNING_BLOCKER"],
+                                           "active_infrastructure_blockers": [row for row in classified_active if row["operational_class"] == "ACTIVE_INFRASTRUCTURE_BLOCKER"],
+                                           "natural_evidence_pending": [row for row in classified_active if row["operational_class"] == "NATURAL_EVIDENCE_PENDING"],
+                                           "historical_resolved_findings": historical_resolved,
+                                           "monitoring_only_findings": [row for row in classified_active if row["operational_class"] == "MONITORING_ONLY"],
+                                           "recurrent_active_findings": [row for row in classified_active if row.get("state") == "RECURRENT"],
+                                           "last_full_integrity_check": _now(),
+                                           "last_successful_recovery": current_readiness.get("last_full_successful_check"),
+                                           "code_repair_required": bool(current_readiness.get("code_repair_required") or human),
+                                           "cross_layer_readiness_consistency_v1": cross_layer,
+                                           "platform_integrity_patterns": {key: dict(value).get("status") for key, value in platform_integrity.items() if key in {"price_data_truth", "lifecycle_proof_deadline", "broker_position_execution_truth", "resource_provider_reliability"}},
                                           "profit_capture_trade_effectiveness_v2": dict(trade_effectiveness.get("cortex_summary") or {}),
                                           "truth_promotion_allowed": False, "recommended_repair_order": [row.get("root_cause_id") for row in active[:5]], "root_cause_orchestration": True},
                        "dependency_graph": dependency_graph_v1(), "consolidated_repair_queue": [{"priority": index + 1, "root_cause_id": row.get("root_cause_id"), "summary": row.get("smallest_safe_repair"), "systems_affected": row.get("affected_components"), "downstream_blockers_cleared": row.get("downstream_symptoms"), "safe_to_autocorrect": bool(row.get("safe_correction_available")), "recommended_files": row.get("affected_components"), "required_tests": ["scanner root-cause regression"]} for index, row in enumerate(active[:10])],

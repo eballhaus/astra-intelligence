@@ -191,3 +191,26 @@ class ContinuousSystemIntegrityScannerTests(unittest.TestCase):
         self.assertFalse(payload["forced_trades_enabled"])
         self.assertFalse(payload["forced_exits_enabled"])
         self.assertFalse(payload["learned_exits_enabled"])
+
+    def test_cortex_separates_current_exit_blocker_from_natural_crypto_evidence_wait(self):
+        payload = self._scan(
+            trading_readiness={
+                "trading_integrity_state": "READY",
+                "lane_readiness": {"DAY": "TECHNICALLY_READY", "SCALP": "TECHNICALLY_READY", "SWING": "TECHNICALLY_READY", "CRYPTO": "TECHNICALLY_READY"},
+                "day_readiness": "TECHNICALLY_READY", "scalp_readiness": "TECHNICALLY_READY",
+                "swing_readiness": "TECHNICALLY_READY", "crypto_readiness": "TECHNICALLY_READY",
+            },
+            continuous_governance={"invariants": [{
+                "invariant_id": "DAY_POSITION_HORIZON_BREACH", "state": "FAIL",
+                "owner": "PaperAutopilot._lane_forced_exit_reason",
+                "exact_blocker": "OVERNIGHT_HOLD_NOT_AUTHORIZED",
+                "observed_value": {"symbol": "LYFT", "position_id": "life-1"},
+            }]},
+            crypto_integrity={"pair_eligibility": {"evaluated_candidates": [{
+                "symbol": "BTC/USD", "first_causal_blocker": {"gate": "timestamp_freshness", "status": "STALE"},
+            }]}},
+        )
+        cortex = payload["cortex_summary"]
+        self.assertTrue(cortex["cross_layer_readiness_consistency_v1"]["all_lanes_technically_ready"])
+        self.assertTrue(cortex["active_exit_blockers"] or cortex["active_truth_blockers"])
+        self.assertTrue(cortex["natural_evidence_pending"])
