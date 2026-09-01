@@ -454,7 +454,15 @@ class AstraTradingReadinessV1:
         previous = _read(self.path)
         session = self._session()
         now = time.monotonic()
-        interval = 300.0 if bool(session["equity_session_open"]) or bool(session["preopen_window"]) else 900.0
+        check_phase = str(session.get("check_phase") or "")
+        scheduled_equity_phase = check_phase in {
+            "PREOPEN_TRADING_READINESS",
+            "POST_OPEN_DISCOVERY_VERIFICATION",
+            "MIDDAY_INTEGRITY_CHECK",
+            "NEAR_CLOSE_INTEGRITY_CHECK",
+            "POST_CLOSE_LANE_ACCOUNTING",
+        }
+        interval = 300.0 if bool(session["equity_session_open"]) or bool(session["preopen_window"]) or scheduled_equity_phase else 900.0
         # A newly deployed watchdog schema must certify immediately rather
         # than inherit an old interval that contains no truth-stage evidence.
         previous_watchdog = _dict(previous.get("truth_production_watchdog"))

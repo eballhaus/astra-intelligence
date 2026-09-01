@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 import unittest
 from datetime import UTC, datetime, timedelta
 
@@ -182,6 +183,22 @@ class TradingReadinessTests(unittest.TestCase):
         result = monitor.run_if_due(runtime_state={"last_execution_trace": {}}, worker_state={})
         self.assertTrue(result["due"])
         self.assertIn("truth_production_watchdog", result)
+
+    def test_post_close_phase_keeps_scheduled_integrity_check_cadence(self):
+        monitor = self._monitor()
+        monitor._session = lambda: {
+            "timezone": "America/New_York",
+            "equity_session_open": False,
+            "preopen_window": False,
+            "check_phase": "POST_CLOSE_LANE_ACCOUNTING",
+            "market_local_time": "2026-08-31T16:05:00-04:00",
+        }
+        monitor.path.write_text(
+            "{\"scan_monotonic\": %.6f, \"truth_production_watchdog\": {\"lanes\": {}}}" % (time.monotonic() - 301),
+            encoding="utf-8",
+        )
+        result = monitor.run_if_due(runtime_state={"last_execution_trace": {}}, worker_state={})
+        self.assertTrue(result["due"])
 
     def test_global_noncrypto_horizon_count_cannot_degrade_crypto(self):
         result = self._monitor().run_if_due(
