@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -148,6 +149,27 @@ class ContinuousSystemIntegrityScannerTests(unittest.TestCase):
         self.scanner.summary_path.unlink(missing_ok=True)
         payload = self._scan(**bad)
         self.assertEqual(payload["active_root_causes"][0]["state"], "RECURRENT")
+
+    def test_absent_recurrent_root_resolves_without_erasing_recurrence_history(self):
+        bad = {"truth_arbitration": {"contradictions": [{"fact_id": "LOCAL_OPEN_CRYPTO_POSITION_COUNT"}]}}
+        self._scan(**bad)
+        for _ in range(3):
+            self.scanner.summary_path.unlink(missing_ok=True)
+            self._scan()
+        self.scanner.summary_path.unlink(missing_ok=True)
+        recurrent = self._scan(**bad)["active_root_causes"][0]
+        self.assertEqual(recurrent["state"], "RECURRENT")
+        recurrence_count = recurrent["occurrence_count"]
+        self.scanner.summary_path.unlink(missing_ok=True)
+        for index in range(3):
+            self.scanner.summary_path.unlink(missing_ok=True)
+            payload = self._scan()
+        self.assertFalse(any(row["root_cause_id"] == recurrent["root_cause_id"] for row in payload["active_root_causes"]))
+        stored_payload = json.loads(self.scanner.root_path.read_text(encoding="utf-8"))
+        stored = {row["root_cause_id"]: row for row in stored_payload["root_causes"]}
+        self.assertEqual(stored[recurrent["root_cause_id"]]["state"], "RESOLVED")
+        self.assertEqual(stored[recurrent["root_cause_id"]]["occurrence_count"], recurrence_count)
+        self.assertTrue(stored[recurrent["root_cause_id"]]["resolved_at"])
 
     def test_endpoint_side_effect_blocks_executive_pass(self):
         payload = self._scan(get_side_effects=1)

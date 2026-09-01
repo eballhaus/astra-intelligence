@@ -594,11 +594,18 @@ class ContinuousSystemIntegrityScannerV1:
                          "state": "RECURRENT" if prior and prior.get("state") == "RESOLVED" else "OPEN", "consistent_observations": 0})
             known[str(item["root_cause_id"])] = item
         for key, item in known.items():
-            if key in active or item.get("state") in {"RESOLVED", "RECURRENT"}:
+            if key in active or item.get("state") == "RESOLVED":
                 continue
             item["consistent_observations"] = _number(item.get("consistent_observations")) + 1
             item["last_detected_at"] = now
-            item["state"] = "RESOLVED" if item["consistent_observations"] >= VERIFICATION_WINDOW else "VERIFYING"
+            if item["consistent_observations"] >= VERIFICATION_WINDOW:
+                # Preserve recurrence_count and first_seen while removing an
+                # absent defect from the current certification input. If it
+                # reappears, the active branch above reopens it as RECURRENT.
+                item["state"] = "RESOLVED"
+                item["resolved_at"] = now
+            else:
+                item["state"] = "VERIFYING"
         payload = {"schema_version": VERSION, "generated_at": now, "verification_window": VERIFICATION_WINDOW,
                    "root_causes": list(known.values())[-ROOT_LIMIT:]}
         _atomic(self.root_path, payload)
