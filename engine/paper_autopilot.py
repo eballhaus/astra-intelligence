@@ -4381,9 +4381,6 @@ class PaperAutopilotEngine:
                 )
                 remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": "client_order_id_mismatch"}
                 continue
-            rows = [r for r in self._fetch_open_positions() if str(r.get("position_id") or "") == str(item.get("position_id") or "")]
-            if not rows:
-                continue
             exit_order_id = str(order.get("id") or order_id)
             filled_at = str(order.get("filled_at") or "").strip()
             explicit_fill_id = str(order.get("fill_id") or order.get("execution_id") or "").strip()
@@ -4394,6 +4391,44 @@ class PaperAutopilotEngine:
                     reason=str(item.get("exit_reason") or ""), blocker="BROKER_FILL_LINEAGE_MISSING", broker_order_id=exit_order_id,
                 )
                 remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": "filled_missing_fill_lineage"}
+                continue
+            rows = [r for r in self._fetch_open_positions() if str(r.get("position_id") or "") == str(item.get("position_id") or "")]
+            if not rows:
+                blocker = "CANONICAL_POSITION_ROW_MISSING_FOR_FILLED_EXIT"
+                filled_qty = _to_float(order.get("filled_qty") or order.get("filled_quantity"), 0.0)
+                self._persist_sell_intent(
+                    str(item.get("client_order_id") or key),
+                    status="BROKER_FILLED_AWAITING_CLOSURE",
+                    reconciliation_status="CANONICAL_POSITION_ROW_MISSING",
+                    broker_order_id=exit_order_id,
+                    broker_order_status="FILLED",
+                    filled_quantity=filled_qty,
+                    average_fill_price=_to_float(order.get("filled_avg_price"), 0.0),
+                    exit_fill_id=exit_fill_id,
+                    filled_at=filled_at,
+                    canonical_lifecycle_reconciliation_required=True,
+                    first_causal_blocker=blocker,
+                    retry_eligible=False,
+                )
+                self._record_native_lane_exit_state(
+                    item,
+                    state="CLOSURE_BLOCKED_CANONICAL_ROW_MISSING",
+                    decision="BROKER_FILLED",
+                    reason=str(item.get("exit_reason") or "lane_exit"),
+                    blocker=blocker,
+                    broker_order_id=exit_order_id,
+                    exit_fill_id=exit_fill_id,
+                    broker_order_status="FILLED",
+                    filled_quantity=filled_qty,
+                    next_reevaluation="canonical_position_row_recovery",
+                )
+                remaining[key] = {
+                    **item,
+                    "last_checked_at": _now_iso(),
+                    "last_order_status": "filled_canonical_position_row_missing",
+                    "last_close_error": blocker,
+                    "exit_fill_id": exit_fill_id,
+                }
                 continue
             latest = {"symbol": item.get("symbol"), "price": _to_float(order.get("filled_avg_price"), 0.0), "timestamp": _now_iso(), "source": "alpaca_paper_order_fill"}
             filled_qty = _to_float(order.get("filled_qty") or order.get("filled_quantity"), 0.0)
@@ -5813,11 +5848,45 @@ class PaperAutopilotEngine:
             "SELL_SUBMITTED": "BROKER_ACKNOWLEDGED_OR_ORDER_STATE",
             "PARTIALLY_FILLED": "AWAITING_BROKER_ZERO",
             "AWAITING_BROKER_ZERO": "BROKER_ZERO_CONFIRMED",
+            "CLOSURE_BLOCKED_CANONICAL_ROW_MISSING": "RESTORE_CANONICAL_POSITION_ROW_OR_FAIL_CLOSED",
             "BROKER_ZERO_CONFIRMED": "CLOSED_PENDING_TRUTH",
             "CLOSED_PENDING_TRUTH": "STRICT_TRUTH_CREATED",
             "STRICT_TRUTH_CREATED": "LEARNING_ACKNOWLEDGED",
             "LEARNING_ACKNOWLEDGED": "NONE",
         }.get(str(state or "").strip(), "RECONCILE_OR_REEVALUATE")
+        post_fill_states = {
+            "AWAITING_BROKER_ZERO",
+            "CLOSURE_BLOCKED_CANONICAL_ROW_MISSING",
+            "CLOSED_PENDING_TRUTH",
+            "STRICT_TRUTH_CREATED",
+            "LEARNING_ACKNOWLEDGED",
+        }
+        pre_fill_states = {
+            "ACTIVE_HOLD",
+            "EXIT_REVIEW",
+            "EXIT_READY",
+            "SELL_SUBMITTED",
+            "EXIT_BLOCKED_EVIDENCE",
+            "EXIT_BLOCKED_EXECUTION",
+            "EXIT_BLOCKED_CRITICAL",
+        }
+        if (
+            str(previous.get("exit_fill_id") or "").strip()
+            and previous_stage in post_fill_states
+            and str(state or "").strip() in pre_fill_states
+            and not str(extra.get("exit_fill_id") or "").strip()
+        ):
+            row = {
+                **previous,
+                "last_evaluated_at": now,
+                "updated_at": now,
+                "downgrade_suppressed": True,
+                "downgrade_suppressed_state": str(state or ""),
+                "downgrade_suppressed_blocker": str(blocker or ""),
+            }
+            rows[position_id] = row
+            self._runtime_state["native_lane_exit_lifecycle_v1"] = rows
+            return row
         row = {
             **previous,
             "position_id": position_id,

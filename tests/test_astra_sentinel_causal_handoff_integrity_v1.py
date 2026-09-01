@@ -77,14 +77,59 @@ class SentinelCausalHandoffIntegrityTests(unittest.TestCase):
             "native_lane_exit_lifecycle": {
                 "life-1": {
                     "lifecycle_id": "life-1", "symbol": "LYFT", "lane_id": "DAY",
-                    "closure_state": "AWAITING_BROKER_ZERO",
+                    "closure_state": "AWAITING_BROKER_ZERO", "exit_fill_id": "exit-fill-1",
                 },
             },
             "authorized_lane_exit_pending": {
-                "exit-1": {"position_id": "life-1", "last_order_status": "filled_awaiting_broker_zero"},
+                "exit-1": {
+                    "position_id": "life-1",
+                    "last_order_status": "filled_awaiting_broker_zero",
+                    "exit_fill_id": "exit-fill-1",
+                },
             },
         })
         fact = next(row for row in monitors["facts"] if row["kind"] == "BROKER_FILLED_CLOSURE_PENDING")
+        result = self._classify(fact)
+        self.assertEqual(result["signals"][0]["category"], "CAUSAL_HANDOFF_LOSS")
+
+    def test_no_exit_fill_does_not_create_broker_filled_handoff_loss(self):
+        monitors = collect_platform_integrity_monitors_v2({
+            "native_lane_exit_lifecycle": {
+                "life-1": {
+                    "lifecycle_id": "life-1", "symbol": "LYFT", "lane_id": "DAY",
+                    "closure_state": "SELL_SUBMITTED",
+                },
+            },
+            "authorized_lane_exit_pending": {
+                "exit-1": {"position_id": "life-1", "last_order_status": "submitted"},
+            },
+        })
+
+        self.assertFalse([row for row in monitors["facts"] if row["kind"] == "BROKER_FILLED_CLOSURE_PENDING"])
+
+    def test_missing_canonical_row_after_real_fill_is_handoff_loss_with_exact_blocker(self):
+        monitors = collect_platform_integrity_monitors_v2({
+            "native_lane_exit_lifecycle": {
+                "life-1": {
+                    "lifecycle_id": "life-1",
+                    "symbol": "LYFT",
+                    "lane_id": "DAY",
+                    "closure_state": "CLOSURE_BLOCKED_CANONICAL_ROW_MISSING",
+                    "exact_blocker": "CANONICAL_POSITION_ROW_MISSING_FOR_FILLED_EXIT",
+                    "exit_fill_id": "exit-fill-1",
+                },
+            },
+            "authorized_lane_exit_pending": {
+                "exit-1": {
+                    "position_id": "life-1",
+                    "last_order_status": "filled_canonical_position_row_missing",
+                    "exit_fill_id": "exit-fill-1",
+                },
+            },
+        })
+
+        fact = next(row for row in monitors["facts"] if row["kind"] == "BROKER_FILLED_CLOSURE_PENDING")
+        self.assertEqual(fact["consumer_blocker"], "CANONICAL_POSITION_ROW_MISSING_FOR_FILLED_EXIT")
         result = self._classify(fact)
         self.assertEqual(result["signals"][0]["category"], "CAUSAL_HANDOFF_LOSS")
 

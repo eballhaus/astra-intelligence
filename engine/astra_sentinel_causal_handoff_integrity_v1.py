@@ -353,12 +353,15 @@ def _lifecycle_monitor(context: dict[str, Any], *, limit: int) -> tuple[dict[str
             "field": "exit_fill_id",
             "evidence_timestamp": pending.get("last_checked_at") or native.get("last_evaluated_at"),
         }
-        if status == "filled_awaiting_broker_zero":
+        exit_fill_id = _text(pending.get("exit_fill_id") or native.get("exit_fill_id"))
+        if status in {"filled_awaiting_broker_zero", "filled_canonical_position_row_missing"} and exit_fill_id:
             facts.append({
                 **base,
                 "kind": "BROKER_FILLED_CLOSURE_PENDING",
                 "producer_state": "BROKER_FILLED",
                 "consumer_state": _text(native.get("closure_state")) or "AWAITING_BROKER_ZERO",
+                "consumer_blocker": _text(native.get("exact_blocker") or pending.get("last_close_error")),
+                "exit_fill_id": exit_fill_id,
                 "first_bad_handoff": "broker-confirmed exit fill -> canonical lifecycle closure",
             })
         if _text(native.get("deadline_requirement_status")) == "SAME_SESSION_DEADLINE_PASSED":

@@ -121,6 +121,63 @@ class NativeLaneExitClosureTests(unittest.TestCase):
         state = engine._runtime_state["native_lane_exit_lifecycle_v1"]["lifecycle-current"]
         self.assertEqual(state["closure_state"], "PARTIALLY_FILLED")
 
+    def test_filled_exit_missing_canonical_row_preserves_exact_blocker(self):
+        engine = self._engine(_Broker(status="filled"))
+        engine._fetch_open_positions = lambda: []
+        engine._runtime_state["authorized_lane_exit_pending"] = {
+            "sell-1": {
+                "position_id": "lifecycle-current",
+                "symbol": "DAY",
+                "lane_id": "DAY",
+                "order_id": "sell-1",
+                "client_order_id": "native-day-exit",
+                "exit_reason": "natural",
+                "normalized_sell_qty": 2,
+            },
+        }
+
+        result = engine._refresh_authorized_lane_exit_pending()
+
+        self.assertEqual(result["filled"], 0)
+        self.assertEqual(result["pending"], 1)
+        self.assertEqual(len(engine.alpaca_paper_broker.submitted), 0)
+        state = engine._runtime_state["native_lane_exit_lifecycle_v1"]["lifecycle-current"]
+        self.assertEqual(state["closure_state"], "CLOSURE_BLOCKED_CANONICAL_ROW_MISSING")
+        self.assertEqual(state["decision"], "BROKER_FILLED")
+        self.assertEqual(state["exit_fill_id"], "sell-1")
+        self.assertEqual(state["exact_blocker"], "CANONICAL_POSITION_ROW_MISSING_FOR_FILLED_EXIT")
+        intent = engine._runtime_state["paper_sell_order_intents"]["native-day-exit"]
+        self.assertEqual(intent["reconciliation_status"], "CANONICAL_POSITION_ROW_MISSING")
+        self.assertTrue(intent["canonical_lifecycle_reconciliation_required"])
+
+    def test_broker_filled_state_cannot_be_downgraded_to_premarket_blocker(self):
+        engine = self._engine()
+        engine._runtime_state["native_lane_exit_lifecycle_v1"] = {
+            "lifecycle-current": {
+                "position_id": "lifecycle-current",
+                "lifecycle_id": "lifecycle-current",
+                "symbol": "DAY",
+                "lane_id": "DAY",
+                "closure_state": "CLOSURE_BLOCKED_CANONICAL_ROW_MISSING",
+                "decision": "BROKER_FILLED",
+                "exact_blocker": "CANONICAL_POSITION_ROW_MISSING_FOR_FILLED_EXIT",
+                "exit_fill_id": "sell-1",
+            }
+        }
+
+        state = engine._record_native_lane_exit_state(
+            _row(),
+            state="EXIT_BLOCKED_EXECUTION",
+            decision="EXIT_READY",
+            reason="day_lane_overnight_breach",
+            blocker="REGULAR_SESSION_REQUIRED:premarket",
+        )
+
+        self.assertEqual(state["closure_state"], "CLOSURE_BLOCKED_CANONICAL_ROW_MISSING")
+        self.assertEqual(state["exact_blocker"], "CANONICAL_POSITION_ROW_MISSING_FOR_FILLED_EXIT")
+        self.assertTrue(state["downgrade_suppressed"])
+        self.assertEqual(state["downgrade_suppressed_blocker"], "REGULAR_SESSION_REQUIRED:premarket")
+
 
 if __name__ == "__main__":
     unittest.main()
