@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 VERSION = "ASTRA_TRADING_HOURS_INTEGRITY_MONITOR_V1"
 RECOVERY_VERSION = "ASTRA_SAFE_RUNTIME_RECOVERY_V1"
+TRUTH_WATCHDOG_VERSION = "ASTRA_ALL_LANE_TRUTH_PRODUCTION_WATCHDOG_V2"
 LANES = ("DAY", "SCALP", "SWING", "CRYPTO")
 TRUTH_PATH_STAGES = (
     "DISCOVERY",
@@ -775,7 +776,11 @@ class AstraTradingReadinessV1:
         # A newly deployed watchdog schema must certify immediately rather
         # than inherit an old interval that contains no truth-stage evidence.
         previous_watchdog = _dict(previous.get("truth_production_watchdog"))
-        if previous and previous_watchdog and now - float(previous.get("scan_monotonic") or 0.0) < interval:
+        watchdog_migrated = (
+            _text(previous_watchdog.get("schema_version")) == TRUTH_WATCHDOG_VERSION
+            and all(isinstance(_dict(_dict(previous_watchdog.get("lanes")).get(lane)).get("stage_status"), Mapping) for lane in LANES)
+        )
+        if previous and previous_watchdog and watchdog_migrated and now - float(previous.get("scan_monotonic") or 0.0) < interval:
             return {**previous, "due": False, "provider_calls_used": 0, "broker_actions_used": 0}
 
         actions = dict(actions or {})
@@ -926,7 +931,7 @@ class AstraTradingReadinessV1:
             "strict_truth_integrity": "FAULT" if any(row["fault_type"] == "STRICT_TRUTH_LEARNING_HANDOFF_FAILURE" for row in issues) else "READY",
             "technical_no_trade": "TECHNICAL_NO_TRADE" if technical_no_trade else "NATURAL_NO_TRADE_OR_ACTIVITY_PRESENT",
             "truth_production_watchdog": {
-                "schema_version": "ASTRA_ALL_LANE_TRUTH_PRODUCTION_WATCHDOG_V1",
+                "schema_version": TRUTH_WATCHDOG_VERSION,
                 "generated_at": _now(),
                 "lanes": stages,
                 "crypto_continuous_check_active": True,

@@ -222,6 +222,20 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertTrue(result["due"])
         self.assertIn("truth_production_watchdog", result)
 
+    def test_v1_watchdog_record_is_migrated_immediately_even_inside_interval(self):
+        monitor = self._monitor()
+        monitor.path.write_text(
+            '{"scan_monotonic": %.6f, "truth_production_watchdog": {"schema_version": "ASTRA_ALL_LANE_TRUTH_PRODUCTION_WATCHDOG_V1", "lanes": {}}}'
+            % time.monotonic(),
+            encoding="utf-8",
+        )
+        result = monitor.run_if_due(runtime_state={"last_execution_trace": {}}, worker_state={})
+        self.assertTrue(result["due"])
+        self.assertEqual(
+            result["truth_production_watchdog"]["schema_version"],
+            "ASTRA_ALL_LANE_TRUTH_PRODUCTION_WATCHDOG_V2",
+        )
+
     def test_post_close_phase_keeps_scheduled_integrity_check_cadence(self):
         monitor = self._monitor()
         monitor._session = lambda: {
