@@ -150,6 +150,46 @@ class NativeLaneExitClosureTests(unittest.TestCase):
         self.assertEqual(intent["reconciliation_status"], "CANONICAL_POSITION_ROW_MISSING")
         self.assertTrue(intent["canonical_lifecycle_reconciliation_required"])
 
+    def test_filled_exit_waiting_for_broker_zero_preserves_fill_lineage(self):
+        engine = self._engine(_Broker(status="filled"))
+        engine._fetch_open_positions = lambda: [_row()]
+        engine._close_position = lambda *args, **kwargs: {
+            "ok": False,
+            "error": "broker_residual_lookup_blocks_close:NONZERO_CONFIRMED",
+        }
+        engine._runtime_state["authorized_lane_exit_pending"] = {
+            "sell-1": {
+                "position_id": "lifecycle-current",
+                "symbol": "DAY",
+                "lane_id": "DAY",
+                "order_id": "sell-1",
+                "client_order_id": "native-day-exit",
+                "exit_reason": "natural",
+                "normalized_sell_qty": 2,
+            },
+        }
+
+        result = engine._refresh_authorized_lane_exit_pending()
+
+        self.assertEqual(result["pending"], 1)
+        state = engine._runtime_state["native_lane_exit_lifecycle_v1"]["lifecycle-current"]
+        self.assertEqual(state["closure_state"], "AWAITING_BROKER_ZERO")
+        self.assertEqual(state["exit_fill_id"], "sell-1")
+        pending = engine._runtime_state["authorized_lane_exit_pending"]["sell-1"]
+        self.assertEqual(pending["exit_fill_id"], "sell-1")
+
+        downgraded = engine._record_native_lane_exit_state(
+            _row(),
+            state="EXIT_BLOCKED_EXECUTION",
+            decision="EXIT_READY",
+            reason="day_lane_overnight_breach",
+            blocker="REGULAR_SESSION_REQUIRED:premarket",
+        )
+
+        self.assertEqual(downgraded["closure_state"], "AWAITING_BROKER_ZERO")
+        self.assertEqual(downgraded["exit_fill_id"], "sell-1")
+        self.assertTrue(downgraded["downgrade_suppressed"])
+
     def test_broker_filled_state_cannot_be_downgraded_to_premarket_blocker(self):
         engine = self._engine()
         engine._runtime_state["native_lane_exit_lifecycle_v1"] = {

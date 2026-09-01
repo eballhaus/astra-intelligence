@@ -4486,9 +4486,18 @@ class PaperAutopilotEngine:
                 self._record_native_lane_exit_state(
                     rows[0], state="AWAITING_BROKER_ZERO", decision="EXIT_READY",
                     reason=str(item.get("exit_reason") or "lane_exit"),
-                    blocker=str(closed.get("error") or "BROKER_ZERO_REQUIRED"), broker_order_id=exit_order_id,
+                    blocker=str(closed.get("error") or "BROKER_ZERO_REQUIRED"),
+                    broker_order_id=exit_order_id, exit_fill_id=exit_fill_id,
+                    broker_order_status="FILLED", filled_quantity=filled_qty, filled_at=filled_at,
                 )
-                remaining[key] = {**item, "last_checked_at": _now_iso(), "last_order_status": "filled_awaiting_broker_zero"}
+                remaining[key] = {
+                    **item,
+                    "last_checked_at": _now_iso(),
+                    "last_order_status": "filled_awaiting_broker_zero",
+                    "exit_fill_id": exit_fill_id,
+                    "filled_quantity": filled_qty,
+                    "filled_at": filled_at,
+                }
             filled += 1 if closed.get("ok") else 0
         self._runtime_state["authorized_lane_exit_pending"] = remaining
         return {"checked": checked, "filled": filled, "pending": len(remaining)}
