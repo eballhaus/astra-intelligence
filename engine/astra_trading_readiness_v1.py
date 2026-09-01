@@ -1,6 +1,7 @@
 """Bounded worker-owned readiness checks and non-decision runtime recovery."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -13,6 +14,11 @@ from zoneinfo import ZoneInfo
 VERSION = "ASTRA_TRADING_HOURS_INTEGRITY_MONITOR_V1"
 RECOVERY_VERSION = "ASTRA_SAFE_RUNTIME_RECOVERY_V1"
 TRUTH_WATCHDOG_VERSION = "ASTRA_ALL_LANE_TRUTH_PRODUCTION_WATCHDOG_V2"
+AUTONOMY_VERSION = "ASTRA_AUTONOMOUS_SELF_REPAIR_V1"
+MAX_CODE_REPAIR_PACKAGES = 32
+MAX_SCORECARD_DAYS = 14
+MAX_FAULT_HISTORY = 64
+MAX_RECOVERY_ACTIONS_PER_CHECK = 8
 LANES = ("DAY", "SCALP", "SWING", "CRYPTO")
 TRUTH_PATH_STAGES = (
     "DISCOVERY",
@@ -253,9 +259,344 @@ class AstraTradingReadinessV1:
         if fault == "ENTRY_FUNNEL_STAGE_BLOCKED":
             matrix_stage = _text(issue.get("component")).rsplit(".", 1)[-1]
             return _MATRIX_STAGE_MAP.get(matrix_stage, "QUALIFIED")
-        if fault.startswith("DISCOVERY") or fault in {"BACKEND_UNHEALTHY", "WORKER_CYCLE_BOUNDARY_EXCEEDED"}:
+        if fault == "WORKER_CYCLE_BOUNDARY_EXCEEDED":
+            return "MANAGEMENT"
+        if fault.startswith("DISCOVERY") or fault == "BACKEND_UNHEALTHY":
             return "DISCOVERY"
         return ""
+
+    @staticmethod
+    def _issue_contract(issue: Mapping[str, Any]) -> dict[str, Any]:
+        """Attach a compact repair handoff without inventing runtime facts."""
+        fault = _text(issue.get("fault_type")).upper()
+        contracts = {
+            "DISCOVERY_LEGACY_BYPASS": {
+                "owner_file": "engine/paper_autopilot.py",
+                "owner_function": "_rebuild_equity_candidate_snapshot_v1",
+                "failing_invariant": "CANONICAL_DISCOVERY_SOURCE_AVAILABLE",
+                "expected_contract": "authoritative discovery state reaches the lane candidate funnel",
+                "smallest_repair_scope": "rebuild the existing bounded discovery snapshot",
+                "relevant_test_owners": ["tests/test_trading_readiness_v1.py"],
+            },
+            "ACTIVE_POSITION_NOT_STREAMED": {
+                "owner_file": "server_extend.py",
+                "owner_function": "_refresh_alpaca_ws_allocation",
+                "failing_invariant": "CANONICAL_ACTIVE_SYMBOLS_ARE_SUBSCRIBED",
+                "expected_contract": "every canonical active equity is in the shared observation subscription set",
+                "smallest_repair_scope": "reconcile the existing shared WS subscription set",
+                "relevant_test_owners": ["tests/test_trading_readiness_v1.py"],
+            },
+            "WS_TRANSPORT_UNHEALTHY": {
+                "owner_file": "engine/alpaca_ws_monitor.py",
+                "owner_function": "AlpacaWSMonitor._run",
+                "failing_invariant": "WS_TRANSPORT_CONNECTED_AND_FLOWING",
+                "expected_contract": "the single IEX observer has stable authenticated/subscribed message flow when expected",
+                "smallest_repair_scope": "bound reconnect and verify transport flow without adding a connection",
+                "relevant_test_owners": ["tests/test_trading_readiness_v1.py", "tests/test_alpaca_ws_monitor.py"],
+            },
+            "PRODUCER_FRESH_CONSUMER_UNAVAILABLE": {
+                "owner_file": "engine/paper_autopilot.py",
+                "owner_function": "_loss_containment_quote_evidence",
+                "failing_invariant": "FRESH_PROVIDER_OBSERVATION_REACHES_MANAGEMENT",
+                "expected_contract": "canonical provider timestamp and identity reach loss containment and profit protection",
+                "smallest_repair_scope": "rematerialize the existing observation alias/cache handoff",
+                "relevant_test_owners": ["tests/test_trading_readiness_v1.py"],
+            },
+            "WORKER_CYCLE_BOUNDARY_EXCEEDED": {
+                "owner_file": "engine/astra_runtime_governance_v1.py",
+                "owner_function": "canonical_runtime_invariants",
+                "failing_invariant": "CYCLE_WITHIN_BOUNDS",
+                "expected_contract": "worker cycle completes within the configured bounded limit",
+                "smallest_repair_scope": "identify and bound the existing blocking stage; do not raise the limit",
+                "relevant_test_owners": ["tests/test_astra_canonical_natural_lifecycle_v1.py"],
+            },
+            "ENTRY_FUNNEL_STAGE_BLOCKED": {
+                "owner_file": "engine/astra_multilane_operational_completion_v1.py",
+                "owner_function": "_first_causal_blocker",
+                "failing_invariant": "LANE_CANDIDATE_CONTRACT_ADVANCES",
+                "expected_contract": "current candidate contract reaches the existing lane eligibility gate",
+                "smallest_repair_scope": "repair only the recorded candidate-to-gate handoff",
+                "relevant_test_owners": ["tests/test_astra_multilane_operational_completion_v1.py"],
+            },
+            "RECONCILIATION_FAILURE": {
+                "owner_file": "SOURCE_OWNER_NOT_PERSISTED_IN_CURRENT_FACT",
+                "owner_function": _text(issue.get("component")) or "canonical lifecycle reconciliation",
+                "failing_invariant": "BROKER_FILLED_EXIT_RECONCILES_TO_CANONICAL_LIFECYCLE",
+                "expected_contract": "the target lifecycle is reconciled using its own authoritative broker fill identity",
+                "smallest_repair_scope": "resolve lifecycle-specific reconciliation without assigning aggregate residuals",
+                "relevant_test_owners": ["tests/test_astra_canonical_natural_lifecycle_v1.py"],
+            },
+            "CRYPTO_HORIZON_PRESENT_BUT_NOT_CONSUMED": {
+                "owner_file": "engine/paper_autopilot.py",
+                "owner_function": "_recover_broker_position_lane_horizon_v1",
+                "failing_invariant": "CRYPTO_IDENTITY_HORIZON_REACHES_MANAGEMENT",
+                "expected_contract": "persisted canonical crypto identity/horizon is consumed without default inference",
+                "smallest_repair_scope": "reload the existing canonical identity state",
+                "relevant_test_owners": ["tests/test_astra_position_lane_horizon_recovery_v1.py"],
+            },
+            "STRICT_TRUTH_LEARNING_HANDOFF_FAILURE": {
+                "owner_file": "engine/astra_operating_health_contract_v1.py",
+                "owner_function": "AstraOperatingHealthContractV1._handoff_ledger_row",
+                "failing_invariant": "STRICT_TRUTH_REACHES_LEARNING_ACKNOWLEDGEMENT",
+                "expected_contract": "an eligible strict truth has a real learning acknowledgement",
+                "smallest_repair_scope": "retry the existing consumer handoff without fabricating acknowledgement",
+                "relevant_test_owners": ["tests/test_astra_operating_health_contract_v1.py"],
+            },
+        }
+        contract = dict(contracts.get(fault) or {})
+        contract.setdefault("owner_file", _text(issue.get("owner_file")) or "OWNER_NOT_RESOLVED")
+        contract.setdefault("owner_function", _text(issue.get("owner_function")) or "OWNER_FUNCTION_NOT_RESOLVED")
+        contract.setdefault("failing_invariant", fault or "UNKNOWN_INVARIANT")
+        contract.setdefault("expected_contract", "the canonical stage invariant passes")
+        contract.setdefault("smallest_repair_scope", "bounded owner-level repair only")
+        contract.setdefault("relevant_test_owners", [])
+        return contract
+
+    @classmethod
+    def _annotate_issue(cls, issue: Mapping[str, Any]) -> dict[str, Any]:
+        row = dict(issue)
+        row.update(cls._issue_contract(row))
+        row["earliest_stage"] = cls._issue_stage(row)
+        row["evidence_fingerprint"] = hashlib.sha256(
+            json.dumps(
+                {
+                    "fault_type": row.get("fault_type"),
+                    "component": row.get("component"),
+                    "lanes": row.get("lanes"),
+                    "evidence": row.get("evidence"),
+                    "earliest_stage": row.get("earliest_stage"),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()[:16]
+        return row
+
+    @staticmethod
+    def _repair_package(issue: Mapping[str, Any], row: Mapping[str, Any], prior: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "schema_version": "ASTRA_CODE_REPAIR_PACKAGE_V1",
+            "fault_code": _text(issue.get("fault_type")),
+            "lanes": list(issue.get("lanes") or []),
+            "earliest_stage": _text(issue.get("earliest_stage")),
+            "first_seen": _text(row.get("first_seen")),
+            "last_seen": _text(row.get("last_seen")),
+            "duration_seconds": row.get("duration_seconds"),
+            "recurrence_count": int(row.get("occurrence_count") or 0),
+            "proven_root_cause": _text(issue.get("evidence")),
+            "owner_file": _text(issue.get("owner_file")),
+            "owner_function": _text(issue.get("owner_function")),
+            "failing_invariant": _text(issue.get("failing_invariant")),
+            "expected_contract": _text(issue.get("expected_contract")),
+            "actual_contract": _text(issue.get("evidence")),
+            "minimal_reproduction_evidence": {
+                "component": _text(issue.get("component")),
+                "fault_type": _text(issue.get("fault_type")),
+                "evidence": _text(issue.get("evidence")),
+                "fingerprint": _text(issue.get("evidence_fingerprint")),
+            },
+            "recovery_attempts": list(row.get("recovery_attempt_history") or prior.get("recovery_attempt_history") or []),
+            "why_runtime_recovery_cannot_fix_it": "no approved action remains or the original invariant still fails after bounded verification",
+            "smallest_repair_scope": _text(issue.get("smallest_repair_scope")),
+            "relevant_test_owners": list(issue.get("relevant_test_owners") or []),
+            "commit": _text(row.get("commit") or prior.get("commit")),
+            "worker_pid": row.get("worker_pid") if row.get("worker_pid") is not None else prior.get("worker_pid"),
+            "state_schema_version": TRUTH_WATCHDOG_VERSION,
+        }
+
+    @staticmethod
+    def _duration_seconds(first_seen: Any, last_seen: Any) -> float | None:
+        first = _text(first_seen)
+        last = _text(last_seen)
+        if not first or not last:
+            return None
+        try:
+            start = datetime.fromisoformat(first.replace("Z", "+00:00"))
+            end = datetime.fromisoformat(last.replace("Z", "+00:00"))
+            return round(max(0.0, (end - start).total_seconds()), 3)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _issue_key(issue: Mapping[str, Any]) -> str:
+        return f"{_text(issue.get('fault_type'))}:{_text(issue.get('component'))}"
+
+    @classmethod
+    def _new_fault_row(
+        cls,
+        issue: Mapping[str, Any],
+        prior: Mapping[str, Any],
+        *,
+        now_iso: str,
+        worker_pid: Any = None,
+        commit: str = "",
+    ) -> dict[str, Any]:
+        annotated = cls._annotate_issue(issue)
+        same_evidence = not prior or (
+            bool(prior.get("evidence_fingerprint"))
+            and prior.get("evidence_fingerprint") == annotated.get("evidence_fingerprint")
+        )
+        first_seen = _text(prior.get("first_seen")) if same_evidence else ""
+        occurrence_count = int(prior.get("occurrence_count") or 0) + 1
+        attempts = int(prior.get("repair_attempt_count") or 0) if same_evidence else 0
+        return {
+            **annotated,
+            "first_seen": first_seen or now_iso,
+            "last_seen": now_iso,
+            "duration_seconds": cls._duration_seconds(first_seen or now_iso, now_iso),
+            "occurrence_count": occurrence_count,
+            "repair_attempt_count": attempts,
+            "repair_result": {},
+            "verification_result": "NOT_ATTEMPTED",
+            "recovery_state": "FAULT_DETECTED",
+            "recovery_suppressed": False,
+            "recurrent": occurrence_count >= 3,
+            "recurrent_failure": "RECURRENT_CANONICAL_INTEGRITY_FAILURE" if occurrence_count >= 3 else "",
+            "recovery_attempt_history": list(prior.get("recovery_attempt_history") or [])[-2:],
+            "worker_pid": worker_pid if worker_pid is not None else prior.get("worker_pid"),
+            "commit": commit or _text(prior.get("commit")),
+        }
+
+    @staticmethod
+    def _scorecard(
+        session: Mapping[str, Any],
+        stages: Mapping[str, Mapping[str, Any]],
+        active_faults: list[dict[str, Any]],
+        recoveries: list[dict[str, Any]],
+        previous: Mapping[str, Any],
+        generated_at: str,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        date_local = _text(session.get("market_local_time"))[:10] or generated_at[:10]
+        lanes: dict[str, Any] = {}
+        for lane in LANES:
+            stage = _dict(stages.get(lane))
+            lane_faults = [row for row in active_faults if lane in (row.get("lanes") or [])]
+            lane_recoveries = [row for row in recoveries if lane in (row.get("lanes") or [])]
+            current_state = _text(stage.get("technical_readiness")) or "NOT_PROVEN"
+            technical_uptime = {
+                "TECHNICALLY_READY": "READY",
+                "DEGRADED": "DEGRADED",
+                "BLOCKED": "BLOCKED",
+            }.get(current_state, "UNKNOWN")
+            blocker_minutes = max(
+                [float(row.get("duration_seconds") or 0.0) / 60.0 for row in lane_faults] or [0.0]
+            )
+            active_session = bool(session.get("equity_session_open")) if lane != "CRYPTO" else str(session.get("check_phase")) == "CRYPTO_CONTINUOUS_CHECK"
+            if lane_faults and active_session:
+                software_cost = "YES"
+            elif active_session:
+                software_cost = "NO"
+            else:
+                software_cost = "UNKNOWN"
+            stage_status = _dict(stage.get("stage_status"))
+            lanes[lane] = {
+                "technical_uptime": technical_uptime,
+                "current_readiness": current_state,
+                "earliest_blocked_stage": _text(stage.get("current_earliest_blocked_stage")),
+                "earliest_blocker": _text(stage.get("current_earliest_blocker")),
+                "truth_path_state": "TECHNICAL_BLOCKED" if lane_faults else "READY_OR_NATURAL_WAIT",
+                "stage_activity": {
+                    name: _text(_dict(stage_status.get(name)).get("status"))
+                    for name in TRUTH_PATH_STAGES
+                    if _dict(stage_status.get(name))
+                },
+                "last_successful_stages": {
+                    "discovery": _text(stage.get("last_discovery_time")),
+                    "candidate": _text(stage.get("last_candidate_time")),
+                    "finalist": _text(stage.get("last_finalist_time")),
+                    "order_ready": _text(stage.get("last_order_ready_time")),
+                    "fill": _text(stage.get("last_fill_time")),
+                    "management": _text(stage.get("last_management_evaluation_time")),
+                    "exit": _text(stage.get("last_exit_time")),
+                    "truth": _text(stage.get("last_strict_truth_time")),
+                    "learning": _text(stage.get("last_learning_ingestion_time")),
+                },
+                "current_open_positions": int(stage.get("current_open_positions") or 0),
+                "technical_blocker_minutes": round(blocker_minutes, 3),
+                "runtime_repairs_attempted": len(lane_recoveries),
+                "verified_recoveries": sum(1 for row in lane_recoveries if row.get("verification_result") == "RECOVERY_SUCCEEDED"),
+                "failed_recoveries": sum(1 for row in lane_recoveries if row.get("verification_result") == "RECOVERY_FAILED"),
+                "code_repair_required": [
+                    _text(row.get("fault_type"))
+                    for row in lane_faults
+                    if row.get("verification_result") == "CODE_REPAIR_REQUIRED"
+                ],
+                "natural_wait": _text(stage.get("technical_truth_starvation_status")) if not lane_faults else "",
+                "software_cost_trading_time": software_cost,
+            }
+        scorecard = {
+            "schema_version": "ASTRA_DAILY_TRUTH_PATH_SCORECARD_V1",
+            "generated_at": generated_at,
+            "date_local": date_local,
+            "paper_only": True,
+            "lanes": lanes,
+        }
+        old_scorecards = [row for row in _rows(previous.get("daily_scorecards")) if _text(row.get("date_local")) != date_local]
+        old_scorecards.append(scorecard)
+        return scorecard, old_scorecards[-MAX_SCORECARD_DAYS:]
+
+    @staticmethod
+    def _control_loop(
+        initial_issues: list[dict[str, Any]],
+        active_faults: list[dict[str, Any]],
+        recoveries: list[dict[str, Any]],
+        stages: Mapping[str, Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        if any(row.get("verification_result") == "CODE_REPAIR_REQUIRED" for row in active_faults):
+            state = "CODE_REPAIR_REQUIRED"
+        elif any(row.get("verification_result") == "RECOVERY_VERIFYING" for row in recoveries):
+            state = "RECOVERY_VERIFYING"
+        elif any(row.get("verification_result") == "RECOVERY_FAILED" for row in recoveries):
+            state = "RECOVERY_FAILED"
+        elif any(row.get("verification_result") == "RECOVERY_SUCCEEDED" for row in recoveries):
+            state = "RECOVERY_SUCCEEDED"
+        elif initial_issues:
+            state = "FAULT_DETECTED"
+        else:
+            state = "HEALTHY"
+        return {
+            "schema_version": AUTONOMY_VERSION,
+            "state": state,
+            "faults_detected": len(initial_issues),
+            "actions_dispatched": sum(1 for row in recoveries if row.get("verification_result") in {"ACTION_DISPATCHED", "RECOVERY_VERIFYING", "RECOVERY_SUCCEEDED", "RECOVERY_FAILED"}),
+            "recovery_verifying": sum(1 for row in recoveries if row.get("verification_result") == "RECOVERY_VERIFYING"),
+            "recovery_succeeded": sum(1 for row in recoveries if row.get("verification_result") == "RECOVERY_SUCCEEDED"),
+            "recovery_failed": sum(1 for row in recoveries if row.get("verification_result") == "RECOVERY_FAILED"),
+            "post_repair_truth_path_recheck": bool(recoveries),
+            "next_blocker_by_lane": {
+                lane: {
+                    "stage": _text(_dict(stages.get(lane)).get("current_earliest_blocked_stage")),
+                    "blocker": _text(_dict(stages.get(lane)).get("current_earliest_blocker")),
+                    "readiness": _text(_dict(stages.get(lane)).get("technical_readiness")),
+                    "truth_starvation": _text(_dict(stages.get(lane)).get("technical_truth_starvation_status")),
+                }
+                for lane in LANES
+            },
+            "bounded_recovery_policy": {
+                "max_attempts_per_fault": 2,
+                "max_actions_per_check": MAX_RECOVERY_ACTIONS_PER_CHECK,
+                "source_code_modification": False,
+            },
+        }
+
+    @staticmethod
+    def _merge_code_repair_packages(previous: Mapping[str, Any], fault_rows: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
+        packages: dict[str, dict[str, Any]] = {}
+        for package in _rows(previous.get("code_repair_packages")):
+            evidence = _dict(package.get("minimal_reproduction_evidence"))
+            key = ":".join((_text(package.get("fault_code")), _text(evidence.get("component")), _text(evidence.get("fingerprint"))))
+            if key.strip(":"):
+                packages[key] = package
+        for row in fault_rows.values():
+            if row.get("verification_result") != "CODE_REPAIR_REQUIRED":
+                continue
+            package = _dict(row.get("code_repair_package"))
+            evidence = _dict(package.get("minimal_reproduction_evidence"))
+            key = ":".join((_text(package.get("fault_code")), _text(evidence.get("component")), _text(evidence.get("fingerprint"))))
+            if key.strip(":"):
+                packages[key] = package
+        return list(packages.values())[-MAX_CODE_REPAIR_PACKAGES:]
 
     def _stage_ledger(self, runtime: Mapping[str, Any], previous: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
         """Record bounded stage evidence without inventing event timestamps."""
@@ -802,78 +1143,165 @@ class AstraTradingReadinessV1:
             return {**previous, "due": False, "provider_calls_used": 0, "broker_actions_used": 0}
 
         actions = dict(actions or {})
+        generated_at = _now()
+        worker_state = dict(worker_state or {})
+        worker_pid = worker_state.get("active_worker_pid") or worker_state.get("worker_pid")
+        commit = _text(runtime_state.get("commit") or worker_state.get("commit") or previous.get("commit"))
         observed_runtime = dict(runtime_state)
-        observed_runtime["_worker_state"] = dict(worker_state or {})
-        issues = self._issues(observed_runtime, session)
-        previous_faults = _dict(previous.get("faults"))
+        observed_runtime["_worker_state"] = worker_state
+        raw_issues = self._issues(observed_runtime, session)
+        # A shared fault can be emitted by more than one existing diagnostic
+        # owner.  Keep one bounded repair decision per fault key.
+        issues_by_key: dict[str, dict[str, Any]] = {}
+        for issue in raw_issues:
+            annotated = self._annotate_issue(issue)
+            issues_by_key.setdefault(self._issue_key(annotated), annotated)
+        issues = list(issues_by_key.values())
+        initial_issues = list(issues)
+        previous_faults = _dict(previous.get("fault_history"))
+        previous_faults.update(_dict(previous.get("faults")))
         fault_rows: dict[str, dict[str, Any]] = {}
         recoveries: list[dict[str, Any]] = []
+        action_budget = MAX_RECOVERY_ACTIONS_PER_CHECK
         for issue in issues:
-            key = f"{issue['fault_type']}:{issue['component']}"
+            key = self._issue_key(issue)
             prior = _dict(previous_faults.get(key))
-            count = int(prior.get("occurrence_count") or 0) + 1
-            attempts = int(prior.get("repair_attempt_count") or 0)
+            row = self._new_fault_row(issue, prior, now_iso=generated_at, worker_pid=worker_pid, commit=commit)
+            same_evidence = not prior or (
+                bool(prior.get("evidence_fingerprint"))
+                and prior.get("evidence_fingerprint") == issue.get("evidence_fingerprint")
+            )
+            attempts = int(row.get("repair_attempt_count") or 0)
+            action = _text(issue.get("repair_action"))
             result: dict[str, Any] = {}
-            action = str(issue.get("repair_action") or "")
-            if attempts < 2 and callable(actions.get(action)):
+            verification = "NOT_ATTEMPTED"
+            prior_code_package = _dict(prior.get("code_repair_package"))
+            unchanged_code_defect = (
+                same_evidence
+                and _text(prior.get("verification_result")) == "CODE_REPAIR_REQUIRED"
+                and _text(prior.get("evidence_fingerprint")) == _text(issue.get("evidence_fingerprint"))
+            )
+            if unchanged_code_defect:
+                verification = "CODE_REPAIR_REQUIRED"
+                row["recovery_state"] = "CODE_REPAIR_REQUIRED"
+                row["recovery_suppressed"] = True
+                row["suppression_reason"] = "UNCHANGED_CODE_REPAIR_EVIDENCE"
+                if prior_code_package:
+                    row["code_repair_package"] = prior_code_package
+            elif attempts < 2 and callable(actions.get(action)) and action_budget > 0:
+                row["recovery_state"] = "DIAGNOSING"
                 attempts += 1
+                action_budget -= 1
                 try:
                     result = _dict(actions[action]())
                     verification = "ACTION_DISPATCHED" if result else "RECOVERY_FAILED"
                 except Exception as exc:
                     result = {"error": str(exc)[:160]}
                     verification = "RECOVERY_FAILED"
-                recoveries.append({"fault_type": issue["fault_type"], "component": issue["component"], "repair_action": action, "result": result, "verification_result": verification})
+                row["recovery_state"] = verification
+                history = list(prior.get("recovery_attempt_history") or [])
+                history.append({
+                    "attempt": attempts,
+                    "action": action,
+                    "dispatched_at": generated_at,
+                    "result": result,
+                    "verification_result": verification,
+                })
+                row["recovery_attempt_history"] = history[-2:]
+                recoveries.append({
+                    "fault_type": issue["fault_type"],
+                    "component": issue["component"],
+                    "lanes": list(issue.get("lanes") or []),
+                    "repair_action": action,
+                    "attempt": attempts,
+                    "result": result,
+                    "verification_result": verification,
+                    "recovery_state": verification,
+                })
+            elif attempts >= 2:
+                verification = "CODE_REPAIR_REQUIRED"
+                row["recovery_state"] = "CODE_REPAIR_REQUIRED"
+            elif action and action_budget <= 0:
+                verification = "RECOVERY_DEFERRED_BOUNDED_BUDGET"
+                row["recovery_state"] = verification
             else:
-                verification = "CODE_REPAIR_REQUIRED" if attempts >= 2 or not action else "NO_SAFE_ACTION_AVAILABLE"
-            fault_rows[key] = {
-                **issue,
-                "first_seen": prior.get("first_seen") or _now(),
-                "last_seen": _now(),
-                "occurrence_count": count,
+                # An explicit technical fault with no approved runtime
+                # action must be escalated immediately, not left as an
+                # unexplained healthy/no-trade condition.
+                verification = "CODE_REPAIR_REQUIRED"
+                row["recovery_state"] = "CODE_REPAIR_REQUIRED"
+            row.update({
                 "repair_attempt_count": attempts,
                 "repair_result": result,
                 "verification_result": verification,
-                "recurrent": count >= 3,
-            }
+                "duration_seconds": self._duration_seconds(row.get("first_seen"), generated_at),
+                "recurrent": int(row.get("occurrence_count") or 0) >= 3,
+                "recurrent_failure": "RECURRENT_CANONICAL_INTEGRITY_FAILURE" if int(row.get("occurrence_count") or 0) >= 3 else "",
+            })
+            fault_rows[key] = row
 
-        # Recovery is bounded to one action plus one retry per fault.
         # Re-evaluate a fresh committed runtime snapshot so dispatch alone is
-        # never reported as a successful repair.
+        # never reported as a successful repair.  Actions themselves remain
+        # bounded and are never retried in this same check.
         if recoveries and callable(refresh_runtime):
             try:
                 refreshed_runtime = refresh_runtime()
                 if isinstance(refreshed_runtime, Mapping):
                     observed_runtime = dict(refreshed_runtime)
-                    observed_runtime["_worker_state"] = dict(worker_state or {})
+                    observed_runtime["_worker_state"] = worker_state
             except Exception:
                 # A failed refresh cannot manufacture a healthy verification;
                 # retain the pre-action snapshot and leave recovery pending.
                 pass
-        remaining_issues = self._issues(observed_runtime, session) if recoveries else issues
-        remaining_keys = {
-            f"{row['fault_type']}:{row['component']}" for row in remaining_issues
-        }
+        remaining_raw = self._issues(observed_runtime, session) if recoveries else issues
+        remaining_by_key: dict[str, dict[str, Any]] = {}
+        for issue in remaining_raw:
+            annotated = self._annotate_issue(issue)
+            remaining_by_key.setdefault(self._issue_key(annotated), annotated)
+        remaining_issues = list(remaining_by_key.values())
+        remaining_keys = set(remaining_by_key)
+        # A successful action may expose the next broken stage.  Surface that
+        # new issue now, but defer its repair to the next bounded check.
+        for issue in remaining_issues:
+            key = self._issue_key(issue)
+            if key in fault_rows:
+                continue
+            row = self._new_fault_row(
+                issue,
+                _dict(previous_faults.get(key)),
+                now_iso=generated_at,
+                worker_pid=worker_pid,
+                commit=commit,
+            )
+            row["verification_result"] = "CODE_REPAIR_REQUIRED" if int(row.get("repair_attempt_count") or 0) >= 2 or not _text(issue.get("repair_action")) else "NOT_ATTEMPTED"
+            row["recovery_state"] = row["verification_result"]
+            fault_rows[key] = row
         for recovery in recoveries:
-            key = f"{recovery.get('fault_type')}:{recovery.get('component')}"
+            key = self._issue_key(recovery)
             if key not in remaining_keys and recovery.get("verification_result") == "ACTION_DISPATCHED":
                 recovery["verification_result"] = "RECOVERY_SUCCEEDED"
+                recovery["recovery_state"] = "RECOVERY_SUCCEEDED"
             elif key in remaining_keys and recovery.get("verification_result") == "ACTION_DISPATCHED":
                 recovery["verification_result"] = "RECOVERY_VERIFYING"
+                recovery["recovery_state"] = "RECOVERY_VERIFYING"
         for key, row in fault_rows.items():
             if key not in remaining_keys and row.get("verification_result") in {"ACTION_DISPATCHED", "RECOVERY_VERIFYING"}:
                 row["verification_result"] = "RECOVERY_SUCCEEDED"
+                row["recovery_state"] = "RECOVERY_SUCCEEDED"
             elif key in remaining_keys and row.get("verification_result") == "ACTION_DISPATCHED":
                 row["verification_result"] = "RECOVERY_VERIFYING"
+                row["recovery_state"] = "RECOVERY_VERIFYING"
             if key in remaining_keys and int(row.get("repair_attempt_count") or 0) >= 2 and row.get("verification_result") == "RECOVERY_VERIFYING":
                 row["verification_result"] = "CODE_REPAIR_REQUIRED"
+                row["recovery_state"] = "CODE_REPAIR_REQUIRED"
                 for recovery in recoveries:
-                    if f"{recovery.get('fault_type')}:{recovery.get('component')}" == key:
+                    if self._issue_key(recovery) == key:
                         recovery["verification_result"] = "RECOVERY_FAILED"
+                        recovery["recovery_state"] = "RECOVERY_FAILED"
         issues = remaining_issues
         active_faults = [row for key, row in fault_rows.items() if key in remaining_keys]
-        readiness = self._readiness(issues, session, runtime_state)
-        stages = self._stage_ledger(runtime_state, previous)
+        readiness = self._readiness(issues, session, observed_runtime)
+        stages = self._stage_ledger(observed_runtime, previous)
         natural_causes = {
             "NATURAL_NO_QUALIFYING_ENTRY",
             "NATURAL_OPEN_POSITION",
@@ -914,14 +1342,32 @@ class AstraTradingReadinessV1:
                 )
             else:
                 stage["technical_no_trade_status"] = "NATURAL_NO_TRADE_OR_ACTIVITY_PRESENT"
+            last_truth = _text(stage.get("last_strict_truth_time"))
+            stage["truth_starvation_duration_seconds"] = self._duration_seconds(last_truth, generated_at) if last_truth else None
         technical_no_trade = any(
             stage.get("technical_no_trade_status") == "TECHNICAL_NO_TRADE"
             for stage in stages.values()
         ) and bool(session["equity_session_open"] or session.get("check_phase") == "CRYPTO_CONTINUOUS_CHECK")
+        for key, row in fault_rows.items():
+            if row.get("verification_result") == "CODE_REPAIR_REQUIRED":
+                row["code_repair_package"] = self._repair_package(row, row, _dict(previous_faults.get(key)))
+        fault_history = dict(previous_faults)
+        fault_history.update(fault_rows)
+        fault_history = dict(list(fault_history.items())[-MAX_FAULT_HISTORY:])
+        generated_scorecard, scorecards = self._scorecard(
+            session,
+            stages,
+            active_faults,
+            recoveries,
+            previous,
+            generated_at,
+        )
+        control_loop = self._control_loop(initial_issues, active_faults, recoveries, stages)
         summary = {
             "schema_version": VERSION,
             "recovery_schema_version": RECOVERY_VERSION,
-            "generated_at": _now(),
+            "autonomy_schema_version": AUTONOMY_VERSION,
+            "generated_at": generated_at,
             "scan_monotonic": now,
             "due": True,
             "session": session,
@@ -946,13 +1392,18 @@ class AstraTradingReadinessV1:
                 "diagnoses_are_non_decisioning": True,
             },
             "faults": fault_rows,
+            "fault_history": fault_history,
             "active_faults": active_faults,
             "self_heal_attempts": len(recoveries),
             "self_heal_successes": sum(1 for row in recoveries if row.get("verification_result") == "RECOVERY_SUCCEEDED"),
             "recurrent_faults": [row for row in active_faults if row.get("recurrent")],
             "code_repair_required": any(row.get("verification_result") == "CODE_REPAIR_REQUIRED" for row in active_faults),
             "recoveries": recoveries,
-            "last_full_successful_check": previous.get("last_full_successful_check") if issues else _now(),
+            "autonomous_control_loop": control_loop,
+            "code_repair_packages": self._merge_code_repair_packages(previous, fault_rows),
+            "daily_scorecard": generated_scorecard,
+            "daily_scorecards": scorecards,
+            "last_full_successful_check": previous.get("last_full_successful_check") if issues else generated_at,
             "safe_rollback_capability": "SAFE_ROLLBACK_UNAVAILABLE",
             "provider_calls_used": 0,
             "broker_actions_used": 0,

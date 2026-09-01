@@ -23,6 +23,12 @@ class TradingReadinessTests(unittest.TestCase):
         monitor._session = lambda: {"timezone": "America/New_York", "equity_session_open": True, "preopen_window": False, "market_local_time": "2026-08-31T10:00:00-04:00"}
         return monitor
 
+    @staticmethod
+    def _force_due(monitor: AstraTradingReadinessV1) -> None:
+        payload = __import__("json").loads(monitor.path.read_text(encoding="utf-8"))
+        payload["scan_monotonic"] = time.monotonic() - 301
+        monitor.path.write_text(__import__("json").dumps(payload), encoding="utf-8")
+
     def test_healthy_runtime_is_technically_ready_without_a_trade(self):
         result = self._monitor().run_if_due(runtime_state={"last_execution_trace": {}}, worker_state={})
         self.assertEqual(result["trading_integrity_state"], "READY")
@@ -403,6 +409,90 @@ class TradingReadinessTests(unittest.TestCase):
         day = result["truth_production_watchdog"]["lanes"]["DAY"]
         self.assertEqual(day["last_learning_ingestion_time"], "")
         self.assertEqual(day["stage_status"]["LEARNING"]["observed_at"], "")
+
+    def test_exhausted_recovery_persists_exact_code_repair_package(self):
+        monitor = self._monitor()
+        runtime = {"last_execution_trace": {"final_blocker_reason": "legacy_market_evidence_bounded"}}
+        action = lambda: {"status": "dispatched"}
+        monitor.run_if_due(runtime_state=runtime, worker_state={"active_worker_pid": 42}, actions={"REBUILD_CANONICAL_DISCOVERY_STATE": action})
+        self._force_due(monitor)
+        result = monitor.run_if_due(runtime_state=runtime, worker_state={"active_worker_pid": 42}, actions={"REBUILD_CANONICAL_DISCOVERY_STATE": action})
+        package = result["code_repair_packages"][0]
+        self.assertEqual(package["fault_code"], "DISCOVERY_LEGACY_BYPASS")
+        self.assertEqual(package["owner_file"], "engine/paper_autopilot.py")
+        self.assertEqual(package["owner_function"], "_rebuild_equity_candidate_snapshot_v1")
+        self.assertEqual(package["worker_pid"], 42)
+        self.assertEqual(package["minimal_reproduction_evidence"]["fingerprint"], result["active_faults"][0]["evidence_fingerprint"])
+        self.assertEqual(result["autonomous_control_loop"]["state"], "CODE_REPAIR_REQUIRED")
+
+    def test_unchanged_code_repair_evidence_is_not_reinvestigated(self):
+        monitor = self._monitor()
+        runtime = {"last_execution_trace": {"final_blocker_reason": "legacy_market_evidence_bounded"}}
+        calls: list[str] = []
+        action = lambda: calls.append("repair") or {"status": "dispatched"}
+        monitor.run_if_due(runtime_state=runtime, worker_state={}, actions={"REBUILD_CANONICAL_DISCOVERY_STATE": action})
+        self._force_due(monitor)
+        monitor.run_if_due(runtime_state=runtime, worker_state={}, actions={"REBUILD_CANONICAL_DISCOVERY_STATE": action})
+        self._force_due(monitor)
+        result = monitor.run_if_due(runtime_state=runtime, worker_state={}, actions={"REBUILD_CANONICAL_DISCOVERY_STATE": action})
+        self.assertEqual(calls, ["repair", "repair"])
+        self.assertTrue(result["active_faults"][0]["recovery_suppressed"])
+        self.assertEqual(result["active_faults"][0]["suppression_reason"], "UNCHANGED_CODE_REPAIR_EVIDENCE")
+        self.assertEqual(result["active_faults"][0]["repair_attempt_count"], 2)
+
+    def test_verified_repair_rechecks_and_surfaces_next_blocker(self):
+        monitor = self._monitor()
+        runtime = {
+            "last_execution_trace": {"final_blocker_reason": "legacy_market_evidence_bounded"},
+        }
+
+        def rebuild():
+            runtime["equity_discovery_rebuild_v1"] = {"candidate_source_available": True}
+            runtime["astra_multilane_completion_matrix_v1"] = {
+                "generated_at": _iso(-1),
+                "lanes": {"SWING": {"stages": {"eligibility": {
+                    "status": "FAIL_UNKNOWN_CLOSED",
+                    "verification_state": "CURRENT",
+                    "first_bad_handoff": "candidate contract -> eligibility gate",
+                }}}},
+            }
+            return {"status": "rebuilt"}
+
+        result = monitor.run_if_due(
+            runtime_state=runtime,
+            worker_state={},
+            actions={"REBUILD_CANONICAL_DISCOVERY_STATE": rebuild},
+            refresh_runtime=lambda: runtime,
+        )
+        self.assertEqual(result["recoveries"][0]["verification_result"], "RECOVERY_SUCCEEDED")
+        self.assertEqual(result["autonomous_control_loop"]["next_blocker_by_lane"]["SWING"]["stage"], "QUALIFIED")
+        self.assertEqual(result["active_faults"][0]["fault_type"], "ENTRY_FUNNEL_STAGE_BLOCKED")
+        self.assertTrue(result["autonomous_control_loop"]["post_repair_truth_path_recheck"])
+
+    def test_recurrent_fault_is_persisted_and_scorecard_is_bounded(self):
+        monitor = self._monitor()
+        runtime = {
+            "last_execution_trace": {},
+            "astra_multilane_completion_matrix_v1": {
+                "generated_at": _iso(-1),
+                "lanes": {"SWING": {"stages": {"eligibility": {
+                    "status": "FAIL_UNKNOWN_CLOSED",
+                    "verification_state": "CURRENT",
+                    "first_bad_handoff": "candidate contract -> eligibility gate",
+                }}}},
+            },
+        }
+        result = monitor.run_if_due(runtime_state=runtime, worker_state={})
+        for _ in range(2):
+            self._force_due(monitor)
+            result = monitor.run_if_due(runtime_state=runtime, worker_state={})
+        fault = result["active_faults"][0]
+        self.assertEqual(fault["occurrence_count"], 3)
+        self.assertEqual(fault["recurrent_failure"], "RECURRENT_CANONICAL_INTEGRITY_FAILURE")
+        self.assertEqual(result["code_repair_packages"][0]["recurrence_count"], 3)
+        self.assertEqual(len(result["daily_scorecards"]), 1)
+        self.assertEqual(result["daily_scorecard"]["lanes"]["DAY"]["current_readiness"], "TECHNICALLY_READY")
+        self.assertEqual(result["daily_scorecard"]["lanes"]["SWING"]["current_readiness"], "DEGRADED")
 
 
 if __name__ == "__main__":
