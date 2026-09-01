@@ -239,6 +239,24 @@ class AstraTradingReadinessV1:
                 observed_at=observed_at,
             )
 
+    @staticmethod
+    def _issue_stage(issue: Mapping[str, Any]) -> str:
+        fault = _text(issue.get("fault_type")).upper()
+        if fault in {"CAUSAL_HANDOFF_LOSS", "RECONCILIATION_FAILURE"}:
+            return "RECONCILIATION"
+        if fault == "STRICT_TRUTH_LEARNING_HANDOFF_FAILURE":
+            return "LEARNING"
+        if fault == "PRODUCER_FRESH_CONSUMER_UNAVAILABLE" or fault in {"ACTIVE_POSITION_NOT_STREAMED", "WS_TRANSPORT_UNHEALTHY"}:
+            return "OBSERVATION"
+        if fault.startswith("CRYPTO_"):
+            return "OBSERVATION"
+        if fault == "ENTRY_FUNNEL_STAGE_BLOCKED":
+            matrix_stage = _text(issue.get("component")).rsplit(".", 1)[-1]
+            return _MATRIX_STAGE_MAP.get(matrix_stage, "QUALIFIED")
+        if fault.startswith("DISCOVERY") or fault in {"BACKEND_UNHEALTHY", "WORKER_CYCLE_BOUNDARY_EXCEEDED"}:
+            return "DISCOVERY"
+        return ""
+
     def _stage_ledger(self, runtime: Mapping[str, Any], previous: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
         """Record bounded stage evidence without inventing event timestamps."""
         prior = _dict(previous.get("truth_production_watchdog"))
@@ -871,18 +889,7 @@ class AstraTradingReadinessV1:
             matching_issue = next(
                 (
                     row for row in lane_issues
-                    if _text(row.get("fault_type")).upper() in {
-                        "DISCOVERY_LEGACY_BYPASS",
-                        "ENTRY_FUNNEL_STAGE_BLOCKED",
-                        "WORKER_CYCLE_BOUNDARY_EXCEEDED",
-                        "PRODUCER_FRESH_CONSUMER_UNAVAILABLE",
-                        "ACTIVE_POSITION_NOT_STREAMED",
-                        "WS_TRANSPORT_UNHEALTHY",
-                        "BACKEND_UNHEALTHY",
-                        "RECONCILIATION_FAILURE",
-                        "CRYPTO_HORIZON_PRESENT_BUT_NOT_CONSUMED",
-                        "STRICT_TRUTH_LEARNING_HANDOFF_FAILURE",
-                    }
+                    if self._issue_stage(row) == earliest
                 ),
                 None,
             )
