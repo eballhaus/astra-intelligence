@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 import time
 import unittest
 from datetime import datetime, timedelta, timezone
+from importlib import import_module
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from engine.astra_canonical_ownership_contract_v1 import classify_dust_position_v1
 from engine.astra_premarket_certification_v1 import (
@@ -120,6 +124,42 @@ class MultiLaneEntryDustRepairTests(unittest.TestCase):
         self.assertEqual(result["status"], "CURRENT")
         self.assertEqual([row["symbol"] for row in observed["handoff"]["rows"]], ["DAYX", "SCALPX"])
         self.assertNotIn("BTCUSD", [row["symbol"] for row in observed["handoff"]["rows"]])
+
+    def test_recent_failed_risk_snapshot_uses_existing_failure_window(self):
+        original_cwd = os.getcwd()
+        try:
+            with tempfile.TemporaryDirectory(prefix="astra_risk_observer_import_") as temp_root:
+                os.chdir(temp_root)
+                os.mkdir("state")
+                sys.modules.pop("server_extend", None)
+                with patch("engine.position_tracker.PositionTracker", return_value=SimpleNamespace()):
+                    server_extend = import_module("server_extend")
+        finally:
+            os.chdir(original_cwd)
+
+        now = time.time()
+        runtime = {
+            "equity_risk_envelopes_snapshot_v1": {
+                "status": "FAILED_FAIL_CLOSED",
+                "generated_at_epoch": now - 10.0,
+                "valid_until_epoch": now + 290.0,
+                "rows": [],
+                "failures": [{"symbol": "AAA", "blocker": "timeout"}],
+            }
+        }
+        broker = SimpleNamespace(
+            latest_quote=lambda _symbol: (_ for _ in ()).throw(AssertionError("quote should be suppressed")),
+            historical_bars=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("bars should be suppressed")),
+        )
+        autopilot = SimpleNamespace(_runtime_state=runtime)
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}), patch.object(
+            server_extend, "PAPER_AUTOPILOT", autopilot
+        ), patch.object(server_extend, "ALPACA_PAPER_BROKER", broker):
+            result = server_extend._refresh_equity_risk_envelopes_snapshot_v1()
+
+        self.assertEqual(result["status"], "RECENT_FAILURE_COOLDOWN")
+        self.assertEqual(result["provider_calls_used"], 0)
+        self.assertEqual(runtime["equity_risk_envelopes_snapshot_v1"]["status"], "FAILED_FAIL_CLOSED")
 
     def test_day_batch_handoff_preserves_current_symbols_for_contract_enrichment(self):
         """A partial lane slice must not be replaced by a later source read."""

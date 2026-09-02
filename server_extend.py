@@ -21933,6 +21933,23 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
     # market is closed.  Only executable quote/order eligibility is deferred.
     closed_session = now_et.weekday() >= 5 or session != "regular_hours"
     refresh_seconds = max(60.0, min(900.0, float(os.getenv("ASTRA_EQUITY_RISK_ENVELOPE_REFRESH_SECONDS", "300") or 300)))
+    prior_status = str(previous.get("status") or "")
+    try:
+        prior_valid_until = float(previous.get("valid_until_epoch") or 0.0)
+    except (TypeError, ValueError):
+        prior_valid_until = 0.0
+    # Preserve fail-closed evidence while its existing refresh window is
+    # active.  A failed bounded batch must not block every worker cycle with
+    # the same sequential provider waits.
+    if prior_status in {"FAILED_FAIL_CLOSED", "PARTIAL_FAIL_CLOSED"} and prior_valid_until > now_epoch:
+        return {
+            "status": "RECENT_FAILURE_COOLDOWN",
+            "rows": len(previous.get("rows") or []),
+            "failed_symbols": len(previous.get("failures") or []),
+            "provider_calls_used": 0,
+            "broker_actions_used": 0,
+            "order_session_eligible": not closed_session,
+        }
     candidates = _bounded_current_equity_candidate_rows_v1()
     required_symbols = {
         str(row.get("symbol") or row.get("ticker") or "").upper().strip()
