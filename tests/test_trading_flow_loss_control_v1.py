@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 import unittest
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
@@ -490,6 +491,25 @@ class ServerQuoteAdapterTests(unittest.TestCase):
         router.assert_called_once()
         self.assertEqual(quote["price"], 101.0)
         self.assertEqual(quote["quote_timestamp"], provider_timestamp)
+
+    def test_worker_stale_top_buys_snapshot_does_not_trigger_blocking_rebuild(self):
+        payload = {"stocks": {"final": [{"symbol": "AAPL", "action": "Buy"}]}}
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}), patch.object(
+            server_extend,
+            "_CACHE",
+            {"top_buys": {"mode::balanced": {"data": payload, "ts": time.time() - 60.0}}},
+        ), patch.object(
+            server_extend,
+            "_top_buys_runtime_snapshot_get",
+            return_value={"available": False, "payload": {}, "age_seconds": None},
+        ), patch.object(
+            server_extend,
+            "top_buys",
+            side_effect=AssertionError("worker must not synchronously rebuild top_buys"),
+        ) as builder:
+            result = server_extend._paper_top_buys_snapshot()
+        builder.assert_not_called()
+        self.assertEqual(result, payload)
 
     def test_stale_or_future_cached_provider_time_routes_to_fresh_worker_quote(self):
         provider_timestamp = _iso()

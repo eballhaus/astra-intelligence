@@ -17283,6 +17283,34 @@ def _paper_top_buys_snapshot():
     mode_cache = cached.get("mode::balanced", {}) if isinstance(cached, dict) else {}
     if mode_cache.get("data") and (time.time() - float(mode_cache.get("ts", 0.0))) <= TOP_BUYS_TTL_SECONDS:
         return dict(mode_cache.get("data", {}))
+    if str(os.getenv("ASTRA_PROCESS_ROLE", "api")).strip().lower() == "worker":
+        runtime_snapshot = _top_buys_runtime_snapshot_get()
+        snapshot_age = runtime_snapshot.get("age_seconds")
+        if runtime_snapshot.get("available") and (
+            snapshot_age is None or float(snapshot_age) <= TOP_BUYS_SAFE_STALE_TTL_SECONDS
+        ):
+            return dict(runtime_snapshot.get("payload") or {})
+        bounded_cached, _, _ = _top_buys_cached_payload_for_mode(
+            "balanced",
+            include_trace=False,
+            max_age_seconds=TOP_BUYS_SAFE_STALE_TTL_SECONDS,
+            allow_alt_trace=True,
+        )
+        if isinstance(bounded_cached, dict) and bounded_cached:
+            return bounded_cached
+        stock_rows = _rows_for_top_buys("stocks")
+        if stock_rows:
+            return _top_buys_minimal_recovery_payload(
+                stock_rows=stock_rows,
+                crypto_rows=[],
+                buy_mode="balanced",
+                include_trace=False,
+                started_at_perf=time.perf_counter(),
+                max_build_seconds=0.0,
+            )
+        # A worker must not turn a missing committed snapshot into a blocking
+        # full-universe build; the next normal ranking publication can recover it.
+        return {}
     try:
         return top_buys()
     except Exception:
