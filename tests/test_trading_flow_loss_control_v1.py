@@ -693,6 +693,45 @@ class ServerQuoteAdapterTests(unittest.TestCase):
         builder.assert_not_called()
         self.assertEqual(result, payload)
 
+    def test_worker_consumes_bounded_persisted_top_buys_snapshot(self):
+        payload = {
+            "last_updated_utc": _iso(),
+            "stocks": {"final": [{"symbol": "AAPL", "action": "Buy", "lane_id": "DAY"}]},
+        }
+        with tempfile.TemporaryDirectory(prefix="astra_shared_top_buys_") as directory:
+            snapshot_path = os.path.join(directory, "top_buys_runtime_snapshot_v1.json")
+            with patch.object(server_extend, "TOP_BUYS_SHARED_SNAPSHOT_PATH", snapshot_path), patch.object(
+                server_extend,
+                "_TOP_BUYS_RUNTIME_SNAPSHOT_V1",
+                {"payload": None, "created_at": 0.0, "source": "", "build_ms": 0.0, "row_count": 0, "is_partial": False, "refresh_status": "idle", "last_error": ""},
+            ), patch.object(server_extend, "_CACHE", {"top_buys": {}}):
+                self.assertTrue(server_extend._top_buys_runtime_snapshot_set(payload, source="fresh_build"))
+                raw = server_extend._safe_read_json(snapshot_path, {})
+                self.assertEqual(raw["source_generated_at_utc"], payload["last_updated_utc"])
+                with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}):
+                    consumed = server_extend._paper_top_buys_snapshot()
+        self.assertEqual(consumed["stocks"]["final"][0]["symbol"], "AAPL")
+        self.assertEqual(consumed["stocks"]["final"][0]["lane_id"], "DAY")
+
+    def test_worker_rejects_stale_persisted_top_buys_snapshot(self):
+        payload = {
+            "last_updated_utc": _iso(-server_extend.TOP_BUYS_SAFE_STALE_TTL_SECONDS - 1),
+            "stocks": {"final": [{"symbol": "AAPL", "action": "Buy"}]},
+        }
+        with tempfile.TemporaryDirectory(prefix="astra_stale_shared_top_buys_") as directory:
+            snapshot_path = os.path.join(directory, "top_buys_runtime_snapshot_v1.json")
+            with patch.object(server_extend, "TOP_BUYS_SHARED_SNAPSHOT_PATH", snapshot_path), patch.object(
+                server_extend,
+                "_TOP_BUYS_RUNTIME_SNAPSHOT_V1",
+                {"payload": None, "created_at": 0.0, "source": "", "build_ms": 0.0, "row_count": 0, "is_partial": False, "refresh_status": "idle", "last_error": ""},
+            ), patch.object(server_extend, "_CACHE", {"top_buys": {}}), patch.object(
+                server_extend, "LAST_RANKINGS", {"stocks": [], "crypto": []}
+            ), patch.object(
+                server_extend, "RANKINGS_ENDPOINT_CACHE", {"stocks": {}, "crypto": {}}
+            ), patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}):
+                self.assertFalse(server_extend._top_buys_shared_snapshot_persist(payload, source="cached"))
+                self.assertEqual(server_extend._paper_top_buys_snapshot(), {})
+
     def test_stale_or_future_cached_provider_time_routes_to_fresh_worker_quote(self):
         provider_timestamp = _iso()
         for cached_timestamp in (_iso(-60), _iso(30)):

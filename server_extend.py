@@ -3613,6 +3613,9 @@ TOP_BUYS_TTL_SECONDS = 5
 TOP_BUYS_STALE_TTL_SECONDS = 30
 TOP_BUYS_BUILD_SOFT_TIMEOUT_SECONDS = 14.0
 TOP_BUYS_SAFE_STALE_TTL_SECONDS = 180.0
+TOP_BUYS_SHARED_SNAPSHOT_PATH = os.path.join(STATE, "snapshots", "top_buys_runtime_snapshot_v1.json")
+TOP_BUYS_SHARED_SNAPSHOT_SCHEMA = "astra_top_buys_runtime_snapshot_v1"
+TOP_BUYS_SHARED_SNAPSHOT_ROW_CAP = 160
 try:
     TOP_BUYS_SNAPSHOT_MAX_AGE_SECONDS = max(
         30.0,
@@ -39869,6 +39872,10 @@ def _top_buys_runtime_snapshot_get():
     with _TOP_BUYS_RUNTIME_SNAPSHOT_LOCK:
         snap = dict(_TOP_BUYS_RUNTIME_SNAPSHOT_V1 or {})
         payload = dict(snap.get("payload") or {})
+    if not payload:
+        shared = _top_buys_shared_snapshot_get()
+        if shared:
+            return shared
     created_at = _to_float(snap.get("created_at"), 0.0)
     age = max(0.0, time.time() - created_at) if created_at > 0.0 else None
     return {
@@ -39883,6 +39890,127 @@ def _top_buys_runtime_snapshot_get():
         "last_error": str(snap.get("last_error") or ""),
         "available": bool(payload),
     }
+
+
+def _top_buys_payload_source_timestamp(payload):
+    data = dict(payload or {})
+    for key in ("last_updated_utc", "generated_at", "source_generated_at_utc"):
+        value = str(data.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _top_buys_snapshot_epoch(timestamp):
+    value = str(timestamp or "").strip()
+    if not value:
+        return None
+    try:
+        return float(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp())
+    except Exception:
+        return None
+
+
+def _top_buys_shared_payload_projection(payload):
+    """Persist only existing bounded candidate sections for the worker boundary."""
+    source = dict(payload or {})
+    projected = {}
+    for key in (
+        "last_updated_utc",
+        "generated_at",
+        "top_buys_payload_source",
+        "top_buys_stage",
+        "top_buys_partial_build",
+        "top_buys_partial_count",
+        "top_buys_partial_stage",
+    ):
+        if key in source:
+            projected[key] = source.get(key)
+
+    for bucket_name in ("stocks", "crypto"):
+        bucket = source.get(bucket_name)
+        if not isinstance(bucket, dict):
+            continue
+        projected_bucket = {}
+        for key in ("final", "qualified", "fill", "watchlist"):
+            rows = bucket.get(key)
+            if isinstance(rows, list):
+                projected_bucket[key] = [dict(row) for row in rows[:TOP_BUYS_SHARED_SNAPSHOT_ROW_CAP] if isinstance(row, dict)]
+        if projected_bucket:
+            projected[bucket_name] = projected_bucket
+
+    for key in ("rows", "top_buys"):
+        rows = source.get(key)
+        if isinstance(rows, list):
+            projected[key] = [dict(row) for row in rows[:TOP_BUYS_SHARED_SNAPSHOT_ROW_CAP] if isinstance(row, dict)]
+
+    views = source.get("top_action_views")
+    canonical_views = views.get("canonical_decision_views") if isinstance(views, dict) else None
+    if isinstance(canonical_views, dict):
+        projected_candidates = {}
+        for key in ("stocks_buy_candidates", "crypto_buy_candidates"):
+            rows = canonical_views.get(key)
+            if isinstance(rows, list):
+                projected_candidates[key] = [
+                    dict(row) for row in rows[:TOP_BUYS_SHARED_SNAPSHOT_ROW_CAP] if isinstance(row, dict)
+                ]
+        if projected_candidates:
+            projected["top_action_views"] = {"canonical_decision_views": projected_candidates}
+    return projected
+
+
+def _top_buys_shared_snapshot_get():
+    raw = _safe_read_json(TOP_BUYS_SHARED_SNAPSHOT_PATH, {})
+    if not isinstance(raw, dict) or str(raw.get("schema_version") or "") != TOP_BUYS_SHARED_SNAPSHOT_SCHEMA:
+        return None
+    payload = raw.get("payload")
+    if not isinstance(payload, dict) or _top_buys_row_count(payload) <= 0:
+        return None
+    source_timestamp = str(raw.get("source_generated_at_utc") or _top_buys_payload_source_timestamp(payload) or "")
+    source_epoch = _top_buys_snapshot_epoch(source_timestamp)
+    age = _iso_age_seconds(source_timestamp)
+    if source_epoch is None or age is None or age > TOP_BUYS_SAFE_STALE_TTL_SECONDS:
+        return None
+    return {
+        "payload": dict(payload),
+        "created_at": float(source_epoch),
+        "age_seconds": float(age),
+        "source": str(raw.get("source") or "shared_persisted_snapshot"),
+        "build_ms": round(_to_float(raw.get("build_ms"), 0.0), 2),
+        "row_count": int(_to_float(raw.get("row_count"), _top_buys_row_count(payload))),
+        "is_partial": bool(raw.get("is_partial", False)),
+        "refresh_status": str(raw.get("refresh_status") or "persisted"),
+        "last_error": str(raw.get("last_error") or ""),
+        "available": True,
+    }
+
+
+def _top_buys_shared_snapshot_persist(payload, *, source="", build_ms=0.0, is_partial=False, refresh_status="idle", last_error=""):
+    data = _top_buys_shared_payload_projection(payload)
+    row_count = _top_buys_row_count(data)
+    source_timestamp = _top_buys_payload_source_timestamp(data)
+    source_epoch = _top_buys_snapshot_epoch(source_timestamp)
+    source_age = _iso_age_seconds(source_timestamp)
+    if row_count <= 0 or source_epoch is None or source_age is None or source_age > TOP_BUYS_SAFE_STALE_TTL_SECONDS:
+        return False
+
+    existing = _safe_read_json(TOP_BUYS_SHARED_SNAPSHOT_PATH, {})
+    existing_epoch = _top_buys_snapshot_epoch((existing or {}).get("source_generated_at_utc")) if isinstance(existing, dict) else None
+    if existing_epoch is not None and existing_epoch > source_epoch:
+        return False
+    envelope = {
+        "schema_version": TOP_BUYS_SHARED_SNAPSHOT_SCHEMA,
+        "published_at_utc": _now_utc_iso(),
+        "source_generated_at_utc": source_timestamp,
+        "source": str(source or "fresh_build"),
+        "build_ms": round(_to_float(build_ms, 0.0), 2),
+        "row_count": int(row_count),
+        "is_partial": bool(is_partial),
+        "refresh_status": str(refresh_status or "idle"),
+        "last_error": _safe_text(last_error, 160),
+        "payload": data,
+    }
+    return bool(_safe_write_json(TOP_BUYS_SHARED_SNAPSHOT_PATH, envelope))
 
 
 def _top_buys_runtime_snapshot_set(payload, *, source="", build_ms=0.0, is_partial=False, refresh_status="idle", last_error=""):
@@ -39904,6 +40032,14 @@ def _top_buys_runtime_snapshot_set(payload, *, source="", build_ms=0.0, is_parti
         _TOP_BUYS_RUNTIME_SNAPSHOT_V1["is_partial"] = bool(is_partial)
         _TOP_BUYS_RUNTIME_SNAPSHOT_V1["refresh_status"] = str(refresh_status or "idle")
         _TOP_BUYS_RUNTIME_SNAPSHOT_V1["last_error"] = _safe_text(last_error, 160)
+    _top_buys_shared_snapshot_persist(
+        data,
+        source=source,
+        build_ms=build_ms,
+        is_partial=is_partial,
+        refresh_status=refresh_status,
+        last_error=last_error,
+    )
     return True
 
 
