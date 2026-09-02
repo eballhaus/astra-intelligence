@@ -21941,7 +21941,9 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
     # Preserve fail-closed evidence while its existing refresh window is
     # active.  A failed bounded batch must not block every worker cycle with
     # the same sequential provider waits.
-    if prior_status in {"FAILED_FAIL_CLOSED", "PARTIAL_FAIL_CLOSED"} and prior_valid_until > now_epoch:
+    if prior_status in {"FAILED_FAIL_CLOSED", "PARTIAL_FAIL_CLOSED"} and (
+        prior_valid_until > now_epoch or closed_session
+    ):
         return {
             "status": "RECENT_FAILURE_COOLDOWN",
             "rows": len(previous.get("rows") or []),

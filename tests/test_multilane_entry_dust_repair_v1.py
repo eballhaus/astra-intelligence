@@ -161,6 +161,44 @@ class MultiLaneEntryDustRepairTests(unittest.TestCase):
         self.assertEqual(result["provider_calls_used"], 0)
         self.assertEqual(runtime["equity_risk_envelopes_snapshot_v1"]["status"], "FAILED_FAIL_CLOSED")
 
+    def test_expired_failed_risk_snapshot_is_not_retried_off_session(self):
+        original_cwd = os.getcwd()
+        try:
+            with tempfile.TemporaryDirectory(prefix="astra_risk_observer_off_session_") as temp_root:
+                os.chdir(temp_root)
+                os.mkdir("state")
+                sys.modules.pop("server_extend", None)
+                with patch("engine.position_tracker.PositionTracker", return_value=SimpleNamespace()):
+                    server_extend = import_module("server_extend")
+        finally:
+            os.chdir(original_cwd)
+
+        now = time.time()
+        runtime = {
+            "equity_risk_envelopes_snapshot_v1": {
+                "status": "PARTIAL_FAIL_CLOSED",
+                "generated_at_epoch": now - 600.0,
+                "valid_until_epoch": now - 1.0,
+                "rows": [{"symbol": "AAA"}],
+                "failures": [{"symbol": "BBB", "blocker": "timeout"}],
+            }
+        }
+        broker = SimpleNamespace(
+            latest_quote=lambda _symbol: (_ for _ in ()).throw(AssertionError("quote should be suppressed")),
+            historical_bars=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("bars should be suppressed")),
+        )
+        autopilot = SimpleNamespace(_runtime_state=runtime)
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}), patch.object(
+            server_extend, "PAPER_AUTOPILOT", autopilot
+        ), patch.object(server_extend, "ALPACA_PAPER_BROKER", broker), patch.object(
+            server_extend, "_market_session_type_et", return_value="overnight_learning"
+        ):
+            result = server_extend._refresh_equity_risk_envelopes_snapshot_v1()
+
+        self.assertEqual(result["status"], "RECENT_FAILURE_COOLDOWN")
+        self.assertEqual(result["provider_calls_used"], 0)
+        self.assertEqual(runtime["equity_risk_envelopes_snapshot_v1"]["status"], "PARTIAL_FAIL_CLOSED")
+
     def test_day_batch_handoff_preserves_current_symbols_for_contract_enrichment(self):
         """A partial lane slice must not be replaced by a later source read."""
         current = [{**_candidate("DAY"), "symbol": f"DAY{index}"} for index in range(5)]
