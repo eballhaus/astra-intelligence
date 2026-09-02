@@ -16,6 +16,65 @@ def _iso() -> str:
 
 
 class AlpacaWSMonitorTests(unittest.TestCase):
+    def test_only_worker_process_can_own_alpaca_ws(self):
+        connect_calls: list[str] = []
+
+        def connect(*_args, **_kwargs):
+            connect_calls.append("called")
+            return object()
+
+        api_monitor = AlpacaWSMonitor(connect=connect)
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "api", "ASTRA_ALPACA_WS_ENABLED": "1"}, clear=False):
+            api_monitor.configure_symbols(symbols=["AAPL"])
+            api_monitor._run()
+        self.assertEqual(connect_calls, [])
+        self.assertIsNone(api_monitor._thread)
+
+    def test_api_monitor_consumes_worker_shared_status_and_observation(self):
+        with tempfile.TemporaryDirectory(prefix="astra_ws_shared_state_") as directory:
+            now = __import__("time").time()
+            state_path = os.path.join(directory, "paper_autopilot_state.json")
+            with open(state_path, "w", encoding="utf-8") as handle:
+                __import__("json").dump({
+                    "alpaca_ws_active_position_monitor_v1": {
+                        "owner_process_role": "worker",
+                        "transport_health": "HEALTHY",
+                        "connection_count": 1,
+                        "subscribed_symbols": ["AAPL"],
+                        "desired_symbols": ["AAPL"],
+                        "observations": {
+                            "AAPL": {
+                                "symbol": "AAPL",
+                                "price": 100.1,
+                                "quote_timestamp": now - 1.0,
+                                "provider_native_timestamp": "2026-09-02T15:00:00Z",
+                                "receive_timestamp": now - 0.5,
+                                "provider_used": "ALPACA_WS_IEX",
+                            }
+                        },
+                    }
+                }, handle)
+            monitor = AlpacaWSMonitor()
+            with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "api", "ASTRA_STATE_DIR": directory}, clear=False):
+                status = monitor.status()
+                quote = monitor.get_quote("AAPL", max_age_seconds=20)
+            self.assertTrue(status["shared_state_consumed"])
+            self.assertEqual(status["connection_count"], 1)
+            self.assertEqual(status["subscribed_symbols"], ["AAPL"])
+            self.assertEqual(quote["provider_used"], "ALPACA_WS_IEX")
+            self.assertAlmostEqual(quote["quote_age_seconds"], 0.5, delta=0.2)
+
+    def test_worker_status_publishes_bounded_observations(self):
+        monitor = AlpacaWSMonitor()
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker", "ASTRA_ALPACA_WS_ENABLED": "0"}, clear=False):
+            monitor.configure_symbols(symbols=["AAPL"])
+            monitor._record_message({
+                "T": "q", "S": "AAPL", "bp": 100.0, "ap": 100.2, "t": _iso(),
+            })
+            status = monitor.status()
+        self.assertEqual(status["owner_process_role"], "worker")
+        self.assertEqual(status["observations"]["AAPL"]["provider_used"], "ALPACA_WS_IEX")
+
     def test_run_waits_for_auth_and_subscription_ack_and_configures_keepalive(self):
         class Connection:
             def __init__(self):
@@ -47,7 +106,7 @@ class AlpacaWSMonitorTests(unittest.TestCase):
 
         monitor = AlpacaWSMonitor(connect=connect)
         monitor._desired_symbols = {"AAPL"}
-        with patch.object(AlpacaWSMonitor, "_credentials", return_value=("key", "secret")):
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}, clear=False), patch.object(AlpacaWSMonitor, "_credentials", return_value=("key", "secret")):
             thread = __import__("threading").Thread(target=monitor._run)
             thread.start()
             for _ in range(20):
@@ -68,12 +127,12 @@ class AlpacaWSMonitorTests(unittest.TestCase):
 
     def test_subscription_is_bounded_and_excludes_crypto_symbols(self):
         monitor = AlpacaWSMonitor()
-        with patch.dict(os.environ, {"ASTRA_ALPACA_WS_ENABLED": "0", "ASTRA_ALPACA_WS_MAX_SYMBOLS": "2"}):
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker", "ASTRA_ALPACA_WS_ENABLED": "0", "ASTRA_ALPACA_WS_MAX_SYMBOLS": "2"}):
             monitor.configure_symbols(
                 open_position_symbols=["MSFT", "AAPL", "ETH/USD"],
                 near_entry_symbols=["NVDA", "TSLA"],
             )
-        status = monitor.status()
+            status = monitor.status()
         self.assertEqual(status["desired_symbols"], ["AAPL", "MSFT"])
         self.assertEqual(status["priority_classes"]["open_positions"], 2)
         self.assertEqual(status["priority_classes"]["near_entry"], 0)
@@ -98,7 +157,8 @@ class AlpacaWSMonitorTests(unittest.TestCase):
 
         monitor = AlpacaWSMonitor()
         monitor._read_messages(QuietConnection())
-        self.assertEqual(monitor.status()["stats"]["errors"], 0)
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}, clear=False):
+            self.assertEqual(monitor.status()["stats"]["errors"], 0)
 
     def test_reconnect_storm_is_unhealthy_and_reconnect_request_is_bounded(self):
         class Connection:
@@ -114,7 +174,8 @@ class AlpacaWSMonitorTests(unittest.TestCase):
         monitor._desired_symbols = {"AAPL"}
         monitor._subscribed_symbols = {"AAPL"}
         monitor._stats.update({"errors": 8, "reconnects": 8, "messages_received": 0})
-        self.assertEqual(monitor.status()["transport_health"], "UNHEALTHY")
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}, clear=False):
+            self.assertEqual(monitor.status()["transport_health"], "UNHEALTHY")
         result = monitor.request_reconnect()
         self.assertTrue(connection.closed)
         self.assertEqual(result["provider_calls_added"], 0)
@@ -256,7 +317,7 @@ class AllocationBoundaryTests(unittest.TestCase):
                 "entry_fill_id": "fill-l",
             },
         ]
-        with patch.object(server_extend, "ALPACA_WS_MONITOR", monitor), patch.object(
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}, clear=False), patch.object(server_extend, "ALPACA_WS_MONITOR", monitor), patch.object(
             server_extend.PAPER_AUTOPILOT, "_fetch_open_positions", return_value=rows
         ), patch.object(server_extend, "_near_entry_candidates", return_value=["MSFT"]), patch.object(
             server_extend, "_ALPACA_WS_ALLOC_STATE", {"ts": 0.0, "signature": ""}
@@ -281,7 +342,7 @@ class AllocationBoundaryTests(unittest.TestCase):
         monitor = Monitor()
         rows = [{"symbol": "AAPL", "asset_type": "stock", "status": "OPEN", "quantity": 1, "lane_id": "DAY", "lifecycle_id": "life-a", "entry_fill_id": "fill-a"}]
         allocation = {"ts": 0.0, "signature": ""}
-        with patch.object(server_extend, "ALPACA_WS_MONITOR", monitor), patch.object(
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}, clear=False), patch.object(server_extend, "ALPACA_WS_MONITOR", monitor), patch.object(
             server_extend.PAPER_AUTOPILOT, "_fetch_open_positions", return_value=rows
         ), patch.object(server_extend, "_near_entry_candidates", return_value=[]), patch.object(
             server_extend, "_ALPACA_WS_ALLOC_STATE", allocation
@@ -291,6 +352,27 @@ class AllocationBoundaryTests(unittest.TestCase):
             server_extend._refresh_alpaca_ws_allocation()
         self.assertEqual(monitor.configure_calls, 1)
         self.assertTrue(server_extend.PAPER_AUTOPILOT._runtime_state["alpaca_ws_active_position_monitor_v1"]["running"])
+
+    def test_api_allocation_never_configures_process_local_monitor(self):
+        class Monitor:
+            def __init__(self):
+                self.configure_calls = 0
+                self.status_calls = 0
+
+            def configure_symbols(self, **_kwargs):
+                self.configure_calls += 1
+
+            def status(self):
+                self.status_calls += 1
+                return {"owner_process_role": "worker", "connection_count": 1}
+
+        monitor = Monitor()
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "api"}, clear=False), patch.object(
+            server_extend, "ALPACA_WS_MONITOR", monitor
+        ), patch.object(server_extend.PAPER_AUTOPILOT, "_fetch_open_positions", side_effect=AssertionError("API must not read allocation")):
+            server_extend._refresh_alpaca_ws_allocation(force_reconcile=True)
+        self.assertEqual(monitor.configure_calls, 0)
+        self.assertEqual(monitor.status_calls, 1)
 
     def test_current_lifecycle_metadata_repairs_horizon_recovery_join(self):
         engine = PaperAutopilotEngine(

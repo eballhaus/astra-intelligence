@@ -17145,6 +17145,14 @@ def _near_entry_candidates(limit=10):
 
 def _refresh_alpaca_ws_allocation(*, force_reconcile=False):
     try:
+        if str(os.getenv("ASTRA_PROCESS_ROLE", "api") or "api").strip().lower() != "worker":
+            # The isolated worker owns the only mutable Alpaca IEX observer.
+            # API processes consume its persisted status/observations instead
+            # of configuring a process-local connection.
+            status_reader = getattr(ALPACA_WS_MONITOR, "status", None)
+            if callable(status_reader):
+                PAPER_AUTOPILOT._runtime_state["alpaca_ws_active_position_monitor_v1"] = dict(status_reader() or {})
+            return
         now = time.time()
         # Only broker-linked, canonical PaperAutopilot equity positions may
         # subscribe.  PositionTracker includes legacy rows and broker dust,

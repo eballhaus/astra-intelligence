@@ -6,6 +6,7 @@ import os
 import threading
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Callable
 
 from engine.runtime_environment import load_runtime_environment
@@ -28,6 +29,13 @@ def _utc_epoch(value: Any) -> float | None:
         return parsed.astimezone(UTC).timestamp()
     except (TypeError, ValueError):
         return None
+
+
+def _receive_epoch(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return _utc_epoch(value)
 
 
 class AlpacaWSMonitor:
@@ -92,6 +100,28 @@ class AlpacaWSMonitor:
             if str(value or "").strip() and "/" not in str(value or "")
         }
 
+    @staticmethod
+    def _is_canonical_owner() -> bool:
+        return str(os.getenv("ASTRA_PROCESS_ROLE", "api") or "api").strip().lower() == "worker"
+
+    @staticmethod
+    def _shared_state_path() -> Path:
+        configured = str(os.getenv("ASTRA_STATE_DIR", "") or "").strip()
+        state_dir = Path(configured).expanduser() if configured else Path(__file__).resolve().parents[1] / "state"
+        return state_dir / "paper_autopilot_state.json"
+
+    @classmethod
+    def _read_shared_status(cls) -> dict[str, Any]:
+        if cls._is_canonical_owner():
+            return {}
+        try:
+            with cls._shared_state_path().open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            status = payload.get("alpaca_ws_active_position_monitor_v1") if isinstance(payload, dict) else None
+            return dict(status) if isinstance(status, dict) else {}
+        except (FileNotFoundError, OSError, TypeError, ValueError):
+            return {}
+
     def configure_symbols(
         self,
         *,
@@ -119,7 +149,7 @@ class AlpacaWSMonitor:
         return {"ok": True, "desired_symbol_count": len(desired), "symbol_cap": cap}
 
     def _ensure_thread(self) -> None:
-        if not _enabled("ASTRA_ALPACA_WS_ENABLED", False):
+        if not self._is_canonical_owner() or not _enabled("ASTRA_ALPACA_WS_ENABLED", False):
             return
         with self._lock:
             if self._thread and self._thread.is_alive():
@@ -262,6 +292,8 @@ class AlpacaWSMonitor:
                 self._record_message(row)
 
     def _run(self) -> None:
+        if not self._is_canonical_owner():
+            return
         retry_seconds = 1.0
         while not self._stop.is_set():
             with self._lock:
@@ -345,20 +377,36 @@ class AlpacaWSMonitor:
         with self._lock:
             quote = dict(self._quotes.get(sym) or {})
         if not quote:
+            shared = self._read_shared_status()
+            quote = dict((shared.get("observations") or {}).get(sym) or {})
+        if not quote:
             return None
-        age = max(0.0, time.time() - float(quote.get("receive_timestamp") or 0.0))
+        received_at = _receive_epoch(quote.get("receive_timestamp"))
+        if received_at is None:
+            return None
+        age = max(0.0, time.time() - received_at)
         if age > max(0.0, float(max_age_seconds)):
             return None
         quote["quote_age_seconds"] = round(age, 3)
         return quote
 
     def status(self) -> dict[str, Any]:
+        shared = self._read_shared_status()
+        if shared:
+            shared["consumer_process_role"] = str(os.getenv("ASTRA_PROCESS_ROLE", "api") or "api").strip().lower()
+            shared["shared_state_consumed"] = True
+            return shared
         with self._lock:
             connected = self._connection is not None
             desired = sorted(self._desired_symbols)
             subscribed = sorted(self._subscribed_symbols)
             stats = dict(self._stats)
             priorities = {"open_positions": len(self._open_symbols), "near_entry": len(self._near_entry_symbols)}
+            observations = {
+                symbol: dict(self._quotes[symbol])
+                for symbol in desired
+                if isinstance(self._quotes.get(symbol), dict)
+            }
         now = time.time()
         connected_at = _utc_epoch(stats.get("last_connected_utc"))
         last_message_at = _utc_epoch(stats.get("last_message_utc"))
@@ -396,6 +444,9 @@ class AlpacaWSMonitor:
             "subscribed_symbols": subscribed,
             "desired_symbols": desired,
             "priority_classes": priorities,
+            "owner_process_role": "worker" if self._is_canonical_owner() else "api",
+            "shared_state_consumed": False,
+            "observations": observations,
             "transport_health": transport_health,
             "stale_stream": stale_stream,
             "connected_age_seconds": round(connected_age, 3) if connected_age is not None else None,
