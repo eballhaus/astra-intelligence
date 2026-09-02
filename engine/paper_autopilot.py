@@ -2282,6 +2282,7 @@ class PaperAutopilotEngine:
             "worker_process_id": _to_int(self._runtime_state.get("worker_process_id"), 0),
             "worker_parent_process_id": _to_int(self._runtime_state.get("worker_parent_process_id"), 0),
             "worker_last_suppressed_exception_v1": dict(self._runtime_state.get("worker_last_suppressed_exception_v1") or {}),
+            "worker_open_review_timing_v1": dict(self._runtime_state.get("worker_open_review_timing_v1") or {}),
             "position_resolution_reviews": dict(self._runtime_state.get("position_resolution_reviews") or {}),
             "loss_containment_state_v1": dict(self._runtime_state.get("loss_containment_state_v1") or {}),
             "profit_protection_state_v1": dict(self._runtime_state.get("profit_protection_state_v1") or {}),
@@ -2401,6 +2402,37 @@ class PaperAutopilotEngine:
         self._runtime_state["worker_cycle_phase"] = normalized_phase
         if error:
             self._runtime_state["worker_cycle_error"] = str(error)[:240]
+
+    def _reset_worker_open_review_timing_v1(self) -> None:
+        self._runtime_state["worker_open_review_timing_v1"] = {
+            "schema_version": "astra_worker_open_review_timing_v1",
+            "durations_seconds": {},
+            "counts": {},
+            "bounded": True,
+        }
+
+    def _record_worker_open_review_timing_v1(self, stage: str, started_monotonic: float) -> None:
+        """Record bounded substage timing without changing worker behavior."""
+        try:
+            elapsed = max(0.0, time.monotonic() - float(started_monotonic))
+        except (TypeError, ValueError):
+            elapsed = 0.0
+        timing = dict(self._runtime_state.get("worker_open_review_timing_v1") or {})
+        durations = dict(timing.get("durations_seconds") or {})
+        counts = dict(timing.get("counts") or {})
+        key = str(stage or "unknown")[:64]
+        durations[key] = round(float(durations.get(key) or 0.0) + elapsed, 3)
+        counts[key] = int(counts.get(key) or 0) + 1
+        if len(durations) > 16:
+            keep = sorted(durations, key=durations.get, reverse=True)[:16]
+            durations = {name: durations[name] for name in keep}
+            counts = {name: counts.get(name, 0) for name in keep}
+        self._runtime_state["worker_open_review_timing_v1"] = {
+            "schema_version": "astra_worker_open_review_timing_v1",
+            "durations_seconds": durations,
+            "counts": counts,
+            "bounded": True,
+        }
 
     def record_external_worker_progress(
         self,
@@ -15052,6 +15084,7 @@ class PaperAutopilotEngine:
                 }
             }
             min_hold = self._min_hold_seconds()
+            self._reset_worker_open_review_timing_v1()
             for row in open_rows:
                 if closed >= self.max_closes_per_cycle:
                     break
@@ -15065,15 +15098,19 @@ class PaperAutopilotEngine:
                 symbol = str(row.get("symbol") or "").upper().strip()
                 asset = _norm_asset(row.get("asset_type") or "stock")
                 broker_pos = dict(broker_position_by_symbol.get(symbol) or {})
+                substage_started = time.monotonic()
                 latest = self._open_position_review_quote_v1(
                     row,
                     broker_pos if broker_reconciliation_active and broker_positions_fetch_ok else {},
                     latest_price_by_symbol,
                 )
+                self._record_worker_open_review_timing_v1("quote", substage_started)
                 if not latest:
                     skipped += 1
                     continue
+                substage_started = time.monotonic()
                 self._update_open_row_snapshot(row, latest)
+                self._record_worker_open_review_timing_v1("snapshot", substage_started)
 
                 entry_ts = str(row.get("entry_timestamp") or "")
                 hold_seconds = 0.0
@@ -15088,21 +15125,28 @@ class PaperAutopilotEngine:
 
                 if broker_reconciliation_active and broker_positions_fetch_ok:
                     broker_pos = dict(broker_position_by_symbol.get(symbol) or {})
+                    substage_started = time.monotonic()
                     learned_sell = self._submit_guarded_learned_exit_sell(row, latest, broker_pos)
+                    self._record_worker_open_review_timing_v1("learned_exit", substage_started)
                     if bool(learned_sell.get("submitted")):
                         skipped += 1
                         continue
 
+                substage_started = time.monotonic()
                 should_close, reason = self._evaluate_exit(row, latest)
+                self._record_worker_open_review_timing_v1("exit_evaluation", substage_started)
                 forced_lane_reason = self._lane_forced_exit_reason(row)
                 if forced_lane_reason:
                     should_close, reason = True, forced_lane_reason
+                substage_started = time.monotonic()
                 decision_evidence = self._record_exit_decision_evidence_v1(
                     row,
                     latest,
                     should_close=should_close,
                     reason=reason,
                 )
+                self._record_worker_open_review_timing_v1("decision_evidence", substage_started)
+                substage_started = time.monotonic()
                 self._record_executable_exit_quote_evaluation(
                     row,
                     latest,
@@ -15110,17 +15154,22 @@ class PaperAutopilotEngine:
                     reason=reason,
                     decision_evidence=decision_evidence,
                 )
+                self._record_worker_open_review_timing_v1("quote_telemetry", substage_started)
                 if should_close and hold_seconds >= float(min_hold):
                     lane = str(row.get("lane_id") or "").upper().strip()
                     if lane in {"DAY", "SCALP", "SWING", "CRYPTO"}:
+                        substage_started = time.monotonic()
                         result = self._submit_authorized_lane_exit(
                             row,
                             dict(broker_position_by_symbol.get(symbol) or {}),
                             reason,
                             latest_quote=latest,
                         )
+                        self._record_worker_open_review_timing_v1("exit_submission", substage_started)
                     else:
+                        substage_started = time.monotonic()
                         result = self._close_position(row, latest, reason)
+                        self._record_worker_open_review_timing_v1("exit_submission", substage_started)
                     if result.get("ok"):
                         closed += 1 if lane not in {"DAY", "SCALP", "SWING", "CRYPTO"} else 0
                         state = self._learned_exit_daily_state()
@@ -15129,7 +15178,10 @@ class PaperAutopilotEngine:
                         if symbol:
                             open_syms.discard(symbol)
 
+            substage_started = time.monotonic()
             self._persist_executable_exit_quote_trace()
+            self._record_worker_open_review_timing_v1("trace_persistence", substage_started)
+            substage_started = time.monotonic()
 
             if capacity_source == "broker":
                 broker_crypto_rows = {
@@ -15223,6 +15275,7 @@ class PaperAutopilotEngine:
             # Normalize every worker-cycle observation before any early gate
             # can reject it.  The ranking and eligibility values are retained;
             # this only gives every candidate a stable operational lineage.
+            self._record_worker_open_review_timing_v1("post_review_bookkeeping", substage_started)
             self._note_worker_progress("candidate_collection")
             candidates = [_normalize_paper_entry_bridge(row) for row in self._collect_candidate_rows() if isinstance(row, dict)]
             equity_risk_refresh_full: dict[str, Any] = {}

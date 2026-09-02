@@ -9,6 +9,8 @@ from typing import Any
 
 TRADE_LIFECYCLE_PATH = os.path.join("state", "trade_lifecycle_v1.jsonl")
 _LOCK = threading.Lock()
+_LATEST_RECORD_CACHE: dict[str, dict[str, dict[str, Any]]] = {}
+_LATEST_RECORD_CACHE_SIGNATURES: dict[str, tuple[int, int, int]] = {}
 
 
 def _now_iso() -> str:
@@ -108,10 +110,30 @@ def _normalize_record(data: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
+def _path_signature(path: str) -> tuple[int, int, int] | None:
+    try:
+        stat = os.stat(path)
+        return (int(stat.st_ino), int(stat.st_size), int(stat.st_mtime_ns))
+    except OSError:
+        return None
+
+
 def _append_record(record: dict[str, Any]) -> None:
-    os.makedirs(os.path.dirname(TRADE_LIFECYCLE_PATH) or ".", exist_ok=True)
-    with open(TRADE_LIFECYCLE_PATH, "a", encoding="utf-8") as fh:
+    path = os.path.abspath(TRADE_LIFECYCLE_PATH)
+    before_signature = _path_signature(path)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, ensure_ascii=True, separators=(",", ":")) + "\n")
+    cached = _LATEST_RECORD_CACHE.get(path)
+    cached_signature = _LATEST_RECORD_CACHE_SIGNATURES.get(path)
+    if cached is not None and cached_signature == before_signature:
+        lifecycle_id = _to_str(record.get("lifecycle_id"))
+        if lifecycle_id:
+            cached[lifecycle_id] = dict(record)
+        _LATEST_RECORD_CACHE_SIGNATURES[path] = _path_signature(path) or cached_signature
+    elif cached is not None:
+        _LATEST_RECORD_CACHE.pop(path, None)
+        _LATEST_RECORD_CACHE_SIGNATURES.pop(path, None)
 
 
 def build_lifecycle_id(data: dict[str, Any]) -> str:
@@ -136,12 +158,12 @@ def create_lifecycle_record(data: dict[str, Any]) -> dict[str, Any]:
         return rec
 
 
-def _latest_record_map() -> dict[str, dict[str, Any]]:
+def _scan_latest_record_map(path: str) -> dict[str, dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
-    if not os.path.exists(TRADE_LIFECYCLE_PATH):
+    if not os.path.exists(path):
         return latest
     try:
-        with open(TRADE_LIFECYCLE_PATH, "r", encoding="utf-8") as fh:
+        with open(path, "r", encoding="utf-8") as fh:
             for raw in fh:
                 line = raw.strip()
                 if not line:
@@ -157,6 +179,18 @@ def _latest_record_map() -> dict[str, dict[str, Any]]:
                     latest[rid] = row
     except Exception:
         return latest
+    return latest
+
+
+def _latest_record_map() -> dict[str, dict[str, Any]]:
+    path = os.path.abspath(TRADE_LIFECYCLE_PATH)
+    signature = _path_signature(path)
+    cached = _LATEST_RECORD_CACHE.get(path)
+    if cached is not None and signature == _LATEST_RECORD_CACHE_SIGNATURES.get(path):
+        return cached
+    latest = _scan_latest_record_map(path)
+    _LATEST_RECORD_CACHE[path] = latest
+    _LATEST_RECORD_CACHE_SIGNATURES[path] = _path_signature(path) or signature or (0, 0, 0)
     return latest
 
 

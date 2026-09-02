@@ -97,6 +97,19 @@ class PaperAutopilotWorkerProgressTests(unittest.TestCase):
         self.assertEqual(timing["counts"], {"external_cycle_active": 1})
         self.assertTrue(timing["bounded"])
 
+    def test_worker_open_review_timing_is_bounded(self):
+        engine = object.__new__(PaperAutopilotEngine)
+        engine._runtime_state = {}
+        engine._reset_worker_open_review_timing_v1()
+        with patch("engine.paper_autopilot.time.monotonic", side_effect=[1.25, 2.5]):
+            engine._record_worker_open_review_timing_v1("quote", 1.0)
+            engine._record_worker_open_review_timing_v1("quote", 2.0)
+        timing = engine._runtime_state["worker_open_review_timing_v1"]
+        self.assertEqual(timing["schema_version"], "astra_worker_open_review_timing_v1")
+        self.assertEqual(timing["durations_seconds"], {"quote": 0.75})
+        self.assertEqual(timing["counts"], {"quote": 2})
+        self.assertTrue(timing["bounded"])
+
     def test_resource_pause_records_a_persisted_engine_phase(self):
         autopilot = _Autopilot()
         with patch("engine.paper_autopilot_worker.read_snapshot", return_value={}), patch(
