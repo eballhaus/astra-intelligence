@@ -17333,7 +17333,10 @@ def _paper_latest_symbol_snapshot(symbol, asset_type, *, bypass_cache=False):
     kind = _normalize_asset_type(asset_type)
     _ensure_latest_rankings()
     # Keep paper exits tied to reasonably fresh snapshots so entry/exit prices can diverge.
-    if _snapshot_age_seconds(kind) > 20.0:
+    # The worker must not turn a per-position quote fallback into a full
+    # ranking/provider refresh. It already has a bounded quote router below.
+    is_worker = str(os.getenv("ASTRA_PROCESS_ROLE", "api")).strip().lower() == "worker"
+    if not is_worker and _snapshot_age_seconds(kind) > 20.0:
         try:
             _refresh_rankings_for_asset(kind)
         except Exception:
