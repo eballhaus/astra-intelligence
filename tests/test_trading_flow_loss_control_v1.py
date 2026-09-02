@@ -732,6 +732,33 @@ class ServerQuoteAdapterTests(unittest.TestCase):
                 self.assertFalse(server_extend._top_buys_shared_snapshot_persist(payload, source="cached"))
                 self.assertEqual(server_extend._paper_top_buys_snapshot(), {})
 
+    def test_shared_top_buys_publisher_refreshes_expired_snapshot(self):
+        payload = {
+            "last_updated_utc": _iso(),
+            "stocks": {"final": [{"symbol": "AAPL", "action": "Buy"}]},
+        }
+        snapshots = [
+            {"available": False, "age_seconds": 10**9},
+            {"available": True, "age_seconds": 1.0},
+        ]
+        with patch("server_extend._top_buys_runtime_snapshot_get", side_effect=snapshots), patch(
+            "server_extend.top_buys", return_value=payload
+        ) as publisher:
+            result = server_extend._publish_top_buys_shared_snapshot_if_needed()
+        self.assertTrue(result["attempted"])
+        self.assertTrue(result["verified"])
+        publisher.assert_called_once_with(buy_mode="balanced")
+
+    def test_shared_top_buys_publisher_never_starts_in_worker_role(self):
+        prior = dict(server_extend._TOP_BUYS_SHARED_PUBLISHER_STATE)
+        try:
+            server_extend._TOP_BUYS_SHARED_PUBLISHER_STATE["thread_started"] = False
+            with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}), patch("threading.Thread") as thread:
+                self.assertFalse(server_extend._start_top_buys_shared_publisher_v1())
+            thread.assert_not_called()
+        finally:
+            server_extend._TOP_BUYS_SHARED_PUBLISHER_STATE.update(prior)
+
     def test_stale_or_future_cached_provider_time_routes_to_fresh_worker_quote(self):
         provider_timestamp = _iso()
         for cached_timestamp in (_iso(-60), _iso(30)):

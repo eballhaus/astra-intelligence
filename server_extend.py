@@ -3616,6 +3616,7 @@ TOP_BUYS_SAFE_STALE_TTL_SECONDS = 180.0
 TOP_BUYS_SHARED_SNAPSHOT_PATH = os.path.join(STATE, "snapshots", "top_buys_runtime_snapshot_v1.json")
 TOP_BUYS_SHARED_SNAPSHOT_SCHEMA = "astra_top_buys_runtime_snapshot_v1"
 TOP_BUYS_SHARED_SNAPSHOT_ROW_CAP = 160
+TOP_BUYS_SHARED_PUBLISH_INTERVAL_SECONDS = 60.0
 try:
     TOP_BUYS_SNAPSHOT_MAX_AGE_SECONDS = max(
         30.0,
@@ -40043,6 +40044,79 @@ def _top_buys_runtime_snapshot_set(payload, *, source="", build_ms=0.0, is_parti
     return True
 
 
+_TOP_BUYS_SHARED_PUBLISHER_LOCK = threading.Lock()
+_TOP_BUYS_SHARED_PUBLISHER_STATE = {
+    "thread_started": False,
+    "last_attempt_utc": "",
+    "last_verified_utc": "",
+    "last_result": "",
+    "last_error": "",
+}
+
+
+def _publish_top_buys_shared_snapshot_if_needed():
+    """Keep the worker's persisted ranked-candidate source live from the API owner."""
+    snapshot = _top_buys_runtime_snapshot_get()
+    snapshot_age = _to_float(snapshot.get("age_seconds"), 10**9) if isinstance(snapshot, dict) else 10**9
+    if bool((snapshot or {}).get("available")) and snapshot_age <= TOP_BUYS_SNAPSHOT_MAX_AGE_SECONDS:
+        return {"attempted": False, "verified": True, "reason": "snapshot_within_publish_age"}
+
+    with _TOP_BUYS_SHARED_PUBLISHER_LOCK:
+        _TOP_BUYS_SHARED_PUBLISHER_STATE["last_attempt_utc"] = _now_utc_iso()
+        _TOP_BUYS_SHARED_PUBLISHER_STATE["last_result"] = "ACTION_DISPATCHED"
+        _TOP_BUYS_SHARED_PUBLISHER_STATE["last_error"] = ""
+    try:
+        payload = top_buys(buy_mode="balanced")
+        verified_snapshot = _top_buys_runtime_snapshot_get()
+        verified_age = _to_float(verified_snapshot.get("age_seconds"), 10**9)
+        verified = bool((verified_snapshot or {}).get("available")) and verified_age <= TOP_BUYS_SAFE_STALE_TTL_SECONDS
+        result = {
+            "attempted": True,
+            "verified": bool(verified),
+            "reason": "shared_snapshot_fresh_after_existing_publisher" if verified else "shared_snapshot_not_verified",
+            "row_count": int(_top_buys_row_count(payload)) if isinstance(payload, dict) else 0,
+        }
+        with _TOP_BUYS_SHARED_PUBLISHER_LOCK:
+            _TOP_BUYS_SHARED_PUBLISHER_STATE["last_result"] = "RECOVERY_SUCCEEDED" if verified else "RECOVERY_FAILED"
+            if verified:
+                _TOP_BUYS_SHARED_PUBLISHER_STATE["last_verified_utc"] = _now_utc_iso()
+            else:
+                _TOP_BUYS_SHARED_PUBLISHER_STATE["last_error"] = "shared_snapshot_not_verified"
+        return result
+    except Exception as exc:
+        with _TOP_BUYS_SHARED_PUBLISHER_LOCK:
+            _TOP_BUYS_SHARED_PUBLISHER_STATE["last_result"] = "RECOVERY_FAILED"
+            _TOP_BUYS_SHARED_PUBLISHER_STATE["last_error"] = _safe_text(str(exc), 160)
+        return {"attempted": True, "verified": False, "reason": "publisher_exception"}
+
+
+def _run_top_buys_shared_publisher_v1():
+    time.sleep(1.5)
+    while True:
+        try:
+            _publish_top_buys_shared_snapshot_if_needed()
+        except Exception as exc:
+            with _TOP_BUYS_SHARED_PUBLISHER_LOCK:
+                _TOP_BUYS_SHARED_PUBLISHER_STATE["last_result"] = "RECOVERY_FAILED"
+                _TOP_BUYS_SHARED_PUBLISHER_STATE["last_error"] = _safe_text(str(exc), 160)
+        time.sleep(TOP_BUYS_SHARED_PUBLISH_INTERVAL_SECONDS)
+
+
+def _start_top_buys_shared_publisher_v1():
+    if str(os.getenv("ASTRA_PROCESS_ROLE", "api")).strip().lower() == "worker":
+        return False
+    with _TOP_BUYS_SHARED_PUBLISHER_LOCK:
+        if bool(_TOP_BUYS_SHARED_PUBLISHER_STATE.get("thread_started", False)):
+            return False
+        _TOP_BUYS_SHARED_PUBLISHER_STATE["thread_started"] = True
+    threading.Thread(
+        target=_run_top_buys_shared_publisher_v1,
+        daemon=True,
+        name="top-buys-shared-publisher",
+    ).start()
+    return True
+
+
 def _top_buys_mark_real_payload(payload):
     rows_n = _top_buys_row_count(payload)
     if rows_n <= 0:
@@ -43209,6 +43283,12 @@ def _runtime_warmup_job():
         _WARMUP_STATE["last_duration_ms"] = duration_ms
         _WARMUP_STATE["finished"] = True
         _record_hot_path_timing("runtime_warmup_ms", duration_ms)
+
+
+@router.on_event("startup")
+def _top_buys_shared_publisher_startup_v1():
+    """The API owns ranked publication; the worker only consumes its snapshot."""
+    _start_top_buys_shared_publisher_v1()
 
 
 def _schedule_runtime_warmup():
