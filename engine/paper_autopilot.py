@@ -2254,6 +2254,7 @@ class PaperAutopilotEngine:
             "worker_cycle_phase": str(self._runtime_state.get("worker_cycle_phase") or "not_started"),
             "worker_cycle_count": _to_int(self._runtime_state.get("worker_cycle_count"), 0),
             "worker_cycle_error": str(self._runtime_state.get("worker_cycle_error") or ""),
+            "worker_phase_timing_v1": dict(self._runtime_state.get("worker_phase_timing_v1") or {}),
             "last_close_by_symbol": dict(self._runtime_state.get("last_close_by_symbol") or {}),
             "learned_exit_pending_sells": dict(self._runtime_state.get("learned_exit_pending_sells") or {}),
             "learned_exit_daily": dict(self._runtime_state.get("learned_exit_daily") or {}),
@@ -2361,8 +2362,43 @@ class PaperAutopilotEngine:
 
     def _note_worker_progress(self, phase: str, *, error: str = "") -> None:
         """Publish in-memory progress without invoking providers or the database."""
+        now_monotonic = time.monotonic()
+        normalized_phase = str(phase or "unknown")[:96]
+        timing = getattr(self, "_worker_phase_timing_v1", None)
+        if not isinstance(timing, dict):
+            timing = {
+                "current_phase": "",
+                "phase_started_monotonic": 0.0,
+                "durations_seconds": {},
+                "counts": {},
+            }
+            self._worker_phase_timing_v1 = timing
+        current_phase = str(timing.get("current_phase") or "")
+        phase_started = float(timing.get("phase_started_monotonic") or 0.0)
+        if current_phase and current_phase != normalized_phase and phase_started > 0.0:
+            elapsed = max(0.0, now_monotonic - phase_started)
+            durations = dict(timing.get("durations_seconds") or {})
+            counts = dict(timing.get("counts") or {})
+            durations[current_phase] = round(float(durations.get(current_phase) or 0.0) + elapsed, 3)
+            counts[current_phase] = int(counts.get(current_phase) or 0) + 1
+            # Keep this diagnostic bounded if future cycles add phase names.
+            if len(durations) > 64:
+                keep = sorted(durations, key=durations.get, reverse=True)[:64]
+                durations = {key: durations[key] for key in keep}
+                counts = {key: counts.get(key, 0) for key in keep}
+            timing["durations_seconds"] = durations
+            timing["counts"] = counts
+        timing["current_phase"] = normalized_phase
+        timing["phase_started_monotonic"] = now_monotonic
+        self._runtime_state["worker_phase_timing_v1"] = {
+            "schema_version": "astra_worker_phase_timing_v1",
+            "current_phase": normalized_phase,
+            "durations_seconds": dict(timing.get("durations_seconds") or {}),
+            "counts": dict(timing.get("counts") or {}),
+            "bounded": True,
+        }
         self._runtime_state["worker_heartbeat_at"] = _now_iso()
-        self._runtime_state["worker_cycle_phase"] = str(phase or "unknown")[:96]
+        self._runtime_state["worker_cycle_phase"] = normalized_phase
         if error:
             self._runtime_state["worker_cycle_error"] = str(error)[:240]
 
@@ -2388,6 +2424,13 @@ class PaperAutopilotEngine:
         state.  Keeping that bridge explicit prevents stale thread-era
         metadata from masquerading as current cycle progress.
         """
+        if str(phase or "") == "external_cycle_active":
+            self._worker_phase_timing_v1 = {
+                "current_phase": "",
+                "phase_started_monotonic": 0.0,
+                "durations_seconds": {},
+                "counts": {},
+            }
         self._runtime_state.update({
             "worker_generation_id": str(worker_generation_id or ""),
             "worker_process_id": max(0, _to_int(process_id, 0)),
@@ -12858,6 +12901,7 @@ class PaperAutopilotEngine:
         }
         trace_rows: dict[str, dict[str, Any]] = {}
         quote_budget = max(1, min(12, _to_int(os.getenv("ASTRA_LOSS_CONTAINMENT_QUOTES_PER_CYCLE"), 12)))
+        self._worker_quote_lookup_attempted_symbols_v1 = set()
         for index, (raw_symbol, raw_position) in enumerate(broker_position_by_symbol.items()):
             symbol = str(raw_symbol or "").upper().strip()
             broker_position = dict(raw_position or {})
@@ -12925,6 +12969,7 @@ class PaperAutopilotEngine:
             else:
                 quote = {}
             if not quote and callable(self.get_latest_row_fn) and index < quote_budget:
+                self._worker_quote_lookup_attempted_symbols_v1.add(symbol)
                 try:
                     quote = dict(self.get_latest_row_fn(symbol, asset_type) or {})
                 except Exception as exc:
@@ -13219,6 +13264,12 @@ class PaperAutopilotEngine:
             or ""
         ).strip()
         if cached and provider_timestamp:
+            cached.setdefault("symbol", symbol)
+            return cached
+        if cached and symbol in set(getattr(self, "_worker_quote_lookup_attempted_symbols_v1", set()) or set()):
+            # Loss containment already attempted this symbol in the same
+            # cycle. Reuse its fail-closed result rather than paying for the
+            # identical sequential provider lookup again.
             cached.setdefault("symbol", symbol)
             return cached
         latest: dict[str, Any] = {}

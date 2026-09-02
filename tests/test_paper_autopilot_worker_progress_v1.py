@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+from engine.paper_autopilot import PaperAutopilotEngine
 from engine.paper_autopilot_worker import PaperAutopilotWorker
 
 
@@ -64,6 +65,37 @@ class PaperAutopilotWorkerProgressTests(unittest.TestCase):
         ])
         self.assertTrue(all(bool(item["persist"]) for item in autopilot.progress))
         self.assertEqual(autopilot.progress[-1]["cycle_count"], 1)
+
+    def test_worker_phase_timing_is_bounded_and_resets_per_external_cycle(self):
+        engine = object.__new__(PaperAutopilotEngine)
+        engine._runtime_state = {}
+        with patch(
+            "engine.paper_autopilot.time.monotonic",
+            side_effect=[1.0, 3.5, 4.0, 10.0, 11.25],
+        ):
+            engine.record_external_worker_progress(
+                worker_generation_id="generation-1",
+                process_id=1,
+                parent_process_id=0,
+                cycle_count=1,
+                phase="external_cycle_active",
+            )
+            engine._note_worker_progress("slow_stage")
+            engine._note_worker_progress("next_stage")
+            engine.record_external_worker_progress(
+                worker_generation_id="generation-1",
+                process_id=1,
+                parent_process_id=0,
+                cycle_count=2,
+                phase="external_cycle_active",
+            )
+            engine._note_worker_progress("next_cycle_stage")
+
+        timing = engine._runtime_state["worker_phase_timing_v1"]
+        self.assertEqual(timing["schema_version"], "astra_worker_phase_timing_v1")
+        self.assertEqual(timing["durations_seconds"], {"external_cycle_active": 1.25})
+        self.assertEqual(timing["counts"], {"external_cycle_active": 1})
+        self.assertTrue(timing["bounded"])
 
     def test_resource_pause_records_a_persisted_engine_phase(self):
         autopilot = _Autopilot()

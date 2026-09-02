@@ -154,6 +154,28 @@ class TrustedQuoteCandidateFlowTests(unittest.TestCase):
         self.assertFalse(should_exit)
         self.assertEqual(reason, "PROVIDER_NATIVE_MARKET_OBSERVATION_UNAVAILABLE")
 
+    def test_open_position_review_reuses_timestamp_less_quote_attempt(self):
+        calls = []
+        engine = self._engine({})
+        engine.get_latest_row_fn = lambda _symbol, _asset: calls.append(1) or {
+            "symbol": "AAPL",
+            "price": 100.0,
+            "provider_used": "FMP",
+        }
+        evidence = engine._loss_containment_quote_evidence(
+            {"AAPL": {"current_price": 100.0}},
+            managed_rows_by_symbol={"AAPL": {"position_id": "position-aapl"}},
+        )
+        latest = engine._open_position_review_quote_v1(
+            {"symbol": "AAPL", "position_id": "position-aapl"},
+            {},
+            evidence,
+        )
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(latest["price"], 100.0)
+        self.assertNotIn("provider_native_timestamp", latest)
+
     def test_exit_evaluation_ignores_stale_same_symbol_loss_decision(self):
         engine = self._engine({})
         engine._runtime_state["loss_containment_state_v1"] = {"decisions": {
