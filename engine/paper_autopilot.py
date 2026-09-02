@@ -12932,6 +12932,18 @@ class PaperAutopilotEngine:
         ws_observations = dict(
             dict(self._runtime_state.get("alpaca_ws_active_position_monitor_v1") or {}).get("observations") or {}
         )
+        # The worker refreshes the persisted status after its management pass.
+        # Read the same canonical owner before that persistence boundary so a
+        # healthy live observation is not forced through the next-cycle cache.
+        try:
+            from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
+
+            live_status = dict(ALPACA_WS_MONITOR.status() or {})
+            live_observations = dict(live_status.get("observations") or {})
+            if live_observations:
+                ws_observations.update(live_observations)
+        except Exception:
+            pass
         selected: dict[str, dict[str, Any]] = {}
         symbols = set(managed) | {
             str(symbol or "").upper().strip()
