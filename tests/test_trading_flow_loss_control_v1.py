@@ -176,6 +176,140 @@ class TrustedQuoteCandidateFlowTests(unittest.TestCase):
         self.assertEqual(latest["price"], 100.0)
         self.assertNotIn("provider_native_timestamp", latest)
 
+    def test_fresh_worker_ws_observation_reaches_loss_containment_without_lookup(self):
+        calls = []
+        engine = self._engine({})
+        engine.get_latest_row_fn = lambda *_args: calls.append(1) or {}
+        provider_timestamp = _iso()
+        engine._runtime_state["alpaca_ws_active_position_monitor_v1"] = {
+            "observations": {
+                "AAPL": {
+                    "symbol": "AAPL",
+                    "price": 101.25,
+                    "provider_native_timestamp": provider_timestamp,
+                    "receive_timestamp": time.time(),
+                    "provider_used": "ALPACA_WS_IEX",
+                }
+            }
+        }
+
+        quotes = engine._loss_containment_quote_evidence(
+            {"AAPL": {"current_price": 101.25}},
+            managed_rows_by_symbol={"AAPL": {"position_id": "position-aapl"}},
+        )
+
+        self.assertEqual(calls, [])
+        self.assertEqual(quotes["AAPL"]["provider_used"], "ALPACA_WS_IEX")
+        self.assertEqual(quotes["AAPL"]["provider_native_timestamp"], provider_timestamp)
+        self.assertEqual(quotes["AAPL"]["canonical_position_id"], "position-aapl")
+
+    def test_newer_worker_ws_observation_wins_over_legacy_fmp_observation(self):
+        engine = self._engine({})
+        engine._runtime_state["active_equity_fmp_observations_v1"] = {
+            "observations": {
+                "AAPL": {
+                    "symbol": "AAPL",
+                    "price": 100.5,
+                    "provider": "FMP",
+                    "provider_native_timestamp": _iso(-5),
+                    "canonical_position_id": "position-aapl",
+                }
+            }
+        }
+        ws_timestamp = _iso(-1)
+        engine._runtime_state["alpaca_ws_active_position_monitor_v1"] = {
+            "observations": {
+                "AAPL": {
+                    "symbol": "AAPL",
+                    "price": 101.25,
+                    "provider_native_timestamp": ws_timestamp,
+                    "receive_timestamp": time.time(),
+                    "provider_used": "ALPACA_WS_IEX",
+                    "canonical_position_id": "position-aapl",
+                }
+            }
+        }
+
+        quotes = engine._loss_containment_quote_evidence(
+            {"AAPL": {"current_price": 101.25}},
+            managed_rows_by_symbol={"AAPL": {"position_id": "position-aapl"}},
+        )
+
+        self.assertEqual(quotes["AAPL"]["provider_used"], "ALPACA_WS_IEX")
+        self.assertEqual(quotes["AAPL"]["provider_native_timestamp"], ws_timestamp)
+
+    def test_stale_worker_ws_observation_remains_fail_closed(self):
+        engine = self._engine({})
+        engine.get_latest_row_fn = lambda *_args: {}
+        engine._runtime_state["alpaca_ws_active_position_monitor_v1"] = {
+            "observations": {
+                "AAPL": {
+                    "symbol": "AAPL",
+                    "price": 101.25,
+                    "provider_native_timestamp": _iso(-120),
+                    "receive_timestamp": time.time(),
+                    "provider_used": "ALPACA_WS_IEX",
+                }
+            }
+        }
+
+        quotes = engine._loss_containment_quote_evidence(
+            {"AAPL": {"current_price": 101.25}},
+            managed_rows_by_symbol={"AAPL": {"position_id": "position-aapl"}},
+        )
+
+        self.assertNotIn("provider_native_timestamp", quotes["AAPL"])
+        self.assertEqual(quotes["AAPL"]["provider_used"], "alpaca_paper")
+
+    def test_profit_protection_consumes_same_worker_observation_contract(self):
+        engine = self._engine({})
+        provider_timestamp = _iso()
+        engine._runtime_state["alpaca_ws_active_position_monitor_v1"] = {
+            "observations": {
+                "AAPL": {
+                    "symbol": "AAPL",
+                    "price": 101.25,
+                    "provider_native_timestamp": provider_timestamp,
+                    "receive_timestamp": time.time(),
+                    "provider_used": "ALPACA_WS_IEX",
+                }
+            }
+        }
+        managed_row = {
+            "symbol": "AAPL",
+            "position_id": "position-aapl",
+            "lifecycle_id": "lifecycle-aapl",
+            "entry_fill_id": "entry-fill-aapl",
+            "lane_id": "DAY",
+            "asset_type": "stock",
+            "status": "OPEN",
+            "entry_price": 100.0,
+            "entry_timestamp": _iso(-60),
+            "quantity": 1.0,
+        }
+        broker_row = {
+            "symbol": "AAPL",
+            "asset_type": "stock",
+            "qty": 1.0,
+            "current_price": 101.25,
+            "market_value": 101.25,
+            "cost_basis": 100.0,
+        }
+        with patch(
+            "engine.paper_autopilot.run_profit_protection_review_v1",
+            return_value={"state": {}, "positions_evaluated": 1},
+        ) as review:
+            engine._profit_protection_review_phase(
+                open_rows=[managed_row],
+                broker_position_by_symbol={"AAPL": broker_row},
+                broker_fetch_succeeded=True,
+            )
+
+        consumed = review.call_args.kwargs["broker_positions"]["AAPL"]
+        self.assertEqual(consumed["provider_native_timestamp"], provider_timestamp)
+        self.assertEqual(consumed["provider_used"], "ALPACA_WS_IEX")
+        self.assertEqual(consumed["retrieval_timestamp"], engine._runtime_state["alpaca_ws_active_position_monitor_v1"]["observations"]["AAPL"]["receive_timestamp"])
+
     def test_exit_evaluation_ignores_stale_same_symbol_loss_decision(self):
         engine = self._engine({})
         engine._runtime_state["loss_containment_state_v1"] = {"decisions": {

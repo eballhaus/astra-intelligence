@@ -12908,6 +12908,112 @@ class PaperAutopilotEngine:
         payload = dict(state or self._runtime_state.get("loss_containment_state_v1") or {})
         save_loss_containment_state_v1(self.loss_containment_state_path, payload)
 
+    def _canonical_active_position_observations_v1(
+        self,
+        managed_rows_by_symbol: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """Return fresh identity-bound observations from existing producers.
+
+        The worker WS snapshot and the FMP supplemental snapshot share the
+        canonical management contract.  WS rows may not carry lifecycle
+        aliases because the producer is symbol-based, so bind them to the
+        already-authoritative managed row for that symbol before validation.
+        No observation is accepted unless its provider-native timestamp is
+        executable-fresh under the existing contract.
+        """
+        managed = {
+            str(symbol or "").upper().strip(): dict(row or {})
+            for symbol, row in dict(managed_rows_by_symbol or {}).items()
+            if str(symbol or "").strip() and isinstance(row, Mapping)
+        }
+        fmp_observations = dict(
+            dict(self._runtime_state.get("active_equity_fmp_observations_v1") or {}).get("observations") or {}
+        )
+        ws_observations = dict(
+            dict(self._runtime_state.get("alpaca_ws_active_position_monitor_v1") or {}).get("observations") or {}
+        )
+        selected: dict[str, dict[str, Any]] = {}
+        symbols = set(managed) | {
+            str(symbol or "").upper().strip()
+            for symbol in set(fmp_observations) | set(ws_observations)
+            if str(symbol or "").strip()
+        }
+        for symbol in symbols:
+            managed_row = dict(managed.get(symbol) or {})
+            managed_aliases = {
+                value for value in (
+                    _pick_first_text(managed_row.get("canonical_position_id")),
+                    _pick_first_text(managed_row.get("lifecycle_id")),
+                    _pick_first_text(managed_row.get("position_id")),
+                ) if value
+            }
+            candidates: list[tuple[float, int, dict[str, Any]]] = []
+            # Prefer the newest valid native observation; WS wins only when
+            # timestamps are equally current. FMP remains the existing fallback.
+            for source_priority, observation in enumerate((ws_observations.get(symbol), fmp_observations.get(symbol))):
+                if not isinstance(observation, Mapping):
+                    continue
+                candidate = dict(observation)
+                if str(candidate.get("symbol") or symbol).upper().strip() != symbol:
+                    continue
+                candidate["symbol"] = symbol
+                observation_aliases = {
+                    value for value in (
+                        _pick_first_text(candidate.get("canonical_position_id")),
+                        _pick_first_text(candidate.get("lifecycle_id")),
+                        _pick_first_text(candidate.get("position_id")),
+                        *[_pick_first_text(value) for value in (candidate.get("canonical_position_aliases") or [])],
+                    ) if value
+                }
+                if observation_aliases and managed_aliases and not (observation_aliases & managed_aliases):
+                    continue
+                if not observation_aliases:
+                    identity = _pick_first_text(
+                        managed_row.get("canonical_position_id"),
+                        managed_row.get("lifecycle_id"),
+                        managed_row.get("position_id"),
+                    )
+                    if not identity:
+                        continue
+                    candidate["canonical_position_id"] = identity
+                    candidate["canonical_position_aliases"] = sorted(managed_aliases or {identity})
+                    lifecycle_id = _pick_first_text(managed_row.get("lifecycle_id"))
+                    position_id = _pick_first_text(managed_row.get("position_id"))
+                    if lifecycle_id:
+                        candidate["lifecycle_id"] = lifecycle_id
+                    if position_id:
+                        candidate["position_id"] = position_id
+                else:
+                    candidate["canonical_position_aliases"] = sorted(observation_aliases | managed_aliases)
+                provider_native = _pick_first_text(
+                    candidate.get("provider_native_timestamp"),
+                    candidate.get("provider_quote_timestamp"),
+                    candidate.get("quote_timestamp"),
+                    candidate.get("market_observation_timestamp"),
+                )
+                if not provider_native:
+                    continue
+                candidate.setdefault("provider_native_timestamp", provider_native)
+                candidate.setdefault("provider_quote_timestamp", provider_native)
+                candidate.setdefault("quote_timestamp", provider_native)
+                candidate.setdefault("provider", candidate.get("provider_used") or candidate.get("provider_name"))
+                candidate.setdefault("provider_used", candidate.get("provider") or candidate.get("provider_name"))
+                candidate.setdefault("retrieval_timestamp", candidate.get("receive_timestamp"))
+                evidence = canonical_market_timestamp_v1(
+                    candidate,
+                    source_type=SOURCE_QUOTE,
+                    max_age_seconds=20.0,
+                )
+                if not bool(evidence.get("executable_freshness")):
+                    continue
+                candidate["quote_age_seconds"] = evidence.get("age_seconds")
+                candidate["market_observation_timestamp"] = evidence.get("market_observation_timestamp")
+                candidates.append((float(evidence.get("age_seconds") or 0.0), source_priority, candidate))
+            if candidates:
+                candidates.sort(key=lambda item: (item[0], item[1]))
+                selected[symbol] = candidates[0][2]
+        return selected
+
     def _loss_containment_quote_evidence(
         self,
         broker_position_by_symbol: Mapping[str, Mapping[str, Any]],
@@ -12923,14 +13029,12 @@ class PaperAutopilotEngine:
         """
         quotes: dict[str, dict[str, Any]] = {}
         diagnostics: dict[str, dict[str, Any]] = {}
-        active_observations = dict(
-            dict(self._runtime_state.get("active_equity_fmp_observations_v1") or {}).get("observations") or {}
-        )
         managed = {
             str(symbol or "").upper().strip(): dict(row or {})
             for symbol, row in dict(managed_rows_by_symbol or {}).items()
             if str(symbol or "").strip() and isinstance(row, Mapping)
         }
+        active_observations = self._canonical_active_position_observations_v1(managed)
         trace_rows: dict[str, dict[str, Any]] = {}
         quote_budget = max(1, min(12, _to_int(os.getenv("ASTRA_LOSS_CONTAINMENT_QUOTES_PER_CYCLE"), 12)))
         self._worker_quote_lookup_attempted_symbols_v1 = set()
@@ -14057,9 +14161,28 @@ class PaperAutopilotEngine:
             pid = _pick_first_text(row.get("canonical_position_id"), row.get("position_id"), row.get("symbol"))
             ownership_map[pid] = resolve_canonical_position_ownership_v1(row)
 
-        identity_rows = [
+        recovery_rows = [
             dict(row) for row in (recovery.get("positions") or []) if isinstance(row, dict)
-        ] or [dict(row) for row in db_rows if isinstance(row, dict)]
+        ]
+        identity_rows_by_symbol: dict[str, dict[str, Any]] = {}
+        for identity_row in [*db_rows, *recovery_rows]:
+            identity_symbol = str(identity_row.get("symbol") or "").upper().strip()
+            if not identity_symbol:
+                continue
+            identity = _pick_first_text(
+                identity_row.get("canonical_position_id"),
+                identity_row.get("lifecycle_id"),
+                identity_row.get("position_id"),
+            )
+            existing = identity_rows_by_symbol.get(identity_symbol)
+            existing_identity = _pick_first_text(
+                (existing or {}).get("canonical_position_id"),
+                (existing or {}).get("lifecycle_id"),
+                (existing or {}).get("position_id"),
+            )
+            if existing is None or (identity and not existing_identity):
+                identity_rows_by_symbol[identity_symbol] = identity_row
+        identity_rows = list(identity_rows_by_symbol.values())
         canonical_position_aliases = {
             str(row.get("symbol") or "").upper().strip(): {
                 value for value in (
@@ -14071,9 +14194,12 @@ class PaperAutopilotEngine:
             for row in identity_rows
             if str(row.get("symbol") or "").strip()
         }
-        observations = dict(
-            dict(self._runtime_state.get("active_equity_fmp_observations_v1") or {}).get("observations") or {}
-        )
+        observation_identity_rows: dict[str, dict[str, Any]] = {}
+        for identity_row in identity_rows:
+            identity_symbol = str(identity_row.get("symbol") or "").upper().strip()
+            if identity_symbol and identity_symbol not in observation_identity_rows:
+                observation_identity_rows[identity_symbol] = dict(identity_row)
+        observations = self._canonical_active_position_observations_v1(observation_identity_rows)
         for symbol, observation in observations.items():
             expected_aliases = canonical_position_aliases.get(str(symbol or "").upper().strip(), set())
             observation_aliases = {
