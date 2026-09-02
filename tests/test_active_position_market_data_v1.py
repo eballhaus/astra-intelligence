@@ -16,6 +16,56 @@ def _iso() -> str:
 
 
 class AlpacaWSMonitorTests(unittest.TestCase):
+    def test_run_waits_for_auth_and_subscription_ack_and_configures_keepalive(self):
+        class Connection:
+            def __init__(self):
+                self.sent: list[str] = []
+                self.closed = False
+                self.messages = [
+                    '[{"T":"success","msg":"authenticated"}]',
+                    '[{"T":"subscription","quotes":["AAPL"],"trades":["AAPL"]}]',
+                    '[{"T":"q","S":"AAPL","bp":100.0,"ap":100.2,"t":"2026-09-02T14:00:00Z"}]',
+                ]
+
+            def send(self, payload):
+                self.sent.append(payload)
+
+            def recv(self, timeout):
+                if self.messages:
+                    return self.messages.pop(0)
+                raise TimeoutError()
+
+            def close(self):
+                self.closed = True
+
+        connection = Connection()
+        kwargs = {}
+
+        def connect(_endpoint, **options):
+            kwargs.update(options)
+            return connection
+
+        monitor = AlpacaWSMonitor(connect=connect)
+        monitor._desired_symbols = {"AAPL"}
+        with patch.object(AlpacaWSMonitor, "_credentials", return_value=("key", "secret")):
+            thread = __import__("threading").Thread(target=monitor._run)
+            thread.start()
+            for _ in range(20):
+                if monitor.status()["stats"]["messages_received"]:
+                    break
+                __import__("time").sleep(0.01)
+            monitor._stop.set()
+            monitor._wake.set()
+            thread.join(timeout=1)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(kwargs["ping_interval"], 20.0)
+        self.assertIsNone(kwargs["ping_timeout"])
+        self.assertEqual(__import__("json").loads(connection.sent[0])["action"], "auth")
+        self.assertEqual(__import__("json").loads(connection.sent[1])["action"], "subscribe")
+        self.assertEqual(monitor._stats["auth_state"], "AUTHENTICATED")
+        self.assertEqual(monitor._stats["subscription_state"], "SUBSCRIBED")
+
     def test_subscription_is_bounded_and_excludes_crypto_symbols(self):
         monitor = AlpacaWSMonitor()
         with patch.dict(os.environ, {"ASTRA_ALPACA_WS_ENABLED": "0", "ASTRA_ALPACA_WS_MAX_SYMBOLS": "2"}):

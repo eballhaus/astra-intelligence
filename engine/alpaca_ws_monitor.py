@@ -60,6 +60,8 @@ class AlpacaWSMonitor:
             "reconnects": 0,
             "errors": 0,
             "last_error": "",
+            "auth_state": "UNKNOWN",
+            "subscription_state": "UNKNOWN",
             "last_message_utc": None,
             "last_connected_utc": None,
             "last_disconnected_utc": None,
@@ -147,7 +149,7 @@ class AlpacaWSMonitor:
     def _send(connection: Any, payload: dict[str, Any]) -> None:
         connection.send(json.dumps(payload, separators=(",", ":")))
 
-    def _sync_subscriptions(self, connection: Any) -> None:
+    def _sync_subscriptions(self, connection: Any, *, mark_subscribed: bool = True) -> bool:
         with self._lock:
             desired = set(self._desired_symbols)
             subscribed = set(self._subscribed_symbols)
@@ -157,8 +159,56 @@ class AlpacaWSMonitor:
             self._send(connection, {"action": "unsubscribe", "trades": remove, "quotes": remove})
         if add:
             self._send(connection, {"action": "subscribe", "trades": add, "quotes": add})
+        if mark_subscribed:
+            with self._lock:
+                self._subscribed_symbols = desired
+        return bool(remove or add)
+
+    def _wait_for_control(
+        self,
+        connection: Any,
+        *,
+        message_type: str,
+        message: str | None = None,
+        timeout_seconds: float = 8.0,
+    ) -> dict[str, Any]:
+        """Wait for the provider acknowledgement that gates the next action."""
+        deadline = time.monotonic() + max(0.1, float(timeout_seconds))
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"alpaca_ws_{message_type}_ack_timeout")
+            try:
+                raw = connection.recv(timeout=min(1.0, remaining))
+            except TimeoutError:
+                continue
+            payload = json.loads(raw)
+            rows = payload if isinstance(payload, list) else [payload]
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                if str(row.get("T") or "") == "error":
+                    detail = str(row.get("msg") or row.get("code") or "unknown")[:120]
+                    raise RuntimeError(f"alpaca_ws_{message_type}_error:{detail}")
+                self._record_message(row)
+                if str(row.get("T") or "") != message_type:
+                    continue
+                if message is not None and str(row.get("msg") or "") != message:
+                    continue
+                with self._lock:
+                    self._stats["last_control_message_utc"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                return row
+
+    def _apply_subscription_ack(self, message: dict[str, Any]) -> None:
+        acknowledged = {
+            str(symbol or "").upper().strip()
+            for key in ("quotes", "trades")
+            for symbol in (message.get(key) or [])
+            if str(symbol or "").strip()
+        }
         with self._lock:
-            self._subscribed_symbols = desired
+            self._subscribed_symbols = acknowledged & set(self._desired_symbols)
+            self._stats["subscription_state"] = "SUBSCRIBED"
 
     def _record_message(self, message: dict[str, Any]) -> None:
         message_type = str(message.get("T") or "")
@@ -231,17 +281,38 @@ class AlpacaWSMonitor:
                 continue
             connection = None
             try:
-                connection = connector(self._endpoint(), open_timeout=8, close_timeout=3)
+                # Keep protocol pings, but use application message flow and
+                # explicit acknowledgements as transport health evidence. A
+                # missed Pong must not create an unbounded reconnect storm.
+                connection = connector(
+                    self._endpoint(),
+                    open_timeout=8,
+                    close_timeout=3,
+                    ping_interval=20.0,
+                    ping_timeout=None,
+                )
                 with self._lock:
                     self._connection = connection
                     self._subscribed_symbols = set()
+                    self._stats["auth_state"] = "AUTHENTICATING"
+                    self._stats["subscription_state"] = "UNSUBSCRIBED"
                     self._stats["last_connected_utc"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
                 self._send(connection, {"action": "auth", "key": key, "secret": secret})
-                self._sync_subscriptions(connection)
+                self._wait_for_control(connection, message_type="success", message="authenticated")
+                with self._lock:
+                    self._stats["auth_state"] = "AUTHENTICATED"
+                if self._sync_subscriptions(connection, mark_subscribed=False):
+                    subscription_ack = self._wait_for_control(connection, message_type="subscription")
+                    self._apply_subscription_ack(subscription_ack)
+                else:
+                    with self._lock:
+                        self._stats["subscription_state"] = "EMPTY"
                 while not self._stop.is_set():
                     if self._wake.is_set():
                         self._wake.clear()
-                        self._sync_subscriptions(connection)
+                        if self._sync_subscriptions(connection, mark_subscribed=False):
+                            subscription_ack = self._wait_for_control(connection, message_type="subscription")
+                            self._apply_subscription_ack(subscription_ack)
                     with self._lock:
                         messages_before = int(self._stats.get("messages_received") or 0)
                     self._read_messages(connection)
@@ -255,6 +326,8 @@ class AlpacaWSMonitor:
                     self._stats["reconnects"] += 1
                     self._stats["last_disconnected_utc"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
                     self._subscribed_symbols = set()
+                    self._stats["auth_state"] = "FAILED"
+                    self._stats["subscription_state"] = "FAILED"
             finally:
                 with self._lock:
                     self._connection = None
@@ -304,6 +377,8 @@ class AlpacaWSMonitor:
         transport_health = "IDLE"
         if desired:
             if reconnect_storm or not connected:
+                transport_health = "UNHEALTHY"
+            elif stats.get("auth_state") != "AUTHENTICATED" or stats.get("subscription_state") != "SUBSCRIBED":
                 transport_health = "UNHEALTHY"
             elif stale_stream:
                 transport_health = "DEGRADED"
