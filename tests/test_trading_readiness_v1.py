@@ -362,6 +362,107 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(result["active_faults"][0]["fault_type"], "ENTRY_FUNNEL_STAGE_BLOCKED")
         self.assertEqual(result["day_readiness"], "TECHNICALLY_READY")
 
+    def test_explicit_capacity_wait_is_not_a_code_repair_package(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "astra_multilane_completion_matrix_v1": {
+                    "generated_at": _iso(-1),
+                    "lanes": {
+                        "CRYPTO": {
+                            "first_blocker": "capacity_concentration",
+                            "stages": {
+                                "eligibility": {
+                                    "status": "FAIL_UNKNOWN_CLOSED",
+                                    "verification_state": "CURRENT",
+                                    "first_bad_handoff": "candidate contract -> eligibility gate",
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            worker_state={},
+        )
+        self.assertEqual(result["crypto_readiness"], "TECHNICALLY_READY")
+        self.assertEqual(result["active_faults"], [])
+        self.assertEqual(result["code_repair_packages"], [])
+
+    def test_lifecycle_broker_ambiguity_does_not_block_day_lane(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "system_integrity_scanner_v1": {
+                    "active_root_causes": [{
+                        "category": "CAUSAL_HANDOFF_LOSS",
+                        "state": "OPEN",
+                        "current_vs_historical": "CURRENT",
+                        "severity": "CRITICAL",
+                        "likely_owner": "authorized lane exit broker reconciliation",
+                        "first_bad_handoff": "broker-confirmed exit fill -> canonical lifecycle closure",
+                        "causal_handoff_integrity_v1": {
+                            "lane": "DAY",
+                            "symbol": "LYFT",
+                            "lifecycle_id": "life-1",
+                            "consumer_state": "AWAITING_BROKER_ZERO",
+                        },
+                    }],
+                },
+            },
+            worker_state={},
+        )
+        self.assertEqual(result["day_readiness"], "DEGRADED")
+        self.assertEqual(result["active_faults"][0]["classification"], "BROKER_EXTERNAL")
+        self.assertEqual(result["active_faults"][0]["scope"], "LIFECYCLE")
+        self.assertEqual(result["code_repair_packages"], [])
+
+    def test_missing_current_observation_is_external_not_source_package(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "active_equity_fmp_observations_v1": {
+                    "canonical_active_equity_symbols": ["AAPL"],
+                    "observations": {},
+                },
+                "alpaca_ws_active_position_monitor_v1": {
+                    "transport_health": "HEALTHY",
+                    "subscribed_symbols": ["AAPL"],
+                },
+                "loss_containment_state_v1": {
+                    "decisions": {
+                        "AAPL": {
+                            "symbol": "AAPL",
+                            "exact_blockers": ["MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE"],
+                        },
+                    },
+                },
+            },
+            worker_state={},
+        )
+        fault = next(row for row in result["active_faults"] if row["fault_type"] == "PRODUCER_FRESH_CONSUMER_UNAVAILABLE")
+        self.assertEqual(fault["classification"], "PROVIDER_EXTERNAL")
+        self.assertEqual(result["code_repair_packages"], [])
+
+    def test_disconnected_ws_does_not_duplicate_subscription_fault(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "active_equity_fmp_observations_v1": {
+                    "canonical_active_equity_symbols": ["AAPL"],
+                    "observations": {"AAPL": {"provider_native_timestamp": _iso(-1)}},
+                },
+                "alpaca_ws_active_position_monitor_v1": {
+                    "transport_health": "UNHEALTHY",
+                    "subscribed_symbols": [],
+                    "stats": {"errors": 8, "reconnects": 8, "messages_received": 0},
+                },
+            },
+            worker_state={},
+        )
+        fault_types = [row["fault_type"] for row in result["active_faults"]]
+        self.assertIn("WS_TRANSPORT_UNHEALTHY", fault_types)
+        self.assertNotIn("ACTIVE_POSITION_NOT_STREAMED", fault_types)
+
     def test_current_scanner_reconciliation_failure_is_attributed_to_day(self):
         result = self._monitor().run_if_due(
             runtime_state={

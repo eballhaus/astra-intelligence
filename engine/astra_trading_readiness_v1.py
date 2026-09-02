@@ -56,6 +56,16 @@ _MATRIX_STAGE_MAP = {
     "learning_consumption": "LEARNING",
 }
 _ET = ZoneInfo("America/New_York")
+_NATURAL_MATRIX_BLOCKERS = {
+    "CAPACITY_CONCENTRATION",
+    "PENDING_LANE_RESERVE_EXHAUSTED",
+    "CAPACITY_FULL",
+    "CANDIDATE_OBSERVATION_PENDING",
+    "CANDIDATE_ELIGIBLE_AWAITING_FULL_CYCLE",
+    "MARKET_SESSION_NOT_ELIGIBLE",
+    "SESSION_NOT_ACTIVE",
+    "NO_CURRENT_MARKET_OPPORTUNITY",
+}
 
 
 def _now() -> str:
@@ -266,6 +276,28 @@ class AstraTradingReadinessV1:
         return ""
 
     @staticmethod
+    def _matrix_failure_is_natural(lane_matrix: Mapping[str, Any], info: Mapping[str, Any]) -> bool:
+        """Do not turn explicit capacity/session waits into source packages."""
+        blocker = _text(
+            lane_matrix.get("first_blocker")
+            or lane_matrix.get("first_causal_blocker")
+            or info.get("legitimate_waiting_reason")
+            or info.get("upstream_blocker")
+        ).upper()
+        return blocker in _NATURAL_MATRIX_BLOCKERS or "RESERVE_EXHAUSTED" in blocker
+
+    @staticmethod
+    def _observation_producer_has_current_evidence(runtime: Mapping[str, Any], symbols: set[str]) -> bool:
+        """Use the existing materialized observation owner as the source proof."""
+        observations = _dict(_dict(runtime.get("active_equity_fmp_observations_v1")).get("observations"))
+        if not observations or not symbols:
+            return False
+        return all(
+            bool(_dict(observations.get(symbol)).get("provider_native_timestamp"))
+            for symbol in symbols
+        )
+
+    @staticmethod
     def _issue_contract(issue: Mapping[str, Any]) -> dict[str, Any]:
         """Attach a compact repair handoff without inventing runtime facts."""
         fault = _text(issue.get("fault_type")).upper()
@@ -364,6 +396,8 @@ class AstraTradingReadinessV1:
                     "component": row.get("component"),
                     "lanes": row.get("lanes"),
                     "evidence": row.get("evidence"),
+                    "classification": row.get("classification"),
+                    "scope": row.get("scope"),
                     "earliest_stage": row.get("earliest_stage"),
                 },
                 sort_keys=True,
@@ -841,7 +875,14 @@ class AstraTradingReadinessV1:
         technical_issues = []
         for issue in lane_issues:
             fault = _text(issue.get("fault_type")).upper()
-            if fault == "STRICT_TRUTH_LEARNING_HANDOFF_FAILURE":
+            classification = _text(issue.get("classification")).upper()
+            if classification == "NATURAL_WAIT":
+                continue
+            if classification == "BROKER_EXTERNAL":
+                category, issue_stage = "BROKER_EXTERNAL", "RECONCILIATION"
+            elif classification == "PROVIDER_EXTERNAL":
+                category, issue_stage = "PROVIDER_EXTERNAL", "OBSERVATION"
+            elif fault == "STRICT_TRUTH_LEARNING_HANDOFF_FAILURE":
                 category, issue_stage = "LEARNING_HANDOFF_FAILURE", "LEARNING"
             elif fault in {"CAUSAL_HANDOFF_LOSS", "RECONCILIATION_FAILURE"}:
                 category, issue_stage = "RECONCILIATION_FAILURE", "RECONCILIATION"
@@ -898,6 +939,8 @@ class AstraTradingReadinessV1:
                 status = _text(info.get("status") or info.get("status_classification")).upper()
                 if not (status.startswith("FAIL") and _text(info.get("verification_state")).upper() == "CURRENT"):
                     continue
+                if self._matrix_failure_is_natural(lane_matrix, info):
+                    continue
                 issues.append({
                     "fault_type": "ENTRY_FUNNEL_STAGE_BLOCKED",
                     "component": f"completion_matrix.{lane_name}.{matrix_stage}",
@@ -922,14 +965,28 @@ class AstraTradingReadinessV1:
             causal = _dict(root.get("causal_handoff_integrity_v1"))
             if category == "CAUSAL_HANDOFF_LOSS":
                 lane = _lane(causal.get("lane") or root.get("lane"))
-                issues.append({
+                issue = {
                     "fault_type": "RECONCILIATION_FAILURE",
                     "component": _text(root.get("likely_owner") or causal.get("consumer")) or "canonical_lifecycle_closure",
                     "lanes": [lane] if lane else list(LANES),
                     "severity": _text(root.get("severity")).upper() or "HIGH",
                     "repair_action": "",
                     "evidence": _text(root.get("first_bad_handoff") or causal.get("first_bad_handoff") or root.get("finding_id")),
-                })
+                }
+                # A broker aggregate residual can keep one lifecycle
+                # fail-closed without disabling unrelated lane operation.
+                if (
+                    _text(causal.get("symbol"))
+                    and _text(causal.get("lifecycle_id"))
+                    and _text(causal.get("consumer_state")).upper() == "AWAITING_BROKER_ZERO"
+                ):
+                    issue.update({
+                        "classification": "BROKER_EXTERNAL",
+                        "scope": "LIFECYCLE",
+                        "symbol": _text(causal.get("symbol")).upper(),
+                        "lifecycle_id": _text(causal.get("lifecycle_id")),
+                    })
+                issues.append(issue)
             elif category == "CYCLE_WITHIN_BOUNDS":
                 issues.append({
                     "fault_type": "WORKER_CYCLE_BOUNDARY_EXCEEDED",
@@ -963,8 +1020,12 @@ class AstraTradingReadinessV1:
             for value in (ws.get("subscribed_symbols") or ws.get("active_symbols") or [])
             if str(value).strip()
         }
+        ws_transport = _text(ws.get("transport_health")).upper()
         missing_ws = sorted(active_symbols - actual)
-        if active_symbols and missing_ws:
+        # A disconnected transport cannot have a live subscription set. Keep
+        # the transport fault as the single observation blocker until the
+        # stream is healthy enough for a subscription invariant to be tested.
+        if active_symbols and missing_ws and ws_transport not in {"UNHEALTHY", "DISCONNECTED", "RECONNECTING"}:
             issues.append({
                 "fault_type": "ACTIVE_POSITION_NOT_STREAMED",
                 "component": "AlpacaWS.active_position_subscription",
@@ -975,7 +1036,6 @@ class AstraTradingReadinessV1:
             })
 
         ws_stats = _dict(ws.get("stats"))
-        ws_transport = _text(ws.get("transport_health")).upper()
         ws_storm = (
             int(ws_stats.get("errors") or 0) >= 3
             and int(ws_stats.get("reconnects") or 0) >= 3
@@ -1027,13 +1087,27 @@ class AstraTradingReadinessV1:
                 ):
                     timestamp_failures.append(row)
         if active_symbols and timestamp_failures:
+            timestamp_failure_symbols = {
+                _text(row.get("symbol")).upper()
+                for row in timestamp_failures
+                if _text(row.get("symbol"))
+            }
+            current_producer_evidence = self._observation_producer_has_current_evidence(
+                runtime,
+                timestamp_failure_symbols,
+            )
             issues.append({
                 "fault_type": "PRODUCER_FRESH_CONSUMER_UNAVAILABLE",
                 "component": "PaperAutopilot.management_observation_handoff",
                 "lanes": ["DAY", "SCALP", "SWING"],
                 "severity": "HIGH",
                 "repair_action": "REMATERIALIZE_MANAGEMENT_EVIDENCE",
-                "evidence": str(len(timestamp_failures)),
+                "evidence": (
+                    str(len(timestamp_failures))
+                    if current_producer_evidence
+                    else "provider_observation_unavailable_before_management"
+                ),
+                **({} if current_producer_evidence else {"classification": "PROVIDER_EXTERNAL"}),
             })
 
         recovery = _dict(runtime.get("position_lane_horizon_recovery_v1"))
@@ -1104,7 +1178,14 @@ class AstraTradingReadinessV1:
                     by_lane[lane].append(issue)
         out: dict[str, str] = {}
         for lane, lane_issues in by_lane.items():
-            if any(str(issue.get("severity")) == "CRITICAL" for issue in lane_issues):
+            if any(
+                str(issue.get("severity")) == "CRITICAL"
+                and not (
+                    _text(issue.get("scope")).upper() == "LIFECYCLE"
+                    and _text(issue.get("classification")).upper() == "BROKER_EXTERNAL"
+                )
+                for issue in lane_issues
+            ):
                 out[lane] = "BLOCKED"
             elif lane_issues:
                 out[lane] = "DEGRADED"
@@ -1173,10 +1254,18 @@ class AstraTradingReadinessV1:
             )
             attempts = int(row.get("repair_attempt_count") or 0)
             action = _text(issue.get("repair_action"))
+            classification = _text(issue.get("classification")).upper()
+            non_code_condition = classification in {
+                "NATURAL_WAIT",
+                "BROKER_EXTERNAL",
+                "PROVIDER_EXTERNAL",
+            }
             result: dict[str, Any] = {}
             verification = "NOT_ATTEMPTED"
             prior_code_package = _dict(prior.get("code_repair_package"))
             unchanged_code_defect = (
+                not non_code_condition
+                and
                 same_evidence
                 and _text(prior.get("verification_result")) == "CODE_REPAIR_REQUIRED"
                 and _text(prior.get("evidence_fingerprint")) == _text(issue.get("evidence_fingerprint"))
@@ -1219,8 +1308,8 @@ class AstraTradingReadinessV1:
                     "recovery_state": verification,
                 })
             elif attempts >= 2:
-                verification = "CODE_REPAIR_REQUIRED"
-                row["recovery_state"] = "CODE_REPAIR_REQUIRED"
+                verification = classification if non_code_condition else "CODE_REPAIR_REQUIRED"
+                row["recovery_state"] = verification
             elif action and action_budget <= 0:
                 verification = "RECOVERY_DEFERRED_BOUNDED_BUDGET"
                 row["recovery_state"] = verification
@@ -1228,8 +1317,8 @@ class AstraTradingReadinessV1:
                 # An explicit technical fault with no approved runtime
                 # action must be escalated immediately, not left as an
                 # unexplained healthy/no-trade condition.
-                verification = "CODE_REPAIR_REQUIRED"
-                row["recovery_state"] = "CODE_REPAIR_REQUIRED"
+                verification = classification if non_code_condition else "CODE_REPAIR_REQUIRED"
+                row["recovery_state"] = verification
             row.update({
                 "repair_attempt_count": attempts,
                 "repair_result": result,
@@ -1273,7 +1362,19 @@ class AstraTradingReadinessV1:
                 worker_pid=worker_pid,
                 commit=commit,
             )
-            row["verification_result"] = "CODE_REPAIR_REQUIRED" if int(row.get("repair_attempt_count") or 0) >= 2 or not _text(issue.get("repair_action")) else "NOT_ATTEMPTED"
+            classification = _text(issue.get("classification")).upper()
+            non_code_condition = classification in {
+                "NATURAL_WAIT",
+                "BROKER_EXTERNAL",
+                "PROVIDER_EXTERNAL",
+            }
+            row["verification_result"] = (
+                classification
+                if non_code_condition
+                else "CODE_REPAIR_REQUIRED"
+                if int(row.get("repair_attempt_count") or 0) >= 2 or not _text(issue.get("repair_action"))
+                else "NOT_ATTEMPTED"
+            )
             row["recovery_state"] = row["verification_result"]
             fault_rows[key] = row
         for recovery in recoveries:
@@ -1292,8 +1393,13 @@ class AstraTradingReadinessV1:
                 row["verification_result"] = "RECOVERY_VERIFYING"
                 row["recovery_state"] = "RECOVERY_VERIFYING"
             if key in remaining_keys and int(row.get("repair_attempt_count") or 0) >= 2 and row.get("verification_result") == "RECOVERY_VERIFYING":
-                row["verification_result"] = "CODE_REPAIR_REQUIRED"
-                row["recovery_state"] = "CODE_REPAIR_REQUIRED"
+                classification = _text(row.get("classification")).upper()
+                row["verification_result"] = (
+                    classification
+                    if classification in {"NATURAL_WAIT", "BROKER_EXTERNAL", "PROVIDER_EXTERNAL"}
+                    else "CODE_REPAIR_REQUIRED"
+                )
+                row["recovery_state"] = row["verification_result"]
                 for recovery in recoveries:
                     if self._issue_key(recovery) == key:
                         recovery["verification_result"] = "RECOVERY_FAILED"
@@ -1349,7 +1455,10 @@ class AstraTradingReadinessV1:
             for stage in stages.values()
         ) and bool(session["equity_session_open"] or session.get("check_phase") == "CRYPTO_CONTINUOUS_CHECK")
         for key, row in fault_rows.items():
-            if row.get("verification_result") == "CODE_REPAIR_REQUIRED":
+            if (
+                row.get("verification_result") == "CODE_REPAIR_REQUIRED"
+                and _text(row.get("classification")).upper() not in {"NATURAL_WAIT", "BROKER_EXTERNAL", "PROVIDER_EXTERNAL"}
+            ):
                 row["code_repair_package"] = self._repair_package(row, row, _dict(previous_faults.get(key)))
         fault_history = dict(previous_faults)
         fault_history.update(fault_rows)
