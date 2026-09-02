@@ -117,6 +117,35 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(result["position_management_integrity"], "FAULT")
         self.assertNotEqual(result["trading_integrity_state"], "READY")
 
+    def test_unresolved_legacy_management_row_cannot_override_canonical_pass(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "active_equity_fmp_observations_v1": {
+                    "canonical_active_equity_symbols": ["AAPL"],
+                    "observations": {"AAPL": {"provider_native_timestamp": _iso(-1)}},
+                },
+                "alpaca_ws_active_position_monitor_v1": {"subscribed_symbols": ["AAPL"]},
+                "loss_containment_state_v1": {
+                    "decisions": {
+                        "canonical-a": {"symbol": "AAPL", "position_id": "canonical-a", "exact_blockers": []},
+                        "unresolved:AAPL": {
+                            "symbol": "AAPL",
+                            "position_id": "unresolved:AAPL",
+                            "ownership_classification": "UNRESOLVED_FAIL_CLOSED",
+                            "exact_blockers": ["MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE"],
+                        },
+                    },
+                },
+            },
+            worker_state={},
+        )
+        self.assertEqual(result["position_management_integrity"], "READY")
+        self.assertNotIn(
+            "PRODUCER_FRESH_CONSUMER_UNAVAILABLE",
+            [row["fault_type"] for row in result["active_faults"]],
+        )
+
     def test_ws_reconnect_storm_cannot_report_ready(self):
         result = self._monitor().run_if_due(
             runtime_state={

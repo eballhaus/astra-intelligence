@@ -1091,6 +1091,22 @@ class AstraTradingReadinessV1:
                 symbol = _text(row.get("symbol")).upper()
                 if active_symbols and symbol not in active_symbols:
                     continue
+                position_id = _text(
+                    row.get("canonical_position_id")
+                    or row.get("lifecycle_id")
+                    or row.get("position_id")
+                )
+                ownership = _text(
+                    row.get("ownership_classification")
+                    or row.get("legacy_current_classification")
+                ).upper()
+                # Legacy/unresolved rows remain auditable, but cannot
+                # override a current canonical decision for the same symbol.
+                if position_id.lower().startswith("unresolved:") or ownership in {
+                    "UNRESOLVED_FAIL_CLOSED",
+                    "LEGACY_UNLINKED_POSITION",
+                }:
+                    continue
                 blockers = {str(blocker) for blocker in (row.get("exact_blockers") or [])}
                 if (
                     "MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE" in str(row.get("first_causal_blocker") or row.get("reason") or "")
