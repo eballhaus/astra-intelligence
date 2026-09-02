@@ -146,6 +146,54 @@ class TradingReadinessTests(unittest.TestCase):
             [row["fault_type"] for row in result["active_faults"]],
         )
 
+    def test_historical_cycle_scanner_row_cannot_override_current_passing_cycle(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "system_integrity_scanner_v1": {
+                    "active_root_causes": [{
+                        "category": "CYCLE_WITHIN_BOUNDS",
+                        "state": "VERIFYING",
+                        "current_vs_historical": "CURRENT",
+                        "severity": "CRITICAL",
+                        "smallest_safe_repair": "historical cycle diagnostic",
+                    }],
+                },
+            },
+            worker_state={
+                "cycle_state": "PARTIAL_SYMBOL_LIMIT",
+                "cycle_elapsed_seconds": 12.4,
+                "limits": {"maximum_cycle_elapsed_seconds": 20},
+            },
+        )
+        self.assertNotIn(
+            "WORKER_CYCLE_BOUNDARY_EXCEEDED",
+            [row["fault_type"] for row in result["active_faults"]],
+        )
+
+    def test_current_cycle_failure_still_surfaces_from_worker_snapshot(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "system_integrity_scanner_v1": {
+                    "active_root_causes": [{
+                        "category": "CYCLE_WITHIN_BOUNDS",
+                        "state": "VERIFYING",
+                        "current_vs_historical": "CURRENT",
+                    }],
+                },
+            },
+            worker_state={
+                "cycle_state": "ACTIVE_BOUNDED",
+                "cycle_elapsed_seconds": 46.0,
+                "limits": {"maximum_cycle_elapsed_seconds": 20},
+            },
+        )
+        self.assertIn(
+            "WORKER_CYCLE_BOUNDARY_EXCEEDED",
+            [row["fault_type"] for row in result["active_faults"]],
+        )
+
     def test_ws_reconnect_storm_cannot_report_ready(self):
         result = self._monitor().run_if_due(
             runtime_state={

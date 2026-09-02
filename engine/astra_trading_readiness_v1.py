@@ -169,6 +169,26 @@ class AstraTradingReadinessV1:
         return symbols
 
     @staticmethod
+    def _cycle_failure_is_current(worker_state: Mapping[str, Any]) -> bool:
+        """Require the worker snapshot to prove a current cycle failure."""
+        cycle_state = _text(worker_state.get("cycle_state")).upper()
+        if cycle_state in {"FAILED_SAFE", "STALE"}:
+            return True
+        raw_elapsed = worker_state.get("cycle_elapsed_seconds")
+        if raw_elapsed in (None, ""):
+            return False
+        try:
+            elapsed = float(raw_elapsed)
+        except (TypeError, ValueError):
+            return False
+        limits = _dict(worker_state.get("limits"))
+        try:
+            maximum_elapsed = float(limits.get("maximum_cycle_elapsed_seconds") or 20.0)
+        except (TypeError, ValueError):
+            maximum_elapsed = 20.0
+        return elapsed > maximum_elapsed
+
+    @staticmethod
     def _position_rows(runtime: Mapping[str, Any]) -> list[dict[str, Any]]:
         capacity = _dict(runtime.get("last_evidence_capacity_snapshot"))
         recovery = _dict(runtime.get("position_lane_horizon_recovery_v1"))
@@ -957,6 +977,7 @@ class AstraTradingReadinessV1:
                 })
 
         scanner = _dict(runtime.get("system_integrity_scanner_v1"))
+        cycle_failure_is_current = self._cycle_failure_is_current(worker_state)
         for root in _rows(scanner.get("active_root_causes")):
             category = _text(root.get("category")).upper()
             state = _text(root.get("state")).upper()
@@ -989,6 +1010,10 @@ class AstraTradingReadinessV1:
                     })
                 issues.append(issue)
             elif category == "CYCLE_WITHIN_BOUNDS":
+                # Scanner records persist across cycles. A historical or
+                # verification row cannot reactivate a passing worker cycle.
+                if not cycle_failure_is_current:
+                    continue
                 issues.append({
                     "fault_type": "WORKER_CYCLE_BOUNDARY_EXCEEDED",
                     "component": _text(root.get("likely_owner")) or "canonical_worker_cycle",
