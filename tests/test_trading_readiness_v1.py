@@ -598,6 +598,32 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(result["active_faults"][0]["fault_type"], "ENTRY_FUNNEL_STAGE_BLOCKED")
         self.assertTrue(result["autonomous_control_loop"]["post_repair_truth_path_recheck"])
 
+    def test_upstream_stale_candidate_wait_does_not_create_entry_source_package(self):
+        monitor = self._monitor()
+        runtime = {
+            "last_execution_trace": {},
+            "astra_multilane_completion_matrix_v1": {
+                "generated_at": _iso(-1),
+                "lanes": {"SWING": {
+                    "first_blocker": "CANDIDATE_STALE",
+                    "stages": {
+                        "candidate_freshness": {
+                            "status": "LEGITIMATE_WAITING",
+                        },
+                        "eligibility": {
+                            "status": "FAIL_UNKNOWN_CLOSED",
+                            "verification_state": "CURRENT",
+                            "first_bad_handoff": "candidate contract -> eligibility gate",
+                        },
+                    },
+                }},
+            },
+        }
+        result = monitor.run_if_due(runtime_state=runtime, worker_state={})
+        self.assertEqual(result["active_faults"], [])
+        self.assertFalse(result["code_repair_required"])
+        self.assertEqual(result["lane_readiness"]["SWING"], "TECHNICALLY_READY")
+
     def test_recurrent_fault_is_persisted_and_scorecard_is_bounded(self):
         monitor = self._monitor()
         runtime = {
