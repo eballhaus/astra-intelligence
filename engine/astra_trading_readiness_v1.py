@@ -1023,10 +1023,20 @@ class AstraTradingReadinessV1:
         }
         ws_transport = _text(ws.get("transport_health")).upper()
         missing_ws = sorted(active_symbols - actual)
+        equity_observation_session = bool(
+            session.get("equity_session_open")
+            or session.get("preopen_window")
+            or session.get("check_phase") in {
+                "POST_OPEN_DISCOVERY_VERIFICATION",
+                "MIDDAY_INTEGRITY_CHECK",
+                "NEAR_CLOSE_INTEGRITY_CHECK",
+                "POST_CLOSE_LANE_ACCOUNTING",
+            }
+        )
         # A disconnected transport cannot have a live subscription set. Keep
         # the transport fault as the single observation blocker until the
         # stream is healthy enough for a subscription invariant to be tested.
-        if active_symbols and missing_ws and ws_transport not in {"UNHEALTHY", "DISCONNECTED", "RECONNECTING"}:
+        if equity_observation_session and active_symbols and missing_ws and ws_transport not in {"UNHEALTHY", "DISCONNECTED", "RECONNECTING"}:
             issues.append({
                 "fault_type": "ACTIVE_POSITION_NOT_STREAMED",
                 "component": "AlpacaWS.active_position_subscription",
@@ -1042,7 +1052,7 @@ class AstraTradingReadinessV1:
             and int(ws_stats.get("reconnects") or 0) >= 3
             and int(ws_stats.get("messages_received") or 0) == 0
         )
-        if active_symbols and (ws_transport == "UNHEALTHY" or ws_storm):
+        if equity_observation_session and active_symbols and (ws_transport == "UNHEALTHY" or ws_storm):
             issues.append({
                 "fault_type": "WS_TRANSPORT_UNHEALTHY",
                 "component": "AlpacaWS.transport",

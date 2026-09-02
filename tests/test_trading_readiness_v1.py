@@ -301,6 +301,33 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(calls, ["ws"])
         self.assertEqual(result["active_faults"][0]["fault_type"], "ACTIVE_POSITION_NOT_STREAMED")
 
+    def test_after_hours_ws_inactivity_is_not_an_equity_transport_fault(self):
+        monitor = self._monitor()
+        monitor._session = lambda: {
+            "timezone": "America/New_York",
+            "equity_session_open": False,
+            "preopen_window": False,
+            "market_local_time": "2026-08-31T20:00:00-04:00",
+            "check_phase": "CRYPTO_CONTINUOUS_CHECK",
+        }
+        result = monitor.run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "active_equity_fmp_observations_v1": {
+                    "canonical_active_equity_symbols": ["AAPL"],
+                    "observations": {},
+                },
+                "alpaca_ws_active_position_monitor_v1": {
+                    "transport_health": "UNHEALTHY",
+                    "subscribed_symbols": [],
+                    "stats": {"errors": 8, "reconnects": 8, "messages_received": 0},
+                },
+            },
+            worker_state={},
+        )
+        self.assertEqual(result["active_faults"], [])
+        self.assertFalse(result["code_repair_required"])
+
     def test_watchdog_tracks_bounded_stage_status_without_synthetic_learning_time(self):
         event_time = _iso(-2)
         result = self._monitor().run_if_due(
