@@ -128,6 +128,10 @@ class AstraTradingReadinessV1:
         self.state_dir = Path(state_dir)
         self.path = self.state_dir / "astra_trading_readiness_v1.json"
 
+    def persist_snapshot(self, summary: Mapping[str, Any]) -> None:
+        """Persist a worker-owned enriched snapshot without changing its facts."""
+        _write(self.path, _dict(summary))
+
     @staticmethod
     def _session(now: datetime | None = None) -> dict[str, Any]:
         current = (now or datetime.now(UTC)).astimezone(_ET)
@@ -1252,6 +1256,7 @@ class AstraTradingReadinessV1:
         worker_state: Mapping[str, Any],
         actions: Mapping[str, Callable[[], Mapping[str, Any] | None]] | None = None,
         refresh_runtime: Callable[[], Mapping[str, Any]] | None = None,
+        force: bool = False,
     ) -> dict[str, Any]:
         previous = _read(self.path)
         session = self._session()
@@ -1272,7 +1277,7 @@ class AstraTradingReadinessV1:
             _text(previous_watchdog.get("schema_version")) == TRUTH_WATCHDOG_VERSION
             and all(isinstance(_dict(_dict(previous_watchdog.get("lanes")).get(lane)).get("stage_status"), Mapping) for lane in LANES)
         )
-        if previous and previous_watchdog and watchdog_migrated and now - float(previous.get("scan_monotonic") or 0.0) < interval:
+        if not force and previous and previous_watchdog and watchdog_migrated and now - float(previous.get("scan_monotonic") or 0.0) < interval:
             return {**previous, "due": False, "provider_calls_used": 0, "broker_actions_used": 0}
 
         actions = dict(actions or {})

@@ -10,11 +10,17 @@ legacy positions.
 from __future__ import annotations
 
 import hashlib
+import json
+import os
+import subprocess
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 
 VERSION = "1.0.0"
+RUNTIME_CERTIFICATION_SCHEMA_VERSION = "ASTRA_PREMARKET_TECHNICAL_CERTIFICATION_V1"
 LANES = ("SWING", "DAY", "SCALP", "CRYPTO")
 REQUIRED_CONTRACT_FIELDS = (
     "candidate_id", "recommendation_id", "decision_id", "symbol", "lane",
@@ -49,6 +55,352 @@ SAFETY_FLAGS = {
     "llm_calls_used": 0,
     "broker_actions_used": 0,
 }
+
+
+@lru_cache(maxsize=1)
+def current_runtime_revision() -> str:
+    """Return the revision loaded by the current checkout, without provider I/O."""
+    override = str(
+        os.getenv("ASTRA_EXPECTED_RUNTIME_REVISION")
+        or os.getenv("ASTRA_GIT_COMMIT")
+        or os.getenv("ASTRA_DEPLOYED_GIT_REVISION")
+        or ""
+    ).strip()
+    if override:
+        return override[:80]
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parents[1],
+            stderr=subprocess.DEVNULL,
+            timeout=1.5,
+            text=True,
+        ).strip()[:80]
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _runtime_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _runtime_dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _runtime_rows(value: Any) -> list[dict[str, Any]]:
+    return [dict(row) for row in (value or []) if isinstance(row, Mapping)]
+
+
+def _runtime_timestamp(value: Any) -> datetime | None:
+    text = _runtime_text(value)
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _runtime_age_seconds(value: Any, now: datetime) -> float | None:
+    parsed = _runtime_timestamp(value)
+    if parsed is None:
+        return None
+    return max(0.0, (now - parsed).total_seconds())
+
+
+def _runtime_number(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value) if value not in (None, "") else float(default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _runtime_lane(value: Any) -> str:
+    lane = _runtime_text(value).upper()
+    return lane if lane in LANES else ""
+
+
+def _runtime_fault_summary(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: row.get(key)
+        for key in (
+            "fault_type", "classification", "lanes", "symbol", "lifecycle_id",
+            "earliest_stage", "failing_invariant", "owner_file", "owner_function",
+            "recovery_state", "verification_result", "last_seen",
+        )
+        if row.get(key) not in (None, "", [])
+    }
+
+
+def _runtime_current_faults(readiness: Mapping[str, Any]) -> list[dict[str, Any]]:
+    return [_runtime_fault_summary(row) for row in _runtime_rows(readiness.get("active_faults"))]
+
+
+def _runtime_fault_types(faults: Sequence[Mapping[str, Any]]) -> set[str]:
+    return {_runtime_text(row.get("fault_type")).upper() for row in faults if _runtime_text(row.get("fault_type"))}
+
+
+def _runtime_technical_fault(row: Mapping[str, Any]) -> bool:
+    return _runtime_text(row.get("classification")).upper() not in {
+        "NATURAL_WAIT", "BROKER_EXTERNAL", "PROVIDER_EXTERNAL", "DEGRADED_EXTERNAL",
+        "INSUFFICIENT_EVIDENCE", "VALID_STRATEGY_REJECTION", "VALID_SAFETY_REJECTION",
+    }
+
+
+def _runtime_symbols(runtime: Mapping[str, Any]) -> set[str]:
+    observations = _runtime_dict(runtime.get("active_equity_fmp_observations_v1"))
+    symbols = {
+        _runtime_text(symbol).upper()
+        for symbol in observations.get("canonical_active_equity_symbols") or []
+        if _runtime_text(symbol)
+    }
+    ws = _runtime_dict(runtime.get("alpaca_ws_active_position_monitor_v1"))
+    if not symbols:
+        symbols.update(
+            _runtime_text(symbol).upper()
+            for symbol in ws.get("desired_symbols") or []
+            if _runtime_text(symbol)
+        )
+    return symbols
+
+
+def _runtime_fresh_observations(runtime: Mapping[str, Any], symbols: set[str], now: datetime) -> bool:
+    if not symbols:
+        return True
+    active = _runtime_dict(runtime.get("active_equity_fmp_observations_v1"))
+    observations = _runtime_dict(active.get("observations"))
+    if not observations:
+        ws = _runtime_dict(runtime.get("alpaca_ws_active_position_monitor_v1"))
+        observations = _runtime_dict(ws.get("observations"))
+    if not observations:
+        return False
+    for symbol in symbols:
+        row = _runtime_dict(observations.get(symbol))
+        native = _runtime_text(
+            row.get("provider_native_timestamp")
+            or row.get("provider_quote_timestamp")
+            or row.get("quote_timestamp")
+            or row.get("market_observation_timestamp")
+        )
+        age = _runtime_age_seconds(native, now)
+        if not native or age is None or age > 20.0:
+            return False
+    return True
+
+
+def _runtime_natural_waits(readiness: Mapping[str, Any], runtime: Mapping[str, Any]) -> list[dict[str, Any]]:
+    waits: list[dict[str, Any]] = []
+    watchdog = _runtime_dict(readiness.get("truth_production_watchdog"))
+    for lane, state in _runtime_dict(watchdog.get("lanes")).items():
+        lane_id = _runtime_lane(lane)
+        if not lane_id:
+            continue
+        reason = _runtime_text(_runtime_dict(state).get("technical_truth_starvation_status")).upper()
+        if reason.startswith(("NATURAL_", "SESSION_", "CAPACITY_")) or reason in {
+            "NO_CURRENT_MARKET_OPPORTUNITY", "NATURAL_NO_TRADE_OR_ACTIVITY_PRESENT",
+        }:
+            waits.append({"lane": lane_id, "reason": reason})
+    capacity = _runtime_dict(runtime.get("last_evidence_capacity_snapshot"))
+    if _runtime_text(capacity.get("crypto_reserve_state")).upper() == "OPEN_POSITION_CONSUMES_RESERVE":
+        waits.append({"lane": "CRYPTO", "reason": "CAPACITY_WAIT_OPEN_POSITION_CONSUMES_RESERVE"})
+    return waits
+
+
+def build_runtime_certification_v1(
+    *,
+    worker_state: Mapping[str, Any] | None,
+    runtime_state: Mapping[str, Any] | None,
+    readiness: Mapping[str, Any] | None,
+    backend_health: Mapping[str, Any] | None = None,
+    expected_revision: str = "",
+    worker_revision: str = "",
+    backend_revision: str = "",
+    previous: Mapping[str, Any] | None = None,
+    now: datetime | None = None,
+    trigger: str = "WORKER_READINESS",
+) -> dict[str, Any]:
+    """Compose fresh runtime readiness from existing worker/readiness facts.
+
+    This function is deliberately read-only.  It does not call providers,
+    brokers, candidate engines, or state writers, and it never promotes a
+    candidate, lifecycle, truth, or learning record.
+    """
+    worker = _runtime_dict(worker_state)
+    runtime = _runtime_dict(runtime_state)
+    ready = _runtime_dict(readiness)
+    backend = _runtime_dict(backend_health)
+    prior = _runtime_dict(previous)
+    current = now or datetime.now(timezone.utc)
+    generated_at = current.isoformat().replace("+00:00", "Z")
+    faults = _runtime_current_faults(ready)
+    fault_types = _runtime_fault_types(faults)
+    session = _runtime_dict(ready.get("session"))
+    equity_expected = bool(
+        session.get("equity_session_open")
+        or session.get("preopen_window")
+        or _runtime_text(session.get("check_phase")) in {
+            "POST_OPEN_DISCOVERY_VERIFICATION", "MIDDAY_INTEGRITY_CHECK",
+            "NEAR_CLOSE_INTEGRITY_CHECK", "POST_CLOSE_LANE_ACCOUNTING",
+        }
+    )
+    readiness_age = _runtime_age_seconds(ready.get("generated_at"), current)
+    readiness_current = readiness_age is not None and readiness_age <= 900.0
+    heartbeat_age = _runtime_age_seconds(worker.get("heartbeat_at"), current)
+    active_worker = bool(worker.get("active_worker_present")) and bool(worker.get("active_worker_pid"))
+    worker_role = _runtime_text(worker.get("process_role")).upper() == "PAPER_AUTOPILOT_WORKER"
+    worker_count = int(_runtime_number(worker.get("worker_count"), 1 if active_worker else 0))
+    cycle_count = _runtime_number(worker.get("cycle_count"), _runtime_number(worker.get("worker_cycle_count"), -1))
+    cycle_progressing = cycle_count >= 0 and bool(
+        _runtime_text(worker.get("last_cycle_completed_at"))
+        or _runtime_text(worker.get("cycle_state")).upper() in {"ACTIVE_BOUNDED", "COMPLETE", "PARTIAL_TIME_LIMIT", "PARTIAL_SYMBOL_LIMIT"}
+    )
+    resource_state = _runtime_text(worker.get("resource_state") or _runtime_dict(worker.get("resource")).get("resource_state")).upper()
+    resource_ok = resource_state in {"RESOURCE_NORMAL", "RESOURCE_ELEVATED"}
+    expected = _runtime_text(expected_revision) or current_runtime_revision()
+    worker_rev = _runtime_text(worker_revision) or _runtime_text(worker.get("runtime_revision") or worker.get("worker_revision"))
+    backend_rev = _runtime_text(backend_revision) or _runtime_text(backend.get("runtime_revision"))
+    backend_ok = bool(backend.get("ok"))
+    revision_values = [expected, worker_rev, backend_rev]
+    revision_match = all(revision_values) and len(set(revision_values)) == 1
+    revision_reason = "" if revision_match else "RUNTIME_REVISION_MISMATCH" if len({value for value in revision_values if value}) > 1 else "RUNTIME_REVISION_UNAVAILABLE"
+    runtime_certified = bool(
+        readiness_current and active_worker and worker_role and worker_count == 1
+        and heartbeat_age is not None and heartbeat_age <= 30.0
+        and cycle_progressing and resource_ok and backend_ok and revision_match
+    )
+
+    matrix = _runtime_dict(runtime.get("multilane_completion_matrix") or runtime.get("astra_multilane_completion_matrix_v1"))
+    watchdog = _runtime_dict(ready.get("truth_production_watchdog"))
+    technical_faults = [row for row in faults if _runtime_technical_fault(row)]
+    technical_fault_types = _runtime_fault_types(technical_faults)
+    discovery_ok = _runtime_text(ready.get("discovery_integrity")).upper() == "READY" and not any(
+        fault.startswith("DISCOVERY") for fault in technical_fault_types
+    )
+    entry_fault = any(
+        _runtime_text(row.get("fault_type")).upper() == "ENTRY_FUNNEL_STAGE_BLOCKED"
+        for row in technical_faults
+    )
+    entry_ok = discovery_ok and not entry_fault
+    active_symbols = _runtime_symbols(runtime)
+    ws = _runtime_dict(runtime.get("alpaca_ws_active_position_monitor_v1"))
+    ws_symbols = {
+        _runtime_text(symbol).upper() for symbol in (ws.get("subscribed_symbols") or ws.get("active_symbols") or []) if _runtime_text(symbol)
+    }
+    ws_stats = _runtime_dict(ws.get("stats"))
+    messages = _runtime_number(ws.get("messages_received"), _runtime_number(ws_stats.get("messages_received"), 0.0))
+    ws_flowing = (
+        _runtime_text(ws.get("transport_health")).upper() in {"HEALTHY", "CONNECTED_AND_FLOWING"}
+        and _runtime_text(ws.get("auth_state")).upper() in {"AUTHENTICATED", "AUTH_OK", "AUTHENTICATION_SUCCEEDED", ""}
+        and _runtime_text(ws.get("subscription_state")).upper() in {"SUBSCRIBED", "ACKNOWLEDGED", "ACTIVE", ""}
+        and active_symbols.issubset(ws_symbols)
+        and messages > 0
+    )
+    fallback_fresh = _runtime_fresh_observations(runtime, active_symbols, current)
+    observation_fault = bool(fault_types & {"ACTIVE_POSITION_NOT_STREAMED", "WS_TRANSPORT_UNHEALTHY", "PRODUCER_FRESH_CONSUMER_UNAVAILABLE"})
+    observation_ok = not active_symbols or (not equity_expected and not observation_fault) or (not observation_fault and (ws_flowing or fallback_fresh))
+    management_fault = _runtime_text(ready.get("position_management_integrity")).upper() == "FAULT" or "PRODUCER_FRESH_CONSUMER_UNAVAILABLE" in fault_types
+    management_ok = not active_symbols or (not management_fault and (not equity_expected or observation_ok))
+    crypto_fault = any(fault.startswith("CRYPTO_") for fault in technical_fault_types)
+    crypto_integrity = _runtime_text(ready.get("crypto_lifecycle_integrity")).upper()
+    crypto_snapshot = _runtime_dict(runtime.get("crypto_operational_integrity_readiness_v1"))
+    crypto_ok = not crypto_fault and crypto_integrity not in {"FAULT", "BROKEN"} and bool(
+        crypto_snapshot or crypto_integrity in {"READY", "TECHNICALLY_READY"}
+    )
+    truth_ok = _runtime_text(ready.get("strict_truth_integrity")).upper() != "FAULT" and bool(watchdog)
+    code_faults = [row for row in faults if _runtime_text(row.get("classification")).upper() == "CODE_REPAIR_REQUIRED" or _runtime_text(row.get("verification_result")).upper() == "CODE_REPAIR_REQUIRED"]
+    external_faults = [row for row in faults if _runtime_text(row.get("classification")).upper() in {"BROKER_EXTERNAL", "PROVIDER_EXTERNAL", "DEGRADED_EXTERNAL"}]
+    natural_waits = _runtime_natural_waits(ready, runtime)
+    current_repairs = [
+        {
+            "fault_type": row.get("fault_type"),
+            "repair_action": row.get("repair_action"),
+            "attempt": row.get("attempt"),
+            "verification_result": row.get("verification_result"),
+        }
+        for row in _runtime_rows(ready.get("recoveries"))
+    ]
+    restart_survived = bool(
+        active_worker and worker_count == 1 and worker_role and revision_match
+        and _runtime_text(worker.get("last_known_worker_pid"))
+        and str(worker.get("last_known_worker_pid")) != str(worker.get("active_worker_pid"))
+    )
+    if not _runtime_text(worker.get("last_known_worker_pid")):
+        restart_survived = False
+    checks = {
+        "runtime": {"passed": runtime_certified, "reasons": [reason for reason, passed in (
+            ("BACKEND_UNHEALTHY", backend_ok), ("WORKER_NOT_SINGLE_CANONICAL", active_worker and worker_role and worker_count == 1),
+            ("HEARTBEAT_STALE", heartbeat_age is not None and heartbeat_age <= 30.0), ("CYCLE_NOT_PROGRESSING", cycle_progressing),
+            ("RESOURCE_NOT_ACCEPTABLE", resource_ok), (revision_reason, revision_match),
+        ) if reason and not passed]},
+        "discovery": {"passed": discovery_ok, "source": "AstraTradingReadinessV1.discovery_integrity"},
+        "entry_funnel": {"passed": entry_ok, "source": "AstraTradingReadinessV1 + canonical multilane matrix", "matrix_available": bool(matrix)},
+        "observation": {"passed": observation_ok, "active_symbols": sorted(active_symbols), "ws_flowing": ws_flowing, "approved_fallback_fresh": fallback_fresh, "equity_evidence_expected": equity_expected},
+        "management": {"passed": management_ok, "position_management_integrity": ready.get("position_management_integrity")},
+        "truth_path": {"passed": truth_ok, "strict_truth_integrity": ready.get("strict_truth_integrity")},
+        "crypto_path": {"passed": crypto_ok, "crypto_lifecycle_integrity": crypto_integrity, "equity_observation_isolation": True},
+        "restart_survivability": {"passed": restart_survived, "current_worker_pid": worker.get("active_worker_pid"), "prior_worker_pid": worker.get("last_known_worker_pid")},
+    }
+    full_technical_pass = all(bool(check.get("passed")) for check in checks.values())
+    pending_recovery = any(
+        _runtime_text(row.get("verification_result")).upper() in {"ACTION_DISPATCHED", "RECOVERY_VERIFYING"}
+        for row in current_repairs
+    )
+    if code_faults:
+        state = "CODE_REPAIR_REQUIRED"
+    elif pending_recovery:
+        state = "RUNTIME_REPAIR_IN_PROGRESS"
+    elif external_faults or not full_technical_pass:
+        state = "DEGRADED_EXTERNAL"
+    elif natural_waits:
+        state = "NATURAL_WAIT"
+    else:
+        state = "TECHNICALLY_CERTIFIED"
+    reasons = []
+    if revision_reason:
+        reasons.append(revision_reason)
+    if external_faults:
+        reasons.extend(sorted({_runtime_text(row.get("fault_type")) for row in external_faults if _runtime_text(row.get("fault_type"))}))
+    if not full_technical_pass and not reasons:
+        reasons.append("FRESH_CURRENT_RUNTIME_CERTIFICATION_INCOMPLETE")
+    last_success = _runtime_text(prior.get("last_successful_full_certification"))
+    if full_technical_pass and not code_faults and not pending_recovery:
+        last_success = generated_at
+    return {
+        "schema_version": RUNTIME_CERTIFICATION_SCHEMA_VERSION,
+        "certification_state": state,
+        "generated_at": generated_at,
+        "certification_trigger": trigger,
+        "runtime_revision": expected,
+        "worker_revision": worker_rev,
+        "backend_revision": backend_rev,
+        "revision_status": "MATCHED" if revision_match else revision_reason,
+        "current_worker_pid": worker.get("active_worker_pid"),
+        "worker_count": worker_count,
+        "runtime_certified": runtime_certified,
+        "discovery_certified": discovery_ok,
+        "entry_funnel_certified": entry_ok,
+        "observation_certified": observation_ok,
+        "management_certified": management_ok,
+        "truth_path_certified": truth_ok,
+        "crypto_path_certified": crypto_ok,
+        "restart_survivability_certified": restart_survived,
+        "checks": checks,
+        "active_faults": faults,
+        "current_external_blockers": external_faults,
+        "current_natural_waits": natural_waits,
+        "current_runtime_repairs": current_repairs,
+        "current_code_repair_required": code_faults,
+        "last_successful_full_certification": last_success,
+        "next_recheck_reason": ";".join(dict.fromkeys(reasons)) or (natural_waits[0]["reason"] if natural_waits else "NEXT_BOUNDED_READINESS_CHECK"),
+        "safety": {**SAFETY_FLAGS, "provider_calls_used": 0, "broker_actions_used": 0},
+        "paper_only": True,
+        "production_state_mutated": False,
+        "production_truths_created": 0,
+        "broker_orders_created": 0,
+        "evidence_fingerprint": hashlib.sha256(json.dumps({"faults": faults, "revisions": revision_values, "worker": worker.get("worker_generation_id")}, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:20],
+    }
 
 # This registry is deliberately limited to bounded, already-produced payloads.
 # Enrichment must never turn a contract build into a provider call or history scan.

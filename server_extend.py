@@ -44023,12 +44023,19 @@ def strategy_recommendations():
     return payload
 
 
+_BACKEND_RUNTIME_REVISION = ""
+
+
 @router.get("/api/health")
 def health():
+    global _BACKEND_RUNTIME_REVISION
+    if not _BACKEND_RUNTIME_REVISION:
+        _BACKEND_RUNTIME_REVISION = os.getenv("ASTRA_GIT_COMMIT") or _production_commit_v1()
     return {
         "ok": True,
         "backend_time_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "service": "astra-backend",
+        "runtime_revision": _BACKEND_RUNTIME_REVISION,
     }
 
 

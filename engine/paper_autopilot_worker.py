@@ -41,6 +41,10 @@ from engine.astra_continuous_system_integrity_scanner_v1 import ContinuousSystem
 from engine.astra_crypto_market_data_capability_matrix_v1 import CryptoMarketDataCapabilityMatrixV1
 from engine.astra_multilane_completion_matrix_v1 import AstraMultilaneCompletionMatrixV1
 from engine.astra_operating_health_contract_v1 import AstraOperatingHealthContractV1
+from engine.astra_premarket_certification_v1 import (
+    build_runtime_certification_v1,
+    current_runtime_revision,
+)
 from engine.astra_trading_readiness_v1 import AstraTradingReadinessV1
 from engine.astra_evidence_accumulation_capacity_v1 import canonical_candidate_capacity_fact
 from engine.candidate_execution_integrity_v1 import derive_crypto_horizon_evidence_v1
@@ -76,6 +80,7 @@ class PaperAutopilotWorker:
         self.cycle_count = int(read_snapshot().get("cycle_count") or 0)
         self.previous_cursor = str(read_snapshot().get("cursor") or "")
         self.resource_policy = dict(read_snapshot().get("resource_policy") or {})
+        self.runtime_revision = current_runtime_revision()
         self.continuous_governance = ContinuousGovernanceV1(STATE)
         self.governance_coverage = AstraGovernanceCoverageConsolidationV1(STATE)
         self.crypto_operational_integrity = CryptoOperationalIntegrityReadinessV1(STATE)
@@ -109,6 +114,9 @@ class PaperAutopilotWorker:
             "process_id": os.getpid(),
             "parent_process_id": os.getppid(),
             "process_role": "PAPER_AUTOPILOT_WORKER",
+            "runtime_revision": self.runtime_revision,
+            "worker_revision": self.runtime_revision,
+            "worker_count": 1,
             "active_worker_present": True,
             "active_worker_pid": os.getpid(),
             "active_worker_instance_id": self.lease.instance_id,
@@ -270,6 +278,21 @@ class PaperAutopilotWorker:
             return round((time.monotonic() - started) * 1000.0, 2)
         except Exception:
             return None
+
+    def _backend_health_snapshot(self) -> dict[str, Any]:
+        """Read the local backend health contract without provider or broker I/O."""
+        host = os.getenv("ASTRA_BACKEND_HOST", "127.0.0.1")
+        port = os.getenv("ASTRA_BACKEND_PORT", "8000")
+        try:
+            with urllib.request.urlopen(f"http://{host}:{port}/api/health", timeout=1.5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+                return {
+                    "ok": int(getattr(response, "status", 0) or 0) == 200 and bool(payload.get("ok")),
+                    "runtime_revision": str(payload.get("runtime_revision") or "").strip(),
+                    "http_status": int(getattr(response, "status", 0) or 0),
+                }
+        except Exception as exc:
+            return {"ok": False, "runtime_revision": "", "error": f"{type(exc).__name__}:{str(exc)[:120]}"}
 
     def _sample_resource(self) -> tuple[dict[str, Any], dict[str, Any]]:
         sample = resource_snapshot(
@@ -836,7 +859,7 @@ class PaperAutopilotWorker:
         })
         return result
 
-    def _run_trading_readiness_v1(self) -> dict[str, Any]:
+    def _run_trading_readiness_v1(self, *, force: bool = False) -> dict[str, Any]:
         """Run the bounded readiness monitor through the existing worker only."""
         def rebuild_discovery() -> dict[str, Any]:
             rebuild = getattr(self.autopilot, "_rebuild_equity_candidate_snapshot_v1", None)
@@ -895,6 +918,8 @@ class PaperAutopilotWorker:
             # These reads are local and only support post-repair verification.
             current["broker_truth_records_v1"] = self._bounded_broker_truth_rows_v1(runtime)
             current["astra_operating_health_contract_v1"] = self.operating_health_contract.snapshot()
+            current["crypto_operational_integrity_readiness_v1"] = self.crypto_operational_integrity.load_snapshot()
+            current["astra_crypto_market_data_capability_matrix_v1"] = self.crypto_market_data_matrix.snapshot()
             return current
 
         monitor_runtime = readiness_runtime()
@@ -909,7 +934,37 @@ class PaperAutopilotWorker:
                 "RECONNECT_ALPACA_WS": reconnect_ws,
                 "RELOAD_CANONICAL_IDENTITY_STATE": reload_canonical_identity,
             },
+            force=force,
         )
+        previous_certification = dict(
+            runtime.get("astra_premarket_certification_v1")
+            or dict(result.get("pre_market_certification_v1") or {})
+        )
+        backend_health = self._backend_health_snapshot()
+        certification = build_runtime_certification_v1(
+            worker_state=read_snapshot(),
+            runtime_state=readiness_runtime(),
+            readiness=result,
+            backend_health=backend_health,
+            expected_revision=current_runtime_revision(),
+            worker_revision=self.runtime_revision,
+            backend_revision=str(backend_health.get("runtime_revision") or ""),
+            previous=previous_certification,
+            trigger=str(dict(result.get("session") or {}).get("check_phase") or "WORKER_READINESS"),
+        )
+        runtime["astra_premarket_certification_v1"] = certification
+        result["pre_market_certification_v1"] = certification
+        result["technical_certification_state"] = certification.get("certification_state")
+        result["technical_certification_gate"] = {
+            "passed": certification.get("certification_state") in {"TECHNICALLY_CERTIFIED", "NATURAL_WAIT"},
+            "state": certification.get("certification_state"),
+            "next_recheck_reason": certification.get("next_recheck_reason"),
+        }
+        if certification.get("certification_state") == "CODE_REPAIR_REQUIRED":
+            result["trading_integrity_state"] = "CODE_REPAIR_REQUIRED"
+        elif certification.get("certification_state") in {"DEGRADED_EXTERNAL", "RUNTIME_REPAIR_IN_PROGRESS"} and result.get("trading_integrity_state") == "HEALTHY":
+            result["trading_integrity_state"] = "DEGRADED"
+        self.trading_readiness.persist_snapshot(result)
         runtime["astra_trading_readiness_v1"] = dict(result)
         runtime["trading_readiness_last_error_v1"] = {}
         return result
@@ -1094,6 +1149,10 @@ class PaperAutopilotWorker:
         self._sync_autopilot_progress("external_worker_started", persist=True)
         self._publish(resource=initial_resource, resource_policy=initial_policy, cycle_state="IDLE", ownership_state="SINGLE_WORKER_ACTIVE")
         self._run_continuous_governance()
+        # A restart must not inherit a stale readiness interval.  This is a
+        # bounded current-runtime certification; it cannot submit orders or
+        # mutate broker/truth state.
+        self._run_trading_readiness_v1(force=True)
         try:
             while not self.stop_requested:
                 self._bounded_cycle()

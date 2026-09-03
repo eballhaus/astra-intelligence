@@ -7,6 +7,7 @@ from unittest.mock import patch
 from engine.astra_premarket_certification_v1 import (
     build_lane_certification,
     build_pretrade_decision_contract,
+    build_runtime_certification_v1,
     deterministic_failure_injection_summary,
 )
 from engine.paper_autopilot import normalize_operational_candidate
@@ -35,6 +36,147 @@ def qualifying_candidate(**overrides):
 
 
 class PreMarketCertificationContractTests(unittest.TestCase):
+    @staticmethod
+    def _runtime_fixture(**overrides):
+        now = datetime(2026, 9, 3, 20, 0, tzinfo=timezone.utc)
+        stamp = now.isoformat().replace("+00:00", "Z")
+        worker = {
+            "active_worker_present": True, "active_worker_pid": 20,
+            "last_known_worker_pid": 19, "process_role": "PAPER_AUTOPILOT_WORKER",
+            "heartbeat_at": stamp, "cycle_count": 12, "cycle_state": "COMPLETE",
+            "last_cycle_completed_at": stamp, "resource_state": "RESOURCE_NORMAL",
+            "runtime_revision": "rev-1", "worker_revision": "rev-1",
+        }
+        readiness = {
+            "generated_at": stamp,
+            "session": {"equity_session_open": False, "preopen_window": False, "check_phase": "CRYPTO_CONTINUOUS_CHECK"},
+            "discovery_integrity": "READY", "position_management_integrity": "READY",
+            "strict_truth_integrity": "READY", "crypto_lifecycle_integrity": "READY",
+            "active_faults": [], "recoveries": [], "truth_production_watchdog": {"lanes": {}},
+        }
+        runtime = {
+            "active_equity_fmp_observations_v1": {"canonical_active_equity_symbols": [], "observations": {}},
+            "crypto_operational_integrity_readiness_v1": {"status": "PAPER_READY"},
+            "last_evidence_capacity_snapshot": {},
+        }
+        backend = {"ok": True, "runtime_revision": "rev-1"}
+        return now, worker, runtime, readiness, backend, overrides
+
+    def test_current_runtime_certifies_without_production_mutation(self):
+        now, worker, runtime, readiness, backend, _ = self._runtime_fixture()
+        result = build_runtime_certification_v1(
+            worker_state=worker, runtime_state=runtime, readiness=readiness,
+            backend_health=backend, expected_revision="rev-1", worker_revision="rev-1",
+            backend_revision="rev-1", now=now,
+        )
+        self.assertEqual(result["certification_state"], "TECHNICALLY_CERTIFIED")
+        self.assertTrue(result["runtime_certified"])
+        self.assertTrue(result["restart_survivability_certified"])
+        self.assertEqual(result["production_truths_created"], 0)
+        self.assertEqual(result["broker_orders_created"], 0)
+        self.assertFalse(result["production_state_mutated"])
+
+    def test_revision_mismatch_is_not_ready(self):
+        now, worker, runtime, readiness, backend, _ = self._runtime_fixture()
+        worker["runtime_revision"] = "old-rev"
+        worker["worker_revision"] = "old-rev"
+        result = build_runtime_certification_v1(
+            worker_state=worker, runtime_state=runtime, readiness=readiness,
+            backend_health=backend, expected_revision="rev-1", now=now,
+        )
+        self.assertEqual(result["revision_status"], "RUNTIME_REVISION_MISMATCH")
+        self.assertFalse(result["runtime_certified"])
+        self.assertNotEqual(result["certification_state"], "TECHNICALLY_CERTIFIED")
+
+    def test_natural_no_opportunity_is_not_a_code_repair(self):
+        now, worker, runtime, readiness, backend, _ = self._runtime_fixture()
+        readiness["truth_production_watchdog"] = {"lanes": {"DAY": {"technical_truth_starvation_status": "NATURAL_NO_QUALIFYING_ENTRY"}}}
+        result = build_runtime_certification_v1(
+            worker_state=worker, runtime_state=runtime, readiness=readiness,
+            backend_health=backend, expected_revision="rev-1", worker_revision="rev-1",
+            backend_revision="rev-1", now=now,
+        )
+        self.assertEqual(result["certification_state"], "NATURAL_WAIT")
+        self.assertEqual(result["current_code_repair_required"], [])
+        self.assertTrue(result["entry_funnel_certified"])
+
+    def test_insufficient_candidate_evidence_does_not_become_entry_code_fault(self):
+        now, worker, runtime, readiness, backend, _ = self._runtime_fixture()
+        readiness["active_faults"] = [{
+            "fault_type": "ENTRY_FUNNEL_STAGE_BLOCKED", "classification": "INSUFFICIENT_EVIDENCE",
+            "lanes": ["DAY"], "earliest_stage": "QUALIFIED",
+        }]
+        result = build_runtime_certification_v1(
+            worker_state=worker, runtime_state=runtime, readiness=readiness,
+            backend_health=backend, expected_revision="rev-1", worker_revision="rev-1",
+            backend_revision="rev-1", now=now,
+        )
+        self.assertTrue(result["entry_funnel_certified"])
+        self.assertEqual(result["current_code_repair_required"], [])
+
+    def test_current_code_fault_is_separate_from_historical_packages(self):
+        now, worker, runtime, readiness, backend, _ = self._runtime_fixture()
+        readiness["active_faults"] = [{
+            "fault_type": "RUNTIME_REVISION_MISMATCH", "classification": "CODE_REPAIR_REQUIRED",
+            "lanes": ["DAY"], "earliest_stage": "RUNTIME", "owner_file": "engine/start.py",
+            "owner_function": "start", "verification_result": "CODE_REPAIR_REQUIRED",
+        }]
+        readiness["code_repair_packages"] = [{"fault_code": "OLD_HISTORICAL_FAULT"}]
+        result = build_runtime_certification_v1(
+            worker_state=worker, runtime_state=runtime, readiness=readiness,
+            backend_health=backend, expected_revision="rev-1", worker_revision="rev-1",
+            backend_revision="rev-1", now=now,
+        )
+        self.assertEqual(result["certification_state"], "CODE_REPAIR_REQUIRED")
+        self.assertEqual(len(result["current_code_repair_required"]), 1)
+        self.assertEqual(result["current_code_repair_required"][0]["fault_type"], "RUNTIME_REVISION_MISMATCH")
+
+    def test_external_fault_is_not_promoted_to_code_repair(self):
+        now, worker, runtime, readiness, backend, _ = self._runtime_fixture()
+        readiness["active_faults"] = [{
+            "fault_type": "RECONCILIATION_FAILURE", "classification": "BROKER_EXTERNAL",
+            "lanes": ["DAY"], "earliest_stage": "RECONCILIATION",
+        }]
+        result = build_runtime_certification_v1(
+            worker_state=worker, runtime_state=runtime, readiness=readiness,
+            backend_health=backend, expected_revision="rev-1", worker_revision="rev-1",
+            backend_revision="rev-1", now=now,
+        )
+        self.assertEqual(result["certification_state"], "DEGRADED_EXTERNAL")
+        self.assertEqual(result["current_code_repair_required"], [])
+        self.assertEqual(result["current_external_blockers"][0]["classification"], "BROKER_EXTERNAL")
+
+    def test_fresh_active_observation_and_restart_are_required(self):
+        now, worker, runtime, readiness, backend, _ = self._runtime_fixture()
+        stamp = now.isoformat().replace("+00:00", "Z")
+        runtime["active_equity_fmp_observations_v1"] = {
+            "canonical_active_equity_symbols": ["GEHC"],
+            "observations": {"GEHC": {"symbol": "GEHC", "provider_native_timestamp": stamp}},
+        }
+        runtime["alpaca_ws_active_position_monitor_v1"] = {
+            "transport_health": "HEALTHY", "auth_state": "AUTHENTICATED",
+            "subscription_state": "SUBSCRIBED", "subscribed_symbols": ["GEHC"],
+            "messages_received": 1,
+        }
+        result = build_runtime_certification_v1(
+            worker_state=worker, runtime_state=runtime, readiness=readiness,
+            backend_health=backend, expected_revision="rev-1", worker_revision="rev-1",
+            backend_revision="rev-1", now=now,
+        )
+        self.assertTrue(result["observation_certified"])
+        self.assertTrue(result["management_certified"])
+        self.assertTrue(result["restart_survivability_certified"])
+
+    def test_crypto_certification_does_not_depend_on_equity_observation(self):
+        now, worker, runtime, readiness, backend, _ = self._runtime_fixture()
+        runtime["active_equity_fmp_observations_v1"] = {"canonical_active_equity_symbols": ["GEHC"], "observations": {}}
+        result = build_runtime_certification_v1(
+            worker_state=worker, runtime_state=runtime, readiness=readiness,
+            backend_health=backend, expected_revision="rev-1", worker_revision="rev-1",
+            backend_revision="rev-1", now=now,
+        )
+        self.assertTrue(result["crypto_path_certified"])
+        self.assertFalse(result["checks"]["observation"]["equity_evidence_expected"])
     def test_complete_contract_is_order_ready_eligible(self):
         contract = build_pretrade_decision_contract(qualifying_candidate())
         self.assertEqual(contract["contract_status"], "VALID")
