@@ -220,7 +220,19 @@ class AstraMultilaneCompletionMatrixV1:
                 elif blocker:
                     first = blocker
                     validity = _blocker_validity(failed)
-                    classification = "VALID_STRATEGY_REJECTION" if validity == "VALID_STRATEGY_REJECTION" else "LEGITIMATE_WAITING" if "market is closed" in reason.lower() else "INSUFFICIENT_EVIDENCE" if blocker.startswith("PENDING_") else "FAIL_UNKNOWN_CLOSED"
+                    # An incomplete candidate contract is an honest
+                    # fail-closed evidence result.  Until the producer/consumer
+                    # handoff itself is proven broken, it is not a source-code
+                    # failure and must not become an ENTRY_FUNNEL package.
+                    classification = (
+                        "VALID_STRATEGY_REJECTION"
+                        if validity in {"VALID_STRATEGY_REJECTION", "VALID_SAFETY_REJECTION"}
+                        else "LEGITIMATE_WAITING"
+                        if "market is closed" in reason.lower()
+                        else "INSUFFICIENT_EVIDENCE"
+                        if validity == "MISSING_INPUT_DEFECT" or blocker.startswith("PENDING_")
+                        else "FAIL_UNKNOWN_CLOSED"
+                    )
                     stages["eligibility"] = _stage("eligibility", classification, reason=reason, first_bad_handoff="candidate contract -> eligibility gate", runtime=True)
                     if lane == "DAY" and "CONTRACT_INCOMPLETE" in blocker:
                         stages["horizon_assignment"] = _stage("horizon_assignment", "BLOCKED_BY_UPSTREAM", upstream="CONTRACT_INCOMPLETE")

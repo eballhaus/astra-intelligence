@@ -466,6 +466,33 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(result["active_faults"][0]["fault_type"], "ENTRY_FUNNEL_STAGE_BLOCKED")
         self.assertEqual(result["day_readiness"], "TECHNICALLY_READY")
 
+    def test_day_incomplete_candidate_evidence_does_not_create_code_repair(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "astra_multilane_completion_matrix_v1": {
+                    "generated_at": _iso(-1),
+                    "lanes": {
+                        "DAY": {
+                            "first_blocker": "CONTRACT_INCOMPLETE",
+                            "stages": {
+                                "eligibility": {
+                                    "status": "INSUFFICIENT_EVIDENCE",
+                                    "status_classification": "INSUFFICIENT_EVIDENCE",
+                                    "verification_state": "CURRENT",
+                                    "first_bad_handoff": "candidate contract -> eligibility gate",
+                                    "insufficient_evidence_reason": "PRETRADE_DECISION_CONTRACT_MISSING_FIELDS",
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            worker_state={},
+        )
+        self.assertEqual(result["active_faults"], [])
+        self.assertFalse(result["code_repair_required"])
+
     def test_explicit_capacity_wait_is_not_a_code_repair_package(self):
         result = self._monitor().run_if_due(
             runtime_state={

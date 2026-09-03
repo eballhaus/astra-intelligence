@@ -86,6 +86,22 @@ class MultilaneCompletionMatrixTests(unittest.TestCase):
         self.assertEqual(day["stages"]["horizon_assignment"]["status"], "BLOCKED_BY_UPSTREAM")
         self.assertEqual(day["stages"]["paper_order"]["status"], "RUNTIME_NOT_EXERCISED")
 
+    def test_day_incomplete_candidate_evidence_is_not_a_code_failure(self):
+        payload = self.build([{
+            "symbol": "AAPL", "asset_class": "equity", "lane_id": "DAY",
+            "eligibility_gate_attribution_v1": {
+                "first_failing_gate": {
+                    "code": "CONTRACT_INCOMPLETE",
+                    "input_value": "PRETRADE_DECISION_CONTRACT_MISSING_FIELDS",
+                    "validity": "MISSING_INPUT_DEFECT",
+                },
+            },
+        }])
+        day = payload["lanes"]["DAY"]
+        self.assertEqual(day["first_blocker"], "CONTRACT_INCOMPLETE")
+        self.assertEqual(day["stages"]["eligibility"]["status"], "INSUFFICIENT_EVIDENCE")
+        self.assertEqual(day["stages"]["eligibility"]["repair_level"], "NONE")
+
     def test_partial_lane_observation_is_not_misreported_as_no_opportunity(self):
         payload = self.build([], observations={
             "DAY": {
