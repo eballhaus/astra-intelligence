@@ -45,6 +45,10 @@ from engine.astra_premarket_certification_v1 import (
     build_runtime_certification_v1,
     current_runtime_revision,
 )
+from engine.astra_historical_truth_certification_v1 import build_historical_truth_certification_v1
+from engine.astra_natural_truth_lifecycle_intelligence_v1 import (
+    build_natural_truth_lifecycle_intelligence_v1,
+)
 from engine.astra_trading_readiness_v1 import AstraTradingReadinessV1
 from engine.astra_evidence_accumulation_capacity_v1 import canonical_candidate_capacity_fact
 from engine.candidate_execution_integrity_v1 import derive_crypto_horizon_evidence_v1
@@ -936,6 +940,41 @@ class PaperAutopilotWorker:
             },
             force=force,
         )
+        truth_rows = self._bounded_broker_truth_rows_v1(runtime)
+        health_snapshot = self.operating_health_contract.snapshot()
+        learning_rows = [
+            dict(row) for row in list(health_snapshot.get("truth_to_learning_ledger") or [])
+            if isinstance(row, dict)
+        ]
+        historical_certification: dict[str, Any] = {}
+        historical_path = STATE / "astra_historical_truth_certification_v1.json"
+        try:
+            if historical_path.exists() and not force:
+                with historical_path.open("r", encoding="utf-8") as handle:
+                    historical_certification = dict(json.load(handle) or {})
+            if force or str(historical_certification.get("current_commit") or "") != current_runtime_revision():
+                historical_certification = build_historical_truth_certification_v1(
+                    STATE,
+                    truth_records=truth_rows,
+                    current_commit=current_runtime_revision(),
+                    trigger="CODE_REPAIR_DEPLOYED",
+                    persist=True,
+                )
+        except Exception:
+            # Certification is supporting evidence only.  A read/parse failure
+            # cannot interrupt the paper execution owner.
+            historical_certification = {}
+        capacity = dict(runtime.get("last_evidence_capacity_snapshot") or {})
+        lifecycle_intelligence = build_natural_truth_lifecycle_intelligence_v1(
+            runtime_state=runtime,
+            readiness=result,
+            truth_records=truth_rows,
+            learning_records=learning_rows,
+            open_positions=list(capacity.get("position_rows_for_read_only_consumers") or []),
+            historical_certification=historical_certification,
+            current_commit=current_runtime_revision(),
+        )
+        runtime["astra_natural_truth_lifecycle_intelligence_v1"] = lifecycle_intelligence
         previous_certification = dict(
             runtime.get("astra_premarket_certification_v1")
             or dict(result.get("pre_market_certification_v1") or {})

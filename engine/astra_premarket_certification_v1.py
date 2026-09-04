@@ -308,7 +308,13 @@ def build_runtime_certification_v1(
     crypto_ok = not crypto_fault and crypto_integrity not in {"FAULT", "BROKEN"} and bool(
         crypto_snapshot or crypto_integrity in {"READY", "TECHNICALLY_READY"}
     )
-    truth_ok = _runtime_text(ready.get("strict_truth_integrity")).upper() != "FAULT" and bool(watchdog)
+    lifecycle_intelligence = _runtime_dict(runtime.get("astra_natural_truth_lifecycle_intelligence_v1"))
+    truth_accounting = _runtime_dict(lifecycle_intelligence.get("truth_accounting_integrity"))
+    lifecycle_truth_ok = not lifecycle_intelligence or (
+        _runtime_text(truth_accounting.get("status")).upper() in {"", "PASS"}
+        and _runtime_number(truth_accounting.get("unexplained_gaps"), 0.0) == 0.0
+    )
+    truth_ok = _runtime_text(ready.get("strict_truth_integrity")).upper() != "FAULT" and bool(watchdog) and lifecycle_truth_ok
     code_faults = [row for row in faults if _runtime_text(row.get("classification")).upper() == "CODE_REPAIR_REQUIRED" or _runtime_text(row.get("verification_result")).upper() == "CODE_REPAIR_REQUIRED"]
     external_faults = [row for row in faults if _runtime_text(row.get("classification")).upper() in {"BROKER_EXTERNAL", "PROVIDER_EXTERNAL", "DEGRADED_EXTERNAL"}]
     natural_waits = _runtime_natural_waits(ready, runtime)
@@ -339,6 +345,13 @@ def build_runtime_certification_v1(
         "observation": {"passed": observation_ok, "active_symbols": sorted(active_symbols), "ws_flowing": ws_flowing, "approved_fallback_fresh": fallback_fresh, "equity_evidence_expected": equity_expected},
         "management": {"passed": management_ok, "position_management_integrity": ready.get("position_management_integrity")},
         "truth_path": {"passed": truth_ok, "strict_truth_integrity": ready.get("strict_truth_integrity")},
+        "lifecycle_truth_continuity": {
+            "passed": lifecycle_truth_ok,
+            "available": bool(lifecycle_intelligence),
+            "truth_accounting_status": truth_accounting.get("status") or "NOT_PROVIDED",
+            "unexplained_gaps": truth_accounting.get("unexplained_gaps", 0),
+            "source": "astra_natural_truth_lifecycle_intelligence_v1 -> existing strict truth/learning owners",
+        },
         "crypto_path": {"passed": crypto_ok, "crypto_lifecycle_integrity": crypto_integrity, "equity_observation_isolation": True},
         "restart_survivability": {"passed": restart_survived, "current_worker_pid": worker.get("active_worker_pid"), "prior_worker_pid": worker.get("last_known_worker_pid")},
     }

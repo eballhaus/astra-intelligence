@@ -1965,6 +1965,9 @@ class PaperAutopilotEngine:
             "worker_cycle_phase": "not_started",
             "worker_cycle_count": 0,
             "worker_cycle_error": "",
+            # Read-only lifecycle/truth/learning continuity composed by the
+            # worker from existing canonical state owners.
+            "astra_natural_truth_lifecycle_intelligence_v1": {},
             "evidence_reserve_entry_timestamps": {"DAY": [], "SCALP": [], "CRYPTO": []},
             "lane_reserve_commitments": {"DAY": {}, "SCALP": {}, "CRYPTO": {}},
             "lane_reserve_commitment_stats": {
@@ -2221,6 +2224,8 @@ class PaperAutopilotEngine:
                     self._runtime_state["truth_arbitration_v1"] = dict(payload.get("truth_arbitration_v1") or {})
                 if isinstance(payload.get("system_integrity_scanner_v1"), dict):
                     self._runtime_state["system_integrity_scanner_v1"] = dict(payload.get("system_integrity_scanner_v1") or {})
+                if isinstance(payload.get("astra_natural_truth_lifecycle_intelligence_v1"), dict):
+                    self._runtime_state["astra_natural_truth_lifecycle_intelligence_v1"] = dict(payload.get("astra_natural_truth_lifecycle_intelligence_v1") or {})
                 if payload.get("last_cycle_utc"):
                     self._runtime_state["last_cycle_utc"] = str(payload.get("last_cycle_utc") or "")
                 for key in (
@@ -2307,6 +2312,7 @@ class PaperAutopilotEngine:
             "equity_risk_envelopes_snapshot_v1": dict(self._runtime_state.get("equity_risk_envelopes_snapshot_v1") or {}),
             "truth_arbitration_v1": dict(self._runtime_state.get("truth_arbitration_v1") or {}),
             "system_integrity_scanner_v1": dict(self._runtime_state.get("system_integrity_scanner_v1") or {}),
+            "astra_natural_truth_lifecycle_intelligence_v1": dict(self._runtime_state.get("astra_natural_truth_lifecycle_intelligence_v1") or {}),
             "astra_trading_readiness_v1": dict(self._runtime_state.get("astra_trading_readiness_v1") or {}),
             "trading_readiness_last_error_v1": dict(self._runtime_state.get("trading_readiness_last_error_v1") or {}),
             "last_execution_trace": {
