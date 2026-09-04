@@ -488,6 +488,7 @@ def build_natural_truth_lifecycle_intelligence_v1(
     lifecycle_state: list[dict[str, Any]] = []
     quality_rows: list[dict[str, Any]] = []
     attribution_rows: list[dict[str, Any]] = []
+    quality_truth_ids: set[str] = set()
     for row in lifecycle_rows:
         symbol, lifecycle = _symbol(row), _lifecycle_id(row)
         observation = dict(observations.get(symbol) or {})
@@ -542,6 +543,27 @@ def build_natural_truth_lifecycle_intelligence_v1(
             quality, attribution = _quality_and_attribution(truth)
             quality_rows.append({"lifecycle_id": lifecycle, "lane": _lane(truth), "symbol": symbol, **quality})
             attribution_rows.append({"lifecycle_id": lifecycle, "lane": _lane(truth), "symbol": symbol, **attribution})
+            quality_truth_ids.add(lifecycle)
+
+    # Completed truths are no longer open positions, so include their bounded
+    # learning-quality views without manufacturing a current position row.
+    for truth in strict_truths:
+        lifecycle = _truth_key(truth)
+        if not lifecycle or lifecycle in quality_truth_ids:
+            continue
+        quality, attribution = _quality_and_attribution(truth)
+        quality_rows.append({
+            "lifecycle_id": lifecycle,
+            "lane": _lane(truth) or None,
+            "symbol": _symbol(truth) or None,
+            **quality,
+        })
+        attribution_rows.append({
+            "lifecycle_id": lifecycle,
+            "lane": _lane(truth) or None,
+            "symbol": _symbol(truth) or None,
+            **attribution,
+        })
 
     strict_ids = {_truth_key(row) for row in strict_truths if _truth_key(row)}
     active_blockers = [row for row in fault_rows if _upper(row.get("earliest_stage")) in {"RECONCILIATION", "STRICT_TRUTH"} and _text(row.get("lifecycle_id"))]

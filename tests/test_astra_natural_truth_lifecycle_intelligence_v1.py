@@ -192,6 +192,19 @@ def test_shadow_evidence_is_visible_but_never_promoted_to_truth() -> None:
     assert result["truth_accounting_integrity"]["strict_truth_count"] == 1
 
 
+def test_completed_truths_receive_learning_quality_without_new_position_rows() -> None:
+    result = build_natural_truth_lifecycle_intelligence_v1(
+        runtime_state={},
+        readiness=_readiness(),
+        truth_records=[_truth()],
+        current_commit="test",
+    )
+    assert result["current_lifecycle_state"] == []
+    assert len(result["truth_quality_assessments"]) == 1
+    assert len(result["outcome_attribution"]) == 1
+    assert result["truth_quality_assessments"][0]["lifecycle_id"] == "life-1"
+
+
 def test_premarket_certification_rejects_unexplained_truth_accounting_gap() -> None:
     result = build_runtime_certification_v1(
         worker_state={
