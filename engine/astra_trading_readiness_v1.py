@@ -20,6 +20,13 @@ MAX_SCORECARD_DAYS = 14
 MAX_FAULT_HISTORY = 64
 MAX_RECOVERY_ACTIONS_PER_CHECK = 8
 LANES = ("DAY", "SCALP", "SWING", "CRYPTO")
+_CANONICAL_EQUITY_CANDIDATE_SOURCES = {
+    "top_buys",
+    "equity_top_buys_cached",
+    "runtime_snapshot",
+    "rankings_rows_fallback",
+}
+_CANDIDATE_EVIDENCE_MAX_AGE_SECONDS = 900.0
 TRUTH_PATH_STAGES = (
     "DISCOVERY",
     "CANDIDATE",
@@ -193,32 +200,99 @@ class AstraTradingReadinessV1:
         return elapsed > maximum_elapsed
 
     @staticmethod
-    def _current_equity_candidate_flow(runtime: Mapping[str, Any]) -> bool:
-        """Use current canonical candidate evidence before flagging discovery."""
+    def _candidate_flow_state(runtime: Mapping[str, Any]) -> str:
+        """Classify current canonical candidate-source evidence."""
         trace = _dict(runtime.get("last_execution_trace"))
         summary = _dict(runtime.get("last_cycle_summary"))
         partial = _dict(summary.get("partial_candidate_microphase"))
         containers = (trace, partial, summary)
+        saw_canonical_source = False
+        saw_stale_source = False
+
+        def evidence_timestamp(container: Mapping[str, Any]) -> str:
+            for key in (
+                "candidate_generated_at",
+                "candidate_snapshot_generated_at",
+                "snapshot_generated_at",
+                "generated_at",
+                "completed_at",
+                "last_autopilot_cycle_at",
+                "updated_at",
+                "as_of",
+                "timestamp",
+            ):
+                value = _text(container.get(key))
+                if value:
+                    return value
+            for key in ("last_cycle_utc", "worker_cycle_completed_at", "last_full_cycle_at"):
+                value = _text(runtime.get(key))
+                if value:
+                    return value
+            return ""
+
+        def is_fresh(value: str) -> bool:
+            if not value:
+                return False
+            try:
+                observed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                age = (datetime.now(UTC) - observed).total_seconds()
+            except ValueError:
+                return False
+            return -30.0 <= age <= _CANDIDATE_EVIDENCE_MAX_AGE_SECONDS
+
         for container in containers:
             source = _text(container.get("candidate_source") or container.get("candidate_source_name")).lower()
+            if source not in _CANONICAL_EQUITY_CANDIDATE_SOURCES:
+                continue
+            saw_canonical_source = True
+            freshness = _text(container.get("candidate_snapshot_freshness")).upper()
+            if freshness in {"SNAPSHOT_STALE", "STALE", "EXPIRED"} or not is_fresh(evidence_timestamp(container)):
+                saw_stale_source = True
+                continue
             count = container.get("candidate_source_count")
             try:
                 source_count = int(float(count)) if count not in (None, "") else 0
             except (TypeError, ValueError):
                 source_count = 0
-            if source in {"top_buys", "equity_top_buys_cached", "runtime_snapshot", "rankings_rows_fallback"} and (
-                source_count > 0 or int(container.get("candidates_seen") or 0) > 0
+            try:
+                candidates_seen = int(float(container.get("candidates_seen") or 0))
+            except (TypeError, ValueError):
+                candidates_seen = 0
+            if source_count > 0 or candidates_seen > 0:
+                return "CURRENT_CANONICAL_FLOW_ACTIVE"
+            # A zero result is valid only when the source explicitly reports
+            # its bounded result. A default source label cannot mask a
+            # missing or legacy discovery publisher.
+            if (
+                "candidate_source_count" in container
+                or _truthy(container.get("candidate_source_available"))
+                or freshness in {"SNAPSHOT_CURRENT", "CURRENT", "FRESH"}
             ):
-                return True
+                return "NATURAL_ZERO_CANDIDATES"
             for row in _rows(container.get("per_candidate_decision_trace")):
                 lane = _lane(row.get("lane_id") or row.get("lane") or row.get("allocation_lane"))
                 asset = _text(row.get("asset_type") or row.get("asset_class")).lower()
                 if lane in {"DAY", "SCALP", "SWING"} or asset in {"stock", "equity", "us_equity"}:
-                    return True
+                    return "CURRENT_CANONICAL_FLOW_ACTIVE"
             lane_counts = _dict(container.get("allocation_lane_counts"))
-            if any(int(float(lane_counts.get(lane) or 0)) > 0 for lane in ("DAY", "SCALP", "SWING")):
-                return True
-        return False
+            try:
+                if any(int(float(lane_counts.get(lane) or 0)) > 0 for lane in ("DAY", "SCALP", "SWING")):
+                    return "CURRENT_CANONICAL_FLOW_ACTIVE"
+            except (TypeError, ValueError):
+                pass
+        if saw_stale_source:
+            return "STALE_CANONICAL_FLOW"
+        if saw_canonical_source:
+            return "CANONICAL_FLOW_UNAVAILABLE"
+        return "LEGACY_ONLY_FLOW"
+
+    @staticmethod
+    def _current_equity_candidate_flow(runtime: Mapping[str, Any]) -> bool:
+        """Use fresh canonical candidate evidence before flagging discovery."""
+        return AstraTradingReadinessV1._candidate_flow_state(runtime) in {
+            "CURRENT_CANONICAL_FLOW_ACTIVE",
+            "NATURAL_ZERO_CANDIDATES",
+        }
 
     @staticmethod
     def _position_rows(runtime: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -1056,11 +1130,12 @@ class AstraTradingReadinessV1:
                 })
 
         source_blocker = str(trace.get("final_blocker_reason") or trace.get("cycle_reason") or "")
+        candidate_flow_state = self._candidate_flow_state(runtime)
         equity_source_missing = (
             bool(session.get("equity_session_open"))
             and not bool(source_state.get("candidate_source_available"))
             and source_blocker in {"legacy_market_evidence_bounded", "full_cycle_required_for_equity_candidate_processing"}
-            and not self._current_equity_candidate_flow(runtime)
+            and candidate_flow_state not in {"CURRENT_CANONICAL_FLOW_ACTIVE", "NATURAL_ZERO_CANDIDATES"}
         )
         if equity_source_missing:
             issues.append({
@@ -1306,7 +1381,13 @@ class AstraTradingReadinessV1:
             _text(previous_watchdog.get("schema_version")) == TRUTH_WATCHDOG_VERSION
             and all(isinstance(_dict(_dict(previous_watchdog.get("lanes")).get(lane)).get("stage_status"), Mapping) for lane in LANES)
         )
-        if not force and previous and previous_watchdog and watchdog_migrated and now - float(previous.get("scan_monotonic") or 0.0) < interval:
+        cached_discovery_fault = any(
+            _text(row.get("fault_type")).upper() == "DISCOVERY_LEGACY_BYPASS"
+            for row in _rows(previous.get("active_faults"))
+        )
+        current_discovery_flow = self._current_equity_candidate_flow(runtime_state)
+        recheck_cached_discovery = bool(session.get("equity_session_open")) and cached_discovery_fault and current_discovery_flow
+        if not force and previous and previous_watchdog and watchdog_migrated and now - float(previous.get("scan_monotonic") or 0.0) < interval and not recheck_cached_discovery:
             return {**previous, "due": False, "provider_calls_used": 0, "broker_actions_used": 0}
 
         actions = dict(actions or {})

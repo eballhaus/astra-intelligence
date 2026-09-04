@@ -62,6 +62,7 @@ class TradingReadinessTests(unittest.TestCase):
                     "candidates_seen": 4,
                     "allocation_lane_counts": {"DAY": 4},
                 },
+                "last_cycle_utc": _iso(),
             },
             worker_state={},
         )
@@ -69,6 +70,63 @@ class TradingReadinessTests(unittest.TestCase):
             "DISCOVERY_LEGACY_BYPASS",
             [row["fault_type"] for row in result["active_faults"]],
         )
+
+    def test_current_candidate_flow_rechecks_cached_discovery_fault(self):
+        monitor = self._monitor()
+        monitor.run_if_due(
+            runtime_state={"last_execution_trace": {"final_blocker_reason": "legacy_market_evidence_bounded"}},
+            worker_state={},
+        )
+        result = monitor.run_if_due(
+            runtime_state={
+                "equity_discovery_rebuild_v1": {"candidate_source_available": False, "generated_at": _iso(-3600)},
+                "last_execution_trace": {
+                    "final_blocker_reason": "legacy_market_evidence_bounded",
+                    "candidate_source": "top_buys",
+                    "candidate_source_count": 9,
+                    "candidates_seen": 9,
+                },
+                "last_cycle_utc": _iso(),
+            },
+            worker_state={},
+        )
+        self.assertTrue(result["due"])
+        self.assertNotIn("DISCOVERY_LEGACY_BYPASS", [row["fault_type"] for row in result["active_faults"]])
+
+    def test_fresh_canonical_zero_candidates_is_not_a_discovery_code_fault(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "equity_discovery_rebuild_v1": {"candidate_source_available": False, "generated_at": _iso(-3600)},
+                "last_execution_trace": {
+                    "final_blocker_reason": "legacy_market_evidence_bounded",
+                    "candidate_source": "top_buys",
+                    "candidate_source_count": 0,
+                    "candidates_seen": 0,
+                    "candidate_snapshot_freshness": "SNAPSHOT_CURRENT",
+                },
+                "last_cycle_utc": _iso(),
+            },
+            worker_state={},
+        )
+        self.assertNotIn("DISCOVERY_LEGACY_BYPASS", [row["fault_type"] for row in result["active_faults"]])
+        self.assertFalse(result["code_repair_required"])
+
+    def test_stale_canonical_candidate_flow_fails_closed(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "equity_discovery_rebuild_v1": {"candidate_source_available": False},
+                "last_execution_trace": {
+                    "final_blocker_reason": "legacy_market_evidence_bounded",
+                    "candidate_source": "top_buys",
+                    "candidate_source_count": 9,
+                    "candidates_seen": 9,
+                    "generated_at": _iso(-3600),
+                },
+                "last_cycle_utc": _iso(),
+            },
+            worker_state={},
+        )
+        self.assertIn("DISCOVERY_LEGACY_BYPASS", [row["fault_type"] for row in result["active_faults"]])
 
     def test_recovery_dispatch_is_not_counted_as_success(self):
         runtime = {"last_execution_trace": {"final_blocker_reason": "legacy_market_evidence_bounded"}}
