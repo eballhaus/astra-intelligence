@@ -225,3 +225,47 @@ def test_premarket_certification_rejects_unexplained_truth_accounting_gap() -> N
     )
     assert result["checks"]["lifecycle_truth_continuity"]["passed"] is False
     assert result["checks"]["truth_path"]["passed"] is False
+
+
+def test_open_position_wait_is_not_entry_truth_starvation() -> None:
+    runtime = {
+        "position_lane_horizon_recovery_v1": {
+            "positions": [{
+                "symbol": "ETH/USD",
+                "canonical_lifecycle_id": "crypto-life",
+                "entry_fill_id": "crypto-entry",
+                "lane": "CRYPTO",
+                "horizon": "day_trade",
+                "canonical_identity_status": "RESOLVED",
+            }],
+        },
+        "multilane_completion_matrix": {
+            "lanes": {
+                "CRYPTO": {
+                    "candidate_count": 3,
+                    "eligible_candidate_count": 0,
+                    "first_blocker": "capacity_concentration",
+                },
+            },
+        },
+    }
+    readiness = {
+        "truth_production_watchdog": {
+            "lanes": {
+                "CRYPTO": {
+                    "technical_readiness": "TECHNICALLY_READY",
+                    "current_earliest_blocker": "candidate contract -> eligibility gate",
+                    "technical_truth_starvation_status": "ENTRY_PIPELINE_TECHNICAL_FAILURE",
+                },
+            },
+        },
+    }
+    result = build_natural_truth_lifecycle_intelligence_v1(
+        runtime_state=runtime,
+        readiness=readiness,
+        open_positions=[],
+        current_commit="test",
+    )
+    scorecard = result["lane_truth_starvation_scorecard"]["CRYPTO"]
+    assert scorecard["current_truth_blocker"] == "NATURAL_OPEN_POSITION"
+    assert scorecard["truth_starvation_status"] == "NATURAL_OPEN_POSITION"

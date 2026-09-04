@@ -405,12 +405,31 @@ def _scorecard(
     watchdog = _dict(watchdog)
     lane_rows = [row for row in lifecycle_rows if _lane(row) == lane]
     lane_truths = [row for row in truths if _lane(row) == lane]
+    lifecycle_faults = [
+        _dict(row.get("current_fault")) for row in lane_rows
+        if _dict(row.get("current_fault"))
+    ]
+    external_lifecycle_fault = any(
+        _upper(row.get("classification")) in {"BROKER_EXTERNAL", "PROVIDER_EXTERNAL", "DEGRADED_EXTERNAL"}
+        for row in lifecycle_faults
+    )
+    technical_lifecycle_fault = any(
+        _upper(row.get("classification")) not in {"BROKER_EXTERNAL", "PROVIDER_EXTERNAL", "DEGRADED_EXTERNAL", "NATURAL_WAIT", ""}
+        for row in lifecycle_faults
+    )
     last = _stage_timestamps(readiness, lane)
     def value(*keys: str) -> Any:
         for key in keys:
             if matrix_lane.get(key) not in (None, ""):
                 return matrix_lane.get(key)
         return None
+    truth_blocker = _text(watchdog.get("current_earliest_blocker") or watchdog.get("technical_truth_starvation_status")) or None
+    truth_starvation = _text(watchdog.get("technical_truth_starvation_status")) or "UNKNOWN_TRUTH_STARVATION"
+    # Entry capacity/eligibility can explain zero new entries, but cannot
+    # turn an otherwise healthy open lifecycle into technical truth starvation.
+    if lane_rows and not technical_lifecycle_fault and not external_lifecycle_fault:
+        truth_blocker = "NATURAL_OPEN_POSITION"
+        truth_starvation = "NATURAL_OPEN_POSITION"
     return {
         "lane": lane,
         "candidates": value("candidate_count", "candidates_seen"),
@@ -425,9 +444,9 @@ def _scorecard(
         "reconciled_completions": len(lane_truths),
         "strict_truths": len(lane_truths),
         "learning_acknowledgements": sum(1 for row in lane_truths if _truth_key(row) in learning_ids or bool(row.get("learning_acknowledged"))),
-        "current_truth_blocker": _text(watchdog.get("current_earliest_blocker") or watchdog.get("technical_truth_starvation_status")) or None,
+        "current_truth_blocker": truth_blocker,
         "technical_readiness": _text(watchdog.get("technical_readiness")) or "NOT_PROVEN",
-        "truth_starvation_status": _text(watchdog.get("technical_truth_starvation_status")) or "UNKNOWN_TRUTH_STARVATION",
+        "truth_starvation_status": truth_starvation,
         "last_successful_stages": {
             "discovery": last.get("last_discovery_time"), "candidate": last.get("last_candidate_time"),
             "finalist": last.get("last_finalist_time"), "qualified": last.get("last_qualified_time"),
