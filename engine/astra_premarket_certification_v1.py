@@ -10,9 +10,12 @@ legacy positions.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
+import inspect
 import json
 import os
 import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -21,6 +24,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 VERSION = "1.0.0"
 RUNTIME_CERTIFICATION_SCHEMA_VERSION = "ASTRA_PREMARKET_TECHNICAL_CERTIFICATION_V1"
+RUNTIME_MODULE_IDENTITY_SCHEMA_VERSION = "ASTRA_RUNTIME_MODULE_IDENTITY_V1"
 LANES = ("SWING", "DAY", "SCALP", "CRYPTO")
 REQUIRED_CONTRACT_FIELDS = (
     "candidate_id", "recommendation_id", "decision_id", "symbol", "lane",
@@ -78,6 +82,113 @@ def current_runtime_revision() -> str:
         ).strip()[:80]
     except (OSError, subprocess.SubprocessError):
         return ""
+
+
+def runtime_module_identity_v1(
+    *,
+    module_name: str = "engine.astra_continuous_governance_v1",
+    canonical_repo_root: str | Path | None = None,
+    reported_revision: str = "",
+    module: Any | None = None,
+) -> dict[str, Any]:
+    """Capture bounded provenance for a worker-critical imported module.
+
+    A revision string is only metadata. This check also proves the loaded
+    module path, source bytes, and the small invariant contract that guards
+    the previously repaired governance call site.
+    """
+    root = Path(canonical_repo_root or Path.cwd()).resolve()
+    canonical_path = (root / (module_name.replace(".", "/") + ".py")).resolve()
+    loaded = module or sys.modules.get(module_name)
+    module_file = str(getattr(loaded, "__file__", "") or "")
+    module_path = Path(module_file).resolve() if module_file else None
+
+    def source_hash(path: Path | None) -> str:
+        try:
+            return hashlib.sha256(path.read_bytes()).hexdigest() if path and path.is_file() else ""
+        except OSError:
+            return ""
+
+    source_sha256 = source_hash(module_path)
+    canonical_source_sha256 = source_hash(canonical_path)
+    invariants = getattr(getattr(loaded, "ContinuousGovernanceV1", None), "_invariants", None)
+    code = getattr(invariants, "__code__", None)
+    code_names = set(getattr(code, "co_names", ()))
+    loaded_source = inspect.getsourcefile(invariants) if invariants is not None else None
+    resolved_sys_path: list[str] = []
+    shadow_candidates: list[str] = []
+    for entry in sys.path:
+        candidate_root = Path(entry or Path.cwd()).resolve()
+        candidate = (candidate_root / (module_name.replace(".", "/") + ".py")).resolve()
+        resolved_sys_path.append(str(candidate_root))
+        if candidate.is_file() and candidate != canonical_path:
+            shadow_candidates.append(str(candidate))
+
+    canonical_revision = ""
+    try:
+        canonical_revision = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            stderr=subprocess.DEVNULL,
+            timeout=1.5,
+            text=True,
+        ).strip()[:80]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    reported = str(reported_revision or "").strip()[:80]
+    path_matches = bool(module_path and module_path == canonical_path)
+    source_matches = bool(source_sha256 and canonical_source_sha256 and source_sha256 == canonical_source_sha256)
+    revision_matches = bool(reported and canonical_revision and reported == canonical_revision)
+    contract_matches = bool(code and "_integer" in code_names and "_to_float" not in code_names)
+    failures: list[str] = []
+    if not loaded:
+        failures.append("MODULE_NOT_LOADED")
+    if not path_matches:
+        failures.append("MODULE_PATH_NONCANONICAL")
+    if not source_matches:
+        failures.append("MODULE_SOURCE_HASH_MISMATCH")
+    if shadow_candidates:
+        failures.append("NONCANONICAL_SYS_PATH_SHADOW")
+    if not revision_matches:
+        failures.append("RUNTIME_REVISION_MISMATCH" if reported and canonical_revision else "CANONICAL_REPO_REVISION_UNAVAILABLE")
+    if not contract_matches:
+        failures.append("LOADED_GOVERNANCE_CONTRACT_MISMATCH")
+    pycache_path = ""
+    if module_path:
+        try:
+            pycache_path = str(Path(importlib.util.cache_from_source(str(module_path))).resolve())
+        except (NotImplementedError, ValueError):
+            pass
+    return {
+        "schema_version": RUNTIME_MODULE_IDENTITY_SCHEMA_VERSION,
+        "checked_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "process_id": os.getpid(),
+        "cwd": str(Path.cwd().resolve()),
+        "sys_executable": str(Path(sys.executable).resolve()),
+        "sys_path": resolved_sys_path,
+        "canonical_repo_root": str(root),
+        "reported_revision": reported,
+        "canonical_repo_revision": canonical_revision,
+        "module_name": module_name,
+        "module_file": module_file,
+        "resolved_module_path": str(module_path) if module_path else "",
+        "canonical_module_path": str(canonical_path),
+        "module_path_matches": path_matches,
+        "source_mtime_ns": module_path.stat().st_mtime_ns if module_path and module_path.is_file() else None,
+        "source_sha256": source_sha256,
+        "canonical_source_sha256": canonical_source_sha256,
+        "source_hash_matches": source_matches,
+        "pycache_path": pycache_path,
+        "to_float_in_globals": bool(loaded and "_to_float" in vars(loaded)),
+        "integer_in_globals": bool(loaded and "_integer" in vars(loaded)),
+        "loaded_invariants_source": str(loaded_source or ""),
+        "loaded_invariants_firstlineno": getattr(code, "co_firstlineno", None),
+        "loaded_invariants_code_names": sorted(name for name in code_names if name in {"_integer", "_to_float"}),
+        "loaded_invariants_contract_matches": contract_matches,
+        "noncanonical_shadow_candidates": shadow_candidates,
+        "status": "MATCHED" if not failures else "RUNTIME_SOURCE_IDENTITY_MISMATCH",
+        "failure_reason": ";".join(failures),
+    }
 
 
 def _runtime_text(value: Any) -> str:
@@ -217,6 +328,7 @@ def build_runtime_certification_v1(
     expected_revision: str = "",
     worker_revision: str = "",
     backend_revision: str = "",
+    runtime_identity: Mapping[str, Any] | None = None,
     previous: Mapping[str, Any] | None = None,
     now: datetime | None = None,
     trigger: str = "WORKER_READINESS",
@@ -265,10 +377,13 @@ def build_runtime_certification_v1(
     revision_values = [expected, worker_rev, backend_rev]
     revision_match = all(revision_values) and len(set(revision_values)) == 1
     revision_reason = "" if revision_match else "RUNTIME_REVISION_MISMATCH" if len({value for value in revision_values if value}) > 1 else "RUNTIME_REVISION_UNAVAILABLE"
+    source_identity = _runtime_dict(runtime_identity)
+    source_identity_ok = not source_identity or _runtime_text(source_identity.get("status")).upper() == "MATCHED"
+    source_identity_reason = "" if source_identity_ok else _runtime_text(source_identity.get("failure_reason")) or "RUNTIME_SOURCE_IDENTITY_MISMATCH"
     runtime_certified = bool(
         readiness_current and active_worker and worker_role and worker_count == 1
         and heartbeat_age is not None and heartbeat_age <= 30.0
-        and cycle_progressing and resource_ok and backend_ok and revision_match
+        and cycle_progressing and resource_ok and backend_ok and revision_match and source_identity_ok
     )
 
     matrix = _runtime_dict(runtime.get("multilane_completion_matrix") or runtime.get("astra_multilane_completion_matrix_v1"))
@@ -339,6 +454,7 @@ def build_runtime_certification_v1(
             ("BACKEND_UNHEALTHY", backend_ok), ("WORKER_NOT_SINGLE_CANONICAL", active_worker and worker_role and worker_count == 1),
             ("HEARTBEAT_STALE", heartbeat_age is not None and heartbeat_age <= 30.0), ("CYCLE_NOT_PROGRESSING", cycle_progressing),
             ("RESOURCE_NOT_ACCEPTABLE", resource_ok), (revision_reason, revision_match),
+            (source_identity_reason, source_identity_ok),
         ) if reason and not passed]},
         "discovery": {"passed": discovery_ok, "source": "AstraTradingReadinessV1.discovery_integrity"},
         "entry_funnel": {"passed": entry_ok, "source": "AstraTradingReadinessV1 + canonical multilane matrix", "matrix_available": bool(matrix)},
@@ -373,6 +489,8 @@ def build_runtime_certification_v1(
     reasons = []
     if revision_reason:
         reasons.append(revision_reason)
+    if source_identity_reason:
+        reasons.append(source_identity_reason)
     if external_faults:
         reasons.extend(sorted({_runtime_text(row.get("fault_type")) for row in external_faults if _runtime_text(row.get("fault_type"))}))
     if not full_technical_pass and not reasons:
@@ -389,6 +507,9 @@ def build_runtime_certification_v1(
         "worker_revision": worker_rev,
         "backend_revision": backend_rev,
         "revision_status": "MATCHED" if revision_match else revision_reason,
+        "runtime_source_identity": source_identity or {"status": "NOT_PROVIDED"},
+        "runtime_source_identity_status": "MATCHED" if source_identity_ok and source_identity else "NOT_PROVIDED" if not source_identity else "RUNTIME_SOURCE_IDENTITY_MISMATCH",
+        "runtime_source_identity_verified": source_identity_ok,
         "current_worker_pid": worker.get("active_worker_pid"),
         "worker_count": worker_count,
         "runtime_certified": runtime_certified,

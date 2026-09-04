@@ -44,6 +44,7 @@ from engine.astra_operating_health_contract_v1 import AstraOperatingHealthContra
 from engine.astra_premarket_certification_v1 import (
     build_runtime_certification_v1,
     current_runtime_revision,
+    runtime_module_identity_v1,
 )
 from engine.astra_historical_truth_certification_v1 import build_historical_truth_certification_v1
 from engine.astra_natural_truth_lifecycle_intelligence_v1 import (
@@ -85,6 +86,7 @@ class PaperAutopilotWorker:
         self.previous_cursor = str(read_snapshot().get("cursor") or "")
         self.resource_policy = dict(read_snapshot().get("resource_policy") or {})
         self.runtime_revision = current_runtime_revision()
+        self.runtime_identity = runtime_module_identity_v1(reported_revision=self.runtime_revision)
         self.continuous_governance = ContinuousGovernanceV1(STATE)
         self.governance_coverage = AstraGovernanceCoverageConsolidationV1(STATE)
         self.crypto_operational_integrity = CryptoOperationalIntegrityReadinessV1(STATE)
@@ -120,6 +122,7 @@ class PaperAutopilotWorker:
             "process_role": "PAPER_AUTOPILOT_WORKER",
             "runtime_revision": self.runtime_revision,
             "worker_revision": self.runtime_revision,
+            "runtime_source_identity": dict(self.runtime_identity),
             "worker_count": 1,
             "active_worker_present": True,
             "active_worker_pid": os.getpid(),
@@ -991,6 +994,7 @@ class PaperAutopilotWorker:
             expected_revision=current_runtime_revision(),
             worker_revision=self.runtime_revision,
             backend_revision=str(backend_health.get("runtime_revision") or ""),
+            runtime_identity=self.runtime_identity,
             previous=previous_certification,
             trigger=str(dict(result.get("session") or {}).get("check_phase") or "WORKER_READINESS"),
         )
@@ -1188,6 +1192,42 @@ class PaperAutopilotWorker:
         if hasattr(signal, "SIGHUP"):
             signal.signal(signal.SIGHUP, self._on_signal)
         initial_resource, initial_policy = self._sample_resource()
+        if str(self.runtime_identity.get("status") or "").upper() != "MATCHED":
+            identity_error = str(self.runtime_identity.get("failure_reason") or "RUNTIME_SOURCE_IDENTITY_MISMATCH")[:240]
+            self._sync_autopilot_progress(
+                "external_worker_source_identity_failed",
+                error=identity_error,
+                error_type="RUNTIME_SOURCE_IDENTITY_MISMATCH",
+                persist=True,
+            )
+            self._publish(
+                resource=initial_resource,
+                resource_policy=initial_policy,
+                cycle_state="FAILED_SAFE",
+                cycle_stop_reason="runtime_source_identity_mismatch",
+                last_error=identity_error,
+                last_error_at=utc_now(),
+                ownership_state="RUNTIME_SOURCE_IDENTITY_MISMATCH",
+            )
+            self._publish(
+                resource=initial_resource,
+                resource_policy=initial_policy,
+                cycle_state="CHECKPOINTED",
+                cycle_stop_reason="runtime_source_identity_mismatch",
+                ownership_state="NO_WORKER_ACTIVE",
+                active_worker_present=False,
+                active_worker_pid=None,
+                active_worker_instance_id=None,
+                active_worker_generation_id=None,
+                last_known_worker_pid=os.getpid(),
+                last_known_worker_instance_id=self.lease.instance_id,
+                last_known_worker_generation_id=self.lease.generation_id,
+                last_known_worker_stopped_at=utc_now(),
+                last_known_worker_exit_reason="runtime_source_identity_mismatch",
+                worker_terminal_cause="runtime_source_identity_mismatch",
+            )
+            self.lease.release()
+            return 3
         self._sync_autopilot_progress("external_worker_started", persist=True)
         self._publish(resource=initial_resource, resource_policy=initial_policy, cycle_state="IDLE", ownership_state="SINGLE_WORKER_ACTIVE")
         self._run_continuous_governance()

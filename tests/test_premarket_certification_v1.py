@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from engine.astra_premarket_certification_v1 import (
     build_lane_certification,
     build_pretrade_decision_contract,
     build_runtime_certification_v1,
+    current_runtime_revision,
     deterministic_failure_injection_summary,
+    runtime_module_identity_v1,
 )
 from engine.paper_autopilot import normalize_operational_candidate
 import server_extend
@@ -87,6 +91,42 @@ class PreMarketCertificationContractTests(unittest.TestCase):
         self.assertEqual(result["revision_status"], "RUNTIME_REVISION_MISMATCH")
         self.assertFalse(result["runtime_certified"])
         self.assertNotEqual(result["certification_state"], "TECHNICALLY_CERTIFIED")
+
+    def test_current_governance_module_identity_is_canonical(self):
+        identity = runtime_module_identity_v1(
+            canonical_repo_root=Path(__file__).resolve().parents[1],
+            reported_revision=current_runtime_revision(),
+        )
+        self.assertEqual(identity["status"], "MATCHED")
+        self.assertTrue(identity["module_path_matches"])
+        self.assertTrue(identity["source_hash_matches"])
+        self.assertEqual(identity["loaded_invariants_code_names"], ["_integer"])
+
+    def test_revision_match_alone_cannot_hide_wrong_loaded_module(self):
+        now, worker, runtime, readiness, backend, _ = self._runtime_fixture()
+        identity = {
+            "status": "RUNTIME_SOURCE_IDENTITY_MISMATCH",
+            "failure_reason": "MODULE_PATH_NONCANONICAL",
+        }
+        result = build_runtime_certification_v1(
+            worker_state=worker, runtime_state=runtime, readiness=readiness,
+            backend_health=backend, expected_revision="rev-1", worker_revision="rev-1",
+            backend_revision="rev-1", runtime_identity=identity, now=now,
+        )
+        self.assertFalse(result["runtime_certified"])
+        self.assertFalse(result["checks"]["runtime"]["passed"])
+        self.assertIn("MODULE_PATH_NONCANONICAL", result["next_recheck_reason"])
+        self.assertNotEqual(result["certification_state"], "TECHNICALLY_CERTIFIED")
+
+    def test_duplicate_source_path_is_detected_even_with_matching_revision(self):
+        identity = runtime_module_identity_v1(
+            canonical_repo_root=Path(__file__).resolve().parents[1],
+            reported_revision=current_runtime_revision(),
+            module=SimpleNamespace(__file__="/tmp/astra-duplicate/engine/astra_continuous_governance_v1.py"),
+        )
+        self.assertEqual(identity["status"], "RUNTIME_SOURCE_IDENTITY_MISMATCH")
+        self.assertIn("MODULE_PATH_NONCANONICAL", identity["failure_reason"])
+        self.assertIn("MODULE_SOURCE_HASH_MISMATCH", identity["failure_reason"])
 
     def test_natural_no_opportunity_is_not_a_code_repair(self):
         now, worker, runtime, readiness, backend, _ = self._runtime_fixture()
