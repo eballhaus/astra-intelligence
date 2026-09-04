@@ -747,6 +747,9 @@ class PaperAutopilotWorker:
         # canonical worker remains the only scanner owner; unchanged evidence
         # continues to use the normal low-frequency Sentinel interval.
         runtime = getattr(self.autopilot, "_runtime_state", {})
+        # Reuse the matrix already produced for Sentinel/Governance in this
+        # cycle so lifecycle scorecards report canonical funnel counts.
+        runtime["multilane_completion_matrix"] = dict(multilane_completion)
         current_blockers = [
             {
                 "symbol": row.get("symbol"),

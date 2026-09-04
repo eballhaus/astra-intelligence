@@ -75,6 +75,8 @@ def _runtime() -> dict:
         "multilane_completion_matrix": {"lanes": {"DAY": {
             "candidate_count": 2,
             "eligible_candidate_count": 1,
+            "finalist_count": 1,
+            "order_ready_count": 0,
             "paper_order_intents": 0,
         }}},
         "shadow_exit_intelligence_v1": {"evaluations": [{"symbol": "ABC"}]},
@@ -112,6 +114,8 @@ def test_open_lifecycle_joins_canonical_identity_and_preserves_fresh_observation
     assert row["observation"]["receive_timestamp"] == "2026-08-20T13:30:01Z"
     assert row["pre_exit_reconciliation_assurance"]["status"] == "PASS"
     assert row["wait_classification"] == "NATURAL_WAIT"
+    assert result["lane_truth_starvation_scorecard"]["DAY"]["candidates"] == 2
+    assert result["lane_truth_starvation_scorecard"]["DAY"]["finalists"] == 1
     assert result["safety"]["production_truths_created"] == 0
 
 
