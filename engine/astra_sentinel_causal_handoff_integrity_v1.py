@@ -19,6 +19,10 @@ def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
 def _unavailable(value: Any) -> bool:
     return value is None or (isinstance(value, str) and value.strip().lower() in {"", "unknown", "unavailable", "missing", "none", "null", "n/a"})
 
@@ -48,6 +52,9 @@ def _signal(fact: dict[str, Any], *, kind: str, category: str, handoff: str, rep
             "field": fact.get("field"),
             "producer_state": fact.get("producer_state") or "AVAILABLE",
             "consumer_state": fact.get("consumer_state") or "UNAVAILABLE",
+            "consumer_blocker": fact.get("consumer_blocker"),
+            "first_incomplete_stage": fact.get("first_incomplete_stage"),
+            "deadline_source": fact.get("deadline_source"),
             "first_bad_handoff": handoff,
             "current_vs_historical": "CURRENT",
             "legitimate_fail_closed": False,
@@ -234,6 +241,59 @@ def _dedupe(rows: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
     return result
 
 
+_SAME_SESSION_DEADLINE_REASONS = {
+    "day_lane_overnight_breach",
+    "day_lane_session_close_required",
+    "scalp_lane_overnight_breach",
+    "scalp_lane_session_close_required",
+}
+_TERMINAL_NATIVE_EXIT_STATES = {
+    "BROKER_ZERO_CONFIRMED", "CLOSED", "LEARNING_ACKNOWLEDGED",
+}
+
+
+def _native_deadline_fact(native: dict[str, Any], position_id: Any) -> dict[str, Any] | None:
+    """Use the worker-owned exit ledger when no standalone deadline is persisted."""
+    lane = _lane(native)
+    reason = _text(native.get("reason")).lower()
+    state = _text(native.get("closure_state")).upper()
+    if lane not in {"DAY", "SCALP"} or reason not in _SAME_SESSION_DEADLINE_REASONS:
+        return None
+    if state in _TERMINAL_NATIVE_EXIT_STATES or (
+        bool(native.get("strict_truth_created")) and bool(native.get("learning_acknowledged"))
+    ):
+        return None
+    stage = {
+        "EXIT_READY": "EXIT_ORDER",
+        "EXIT_BLOCKED_EXECUTION": "EXIT_ORDER",
+        "SELL_SUBMITTED": "BROKER_ACK",
+        "BROKER_ACKNOWLEDGED": "EXIT_FILL",
+        "PARTIALLY_FILLED": "EXIT_FILL",
+        "AWAITING_BROKER_ZERO": "RECONCILIATION",
+        "CLOSED_PENDING_TRUTH": "STRICT_TRUTH",
+        "STRICT_TRUTH_CREATED": "LEARNING_ACK",
+    }.get(state, "EXIT_DECISION")
+    blocker = _text(native.get("exact_blocker")) or "SAME_SESSION_DEADLINE_PASSED"
+    return {
+        "monitor": "LIFECYCLE_PROOF_DEADLINE",
+        "current": True,
+        "kind": "HORIZON_DEADLINE_MISSED",
+        "symbol": native.get("symbol"),
+        "lane": lane,
+        "lifecycle_id": native.get("lifecycle_id") or position_id,
+        "producer": "native_lane_exit_lifecycle_v1",
+        "consumer": "canonical lifecycle completion",
+        "field": "same_session_exit_required",
+        "evidence_timestamp": native.get("last_evaluated_at") or native.get("stage_entered_at"),
+        "producer_state": "DEADLINE_PASSED",
+        "consumer_state": state or blocker,
+        "consumer_blocker": blocker,
+        "first_incomplete_stage": stage,
+        "deadline_source": "native_lane_exit_lifecycle_v1.reason",
+        "first_bad_handoff": "canonical same-session deadline -> existing authorized exit execution",
+    }
+
+
 def _price_monitor(context: dict[str, Any], *, limit: int) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
     """Compare only explicitly supplied current price facts; never select a price."""
     facts, waiting = [], []
@@ -275,6 +335,7 @@ def _lifecycle_monitor(context: dict[str, Any], *, limit: int) -> tuple[dict[str
     # that compact source so an active lane's latest proof is not hidden by a
     # different lane's newer entries; no historical store is traversed.
     entry_records = _rows(context.get("entry_lane_horizon_integrity"))[-250:]
+    native_states = dict(context.get("native_lane_exit_lifecycle") or {})
     completion = dict(context.get("multilane_completion_matrix") or {})
     matrix_lanes = dict(completion.get("lanes") or {})
     lesson_lifecycles = {_text(row.get("lifecycle_id")) for row in lessons if _text(row.get("lifecycle_id"))}
@@ -322,6 +383,18 @@ def _lifecycle_monitor(context: dict[str, Any], *, limit: int) -> tuple[dict[str
         review = readiness.get(symbol, {})
         evaluated_at = _timestamp(review.get("evaluated_at") or review.get("generated_at"))
         base = {"monitor": "LIFECYCLE_PROOF_DEADLINE", "current": True, "symbol": symbol, "lane": _lane(position), "lifecycle_id": position.get("canonical_lifecycle_id") or position.get("canonical_position_id"), "producer": "canonical horizon recovery", "consumer": "existing natural exit readiness owner", "field": "same_session_exit_required", "evidence_timestamp": deadline_raw}
+        native = _dict(native_states.get(_text(base.get("lifecycle_id"))))
+        if not native:
+            native_matches = [
+                _dict(value) for value in native_states.values()
+                if _text(value.get("symbol")).upper() == symbol
+            ]
+            if len(native_matches) == 1:
+                native = native_matches[0]
+        native_deadline = _native_deadline_fact(native, base.get("lifecycle_id"))
+        if native_deadline:
+            facts.append({**base, **native_deadline})
+            continue
         if deadline is None:
             waiting.append({**base, "category": "INSUFFICIENT_RUNTIME_EVIDENCE", "reason": "canonical_same_session_deadline_unavailable", "legitimate_fail_closed": True})
         elif datetime.now(UTC) >= deadline and (evaluated_at is None or evaluated_at < deadline):
@@ -331,7 +404,6 @@ def _lifecycle_monitor(context: dict[str, Any], *, limit: int) -> tuple[dict[str
     # the worker. Correlating the two is read-only and lets the existing
     # Sentinel distinguish a genuine broker-filled close that is still waiting
     # for local persistence from an ordinary active lifecycle.
-    native_states = dict(context.get("native_lane_exit_lifecycle") or {})
     pending_by_position = {
         _text(item.get("position_id")): dict(item)
         for item in dict(context.get("authorized_lane_exit_pending") or {}).values()
@@ -353,6 +425,9 @@ def _lifecycle_monitor(context: dict[str, Any], *, limit: int) -> tuple[dict[str
             "field": "exit_fill_id",
             "evidence_timestamp": pending.get("last_checked_at") or native.get("last_evaluated_at"),
         }
+        native_deadline = _native_deadline_fact(native, position_id)
+        if native_deadline:
+            facts.append(native_deadline)
         exit_fill_id = _text(pending.get("exit_fill_id") or native.get("exit_fill_id"))
         if status in {"filled_awaiting_broker_zero", "filled_canonical_position_row_missing"} and exit_fill_id:
             facts.append({
@@ -364,7 +439,7 @@ def _lifecycle_monitor(context: dict[str, Any], *, limit: int) -> tuple[dict[str
                 "exit_fill_id": exit_fill_id,
                 "first_bad_handoff": "broker-confirmed exit fill -> canonical lifecycle closure",
             })
-        if _text(native.get("deadline_requirement_status")) == "SAME_SESSION_DEADLINE_PASSED":
+        if not native_deadline and _text(native.get("deadline_requirement_status")) == "SAME_SESSION_DEADLINE_PASSED":
             facts.append({
                 **base,
                 "kind": "HORIZON_DEADLINE_MISSED",

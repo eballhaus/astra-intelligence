@@ -331,7 +331,86 @@ def _wait_classification(fault: Mapping[str, Any], *, completed: bool, identity_
     return "NATURAL_WAIT"
 
 
-def _lifecycle_stage(row: Mapping[str, Any], management: Mapping[str, Any], observation: Mapping[str, Any], fault: Mapping[str, Any], truth: Mapping[str, Any], readiness: Mapping[str, Any]) -> tuple[str, str, str]:
+_SAME_SESSION_DEADLINE_REASONS = {
+    "day_lane_overnight_breach",
+    "day_lane_session_close_required",
+    "scalp_lane_overnight_breach",
+    "scalp_lane_session_close_required",
+}
+_TERMINAL_NATIVE_EXIT_STATES = {
+    "BROKER_ZERO_CONFIRMED", "CLOSED", "LEARNING_ACKNOWLEDGED",
+}
+
+
+def _native_exit_for_row(runtime: Mapping[str, Any], row: Mapping[str, Any]) -> dict[str, Any]:
+    native_states = _dict(runtime.get("native_lane_exit_lifecycle_v1"))
+    lifecycle = _lifecycle_id(row)
+    exact = _dict(native_states.get(lifecycle)) if lifecycle else {}
+    if exact:
+        return exact
+    symbol = _symbol(row)
+    matches = [
+        _dict(value) for value in native_states.values()
+        if _symbol(value) == symbol
+    ]
+    return matches[0] if len(matches) == 1 else {}
+
+
+def _lifecycle_deadline(row: Mapping[str, Any], runtime: Mapping[str, Any], readiness: Mapping[str, Any]) -> dict[str, Any]:
+    """Expose a passed same-session contract without authorizing an exit."""
+    lane = _lane(row)
+    if lane not in {"DAY", "SCALP"} or row.get("same_session_exit_required") is not True:
+        return {}
+    if row.get("overnight_allowed") is not False:
+        return {}
+    native = _native_exit_for_row(runtime, row)
+    native_state = _upper(native.get("closure_state"))
+    if native_state in _TERMINAL_NATIVE_EXIT_STATES or (
+        bool(native.get("strict_truth_created")) and bool(native.get("learning_acknowledged"))
+    ):
+        return {}
+    reason = _text(native.get("reason")).lower()
+    session = _dict(readiness.get("session"))
+    session_mode = _upper(session.get("market_session_mode") or session.get("current_session_type"))
+    passed = reason in _SAME_SESSION_DEADLINE_REASONS or session_mode in {
+        "AFTER_HOURS", "POST_CLOSE", "CLOSED", "PREOPEN",
+    }
+    if not passed:
+        return {}
+    state = native_state
+    current_stage = {
+        "EXIT_READY": "EXIT_ORDER_PENDING",
+        "EXIT_BLOCKED_EXECUTION": "EXIT_ORDER_PENDING",
+        "SELL_SUBMITTED": "BROKER_ACK_PENDING",
+        "BROKER_ACKNOWLEDGED": "EXIT_FILL_PENDING",
+        "PARTIALLY_FILLED": "EXIT_FILL_PENDING",
+        "AWAITING_BROKER_ZERO": "RECONCILIATION_PENDING",
+        "CLOSED_PENDING_TRUTH": "TRUTH_PENDING",
+        "STRICT_TRUTH_CREATED": "LEARNING_ACK_PENDING",
+    }.get(state, "EXIT_DUE")
+    blocker = _text(native.get("exact_blocker")) or "SAME_SESSION_DEADLINE_PASSED"
+    return {
+        "status": "OVERDUE",
+        "classification": "EXTERNAL_WAIT" if "REGULAR_SESSION_REQUIRED" in blocker else "NATURAL_WAIT",
+        "current_stage": current_stage,
+        "expected_next_stage": {
+            "EXIT_ORDER_PENDING": "EXIT_FILLED",
+            "BROKER_ACK_PENDING": "EXIT_FILL_PENDING",
+            "EXIT_FILL_PENDING": "RECONCILIATION_PENDING",
+            "RECONCILIATION_PENDING": "TRUTH_PENDING",
+            "TRUTH_PENDING": "LEARNING_ACKNOWLEDGED",
+            "LEARNING_ACK_PENDING": "LEARNING_ACKNOWLEDGED",
+        }.get(current_stage, "EXIT_ORDER_PENDING"),
+        "first_incomplete_stage": current_stage,
+        "blocker": blocker,
+        "requirement": "SAME_SESSION_EXIT_REQUIRED",
+        "native_exit_state": state or None,
+        "native_reason": reason or None,
+        "evidence_timestamp": _text(native.get("last_evaluated_at") or native.get("stage_entered_at")) or None,
+    }
+
+
+def _lifecycle_stage(row: Mapping[str, Any], management: Mapping[str, Any], observation: Mapping[str, Any], fault: Mapping[str, Any], truth: Mapping[str, Any], readiness: Mapping[str, Any], runtime: Mapping[str, Any]) -> tuple[str, str, str]:
     if truth:
         return "STRICT_TRUTH", "LEARNING_ACKNOWLEDGED", "COMPLETED"
     if _upper(fault.get("earliest_stage")) in {"RECONCILIATION", "STRICT_TRUTH", "LEARNING"}:
@@ -339,6 +418,9 @@ def _lifecycle_stage(row: Mapping[str, Any], management: Mapping[str, Any], obse
         return stage, "STRICT_TRUTH" if stage == "RECONCILIATION" else "LEARNING", _wait_classification(fault, completed=False, identity_missing=False)
     if not _lifecycle_id(row) or not _text(row.get("entry_fill_id")):
         return "POSITION_IDENTITY", "OBSERVATION", "EXTERNAL_WAIT"
+    deadline = _lifecycle_deadline(row, runtime, readiness)
+    if deadline:
+        return deadline["current_stage"], deadline["expected_next_stage"], deadline["classification"]
     native = _text(observation.get("provider_native_timestamp"))
     freshness = _upper(observation.get("freshness_state") or observation.get("freshness"))
     if not native or freshness in {"STALE", "EXPIRED", "UNAVAILABLE", "MISSING"}:
@@ -427,7 +509,14 @@ def _scorecard(
     truth_starvation = _text(watchdog.get("technical_truth_starvation_status")) or "UNKNOWN_TRUTH_STARVATION"
     # Entry capacity/eligibility can explain zero new entries, but cannot
     # turn an otherwise healthy open lifecycle into technical truth starvation.
-    if lane_rows and not technical_lifecycle_fault and not external_lifecycle_fault:
+    overdue_rows = [
+        row for row in lane_rows
+        if _text(_dict(row.get("lifecycle_deadline")).get("status")).upper() == "OVERDUE"
+    ]
+    if overdue_rows:
+        truth_blocker = "EXIT_STAGE_BLOCKED"
+        truth_starvation = "EXIT_STAGE_BLOCKED"
+    elif lane_rows and not technical_lifecycle_fault and not external_lifecycle_fault:
         truth_blocker = "NATURAL_OPEN_POSITION"
         truth_starvation = "NATURAL_OPEN_POSITION"
     return {
@@ -495,9 +584,13 @@ def build_natural_truth_lifecycle_intelligence_v1(
         truth = dict(truth_by_lifecycle.get(lifecycle) or {})
         fault = _fault_for(row, fault_rows)
         management = next((item for item in _rows(_dict(runtime.get("position_exit_readiness_v1")).get("positions")) if _symbol(item) == symbol and (_lifecycle_id(item) == lifecycle or not _lifecycle_id(item))), {})
-        current_stage, expected_next, wait = _lifecycle_stage(row, management, observation, fault, truth, ready)
+        deadline = _lifecycle_deadline(row, runtime, ready)
+        current_stage, expected_next, wait = _lifecycle_stage(row, management, observation, fault, truth, ready, runtime)
         identity_missing = not lifecycle or not _text(row.get("entry_fill_id"))
-        wait = _wait_classification(fault, completed=bool(truth), identity_missing=identity_missing) if not truth else "COMPLETED"
+        if truth:
+            wait = "COMPLETED"
+        elif not deadline:
+            wait = _wait_classification(fault, completed=False, identity_missing=identity_missing)
         continuity = {
             "lifecycle_id": lifecycle or None,
             "lane": _lane(row) or None,
@@ -520,6 +613,7 @@ def build_natural_truth_lifecycle_intelligence_v1(
             "current_stage": current_stage,
             "expected_next_stage": expected_next,
             "wait_classification": wait,
+            "lifecycle_deadline": deadline or {"status": "NOT_DUE"},
             "current_fault": {key: fault.get(key) for key in ("fault_type", "classification", "earliest_stage", "failing_invariant", "owner_file", "owner_function") if fault.get(key) not in (None, "")},
             "observation": {
                 "provider": _text(observation.get("provider") or observation.get("provenance")) or None,

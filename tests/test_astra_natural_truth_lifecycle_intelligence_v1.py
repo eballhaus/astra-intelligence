@@ -119,6 +119,50 @@ def test_open_lifecycle_joins_canonical_identity_and_preserves_fresh_observation
     assert result["safety"]["production_truths_created"] == 0
 
 
+def test_same_session_deadline_is_not_reported_as_natural_open_position() -> None:
+    runtime = {
+        "position_lane_horizon_recovery_v1": {"positions": [{
+            "symbol": "GEHC",
+            "canonical_lifecycle_id": "scalp-life",
+            "canonical_position_id": "scalp-life",
+            "entry_fill_id": "entry-gech",
+            "lane": "SCALP",
+            "horizon": "scalp",
+            "expected_max_hold": "same_session",
+            "same_session_exit_required": True,
+            "overnight_allowed": False,
+            "canonical_identity_status": "RESOLVED",
+        }]},
+        "native_lane_exit_lifecycle_v1": {
+            "scalp-life": {
+                "lifecycle_id": "scalp-life", "symbol": "GEHC", "lane_id": "SCALP",
+                "closure_state": "EXIT_BLOCKED_EXECUTION", "decision": "EXIT_READY",
+                "reason": "scalp_lane_overnight_breach",
+                "exact_blocker": "REGULAR_SESSION_REQUIRED:after_hours",
+                "last_evaluated_at": "2026-08-20T21:00:00Z",
+            },
+        },
+    }
+    readiness = _readiness()
+    readiness["session"] = {"market_session_mode": "after_hours"}
+    readiness["truth_production_watchdog"]["lanes"]["SCALP"] = {
+        "last_management_evaluation_time": "2026-08-20T20:30:00Z",
+        "technical_readiness": "DEGRADED",
+    }
+    result = build_natural_truth_lifecycle_intelligence_v1(
+        runtime_state=runtime,
+        readiness=readiness,
+        current_commit="test",
+        now=datetime(2026, 8, 20, 21, 1, tzinfo=UTC),
+    )
+    row = result["current_lifecycle_state"][0]
+    assert row["current_stage"] == "EXIT_ORDER_PENDING"
+    assert row["expected_next_stage"] == "EXIT_FILLED"
+    assert row["wait_classification"] == "EXTERNAL_WAIT"
+    assert row["lifecycle_deadline"]["status"] == "OVERDUE"
+    assert result["lane_truth_starvation_scorecard"]["SCALP"]["current_truth_blocker"] == "EXIT_STAGE_BLOCKED"
+
+
 def test_missing_identity_is_explicit_and_never_assigned_by_symbol() -> None:
     result = build_natural_truth_lifecycle_intelligence_v1(
         runtime_state={},

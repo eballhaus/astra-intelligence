@@ -75,7 +75,7 @@ def _operational_class(root: dict[str, Any]) -> str:
     if str(root.get("state") or "").upper() == "RESOLVED":
         return "HISTORICAL_RESOLVED"
     category = str(root.get("category") or "").upper()
-    if category in {"DAY_POSITION_HORIZON_BREACH", "LOSS_THRESHOLD_BREACH_NOT_EXIT_READY"}:
+    if category in {"DAY_POSITION_HORIZON_BREACH", "HORIZON_DEADLINE_MISSED", "LOSS_THRESHOLD_BREACH_NOT_EXIT_READY"}:
         return "ACTIVE_EXIT_BLOCKER"
     if category in {"CAUSAL_HANDOFF_LOSS", "BROKER_FILLED_CLOSURE_PENDING", "CLOSED_POSITION_TRUTH_NOT_CREATED"}:
         return "ACTIVE_TRUTH_BLOCKER"

@@ -147,6 +147,37 @@ class SentinelCausalHandoffIntegrityTests(unittest.TestCase):
         fact = next(row for row in monitors["facts"] if row["kind"] == "HORIZON_DEADLINE_MISSED")
         self.assertEqual(fact["consumer_state"], "STALE_PROVIDER_NATIVE_TIMESTAMP")
 
+    def test_native_same_session_deadline_surfaces_for_day_and_scalp(self):
+        monitors = collect_platform_integrity_monitors_v2({
+            "position_lane_horizon_recovery": {"positions": [
+                {"symbol": "GEHC", "lane": "SCALP", "canonical_lifecycle_id": "scalp-life", "same_session_exit_required": True},
+                {"symbol": "PTON", "lane": "DAY", "canonical_lifecycle_id": "day-life", "same_session_exit_required": True},
+            ]},
+            "native_lane_exit_lifecycle": {
+                "scalp-life": {
+                    "lifecycle_id": "scalp-life", "symbol": "GEHC", "lane_id": "SCALP",
+                    "closure_state": "EXIT_BLOCKED_EXECUTION", "decision": "EXIT_READY",
+                    "reason": "scalp_lane_overnight_breach",
+                    "exact_blocker": "REGULAR_SESSION_REQUIRED:after_hours",
+                    "last_evaluated_at": "2026-08-20T21:00:00Z",
+                },
+                "day-life": {
+                    "lifecycle_id": "day-life", "symbol": "PTON", "lane_id": "DAY",
+                    "closure_state": "EXIT_BLOCKED_EXECUTION", "decision": "EXIT_READY",
+                    "reason": "day_lane_session_close_required",
+                    "exact_blocker": "REGULAR_SESSION_REQUIRED:after_hours",
+                    "last_evaluated_at": "2026-08-20T21:00:00Z",
+                },
+            },
+        })
+        facts = [row for row in monitors["facts"] if row["kind"] == "HORIZON_DEADLINE_MISSED"]
+        self.assertEqual({row["lifecycle_id"] for row in facts}, {"scalp-life", "day-life"})
+        scalp = next(row for row in facts if row["lifecycle_id"] == "scalp-life")
+        self.assertEqual(scalp["first_incomplete_stage"], "EXIT_ORDER")
+        self.assertEqual(scalp["deadline_source"], "native_lane_exit_lifecycle_v1.reason")
+        signal = classify_causal_handoff_facts_v1([scalp])["signals"][0]
+        self.assertEqual(signal["causal_finding_v1"]["first_incomplete_stage"], "EXIT_ORDER")
+
     def test_scanner_publishes_bounded_causal_root_to_existing_sentinel_path(self):
         with tempfile.TemporaryDirectory() as directory:
             scanner = ContinuousSystemIntegrityScannerV1(directory)
