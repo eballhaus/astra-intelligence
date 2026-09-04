@@ -193,6 +193,34 @@ class AstraTradingReadinessV1:
         return elapsed > maximum_elapsed
 
     @staticmethod
+    def _current_equity_candidate_flow(runtime: Mapping[str, Any]) -> bool:
+        """Use current canonical candidate evidence before flagging discovery."""
+        trace = _dict(runtime.get("last_execution_trace"))
+        summary = _dict(runtime.get("last_cycle_summary"))
+        partial = _dict(summary.get("partial_candidate_microphase"))
+        containers = (trace, partial, summary)
+        for container in containers:
+            source = _text(container.get("candidate_source") or container.get("candidate_source_name")).lower()
+            count = container.get("candidate_source_count")
+            try:
+                source_count = int(float(count)) if count not in (None, "") else 0
+            except (TypeError, ValueError):
+                source_count = 0
+            if source in {"top_buys", "equity_top_buys_cached", "runtime_snapshot", "rankings_rows_fallback"} and (
+                source_count > 0 or int(container.get("candidates_seen") or 0) > 0
+            ):
+                return True
+            for row in _rows(container.get("per_candidate_decision_trace")):
+                lane = _lane(row.get("lane_id") or row.get("lane") or row.get("allocation_lane"))
+                asset = _text(row.get("asset_type") or row.get("asset_class")).lower()
+                if lane in {"DAY", "SCALP", "SWING"} or asset in {"stock", "equity", "us_equity"}:
+                    return True
+            lane_counts = _dict(container.get("allocation_lane_counts"))
+            if any(int(float(lane_counts.get(lane) or 0)) > 0 for lane in ("DAY", "SCALP", "SWING")):
+                return True
+        return False
+
+    @staticmethod
     def _position_rows(runtime: Mapping[str, Any]) -> list[dict[str, Any]]:
         capacity = _dict(runtime.get("last_evidence_capacity_snapshot"))
         recovery = _dict(runtime.get("position_lane_horizon_recovery_v1"))
@@ -1032,6 +1060,7 @@ class AstraTradingReadinessV1:
             bool(session.get("equity_session_open"))
             and not bool(source_state.get("candidate_source_available"))
             and source_blocker in {"legacy_market_evidence_bounded", "full_cycle_required_for_equity_candidate_processing"}
+            and not self._current_equity_candidate_flow(runtime)
         )
         if equity_source_missing:
             issues.append({

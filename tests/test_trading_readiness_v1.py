@@ -49,6 +49,27 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(result["active_faults"][0]["fault_type"], "DISCOVERY_LEGACY_BYPASS")
         self.assertEqual(result["recoveries"][0]["repair_action"], "REBUILD_CANONICAL_DISCOVERY_STATE")
 
+    def test_current_canonical_candidate_flow_overrides_stale_failed_rebuild(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "equity_discovery_rebuild_v1": {
+                    "candidate_source_available": False,
+                    "generated_at": _iso(-3600),
+                },
+                "last_execution_trace": {
+                    "final_blocker_reason": "legacy_market_evidence_bounded",
+                    "candidate_source": "top_buys",
+                    "candidates_seen": 4,
+                    "allocation_lane_counts": {"DAY": 4},
+                },
+            },
+            worker_state={},
+        )
+        self.assertNotIn(
+            "DISCOVERY_LEGACY_BYPASS",
+            [row["fault_type"] for row in result["active_faults"]],
+        )
+
     def test_recovery_dispatch_is_not_counted_as_success(self):
         runtime = {"last_execution_trace": {"final_blocker_reason": "legacy_market_evidence_bounded"}}
         result = self._monitor().run_if_due(
