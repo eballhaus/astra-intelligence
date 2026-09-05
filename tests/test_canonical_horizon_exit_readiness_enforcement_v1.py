@@ -143,6 +143,33 @@ class CanonicalHorizonExitReadinessEnforcementTests(unittest.TestCase):
         self.assertFalse(unified_row["legacy_position"])
         self.assertEqual(unified_row["canonical_identity_status"], "RESOLVED")
 
+    def test_management_snapshot_recovers_contract_and_persists_hold_time(self):
+        """A metadata-only SCALP contract cannot regress to blank monitoring."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            engine = PaperAutopilotEngine(
+                db_path=str(root / "paper.db"), state_path=str(root / "state.json"),
+            )
+            metadata = _evidence("GEHC", "SCALP", "scalp")["entry_metadata_json"]
+            with engine._connect() as conn:
+                conn.execute(
+                    """INSERT INTO paper_positions(position_id,symbol,asset_type,status,quantity,entry_price,entry_timestamp,lane_id,position_owner,exit_policy_owner,entry_metadata_generation,entry_metadata_json,row_json,lifecycle_notes,created_at,updated_at)
+                    VALUES ('pos-GEHC','GEHC','stock','OPEN',1,73.0,?,'SCALP','SCALP','SCALP','V1_MANDATORY',?,'{}','{}',?,?)""",
+                    (STAMP, json.dumps(metadata), STAMP, STAMP),
+                )
+                conn.commit()
+                open_row = dict(conn.execute("SELECT * FROM paper_positions WHERE position_id='pos-GEHC'").fetchone())
+            captured: list[dict] = []
+            with patch.object(paper_autopilot_module, "update_lifecycle_progress", lambda _pid, row: captured.append(dict(row))):
+                engine._update_open_row_snapshot(open_row, {"price": 74.0, "quote_quality": "fresh"})
+            self.assertEqual(len(captured), 1)
+            lifecycle = captured[0]
+            self.assertEqual(lifecycle["intended_horizon"], "scalp")
+            self.assertEqual(lifecycle["expected_max_hold"], "same_session")
+            self.assertIs(lifecycle["same_session_exit_required"], True)
+            self.assertIs(lifecycle["overnight_allowed"], False)
+            self.assertGreater(lifecycle["hold_time_seconds"], 0.0)
+
     def test_missing_horizon_evidence_remains_unavailable_and_is_not_invented(self):
         recovery = self._recovery("OLD", "DAY", "day_trade", contract=False)
         recovered = recovery["positions"][0]

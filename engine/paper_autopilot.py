@@ -12446,6 +12446,11 @@ class PaperAutopilotEngine:
             return {}
 
     def _update_open_row_snapshot(self, open_row: dict[str, Any], latest_row: dict[str, Any]):
+        # Management snapshots may be read from schema-era rows whose immutable
+        # lane contract only survives in entry metadata.  Materialize it before
+        # every lifecycle progress write so monitoring cannot erase a resolved
+        # SCALP/DAY same-session contract from the append-only lifecycle view.
+        open_row = self._materialize_open_position_entry_contract(open_row)
         pid = str(open_row.get("position_id") or "").strip()
         if not pid:
             return
@@ -12550,6 +12555,11 @@ class PaperAutopilotEngine:
                 pass
         if callable(update_lifecycle_progress):
             try:
+                lifecycle_contract = {
+                    field: open_row.get(field)
+                    for field in CONTRACT_FIELDS
+                    if field in open_row and open_row.get(field) is not None
+                }
                 update_lifecycle_progress(
                     pid,
                     {
@@ -12559,9 +12569,13 @@ class PaperAutopilotEngine:
                         "pnl_pct": ret,
                         "max_favorable_excursion_pct": mfe,
                         "max_adverse_excursion_pct": mae,
+                        "peak_return_percent": peak,
+                        "drawdown_from_peak_percent": drawdown,
+                        "hold_time_seconds": hold_seconds,
                         "exit_reason": str(open_row.get("exit_reason") or ""),
                         "source_endpoint": "paper_autopilot",
                         "lifecycle_stage": "monitoring",
+                        **lifecycle_contract,
                     },
                 )
             except Exception:
