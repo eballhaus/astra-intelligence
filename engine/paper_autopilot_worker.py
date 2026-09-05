@@ -842,6 +842,7 @@ class PaperAutopilotWorker:
             cortex=dict(integrity_scan.get("cortex_summary") or {}),
             truth_records=truth_rows,
             learning_records=learning_rows,
+            canonical_capacity_facts={"CRYPTO": dict(lane.get("canonical_capacity_fact") or {})},
         )
         self.operating_health_contract.write(operating_health)
         runtime["astra_operating_health_contract_v1"] = dict(operating_health)

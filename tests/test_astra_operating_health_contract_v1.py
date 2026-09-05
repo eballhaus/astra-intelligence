@@ -64,6 +64,38 @@ class OperatingHealthContractTests(unittest.TestCase):
             self.assertEqual(swing["blocker_validity"], "VALID_MARKET_DATA_LIMITATION")
             self.assertEqual(swing["waiting_state"], "LEGITIMATE_WAIT")
 
+    def test_authoritative_crypto_reserve_exhaustion_is_a_valid_capacity_wait(self):
+        with tempfile.TemporaryDirectory() as root:
+            payload = AstraOperatingHealthContractV1(root).build(
+                multilane={"lanes": {"CRYPTO": {"first_blocker": "capacity_concentration"}}},
+                worker_state={}, continuous={}, sentinel={},
+                canonical_capacity_facts={"CRYPTO": {
+                    "authority_current": True, "allowed": False,
+                    "capacity_decision": "LANE_RESERVE_EXHAUSTED",
+                    "lane_reserve_status": "LANE_RESERVE_EXHAUSTED",
+                    "reserve_available": False, "positions_used": 2, "positions_remaining": 0,
+                }},
+            )
+            crypto = payload["lanes"]["CRYPTO"]
+            self.assertEqual(crypto["blocker_validity"], "VALID_CAPACITY_WAIT")
+            self.assertEqual(crypto["waiting_state"], "LEGITIMATE_WAIT")
+
+    def test_capacity_gate_remains_fail_closed_when_authority_is_allowed_or_ambiguous(self):
+        with tempfile.TemporaryDirectory() as root:
+            contract = AstraOperatingHealthContractV1(root)
+            allowed = contract.build(
+                multilane={"lanes": {"CRYPTO": {"first_blocker": "capacity_concentration"}}},
+                worker_state={}, continuous={}, sentinel={},
+                canonical_capacity_facts={"CRYPTO": {"authority_current": True, "allowed": True, "capacity_decision": "AVAILABLE"}},
+            )
+            unavailable = contract.build(
+                multilane={"lanes": {"CRYPTO": {"first_blocker": "capacity_concentration"}}},
+                worker_state={}, continuous={}, sentinel={},
+                canonical_capacity_facts={"CRYPTO": {"authority_current": False, "allowed": False, "capacity_decision": "LANE_RESERVE_EXHAUSTED"}},
+            )
+            self.assertEqual(allowed["lanes"]["CRYPTO"]["blocker_validity"], "UNCLASSIFIED_FAIL_CLOSED")
+            self.assertEqual(unavailable["lanes"]["CRYPTO"]["blocker_validity"], "UNCLASSIFIED_FAIL_CLOSED")
+
     def test_high_sentinel_root_prevents_false_control_plane_agreement(self):
         with tempfile.TemporaryDirectory() as root:
             payload = AstraOperatingHealthContractV1(root).build(

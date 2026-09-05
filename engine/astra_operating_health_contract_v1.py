@@ -207,14 +207,17 @@ class AstraOperatingHealthContractV1:
         cortex: dict[str, Any] | None = None,
         truth_records: list[dict[str, Any]] | None = None,
         learning_records: list[dict[str, Any]] | None = None,
+        canonical_capacity_facts: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         matrix = _dict(multilane)
         truths = self._strict_truths([_dict(row) for row in (truth_records or [])])
         learning = [_dict(row) for row in (learning_records or [])]
         learned_ids = set().union(*(_record_identity(row) for row in learning)) if learning else set()
+        capacity_facts = _dict(canonical_capacity_facts)
         lanes: dict[str, Any] = {}
         for lane in LANES:
             row = _dict(_dict(matrix.get("lanes")).get(lane))
+            capacity_fact = _dict(capacity_facts.get(lane))
             lane_truths = [truth for truth in truths if _text(truth.get("lane") or truth.get("lane_id")).upper() == lane]
             consumed = [truth for truth in lane_truths if _record_identity(truth) & learned_ids]
             blocker = _text(row.get("first_blocker"), "CANDIDATE_OBSERVATION_PENDING")
@@ -228,11 +231,30 @@ class AstraOperatingHealthContractV1:
                 "VALID_SCHEDULING_WAIT",
                 "VALID_MARKET_DATA_LIMITATION",
             }
+            capacity_exhausted = (
+                bool(capacity_fact.get("authority_current"))
+                and not bool(capacity_fact.get("allowed"))
+                and _text(capacity_fact.get("capacity_decision")) == "LANE_RESERVE_EXHAUSTED"
+                and _text(capacity_fact.get("lane_reserve_status")) == "LANE_RESERVE_EXHAUSTED"
+                and not bool(capacity_fact.get("reserve_available"))
+                and blocker == "capacity_concentration"
+            )
+            if capacity_exhausted:
+                blocker_validity = "VALID_CAPACITY_WAIT"
+                waiting_state = "LEGITIMATE_WAIT"
+            else:
+                blocker_validity = row.get("first_blocker_validity") or ("VALID_SAFETY_WAIT" if valid_wait else "UNCLASSIFIED_FAIL_CLOSED")
+                waiting_state = "LEGITIMATE_WAIT" if valid_wait else "DEFECT_OR_UNCLASSIFIED"
             lanes[lane] = {
                 "lane": lane, "current_lifecycle_stage": row.get("current_stage") or "candidate_discovery",
                 "first_causal_blocker": blocker, "blocker_source": "astra_multilane_completion_matrix_v1",
-                "blocker_validity": row.get("first_blocker_validity") or ("VALID_SAFETY_WAIT" if valid_wait else "UNCLASSIFIED_FAIL_CLOSED"),
-                "waiting_state": "LEGITIMATE_WAIT" if valid_wait else "DEFECT_OR_UNCLASSIFIED",
+                "blocker_validity": blocker_validity,
+                "waiting_state": waiting_state,
+                "capacity_fact_provenance": {
+                    "authority_current": bool(capacity_fact.get("authority_current")),
+                    "capacity_decision": _text(capacity_fact.get("capacity_decision")) or None,
+                    "drill_down_ref": f"canonical_capacity_facts.{lane}",
+                } if capacity_fact else None,
                 "candidate_count": _number(row.get("candidate_count")),
                 "fresh_candidate_count": _number(row.get("fresh_candidate_count")),
                 "eligible_candidate_count": _number(row.get("eligible_candidate_count")),

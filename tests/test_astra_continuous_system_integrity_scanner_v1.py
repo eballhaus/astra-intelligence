@@ -260,6 +260,14 @@ class ContinuousSystemIntegrityScannerTests(unittest.TestCase):
         self.assertEqual(day["status"], "EXTERNAL_WAIT")
         self.assertEqual(day["activity_classification"], "PROVIDER_EXTERNAL")
 
+    def test_current_allowed_capacity_with_a_pending_candidate_gate_remains_a_sentinel_defect(self):
+        payload = self._scan(
+            canonical_capacity_fact={"authority_current": True, "allowed": True, "capacity_decision": "AVAILABLE"},
+            crypto_integrity={"candidate_execution_blockers": ["capacity_concentration"]},
+        )
+        categories = {row["category"] for row in payload["active_root_causes"]}
+        self.assertIn("CANONICAL_CAPACITY_CONSUMER_MISMATCH", categories)
+
     def test_cycle_failure_is_reported_as_active_infrastructure_without_relaxing_governance(self):
         payload = self._scan(
             continuous_governance={"invariants": [{
