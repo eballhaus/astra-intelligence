@@ -118,6 +118,7 @@ class CopilotAskAstraIntegrationTests(unittest.TestCase):
         )
         self.assertIn("open Paper position", result["short_answer"])
         self.assertIn("GEHC", result["short_answer"])
+        self.assertIn("SCALP", result["short_answer"])
         self.assertIn("Insufficient Evidence", result["short_answer"])
         self.assertTrue(result["answer_grounding"]["canonical_source_available"])
 

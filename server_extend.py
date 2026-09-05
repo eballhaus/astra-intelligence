@@ -76620,7 +76620,8 @@ def _ask_astra_fast_grounded_response_v1(
         matching_position = next((row for row in current_positions if str(row.get("symbol") or "").upper() == requested_symbol), {}) if requested_symbol else {}
         if matching_position:
             matching = matching_position
-            direct = f"Astra currently reports {matching.get('symbol') or facts.get('symbol')} as an open Paper position in {str(matching.get('canonical_lifecycle_state') or 'HOLD').replace('_', ' ').title()} state."
+            lane = str(matching.get("lane_id") or matching.get("horizon") or "unclassified").replace("_", " ").upper()
+            direct = f"Astra currently reports {matching.get('symbol') or facts.get('symbol')} as an open Paper position in the {lane} lane and {str(matching.get('canonical_lifecycle_state') or 'HOLD').replace('_', ' ').title()} state."
             watch = f"Exit state: {str(matching.get('advisory_exit_state') or 'insufficient evidence').replace('_', ' ').title()}."
         elif not requested_symbol and current_positions:
             direct = "Astra currently reports these open Paper positions: " + ", ".join(str(row.get("symbol")) for row in current_positions[:8] if row.get("symbol")) + "."
@@ -76632,7 +76633,8 @@ def _ask_astra_fast_grounded_response_v1(
         matching_position = next((row for row in current_positions if str(row.get("symbol") or "").upper() == requested_symbol), {}) if requested_symbol else {}
         if matching_position:
             matching = matching_position
-            direct = f"Astra currently reports {matching.get('symbol') or facts.get('symbol')} as an open Paper position; its advisory exit state is {str(matching.get('advisory_exit_state') or 'insufficient evidence').replace('_', ' ').title()}."
+            lane = str(matching.get("lane_id") or matching.get("horizon") or "unclassified").replace("_", " ").upper()
+            direct = f"Astra currently reports {matching.get('symbol') or facts.get('symbol')} as an open Paper position in the {lane} lane; its advisory exit state is {str(matching.get('advisory_exit_state') or 'insufficient evidence').replace('_', ' ').title()}."
             watch = "This reports existing lifecycle evidence only. It does not submit, approve, or force an exit."
         else:
             direct = "I cannot verify a current open-position exit state for that symbol."
