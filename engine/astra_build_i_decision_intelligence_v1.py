@@ -172,8 +172,26 @@ def resolve_question_route(
         "system_health": ["unified_learning_diagnostics_v1", "astra_autonomous_optimization_governance_core_v1"],
         "roadmap": ["astra_build_h_final_validation_v1", "astra_shadow_experiment_governance_v1"],
     }
-    sources = route_sources.get(inferred_intent, [])
     matching = next((row for row in rows if str(row.get("symbol") or "").upper() == symbol), {})
+    copilot_status = status_value(all_statuses, "astra_copilot_suite_v1")
+    current_positions = [row for row in list(copilot_status.get("current_positions") or []) if isinstance(row, dict)]
+    if not symbol:
+        current_symbols = {str(row.get("symbol") or "").upper() for row in current_positions if row.get("symbol")}
+        for token in re.findall(r"\b[A-Za-z]{2,8}(?:[-/]USD)?\b", question or ""):
+            candidate_symbol = token.upper().replace("/USD", "").replace("-USD", "")
+            if candidate_symbol in current_symbols:
+                symbol = candidate_symbol
+                break
+    position_matching = next((row for row in current_positions if str(row.get("symbol") or "").upper() == symbol), {}) if symbol else {}
+    if inferred_intent in {"current_position", "exit_readiness"} and position_matching:
+        matching = position_matching
+    if inferred_intent == "copilot_recommendation" and position_matching and any(token in (question or "").lower() for token in ("what lane", "which lane")):
+        # A lane question about a current position belongs to lifecycle truth,
+        # not candidate discovery.  A non-position symbol retains the normal
+        # opportunity route.
+        inferred_intent = "current_position"
+        matching = position_matching
+    sources = route_sources.get(inferred_intent, [])
     broker = status_value(all_statuses, "broker_truth_accumulation_v2")
     shadow = status_value(all_statuses, "astra_shadow_experiment_governance_v1")
     replay = status_value(all_statuses, "replay_counterfactual_learning_v2")
@@ -181,11 +199,11 @@ def resolve_question_route(
         "copilot_recommendation": bool(matching or rows),
         "candidate_eligibility": bool(matching or rows),
         "candidate_rejection": bool(matching and list(matching.get("blockers") or [])),
-        "current_position": bool(matching and matching.get("position_state") == "POSITION_OPEN"),
-        "exit_readiness": bool(matching and matching.get("position_state") == "POSITION_OPEN"),
+        "current_position": bool(position_matching or (not symbol and current_positions)),
+        "exit_readiness": bool(position_matching),
         "capacity": bool(status_value(all_statuses, "astra_operating_health_contract_v1") or status_value(all_statuses, "astra_trading_readiness_v1")),
         "learning": bool(status_value(all_statuses, "unified_learning_diagnostics_v1")),
-        "freshness": bool(matching),
+        "freshness": bool(matching or copilot_status.get("source_summary", {}).get("candidate_snapshot_timestamp")),
         "broker_truth": to_int(broker.get("total_complete_broker_confirmed_lifecycles"), 0) > 0,
         "paper_performance": to_int(broker.get("total_complete_broker_confirmed_lifecycles"), 0) > 0,
         "shadow_experiment": bool(shadow),
@@ -226,6 +244,7 @@ def resolve_question_route(
         "blockers": list(matching.get("blockers") or []),
         "freshness": matching.get("freshness"),
         "source_freshness_state": matching.get("source_freshness_state"),
+        "source_timestamp": matching.get("source_timestamp") or copilot_status.get("source_summary", {}).get("candidate_snapshot_timestamp"),
         "broker_complete_lifecycles": to_int(broker.get("total_complete_broker_confirmed_lifecycles"), 0),
         "broker_metric_status": broker.get("official_metric_status"),
         "shadow_readiness": shadow.get("current_readiness"),

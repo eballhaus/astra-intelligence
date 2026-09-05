@@ -353,6 +353,7 @@ export default function CopilotPage({ selectedSymbol = "", onSelectSymbol }) {
   const [filter, setFilter] = useState("ALL");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState("");
+  const [selectionNotice, setSelectionNotice] = useState("");
   const [compareId, setCompareId] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 600px)").matches);
@@ -382,8 +383,18 @@ export default function CopilotPage({ selectedSymbol = "", onSelectSymbol }) {
     return rows.find((row) => row.recommendation_id === selectedId) || preferred || filteredRows[0] || rows[0] || null;
   }, [filteredRows, rows, selectedId, selectedSymbol]);
 
+  useEffect(() => {
+    if (!selectedId || rows.some((row) => row.recommendation_id === selectedId)) return;
+    const replacement = filteredRows[0] || rows[0] || null;
+    setSelectedId(replacement?.recommendation_id || "");
+    setSelectionNotice(replacement
+      ? "The previously selected recommendation is no longer current. Copilot moved to the first current recommendation."
+      : "The previously selected recommendation is no longer current and no replacement is available.");
+  }, [filteredRows, rows, selectedId]);
+
   const choose = (id) => {
     setSelectedId(id);
+    setSelectionNotice("");
     const row = rows.find((item) => item.recommendation_id === id);
     if (row && typeof onSelectSymbol === "function") onSelectSymbol(row.symbol);
   };
@@ -405,6 +416,7 @@ export default function CopilotPage({ selectedSymbol = "", onSelectSymbol }) {
       <CopilotHeader payload={payload} rows={rows} error={error} onRefresh={refreshCurrentState} refreshing={refreshing} />
       <MarketContextStrip rows={rows} />
       {error ? <div className="copilot-alert copilot-alert-danger" role="alert">{error}. The page is showing a safe empty state and has not created a fallback recommendation.</div> : null}
+      {selectionNotice ? <div className="copilot-alert" role="status">{selectionNotice}</div> : null}
       <FilterBar filter={filter} onChange={setFilter} rows={rows} search={search} onSearch={setSearch} onReset={() => { setFilter("ALL"); setSearch(""); }} />
       <div className="copilot-section-heading"><div><div className="copilot-kicker">Priority queue</div><h2>Top 5 actions</h2></div><span>{filteredRows.length} shown / {rows.length} available</span></div>
       {filteredRows.length ? <div className="copilot-action-grid">{filteredRows.slice(0, 5).map((row) => <ActionCard key={row.recommendation_id} row={row} selected={selectedRow?.recommendation_id === row.recommendation_id} onSelect={choose} />)}</div> : <div className="copilot-empty copilot-empty-compact"><h2>{rows.length ? "No actions match this filter" : "No Top 5 actions available"}</h2><p>{rows.length ? "Try All or another canonical lifecycle filter." : "Astra has not provided enough valid cached recommendations to populate this queue."}</p></div>}
