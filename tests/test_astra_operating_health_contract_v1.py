@@ -128,6 +128,27 @@ class OperatingHealthContractTests(unittest.TestCase):
             self.assertEqual(payload["truth_to_learning_ledger"][0]["final_state"], "CONSUMED")
             self.assertEqual(payload["truth_to_learning_ledger"][0]["consumer"], "canonical_lifecycle_learning")
 
+    def test_learning_utilization_uses_existing_records_without_claiming_missing_outcomes(self):
+        with tempfile.TemporaryDirectory() as root:
+            truth = {
+                "evidence_class": "BROKER_CONFIRMED_COMPLETE", "stable_key": "strict:in:out",
+                "lifecycle_id": "life-1", "lane_id": "DAY", "symbol": "AAPL",
+                "entry_fill_id": "in", "exit_fill_id": "out", "created_at": "2026-08-09T12:00:00Z",
+            }
+            payload = AstraOperatingHealthContractV1(root).build(
+                multilane={"lanes": {}}, worker_state={}, continuous={}, sentinel={}, truth_records=[truth],
+                learning_records=[{
+                    "truth_id": "strict:in:out", "lesson_id": "lesson-1",
+                    "lesson_retrieved": True, "lesson_retrieved_at": "2026-08-09T12:01:00Z",
+                    "lesson_applied": True, "lesson_applied_at": "2026-08-09T12:02:00Z",
+                    "later_outcome_linked": True, "later_outcome_linked_at": "2026-08-09T12:03:00Z",
+                    "effectiveness_evaluated": True, "effectiveness_evaluated_at": "2026-08-09T12:04:00Z",
+                }],
+            )
+            ledger = payload["truth_to_learning_ledger"][0]
+            self.assertEqual(ledger["utilization_state"], "EFFECTIVENESS_EVALUATED")
+            self.assertEqual(payload["learning_utilization_summary"]["states"]["EFFECTIVENESS_EVALUATED"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

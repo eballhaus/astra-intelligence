@@ -137,6 +137,10 @@ class AstraOperatingHealthContractV1:
         teacher_at = _first_timestamp(learned, "teacher_handoff_at", "teacher_acknowledged_at", "taught_at")
         memory_at = _first_timestamp(learned, "memory_indexed_at", "indexed_at", "memory_available_at")
         cortex_at = _first_timestamp(truth, "cortex_acknowledged_at") or _first_timestamp(learned, "cortex_acknowledged_at")
+        retrieval_at = _first_timestamp(learned, "lesson_retrieved_at", "retrieved_at", "retrieval_at")
+        application_at = _first_timestamp(learned, "lesson_applied_at", "applied_at", "application_at")
+        outcome_at = _first_timestamp(learned, "later_outcome_linked_at", "outcome_linked_at")
+        effectiveness_at = _first_timestamp(learned, "effectiveness_evaluated_at", "effectiveness_at")
         stage_defs = (
             ("strict_truth_persisted", persisted_at, True),
             ("learning_acknowledged", acknowledgement_at, bool(truth.get("learning_acknowledged") or related)),
@@ -144,6 +148,10 @@ class AstraOperatingHealthContractV1:
             ("teacher_handoff", teacher_at, bool(learned.get("teacher_handoff_complete"))),
             ("memory_index_available", memory_at, bool(learned.get("memory_index_available"))),
             ("cortex_acknowledged", cortex_at, bool(truth.get("cortex_acknowledged") or learned.get("cortex_acknowledged"))),
+            ("lesson_retrieved", retrieval_at, bool(learned.get("lesson_retrieved") or learned.get("retrieved"))),
+            ("lesson_applied", application_at, bool(learned.get("lesson_applied") or learned.get("used_in_reasoning") or learned.get("used_in_experiment"))),
+            ("later_outcome_linked", outcome_at, bool(learned.get("later_outcome_linked") or learned.get("outcome_linked"))),
+            ("effectiveness_evaluated", effectiveness_at, bool(learned.get("effectiveness_evaluated"))),
         )
         stages: list[dict[str, Any]] = []
         previous_epoch = _epoch(persisted_at)
@@ -168,6 +176,14 @@ class AstraOperatingHealthContractV1:
         if _epoch(persisted_at) is not None and last_observed_epoch is not None and last_observed_epoch >= _epoch(persisted_at):
             total_latency = round(last_observed_epoch - _epoch(persisted_at), 3)
         truth_id = _text(truth.get("truth_id") or truth.get("stable_key") or truth.get("lifecycle_id"))
+        observed_stages = {row["stage"] for row in stages if str(row.get("status") or "").startswith("OBSERVED")}
+        utilization_state = (
+            "EFFECTIVENESS_EVALUATED" if "effectiveness_evaluated" in observed_stages else
+            "OUTCOME_LINKED" if "later_outcome_linked" in observed_stages else
+            "LESSON_APPLIED" if "lesson_applied" in observed_stages else
+            "LESSON_RETRIEVED" if "lesson_retrieved" in observed_stages else
+            "CONNECTED_NOT_YET_RETRIEVED"
+        )
         return {
             "truth_id": truth_id,
             "lane": _text(truth.get("lane") or truth.get("lane_id")).upper(),
@@ -178,6 +194,7 @@ class AstraOperatingHealthContractV1:
             "first_delayed_or_unobserved_handoff": first_gap or "NONE_OBSERVED",
             "total_observed_latency_seconds": total_latency,
             "latency_observability": "PARTIAL" if first_gap else "COMPLETE",
+            "utilization_state": utilization_state,
         }
 
     def build(
@@ -250,11 +267,24 @@ class AstraOperatingHealthContractV1:
                 "final_state": "CONSUMED" if consumed else "PERSISTED_AWAITING_CONSUMPTION",
             })
             ledger.append(handoff)
+        utilization_states = {
+            state: sum(1 for row in ledger if row.get("utilization_state") == state)
+            for state in (
+                "CONNECTED_NOT_YET_RETRIEVED", "LESSON_RETRIEVED", "LESSON_APPLIED",
+                "OUTCOME_LINKED", "EFFECTIVENESS_EVALUATED",
+            )
+        }
         return {
             "endpoint": "/api/astra_operating_health_contract_v1", "suite": "Astra Operating Health Contract V1",
             "version": VERSION, "generated_at": _now(), "status": status, "lanes": lanes,
             "strict_truth_total": len(truths), "truths_consumed_by_learning_total": sum(1 for truth in truths if _record_identity(truth) & learned_ids),
             "truth_to_learning_ledger": ledger, "truth_to_learning_ledger_bounded": True,
+            "learning_utilization_summary": {
+                "bounded": True,
+                "truths_tracked": len(ledger),
+                "states": utilization_states,
+                "natural_effectiveness_evidence_required": True,
+            },
             "sentinel_status": _dict(sentinel).get("status"), "governance_status": _dict(continuous).get("status"),
             "cortex_status": _dict(cortex).get("status"), "control_plane_agreement": control_agree,
             "control_plane_disagreement_reason": None if control_agree else "sentinel_has_high_or_critical_root_cause; governance remains fail-closed for execution",

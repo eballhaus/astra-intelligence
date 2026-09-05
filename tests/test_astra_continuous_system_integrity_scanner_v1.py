@@ -230,6 +230,36 @@ class ContinuousSystemIntegrityScannerTests(unittest.TestCase):
         self.assertIn("degraded or blocked", cross_layer["explanation"])
         self.assertNotIn("All lanes are technically entry-ready", cross_layer["explanation"])
 
+    def test_lane_activity_summary_is_bounded_and_forwarded_to_governance_and_cortex(self):
+        payload = self._scan(
+            trading_readiness={
+                "lane_readiness": {"DAY": "TECHNICALLY_READY", "SCALP": "TECHNICALLY_READY", "SWING": "TECHNICALLY_READY", "CRYPTO": "TECHNICALLY_READY"},
+                "lane_activity_truth_starvation_v1": {"lanes": {
+                    "DAY": {"classification": "POLICY_REJECTION", "activity_warning": "DEEP_REVIEW", "first_causal_stage": "QUALIFICATION", "reason": "CANDIDATES_OBSERVED_WITHOUT_ENTRY_OR_TRUTH_PROGRESS"},
+                }},
+            },
+        )
+        cortex = payload["cortex_summary"]["lane_operations_summary_v1"]
+        governance = payload["governance_summary"]["lane_operations_summary_v1"]
+        self.assertEqual(cortex["lanes"]["DAY"]["status"], "DEEP_REVIEW")
+        self.assertEqual(cortex["lanes"]["DAY"]["first_causal_stage"], "QUALIFICATION")
+        self.assertEqual(cortex["lanes"]["DAY"]["drill_down_ref"], "astra_trading_readiness_v1.lane_activity_truth_starvation_v1.lanes.DAY")
+        self.assertEqual(cortex["raw_records_forwarded"], 0)
+        self.assertEqual(governance, cortex)
+
+    def test_lane_activity_provider_wait_is_not_described_as_healthy_or_a_code_defect(self):
+        payload = self._scan(
+            trading_readiness={
+                "lane_readiness": {"DAY": "TECHNICALLY_READY"},
+                "lane_activity_truth_starvation_v1": {"lanes": {
+                    "DAY": {"classification": "PROVIDER_EXTERNAL", "activity_warning": "NORMAL"},
+                }},
+            },
+        )
+        day = payload["cortex_summary"]["lane_operations_summary_v1"]["lanes"]["DAY"]
+        self.assertEqual(day["status"], "EXTERNAL_WAIT")
+        self.assertEqual(day["activity_classification"], "PROVIDER_EXTERNAL")
+
     def test_cycle_failure_is_reported_as_active_infrastructure_without_relaxing_governance(self):
         payload = self._scan(
             continuous_governance={"invariants": [{

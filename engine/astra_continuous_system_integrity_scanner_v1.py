@@ -90,6 +90,49 @@ def _operational_class(root: dict[str, Any]) -> str:
     return "MONITORING_ONLY"
 
 
+def _lane_operations_summary(readiness: dict[str, Any]) -> dict[str, Any]:
+    """Bound lane health before Sentinel, Governance, and Cortex consume it."""
+    activity = _dict(_dict(readiness.get("lane_activity_truth_starvation_v1")).get("lanes"))
+    lane_readiness = _dict(readiness.get("lane_readiness"))
+    lanes: dict[str, dict[str, Any]] = {}
+    for lane in ("SCALP", "DAY", "SWING", "CRYPTO"):
+        row = _dict(activity.get(lane))
+        technical = _text(lane_readiness.get(lane)) or "UNAVAILABLE"
+        classification = _text(row.get("classification")) or "NO_CURRENT_ACTIVITY_FACT"
+        warning = _text(row.get("activity_warning")) or "NORMAL"
+        if classification in {"RUNTIME_REPAIRABLE", "CODE_REPAIR_REQUIRED"}:
+            status = "DEGRADED" if classification == "RUNTIME_REPAIRABLE" else "BLOCKED"
+        elif classification in {"PROVIDER_EXTERNAL", "BROKER_EXTERNAL"}:
+            status = "EXTERNAL_WAIT"
+        elif warning in {"WATCH", "STARVATION_RISK", "DEEP_REVIEW"}:
+            status = warning
+        elif technical != "TECHNICALLY_READY":
+            status = "DEGRADED"
+        else:
+            status = "HEALTHY"
+        lanes[lane] = {
+            "lane": lane,
+            "status": status,
+            "technical_readiness": technical,
+            "activity_classification": classification,
+            "activity_warning": warning,
+            "first_causal_stage": _text(row.get("first_causal_stage")),
+            "reason": _text(row.get("reason")),
+            "recovery_state": _text(row.get("existing_recovery_state")),
+            "drill_down_ref": f"astra_trading_readiness_v1.lane_activity_truth_starvation_v1.lanes.{lane}",
+        }
+    priority = [lane for lane, row in lanes.items() if row["status"] in {"BLOCKED", "DEGRADED", "DEEP_REVIEW", "STARVATION_RISK", "WATCH"}]
+    return {
+        "schema_version": "ASTRA_LANE_OPERATIONS_SUMMARY_V1",
+        "lanes": lanes,
+        "cross_lane_issue": priority[0] if priority else "NONE",
+        "lanes_needing_attention": priority,
+        "raw_records_forwarded": 0,
+        "bounded_summary_only": True,
+        "provenance_owner": "AstraTradingReadinessV1",
+    }
+
+
 class ContinuousSystemIntegrityScannerV1:
     """Bounded scanner run by PaperAutopilotWorker only.
 
@@ -737,6 +780,7 @@ class ContinuousSystemIntegrityScannerV1:
             ][-limits["max_issues"]:]
             current_readiness = _dict(context.get("trading_readiness"))
             lane_readiness = _dict(current_readiness.get("lane_readiness"))
+            lane_operations = _lane_operations_summary(current_readiness)
             readiness_lanes = {"DAY", "SCALP", "SWING", "CRYPTO"}
             all_lanes_technically_ready = bool(lane_readiness) and readiness_lanes.issubset(lane_readiness) and all(
                 str(lane_readiness.get(lane)).upper() == "TECHNICALLY_READY" for lane in readiness_lanes
@@ -796,6 +840,7 @@ class ContinuousSystemIntegrityScannerV1:
                        },
                        "crypto_market_data": crypto_market_data,
                        "governance_summary": {"root_causes": len(active), "human_repair_required": len(human), "safe_corrections": len(corrections), "sentinel_single_scan_owner": True,
+                                              "lane_operations_summary_v1": lane_operations,
                                               "platform_integrity_status": {key: dict(value).get("status") for key, value in platform_integrity.items() if key in {"price_data_truth", "lifecycle_proof_deadline", "broker_position_execution_truth", "resource_provider_reliability"}},
                                               "profit_capture_trade_effectiveness_v2": dict(trade_effectiveness.get("cortex_summary") or {})},
                         "cortex_summary": {"system_integrity_summary": status, "highest_impact_root_causes": classified_active[:5], "downstream_symptoms_grouped": True,
@@ -818,6 +863,7 @@ class ContinuousSystemIntegrityScannerV1:
                                            "last_successful_recovery": current_readiness.get("last_full_successful_check"),
                                            "code_repair_required": bool(current_readiness.get("code_repair_required") or human),
                                            "cross_layer_readiness_consistency_v1": cross_layer,
+                                           "lane_operations_summary_v1": lane_operations,
                                            "platform_integrity_patterns": {key: dict(value).get("status") for key, value in platform_integrity.items() if key in {"price_data_truth", "lifecycle_proof_deadline", "broker_position_execution_truth", "resource_provider_reliability"}},
                                           "profit_capture_trade_effectiveness_v2": dict(trade_effectiveness.get("cortex_summary") or {}),
                                           "truth_promotion_allowed": False, "recommended_repair_order": [row.get("root_cause_id") for row in active[:5]], "root_cause_orchestration": True},
