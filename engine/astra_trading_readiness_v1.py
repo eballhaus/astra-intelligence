@@ -5,7 +5,7 @@ import hashlib
 import json
 import os
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Mapping
 from zoneinfo import ZoneInfo
@@ -629,6 +629,21 @@ class AstraTradingReadinessV1:
         generated_at: str,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         date_local = _text(session.get("market_local_time"))[:10] or generated_at[:10]
+        same_day_prior = [
+            row for row in _rows(previous.get("daily_scorecards"))
+            if _text(row.get("date_local")) == date_local
+        ]
+        same_day_prior.sort(key=lambda row: _event_time(row.get("generated_at")))
+        prior_scorecard = _dict(same_day_prior[-1]) if same_day_prior else {}
+        prior_at = _event_time(prior_scorecard.get("generated_at"))
+        try:
+            elapsed_minutes = max(0.0, min(
+                10.0,
+                (datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+                 - datetime.fromisoformat(prior_at.replace("Z", "+00:00"))).total_seconds() / 60.0,
+            )) if prior_at else 0.0
+        except ValueError:
+            elapsed_minutes = 0.0
         lanes: dict[str, Any] = {}
         for lane in LANES:
             stage = _dict(stages.get(lane))
@@ -651,6 +666,49 @@ class AstraTradingReadinessV1:
             else:
                 software_cost = "UNKNOWN"
             stage_status = _dict(stage.get("stage_status"))
+            candidate_observed = _text(_dict(stage_status.get("CANDIDATE")).get("status")) == "PROVEN_READY"
+            qualified_observed = _text(_dict(stage_status.get("QUALIFIED")).get("status")) == "PROVEN_READY"
+            entry_or_truth_progress = any(
+                _text(_dict(stage_status.get(name)).get("status")) == "PROVEN_READY"
+                for name in ("ENTRY_FILLED", "STRICT_TRUTH", "LEARNING")
+            )
+            # A post-close accounting run represents a completed valid equity
+            # session.  This keeps the daily scorecard useful after the market
+            # closes without treating pre-market or weekends as opportunity.
+            valid_session = (
+                str(session.get("check_phase") or "") == "CRYPTO_CONTINUOUS_CHECK"
+                if lane == "CRYPTO"
+                else bool(session.get("equity_session_open"))
+                or str(session.get("check_phase") or "") == "POST_CLOSE_LANE_ACCOUNTING"
+            )
+            prior_lane = _dict(_dict(prior_scorecard.get("lanes")).get(lane))
+            prior_accounting = _dict(prior_lane.get("session_opportunity_accounting"))
+            accounting = {
+                name: float(prior_accounting.get(name) or 0.0)
+                for name in (
+                    "HEALTHY_OPERATION_MINUTES",
+                    "NATURAL_WAIT_MINUTES",
+                    "PROVIDER_EXTERNAL_MINUTES",
+                    "BROKER_EXTERNAL_MINUTES",
+                    "RUNTIME_REPAIR_MINUTES",
+                    "TECHNICAL_BLOCKED_MINUTES",
+                )
+            }
+            # This starts prospectively: only a bounded interval between two
+            # consecutive valid observations is counted, never inferred.
+            if valid_session and bool(prior_lane.get("valid_activity_session")):
+                fault_classes = {_text(row.get("classification")).upper() for row in lane_faults}
+                if fault_classes and fault_classes <= {"PROVIDER_EXTERNAL"}:
+                    bucket = "PROVIDER_EXTERNAL_MINUTES"
+                elif fault_classes and fault_classes <= {"BROKER_EXTERNAL"}:
+                    bucket = "BROKER_EXTERNAL_MINUTES"
+                elif lane_faults:
+                    bucket = "RUNTIME_REPAIR_MINUTES" if lane_recoveries else "TECHNICAL_BLOCKED_MINUTES"
+                elif not candidate_observed:
+                    bucket = "NATURAL_WAIT_MINUTES"
+                else:
+                    bucket = "HEALTHY_OPERATION_MINUTES"
+                accounting[bucket] = round(accounting[bucket] + elapsed_minutes, 3)
             lanes[lane] = {
                 "technical_uptime": technical_uptime,
                 "current_readiness": current_state,
@@ -685,6 +743,12 @@ class AstraTradingReadinessV1:
                 ],
                 "natural_wait": _text(stage.get("technical_truth_starvation_status")) if not lane_faults else "",
                 "software_cost_trading_time": software_cost,
+                "valid_activity_session": valid_session,
+                "candidate_opportunity_observed": candidate_observed,
+                "qualification_observed": qualified_observed,
+                "entry_or_truth_progress_observed": entry_or_truth_progress,
+                "session_opportunity_accounting": accounting,
+                "session_opportunity_accounting_prospective": True,
             }
         scorecard = {
             "schema_version": "ASTRA_DAILY_TRUTH_PATH_SCORECARD_V1",
@@ -696,6 +760,114 @@ class AstraTradingReadinessV1:
         old_scorecards = [row for row in _rows(previous.get("daily_scorecards")) if _text(row.get("date_local")) != date_local]
         old_scorecards.append(scorecard)
         return scorecard, old_scorecards[-MAX_SCORECARD_DAYS:]
+
+    @staticmethod
+    def _lane_activity_escalation(
+        scorecards: list[dict[str, Any]],
+        current_scorecard: Mapping[str, Any],
+        active_faults: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Classify prospective lane inactivity from existing daily facts.
+
+        This is a diagnostic bridge only.  The existing readiness recovery
+        owner remains responsible for any bounded technical action; a policy
+        rejection is deliberately converted to review evidence, never a rule
+        change.
+        """
+        current_at = _event_time(current_scorecard.get("generated_at")) or _now()
+        try:
+            current_time = datetime.fromisoformat(current_at.replace("Z", "+00:00")).astimezone(UTC)
+        except ValueError:
+            current_time = datetime.now(UTC)
+        rows = [dict(row) for row in scorecards if isinstance(row, Mapping)]
+        rows.sort(key=lambda row: _event_time(row.get("generated_at"), row.get("date_local")))
+        output: dict[str, Any] = {}
+        for lane in LANES:
+            history: list[dict[str, Any]] = []
+            for scorecard in rows:
+                lane_row = _dict(_dict(scorecard.get("lanes")).get(lane))
+                if not lane_row.get("valid_activity_session"):
+                    continue
+                if lane == "CRYPTO":
+                    observed_at = _event_time(scorecard.get("generated_at"))
+                    try:
+                        observed = datetime.fromisoformat(observed_at.replace("Z", "+00:00")).astimezone(UTC)
+                    except ValueError:
+                        continue
+                    if observed < current_time - timedelta(hours=72):
+                        continue
+                history.append({"generated_at": scorecard.get("generated_at"), **lane_row})
+            window = history[-3:] if lane != "CRYPTO" else history
+            current = _dict(_dict(current_scorecard.get("lanes")).get(lane))
+            lane_faults = [row for row in active_faults if lane in (row.get("lanes") or [])]
+            technical = bool(lane_faults) or _text(current.get("truth_path_state")) == "TECHNICAL_BLOCKED"
+            fault_classes = {_text(row.get("classification")).upper() for row in lane_faults}
+            opportunity = any(bool(row.get("candidate_opportunity_observed")) for row in window)
+            progressed = any(bool(row.get("entry_or_truth_progress_observed")) for row in window)
+            open_positions = any(int(row.get("current_open_positions") or 0) > 0 for row in window)
+            threshold_met = len(window) >= 3
+            if lane == "SWING" and open_positions and not technical:
+                classification, reason = "NATURAL_WAIT", "NATURAL_OPEN_POSITION"
+            elif technical:
+                if any(_text(row.get("verification_result")) == "CODE_REPAIR_REQUIRED" for row in lane_faults):
+                    classification = "CODE_REPAIR_REQUIRED"
+                elif fault_classes and fault_classes <= {"PROVIDER_EXTERNAL"}:
+                    classification = "PROVIDER_EXTERNAL"
+                elif fault_classes and fault_classes <= {"BROKER_EXTERNAL"}:
+                    classification = "BROKER_EXTERNAL"
+                else:
+                    classification = "RUNTIME_REPAIRABLE"
+                reason = _text(current.get("earliest_blocker")) or _text(current.get("natural_wait")) or "EXISTING_READINESS_FAULT"
+            elif not opportunity:
+                classification, reason = "NATURAL_WAIT", "NO_NATURAL_CANDIDATE"
+            elif progressed:
+                classification, reason = "ACTIVE_OR_RECENTLY_PROGRESSING", "ENTRY_OR_TRUTH_PROGRESS_OBSERVED"
+            else:
+                classification, reason = "POLICY_REJECTION", "CANDIDATES_OBSERVED_WITHOUT_ENTRY_OR_TRUTH_PROGRESS"
+            deep_review = bool(threshold_met and classification in {"POLICY_REJECTION", "RUNTIME_REPAIRABLE", "CODE_REPAIR_REQUIRED"})
+            if classification == "POLICY_REJECTION":
+                activity_warning = "DEEP_REVIEW" if deep_review else "STARVATION_RISK" if len(window) >= 2 else "WATCH"
+            elif classification in {"RUNTIME_REPAIRABLE", "CODE_REPAIR_REQUIRED"}:
+                activity_warning = "RECOVERY_IN_PROGRESS" if classification == "RUNTIME_REPAIRABLE" else "TECHNICAL_BLOCKED"
+            else:
+                activity_warning = "NORMAL"
+            output[lane] = {
+                "lane": lane,
+                "window_type": "ROLLING_72_HOURS" if lane == "CRYPTO" else "THREE_VALID_EQUITY_SESSIONS",
+                "valid_session_observations": len(window),
+                "three_day_deep_review_required": deep_review,
+                "activity_warning": activity_warning,
+                "classification": classification,
+                "reason": reason,
+                "first_causal_stage": _text(current.get("earliest_blocked_stage")) or (
+                    "QUALIFICATION" if opportunity else "DISCOVERY"
+                ),
+                "policy_calibration_evidence_required": bool(deep_review and classification == "POLICY_REJECTION"),
+                "existing_recovery_owner": (
+                    "AstraTradingReadinessV1"
+                    if classification in {"RUNTIME_REPAIRABLE", "CODE_REPAIR_REQUIRED"}
+                    else None
+                ),
+                "existing_recovery_state": (
+                    "CODE_REPAIR_REQUIRED" if classification == "CODE_REPAIR_REQUIRED"
+                    else "EXISTING_BOUNDED_RECOVERY" if classification == "RUNTIME_REPAIRABLE"
+                    else "NO_TECHNICAL_REPAIR_AUTHORIZED"
+                ),
+                "source": "existing daily scorecards + truth production watchdog + existing readiness faults",
+                "provider_calls_used": 0,
+                "broker_actions_used": 0,
+                "policy_changed": False,
+            }
+        return {
+            "schema_version": "ASTRA_LANE_ACTIVITY_TRUTH_STARVATION_V1",
+            "generated_at": current_at,
+            "lanes": output,
+            "diagnostic_only": True,
+            "recovery_owner": "existing AstraTradingReadinessV1 bounded recovery",
+            "provider_calls_used": 0,
+            "broker_actions_used": 0,
+            "policy_changed": False,
+        }
 
     @staticmethod
     def _control_loop(
@@ -1638,6 +1810,11 @@ class AstraTradingReadinessV1:
             previous,
             generated_at,
         )
+        lane_activity_escalation = self._lane_activity_escalation(
+            scorecards,
+            generated_scorecard,
+            active_faults,
+        )
         control_loop = self._control_loop(initial_issues, active_faults, recoveries, stages)
         summary = {
             "schema_version": VERSION,
@@ -1679,6 +1856,7 @@ class AstraTradingReadinessV1:
             "code_repair_packages": self._merge_code_repair_packages(previous, fault_rows),
             "daily_scorecard": generated_scorecard,
             "daily_scorecards": scorecards,
+            "lane_activity_truth_starvation_v1": lane_activity_escalation,
             "last_full_successful_check": previous.get("last_full_successful_check") if issues else generated_at,
             "safe_rollback_capability": "SAFE_ROLLBACK_UNAVAILABLE",
             "provider_calls_used": 0,

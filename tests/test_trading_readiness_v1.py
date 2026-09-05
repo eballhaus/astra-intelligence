@@ -37,6 +37,101 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertFalse(result["forced_trades_enabled"])
         self.assertFalse(result["entry_policy_changed"])
 
+    @staticmethod
+    def _activity_scorecard(when: str, lane: str, **lane_values) -> dict:
+        return {
+            "generated_at": when,
+            "lanes": {
+                lane: {
+                    "valid_activity_session": True,
+                    "candidate_opportunity_observed": False,
+                    "qualification_observed": False,
+                    "entry_or_truth_progress_observed": False,
+                    "current_open_positions": 0,
+                    "truth_path_state": "READY_OR_NATURAL_WAIT",
+                    "earliest_blocked_stage": "",
+                    "earliest_blocker": "",
+                    **lane_values,
+                },
+            },
+        }
+
+    def test_three_valid_equity_sessions_escalate_policy_rejection_without_policy_change(self):
+        scores = [
+            self._activity_scorecard(f"2026-08-2{day}T20:05:00Z", "DAY", candidate_opportunity_observed=True)
+            for day in (4, 5, 6)
+        ]
+        payload = AstraTradingReadinessV1._lane_activity_escalation(scores, scores[-1], [])
+        day = payload["lanes"]["DAY"]
+        self.assertTrue(day["three_day_deep_review_required"])
+        self.assertEqual(day["classification"], "POLICY_REJECTION")
+        self.assertTrue(day["policy_calibration_evidence_required"])
+        self.assertFalse(payload["policy_changed"])
+        self.assertEqual(day["existing_recovery_state"], "NO_TECHNICAL_REPAIR_AUTHORIZED")
+
+    def test_swing_open_position_is_not_a_three_day_starvation_false_positive(self):
+        scores = [
+            self._activity_scorecard(
+                f"2026-08-2{day}T20:05:00Z", "SWING",
+                candidate_opportunity_observed=True, current_open_positions=1,
+            )
+            for day in (4, 5, 6)
+        ]
+        payload = AstraTradingReadinessV1._lane_activity_escalation(scores, scores[-1], [])
+        swing = payload["lanes"]["SWING"]
+        self.assertFalse(swing["three_day_deep_review_required"])
+        self.assertEqual(swing["classification"], "NATURAL_WAIT")
+        self.assertEqual(swing["reason"], "NATURAL_OPEN_POSITION")
+
+    def test_crypto_uses_a_rolling_72_hour_window(self):
+        scores = [
+            self._activity_scorecard(f"2026-08-26T{hour:02d}:00:00Z", "CRYPTO", candidate_opportunity_observed=True)
+            for hour in (0, 12, 23)
+        ]
+        payload = AstraTradingReadinessV1._lane_activity_escalation(scores, scores[-1], [])
+        crypto = payload["lanes"]["CRYPTO"]
+        self.assertEqual(crypto["window_type"], "ROLLING_72_HOURS")
+        self.assertEqual(crypto["valid_session_observations"], 3)
+        self.assertTrue(crypto["three_day_deep_review_required"])
+
+    def test_runtime_fault_reuses_existing_recovery_instead_of_becoming_policy_rejection(self):
+        scores = [
+            self._activity_scorecard(f"2026-08-2{day}T20:05:00Z", "SCALP", candidate_opportunity_observed=True)
+            for day in (4, 5, 6)
+        ]
+        fault = {"lanes": ["SCALP"], "verification_result": "ACTION_DISPATCHED"}
+        payload = AstraTradingReadinessV1._lane_activity_escalation(scores, scores[-1], [fault])
+        scalp = payload["lanes"]["SCALP"]
+        self.assertEqual(scalp["classification"], "RUNTIME_REPAIRABLE")
+        self.assertEqual(scalp["existing_recovery_owner"], "AstraTradingReadinessV1")
+        self.assertFalse(scalp["policy_calibration_evidence_required"])
+
+    def test_provider_external_wait_does_not_become_a_code_or_policy_defect(self):
+        scores = [
+            self._activity_scorecard(f"2026-08-2{day}T20:05:00Z", "DAY", candidate_opportunity_observed=True)
+            for day in (4, 5, 6)
+        ]
+        fault = {"lanes": ["DAY"], "classification": "PROVIDER_EXTERNAL"}
+        payload = AstraTradingReadinessV1._lane_activity_escalation(scores, scores[-1], [fault])
+        day = payload["lanes"]["DAY"]
+        self.assertEqual(day["classification"], "PROVIDER_EXTERNAL")
+        self.assertFalse(day["three_day_deep_review_required"])
+        self.assertIsNone(day["existing_recovery_owner"])
+        self.assertEqual(day["existing_recovery_state"], "NO_TECHNICAL_REPAIR_AUTHORIZED")
+
+    def test_scorecard_starts_prospective_bounded_session_opportunity_accounting(self):
+        monitor = self._monitor()
+        first = monitor.run_if_due(runtime_state={"last_execution_trace": {}}, worker_state={})
+        self._force_due(monitor)
+        payload = __import__("json").loads(monitor.path.read_text(encoding="utf-8"))
+        payload["daily_scorecards"][0]["generated_at"] = _iso(-300)
+        monitor.path.write_text(__import__("json").dumps(payload), encoding="utf-8")
+        second = monitor.run_if_due(runtime_state={"last_execution_trace": {}}, worker_state={})
+        accounting = second["daily_scorecard"]["lanes"]["DAY"]["session_opportunity_accounting"]
+        self.assertGreater(accounting["NATURAL_WAIT_MINUTES"], 0.0)
+        self.assertTrue(second["daily_scorecard"]["lanes"]["DAY"]["session_opportunity_accounting_prospective"])
+        self.assertEqual(first["daily_scorecard"]["lanes"]["DAY"]["session_opportunity_accounting"]["NATURAL_WAIT_MINUTES"], 0.0)
+
     def test_discovery_bypass_runs_only_allowlisted_rebuild(self):
         calls: list[str] = []
         result = self._monitor().run_if_due(
