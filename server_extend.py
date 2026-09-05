@@ -44476,14 +44476,40 @@ def _copilot_action_from_row(row, idx=0, action=None, active_symbols=None):
         else f"Astra ranks {symbol} well on cached confidence, horizon fit, and current setup quality.",
         220,
     )
+    # Copilot must report the execution state already produced by Astra.  A
+    # confidence score alone is not a current entry authorization.
+    freshness = str(r.get("freshness_status") or r.get("candidate_freshness") or "CACHED")
+    freshness_upper = freshness.upper()
+    source_timestamp = (
+        r.get("source_generated_at")
+        or r.get("candidate_generated_at")
+        or r.get("snapshot_timestamp")
+        or r.get("updated_at")
+        or r.get("timestamp")
+    )
+    source_freshness_state = freshness_upper if freshness_upper not in {"", "CACHED"} else ("CACHED" if source_timestamp else "UNVERIFIED")
+    evidence_quality = str(r.get("evidence_quality") or ("MODERATE" if confidence >= 72 else "LOW_SAMPLE"))
+    paper_eligible = bool(r.get("paper_eligible") or r.get("paper_autopilot_eligibility") == "eligible")
+    blockers = list(r.get("blockers") or r.get("missing_fields") or [])
+    explicit_state = str(
+        r.get("canonical_lifecycle_state")
+        or r.get("candidate_execution_state")
+        or r.get("eligibility_state")
+        or r.get("canonical_final_state")
+        or ""
+    ).upper()
     selected_action = action
     if not selected_action:
         if symbol in active:
             selected_action = "MANAGE_POSITION"
-        elif confidence >= 82:
+        elif freshness_upper in {"STALE", "DATA_STALE", "EXPIRED"}:
+            selected_action = "DATA_STALE"
+        elif blockers:
+            selected_action = "BLOCKED"
+        elif paper_eligible:
             selected_action = "BUY_NOW"
-        elif confidence >= 72:
-            selected_action = "STRONG_CANDIDATE"
+        elif explicit_state in {"APPROACHING_BUY", "WATCH", "BLOCKED", "INSUFFICIENT_EVIDENCE", "MONITOR_ONLY"}:
+            selected_action = explicit_state
         else:
             selected_action = "WATCH"
     raw_action = str(selected_action).upper()
@@ -44508,10 +44534,22 @@ def _copilot_action_from_row(row, idx=0, action=None, active_symbols=None):
         or "momentum, catalyst support, or market participation weakens"
     )
     recommendation_id = "copilot:" + hashlib.sha256(f"{symbol}|{horizon}|{lifecycle_state}|{idx}".encode("utf-8")).hexdigest()[:16]
-    freshness = str(r.get("freshness_status") or r.get("candidate_freshness") or "CACHED")
-    evidence_quality = str(r.get("evidence_quality") or ("MODERATE" if confidence >= 72 else "LOW_SAMPLE"))
-    paper_eligible = bool(r.get("paper_eligible") or r.get("paper_autopilot_eligibility") == "eligible")
-    blockers = list(r.get("blockers") or r.get("missing_fields") or [])
+    if symbol in active:
+        candidate_execution_state = "POSITION_OPEN"
+    elif bool(r.get("order_submitted")):
+        candidate_execution_state = "ORDER_SUBMITTED"
+    elif bool(r.get("order_ready")) or explicit_state in {"ORDER_READY", "PAPER_READY"}:
+        candidate_execution_state = "ORDER_READY"
+    elif paper_eligible:
+        candidate_execution_state = "ELIGIBLE"
+    elif explicit_state in {"QUALIFIED", "RELEASED_BUY", "CANDIDATE", "WATCH"}:
+        candidate_execution_state = "QUALIFIED" if explicit_state in {"QUALIFIED", "RELEASED_BUY"} else explicit_state
+    elif blockers:
+        candidate_execution_state = "BLOCKED"
+    elif freshness_upper in {"STALE", "DATA_STALE", "EXPIRED"}:
+        candidate_execution_state = "DATA_STALE"
+    else:
+        candidate_execution_state = "CANDIDATE"
     advisory_entry_state = "BUY_NOW_ADVISORY" if lifecycle_state == "BUY_NOW" else lifecycle_state if lifecycle_state in {"WATCH", "APPROACHING_BUY", "BLOCKED", "INSUFFICIENT_EVIDENCE"} else "NOT_READY"
     advisory_exit_state = lifecycle_state if lifecycle_state in {"HOLD", "LOSING_MOMENTUM", "PROTECT_PROFIT", "APPROACHING_SELL", "SELL_RECOMMENDED"} else "INSUFFICIENT_EVIDENCE"
     preferred_horizon = r.get("preferred_horizon") or horizon
@@ -44553,6 +44591,7 @@ def _copilot_action_from_row(row, idx=0, action=None, active_symbols=None):
         "lane_assignment_source": str(r.get("lane_assignment_source") or "PRETRADE_EXPLICIT"),
         "action": lifecycle_state,
         "canonical_lifecycle_state": lifecycle_state,
+        "candidate_execution_state": candidate_execution_state,
         "confidence": round(confidence, 2),
         "horizon": horizon,
         "preferred_horizon": preferred_horizon,
@@ -44587,6 +44626,8 @@ def _copilot_action_from_row(row, idx=0, action=None, active_symbols=None):
         "fill_confirmed": bool(r.get("fill_confirmed", False)),
         "position_state": "POSITION_OPEN" if symbol in active else "NO_OPEN_POSITION",
         "freshness": freshness,
+        "source_timestamp": source_timestamp,
+        "source_freshness_state": source_freshness_state,
         "evidence_quality": evidence_quality,
         "blockers": blockers,
         "advisory_entry_state": advisory_entry_state,
@@ -76465,8 +76506,14 @@ def _ask_astra_fast_grounded_response_v1(
     request_context: dict,
 ) -> dict:
     """Answer fast-mode questions from canonical cached facts before deep assembly."""
+    # The compact command endpoint may provide only top_actions.  The routing
+    # contract expects recommendations, so expose the same bounded canonical
+    # rows under that alias rather than falling back to generic text.
+    copilot_for_grounding = dict(copilot or {})
+    if not isinstance(copilot_for_grounding.get("recommendations"), list):
+        copilot_for_grounding["recommendations"] = list(copilot_for_grounding.get("top_actions") or [])
     statuses = {
-        "astra_copilot_suite_v1": copilot,
+        "astra_copilot_suite_v1": copilot_for_grounding,
         "broker_truth_accumulation_v2": dict(cached_unified.get("broker_truth_accumulation_v2") or _astra_broker_truth_accumulation_v2_payload()),
         "astra_shadow_experiment_governance_v1": dict(cached_unified.get("astra_shadow_experiment_governance_v1") or {}),
         "replay_counterfactual_learning_v2": dict(cached_unified.get("replay_counterfactual_learning_v2") or {}),
@@ -76484,13 +76531,61 @@ def _ask_astra_fast_grounded_response_v1(
         prior_context=request_context.get("conversation_context") if isinstance(request_context.get("conversation_context"), dict) else {},
     )
     facts = dict(grounding.get("deterministic_facts") or {})
-    actions = list(copilot.get("top_actions") or copilot.get("recommendations") or [])[:5]
+    actions = list(copilot_for_grounding.get("top_actions") or copilot_for_grounding.get("recommendations") or [])[:5]
     matching = next((row for row in actions if str(row.get("symbol") or "").upper() == str(facts.get("symbol") or "").upper()), actions[0] if actions else {})
     intent = str(grounding.get("intent") or "unsupported")
     if intent == "copilot_recommendation" and matching:
-        reason = matching.get("simple_why") or matching.get("why_astra_chose_it") or matching.get("reason") or "the current cached evidence remains advisory-only"
-        direct = f"{matching.get('symbol') or facts.get('symbol') or 'This opportunity'} is {str(matching.get('canonical_lifecycle_state') or matching.get('action') or 'being monitored').replace('_', ' ').title()} with {matching.get('confidence', 'n/a')}% confidence."
-        watch = f"Why: {reason}. Horizon: {matching.get('preferred_horizon') or matching.get('horizon') or 'not available'}."
+        source_state = str(facts.get("source_freshness_state") or matching.get("source_freshness_state") or "UNVERIFIED").upper()
+        if source_state == "UNVERIFIED":
+            direct = f"I cannot verify {matching.get('symbol') or facts.get('symbol') or 'this opportunity'} as a current Astra recommendation because source freshness is unverified."
+            watch = "The cached candidate record is available for context but is not presented as a current trade decision."
+        else:
+            reason = matching.get("simple_why") or matching.get("why_astra_chose_it") or matching.get("reason") or "the current cached evidence remains advisory-only"
+            direct = f"{matching.get('symbol') or facts.get('symbol') or 'This opportunity'} is {str(matching.get('canonical_lifecycle_state') or matching.get('action') or 'being monitored').replace('_', ' ').title()} with {matching.get('confidence', 'n/a')}% confidence."
+            watch = f"Why: {reason}. Horizon: {matching.get('preferred_horizon') or matching.get('horizon') or 'not available'}."
+    elif intent == "candidate_eligibility" and matching:
+        execution_state = str(facts.get("candidate_execution_state") or "CANDIDATE").replace("_", " ").title()
+        eligible = facts.get("paper_autopilot_eligible") is True
+        direct = f"{matching.get('symbol') or facts.get('symbol') or 'This candidate'} is {execution_state}; Paper Autopilot eligibility is {'confirmed' if eligible else 'not confirmed'} in the current canonical payload."
+        blockers = facts.get("blockers") or []
+        watch = f"Current blocker: {blockers[0]}." if blockers else "No blocker is supplied by the current canonical record; this does not create an order."
+    elif intent == "candidate_rejection":
+        blockers = facts.get("blockers") or []
+        if matching and blockers:
+            direct = f"Astra did not advance {matching.get('symbol') or facts.get('symbol')} because its current canonical blocker is {blockers[0]}."
+            watch = "This is a recorded pipeline blocker, not generic investment advice."
+        else:
+            direct = "I cannot verify a current canonical rejection reason for that symbol."
+            watch = "Astra will not invent a rejection reason when the bounded execution record is unavailable."
+    elif intent == "current_position":
+        if matching and facts.get("position_state") == "POSITION_OPEN":
+            direct = f"Astra currently reports {matching.get('symbol') or facts.get('symbol')} as an open Paper position in {str(matching.get('canonical_lifecycle_state') or 'HOLD').replace('_', ' ').title()} state."
+            watch = f"Exit state: {str(facts.get('exit_state') or 'insufficient evidence').replace('_', ' ').title()}."
+        else:
+            direct = "I cannot verify that Astra currently holds that position from the canonical payload."
+            watch = "Current position truth is unavailable or the symbol is not open; Astra will not infer a hold state."
+    elif intent == "exit_readiness":
+        if matching and facts.get("position_state") == "POSITION_OPEN":
+            direct = f"Astra's current advisory exit state for {matching.get('symbol') or facts.get('symbol')} is {str(facts.get('exit_state') or 'insufficient evidence').replace('_', ' ').title()}."
+            watch = "This reports existing lifecycle evidence only. It does not submit, approve, or force an exit."
+        else:
+            direct = "I cannot verify a current open-position exit state for that symbol."
+            watch = "Astra will not invent an exit recommendation without canonical lifecycle evidence."
+    elif intent == "freshness":
+        state = str(facts.get("source_freshness_state") or facts.get("freshness") or "UNVERIFIED").replace("_", " ").title()
+        if grounding.get("answer_state") == "FRESHNESS_UNCERTAIN":
+            direct = f"I cannot verify that {matching.get('symbol') or facts.get('symbol') or 'this recommendation'} is current; source freshness is {state}."
+            watch = "A cached or unverified record is not presented as a current trade decision."
+        else:
+            direct = f"Source freshness for {matching.get('symbol') or facts.get('symbol') or 'this recommendation'} is {state}."
+            watch = "Freshness is reported from the canonical payload, not inferred from this answer's generation time."
+    elif intent == "capacity":
+        readiness = statuses.get("astra_trading_readiness_v1") or statuses.get("astra_operating_health_contract_v1") or {}
+        direct = f"Astra's capacity status is {readiness.get('capacity_status') or readiness.get('status') or 'not available'} from the bounded current readiness summary."
+        watch = "Capacity context is explanatory only and does not change lane allocation or entry policy."
+    elif intent == "learning":
+        direct = "Astra's learning answer is based on the current bounded Learning diagnostics, with broker truth, replay, and Shadow evidence kept distinct."
+        watch = "Astra only claims effectiveness when the relevant outcome-linked evidence is available."
     elif intent in {"broker_truth", "paper_performance"}:
         direct = f"Astra has {facts.get('broker_complete_lifecycles', 0)} complete broker-confirmed paper lifecycles."
         watch = f"Official metric status: {facts.get('broker_metric_status') or 'warming up'}; shadow and replay remain separately labelled."

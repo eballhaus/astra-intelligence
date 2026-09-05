@@ -4,12 +4,15 @@ import "./CopilotPage.css";
 
 const EMPTY_PAYLOAD = { recommendations: [], top_actions: [], status: "warming_up" };
 let copilotRequest = null;
+let copilotRequestAt = 0;
+const COPILOT_CACHE_TTL_MS = 30_000;
 
 const ENTRY_STATES = new Set(["BUY_NOW_ADVISORY", "APPROACHING_BUY", "WATCH", "BLOCKED", "INSUFFICIENT_EVIDENCE", "NOT_READY"]);
 const EXIT_STATES = new Set(["HOLD", "LOSING_MOMENTUM", "PROTECT_PROFIT", "APPROACHING_SELL", "SELL_RECOMMENDED", "INSUFFICIENT_EVIDENCE"]);
 
-function loadCopilot() {
-  if (!copilotRequest) {
+function loadCopilot({ force = false } = {}) {
+  const cacheCurrent = copilotRequest && (Date.now() - copilotRequestAt) < COPILOT_CACHE_TTL_MS;
+  if (force || !cacheCurrent) {
     copilotRequest = fetchJsonWithFallback("/api/copilot_decision_command_v1", {
       preferredBase: getInitialApiBase(),
       fallbackValue: EMPTY_PAYLOAD,
@@ -19,6 +22,7 @@ function loadCopilot() {
       payload: result.ok && result.parsed ? result.parsed : EMPTY_PAYLOAD,
       error: result.error || "",
     }));
+    copilotRequestAt = Date.now();
   }
   return copilotRequest;
 }
@@ -101,7 +105,7 @@ function ContextItem({ label, value }) {
   return <div className="copilot-context-item"><span>{label}</span><strong>{titleCase(value)}</strong></div>;
 }
 
-function CopilotHeader({ payload, rows, error }) {
+function CopilotHeader({ payload, rows, error, onRefresh, refreshing }) {
   const attentionCount = rows.filter((row) => {
     const state = stateLabel(row);
     return ["LOSING_MOMENTUM", "PROTECT_PROFIT", "APPROACHING_SELL", "SELL_RECOMMENDED", "BLOCKED", "DATA_STALE", "INSUFFICIENT_EVIDENCE"].includes(state) || (row.blockers || []).length > 0;
@@ -122,6 +126,7 @@ function CopilotHeader({ payload, rows, error }) {
         <StatusPill label="Needs attention" value={attentionCount} tone={attentionCount ? "warn" : "good"} />
         <StatusPill label="Freshness" value={text(first?.freshness, "Cached")} />
         <div className="copilot-updated">Last updated {formatTimestamp(payload?.generated_at)}</div>
+        <button type="button" className="copilot-refresh" onClick={onRefresh} disabled={refreshing}>{refreshing ? "Refreshing..." : "Refresh current state"}</button>
       </div>
     </header>
   );
@@ -210,6 +215,7 @@ function FactorList({ title, items, empty = "No supporting evidence is available
 
 function ExecutionState({ row }) {
   const values = [
+    ["Candidate state", titleCase(row.candidate_execution_state)],
     ["Advisory entry", titleCase(row.advisory_entry_state)],
     ["Advisory exit", titleCase(row.advisory_exit_state)],
     ["Paper Autopilot", row.paper_autopilot_eligible ? "Eligible" : "Not eligible"],
@@ -348,6 +354,7 @@ export default function CopilotPage({ selectedSymbol = "", onSelectSymbol }) {
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [compareId, setCompareId] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 600px)").matches);
 
   useEffect(() => {
@@ -381,13 +388,21 @@ export default function CopilotPage({ selectedSymbol = "", onSelectSymbol }) {
     if (row && typeof onSelectSymbol === "function") onSelectSymbol(row.symbol);
   };
 
+  const refreshCurrentState = () => {
+    setRefreshing(true);
+    loadCopilot({ force: true }).then((result) => {
+      setPayload(result.payload || EMPTY_PAYLOAD);
+      setError(result.ok ? "" : result.error || "copilot_endpoint_unavailable");
+    }).finally(() => setRefreshing(false));
+  };
+
   if (payload === null) return <div className="copilot-page"><div className="copilot-loading"><div className="copilot-loader" /><h1>Connecting Astra Copilot</h1><p>Loading one canonical recommendation payload.</p></div></div>;
 
   if (isMobile) return <MobileCopilotView payload={payload} rows={rows} error={error} />;
 
   return (
     <div className="copilot-page">
-      <CopilotHeader payload={payload} rows={rows} error={error} />
+      <CopilotHeader payload={payload} rows={rows} error={error} onRefresh={refreshCurrentState} refreshing={refreshing} />
       <MarketContextStrip rows={rows} />
       {error ? <div className="copilot-alert copilot-alert-danger" role="alert">{error}. The page is showing a safe empty state and has not created a fallback recommendation.</div> : null}
       <FilterBar filter={filter} onChange={setFilter} rows={rows} search={search} onSearch={setSearch} onReset={() => { setFilter("ALL"); setSearch(""); }} />

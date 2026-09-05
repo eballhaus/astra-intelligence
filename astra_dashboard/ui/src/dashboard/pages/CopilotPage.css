@@ -55,6 +55,9 @@
 .copilot-pill-warn strong { color: #f4bd58; }
 .copilot-pill-danger strong { color: #ff7e85; }
 .copilot-updated { color: #8299b7; font-size: 0.7rem; text-align: right; }
+.copilot-refresh { border: 1px solid rgba(116, 172, 255, 0.38); border-radius: 9px; padding: 8px 10px; background: rgba(43, 104, 194, 0.16); color: #cfe4ff; cursor: pointer; font-size: 0.7rem; font-weight: 800; }
+.copilot-refresh:hover, .copilot-refresh:focus-visible { border-color: #78adff; background: rgba(43, 104, 194, 0.3); outline: none; }
+.copilot-refresh:disabled { cursor: progress; opacity: 0.65; }
 
 .copilot-context-strip { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0; padding: 0; border-radius: 16px; overflow: hidden; }
 .copilot-context-item { min-width: 0; padding: 14px 16px; border-right: 1px solid rgba(129, 170, 229, 0.16); }

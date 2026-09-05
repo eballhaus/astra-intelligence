@@ -42,6 +42,13 @@ QUESTION_CORPUS = (
     "What is the sector context for semiconductors?",
     "Is the system healthy?",
     "What is on the roadmap?",
+    "Which opportunities are actually eligible?",
+    "Is Astra still holding NVDA?",
+    "Has Astra reached an exit condition for NVDA?",
+    "Why did Astra reject NVDA?",
+    "Is Astra at capacity?",
+    "What has Astra learned recently?",
+    "How current is Astra's NVDA recommendation?",
 )
 
 
@@ -75,7 +82,11 @@ def _symbol_from_question(question: str, selected_symbol: str, recommendations: 
 
 def _intent(question: str) -> str:
     q = (question or "").lower()
+    if any(token in q for token in ("how current", "last refreshed", "latest data", "freshness", "stale data")):
+        return "freshness"
     if any(token in q for token in ("broker truth", "broker-confirmed", "broker confirmed", "fill", "order")):
+        return "broker_truth"
+    if any(token in q for token in ("completed recently", "trades completed", "recent trades")):
         return "broker_truth"
     if any(token in q for token in ("paper performance", "profit factor", "win rate", "average return", "p/l", "pnl")):
         return "paper_performance"
@@ -93,6 +104,24 @@ def _intent(question: str) -> str:
         return "system_health"
     if any(token in q for token in ("roadmap", "build", "next")):
         return "roadmap"
+    if any(token in q for token in ("actually eligible", "eligible", "order ready", "qualified candidate")):
+        return "candidate_eligibility"
+    if any(token in q for token in ("why did astra reject", "why isn't astra buying", "why not buy", "why rejected", "rejection")):
+        return "candidate_rejection"
+    if any(token in q for token in ("exit condition", "close to selling", "approaching exit", "exit ready", "why did astra sell", "why did astra exit")):
+        return "exit_readiness"
+    if any(token in q for token in ("still holding", "open positions", "position open", "thesis changed", "what changed since", "management state")):
+        return "current_position"
+    if any(token in q for token in ("at capacity", "lane capacity", "which lane has capacity", "capacity")):
+        return "capacity"
+    if any(token in q for token in ("what has astra learned", "learned recently", "similar trades", "learning")):
+        return "learning"
+    if any(token in q for token in ("best stocks", "what stocks", "best opportunities", "current selections", "what does astra like", "what does astra prefer")):
+        return "copilot_recommendation"
+    if any(token in q for token in ("why isn't astra trading", "why isnt astra trading", "what is astra waiting", "why is trading quiet")):
+        return "candidate_rejection"
+    if any(token in q for token in ("what lane", "major risks", "risk in", "thesis changed", "expected horizon")):
+        return "copilot_recommendation"
     if any(token in q for token in ("copilot", "recommendation", "why", "hold", "buy", "sell", "position", "changed")):
         return "copilot_recommendation"
     return "unsupported"
@@ -126,6 +155,13 @@ def resolve_question_route(
     asset_class = "crypto" if symbol in CRYPTO_SYMBOLS or "crypto" in (question or "").lower() else "equity"
     route_sources = {
         "copilot_recommendation": ["_astra_copilot_suite_v1", "astra_knowledge_warehouse_v1"],
+        "candidate_eligibility": ["_astra_copilot_suite_v1", "astra_trading_readiness_v1"],
+        "candidate_rejection": ["_astra_copilot_suite_v1", "lane_execution_trace_ledger_v1"],
+        "current_position": ["_astra_copilot_suite_v1", "canonical_lifecycle"],
+        "exit_readiness": ["_astra_copilot_suite_v1", "exit_readiness"],
+        "capacity": ["astra_operating_health_contract_v1", "astra_trading_readiness_v1"],
+        "learning": ["unified_learning_diagnostics_v1", "astra_knowledge_warehouse_v1"],
+        "freshness": ["_astra_copilot_suite_v1"],
         "broker_truth": ["broker_truth_records_v1", "broker_truth_accumulation_v2", "astra_knowledge_warehouse_v1"],
         "paper_performance": ["broker_truth_records_v1", "broker_truth_accumulation_v2"],
         "shadow_experiment": ["astra_shadow_experiment_governance_v1", "realistic_shadow_evidence_learning_lab_v1"],
@@ -143,6 +179,13 @@ def resolve_question_route(
     replay = status_value(all_statuses, "replay_counterfactual_learning_v2")
     available = {
         "copilot_recommendation": bool(matching or rows),
+        "candidate_eligibility": bool(matching or rows),
+        "candidate_rejection": bool(matching and list(matching.get("blockers") or [])),
+        "current_position": bool(matching and matching.get("position_state") == "POSITION_OPEN"),
+        "exit_readiness": bool(matching and matching.get("position_state") == "POSITION_OPEN"),
+        "capacity": bool(status_value(all_statuses, "astra_operating_health_contract_v1") or status_value(all_statuses, "astra_trading_readiness_v1")),
+        "learning": bool(status_value(all_statuses, "unified_learning_diagnostics_v1")),
+        "freshness": bool(matching),
         "broker_truth": to_int(broker.get("total_complete_broker_confirmed_lifecycles"), 0) > 0,
         "paper_performance": to_int(broker.get("total_complete_broker_confirmed_lifecycles"), 0) > 0,
         "shadow_experiment": bool(shadow),
@@ -163,7 +206,9 @@ def resolve_question_route(
         answer_state = "ANSWERED_FROM_REPLAY_EVIDENCE"
     elif inferred_intent in {"broker_truth", "paper_performance"}:
         answer_state = "ANSWERED_FROM_BROKER_TRUTH"
-    elif matching or inferred_intent in {"system_health", "roadmap", "market_regime", "sector_context"}:
+    elif inferred_intent == "freshness" and str(matching.get("source_freshness_state") or matching.get("freshness") or "").upper() in {"", "CACHED", "UNVERIFIED", "STALE", "DATA_STALE", "EXPIRED"}:
+        answer_state = "FRESHNESS_UNCERTAIN"
+    elif matching or inferred_intent in {"system_health", "roadmap", "market_regime", "sector_context", "capacity", "learning"}:
         answer_state = "ANSWERED_FROM_CANONICAL_CURRENT_DATA"
     else:
         answer_state = "PARTIALLY_ANSWERED"
@@ -174,6 +219,13 @@ def resolve_question_route(
         "recommendation_state": matching.get("canonical_lifecycle_state") or matching.get("action") or None,
         "recommendation_confidence": matching.get("confidence"),
         "recommendation_id": matching.get("recommendation_id"),
+        "candidate_execution_state": matching.get("candidate_execution_state"),
+        "paper_autopilot_eligible": matching.get("paper_autopilot_eligible"),
+        "position_state": matching.get("position_state"),
+        "exit_state": matching.get("advisory_exit_state"),
+        "blockers": list(matching.get("blockers") or []),
+        "freshness": matching.get("freshness"),
+        "source_freshness_state": matching.get("source_freshness_state"),
         "broker_complete_lifecycles": to_int(broker.get("total_complete_broker_confirmed_lifecycles"), 0),
         "broker_metric_status": broker.get("official_metric_status"),
         "shadow_readiness": shadow.get("current_readiness"),
