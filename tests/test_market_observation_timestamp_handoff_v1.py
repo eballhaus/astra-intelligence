@@ -198,6 +198,31 @@ class MarketObservationTimestampHandoffTests(unittest.TestCase):
             native_timestamp,
         )
 
+    def test_loss_management_reuses_recovery_identity_when_db_projection_is_missing(self):
+        engine = self._engine()
+        native_timestamp = _iso(-2)
+        engine._runtime_state["crypto_rankings_snapshot_v1"] = {
+            "crypto_quote_handoffs_v1": [{
+                "symbol": "ETH/USD", "quote_received": True,
+                "provider_bid": 2490.0, "provider_ask": 2491.0,
+                "provider_quote_timestamp": native_timestamp,
+                "quote_observed_at": _iso(-1), "quote_provider": "alpaca",
+            }],
+        }
+        engine._runtime_state["position_lane_horizon_recovery_v1"] = {
+            "positions": [{
+                "symbol": "ETHUSD", "asset_class": "crypto", "lane": "CRYPTO",
+                "canonical_position_id": "ETH/USD:2026-08-26T20:19:05",
+                "canonical_lifecycle_id": "ETH/USD:2026-08-26T20:19:05",
+            }],
+        }
+        quotes = engine._loss_containment_quote_evidence(
+            {"ETHUSD": {"symbol": "ETHUSD", "asset_type": "crypto", "current_price": 2490.5}},
+            managed_rows_by_symbol={},
+        )
+        self.assertEqual(quotes["ETHUSD"]["provider_native_timestamp"], native_timestamp)
+        self.assertEqual(quotes["ETHUSD"]["canonical_position_id"], "ETH/USD:2026-08-26T20:19:05")
+
     def test_profit_management_replaces_missing_broker_timestamp_from_fmp_observation(self):
         engine = self._engine()
         native_timestamp = _iso(-2)

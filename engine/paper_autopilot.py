@@ -13205,6 +13205,18 @@ class PaperAutopilotEngine:
             for symbol, row in dict(managed_rows_by_symbol or {}).items()
             if str(symbol or "").strip() and isinstance(row, Mapping)
         }
+        # Broker-confirmed crypto lifecycles can be absent from the legacy
+        # paper_positions projection after identity rematerialization. Reuse
+        # the canonical recovery rows so loss containment enumerates the same
+        # active identities as profit protection without another provider call.
+        for recovery_row in list(
+            (dict(self._runtime_state.get("position_lane_horizon_recovery_v1") or {}).get("positions") or [])
+        ):
+            if not isinstance(recovery_row, Mapping):
+                continue
+            recovery_symbol = str(recovery_row.get("symbol") or "").upper().strip()
+            if recovery_symbol and recovery_symbol not in managed:
+                managed[recovery_symbol] = dict(recovery_row)
         active_observations = self._canonical_active_position_observations_v1(managed)
         trace_rows: dict[str, dict[str, Any]] = {}
         quote_budget = max(1, min(12, _to_int(os.getenv("ASTRA_LOSS_CONTAINMENT_QUOTES_PER_CYCLE"), 12)))
