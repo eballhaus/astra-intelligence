@@ -13210,7 +13210,7 @@ class PaperAutopilotEngine:
         # the canonical recovery rows so loss containment enumerates the same
         # active identities as profit protection without another provider call.
         recovery = dict(self._runtime_state.get("position_lane_horizon_recovery_v1") or {})
-        if not recovery:
+        if not list(recovery.get("positions") or []):
             recovery_owner = getattr(self, "position_lane_horizon_recovery", None)
             snapshot_fn = getattr(recovery_owner, "snapshot", None)
             if callable(snapshot_fn):
@@ -13223,18 +13223,47 @@ class PaperAutopilotEngine:
             if not isinstance(recovery_row, Mapping):
                 continue
             recovery_symbol = str(recovery_row.get("symbol") or "").upper().strip()
-            if (
-                recovery_symbol
-                and recovery_symbol not in managed
-                and (
-                    not broker_symbols
-                    or any(
-                        alias in broker_symbols
-                        for alias in _broker_position_symbol_aliases_v1(recovery_symbol)
-                    )
-                )
-            ):
+            if not recovery_symbol:
+                continue
+            recovery_aliases = set(_broker_position_symbol_aliases_v1(recovery_symbol))
+            if broker_symbols and not recovery_aliases.intersection(broker_symbols):
+                continue
+            matching_key = next(
+                (
+                    key for key in managed
+                    if key in recovery_aliases
+                    or recovery_aliases.intersection(_broker_position_symbol_aliases_v1(key))
+                ),
+                None,
+            )
+            if matching_key is None:
                 managed[recovery_symbol] = dict(recovery_row)
+                continue
+            existing_row = dict(managed.get(matching_key) or {})
+            recovery_identity = {
+                value for value in (
+                    _pick_first_text(recovery_row.get("canonical_position_id")),
+                    _pick_first_text(recovery_row.get("canonical_lifecycle_id")),
+                    _pick_first_text(recovery_row.get("lifecycle_id")),
+                    _pick_first_text(recovery_row.get("position_id")),
+                ) if value
+            }
+            existing_identity = {
+                value for value in (
+                    _pick_first_text(existing_row.get("canonical_position_id")),
+                    _pick_first_text(existing_row.get("canonical_lifecycle_id")),
+                    _pick_first_text(existing_row.get("lifecycle_id")),
+                    _pick_first_text(existing_row.get("position_id")),
+                ) if value
+            }
+            if existing_identity and recovery_identity and not existing_identity.intersection(recovery_identity):
+                continue
+            merged_row = dict(recovery_row)
+            merged_row.update({
+                key: value for key, value in existing_row.items()
+                if value not in (None, "", [], {})
+            })
+            managed[matching_key] = merged_row
         active_observations = self._canonical_active_position_observations_v1(managed)
         trace_rows: dict[str, dict[str, Any]] = {}
         quote_budget = max(1, min(12, _to_int(os.getenv("ASTRA_LOSS_CONTAINMENT_QUOTES_PER_CYCLE"), 12)))
