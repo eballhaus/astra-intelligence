@@ -71,6 +71,133 @@ class MarketObservationTimestampHandoffTests(unittest.TestCase):
         self.assertTrue(canonical_market_timestamp_v1(quote, source_type="QUOTE", max_age_seconds=20)["executable_freshness"])
         self.assertEqual(engine._open_position_review_quote_v1({"symbol": "AAPL", "asset_type": "stock"}, {}, quotes), quote)
 
+    def test_fresh_crypto_handoff_reaches_management_for_compact_position_symbol(self):
+        engine = self._engine()
+        native_timestamp = _iso(-2)
+        receive_timestamp = _iso(-1)
+        engine.get_latest_row_fn = lambda *_args: self.fail("canonical crypto handoff should avoid a new quote request")
+        engine._runtime_state["crypto_rankings_snapshot_v1"] = {
+            "rows": [],
+            "crypto_quote_handoffs_v1": [{
+                "symbol": "SHIB/USD",
+                "quote_received": True,
+                "provider_bid": 0.00000538,
+                "provider_ask": 0.00000540,
+                "provider_quote_timestamp": native_timestamp,
+                "quote_observed_at": receive_timestamp,
+                "quote_provider": "alpaca",
+            }],
+        }
+        managed = {
+            "SHIBUSD": {
+                "symbol": "SHIBUSD", "asset_type": "crypto", "lane_id": "CRYPTO",
+                "position_id": "crypto-position",
+            },
+        }
+        observations = engine._canonical_active_position_observations_v1(managed)
+        quote = observations["SHIBUSD"]
+        self.assertEqual(quote["canonical_market_symbol"], "SHIB/USD")
+        self.assertEqual(quote["provider_native_timestamp"], native_timestamp)
+        self.assertEqual(quote["receive_timestamp"], receive_timestamp)
+        self.assertAlmostEqual(quote["price"], 0.00000539)
+        self.assertTrue(canonical_market_timestamp_v1(quote, source_type="QUOTE", max_age_seconds=20)["executable_freshness"])
+
+        quotes = engine._loss_containment_quote_evidence(
+            {"SHIBUSD": {"symbol": "SHIBUSD", "asset_type": "crypto", "current_price": 0.00000539}},
+            managed_rows_by_symbol=managed,
+        )
+        self.assertEqual(quotes["SHIBUSD"]["provider_native_timestamp"], native_timestamp)
+        self.assertEqual(quotes["SHIBUSD"]["position_id"], "crypto-position")
+
+    def test_stale_crypto_handoff_remains_fail_closed(self):
+        engine = self._engine()
+        engine.get_latest_row_fn = lambda *_args: {}
+        engine._runtime_state["crypto_rankings_snapshot_v1"] = {
+            "crypto_quote_handoffs_v1": [{
+                "symbol": "ETH/USD",
+                "quote_received": True,
+                "provider_bid": 2490.0,
+                "provider_ask": 2491.0,
+                "provider_quote_timestamp": _iso(-60),
+                "quote_observed_at": _iso(-59),
+                "quote_provider": "alpaca",
+            }],
+        }
+        quotes = engine._loss_containment_quote_evidence(
+            {"ETHUSD": {"symbol": "ETHUSD", "asset_type": "crypto", "current_price": 2490.5}},
+            managed_rows_by_symbol={"ETHUSD": {"symbol": "ETHUSD", "asset_type": "crypto", "lane_id": "CRYPTO", "position_id": "eth-position"}},
+        )
+        evidence = canonical_market_timestamp_v1(quotes["ETHUSD"], source_type="QUOTE", max_age_seconds=20)
+        self.assertFalse(evidence["executable_freshness"])
+        self.assertEqual(evidence["freshness_status"], "UNAVAILABLE")
+
+    def test_fresh_crypto_handoff_wins_over_stale_legacy_observation(self):
+        engine = self._engine()
+        native_timestamp = _iso(-2)
+        engine.get_latest_row_fn = lambda *_args: self.fail("fresh canonical handoff should win without a provider call")
+        engine._runtime_state["active_equity_fmp_observations_v1"] = {
+            "observations": {
+                "ETHUSD": {
+                    "symbol": "ETHUSD", "canonical_position_id": "eth-position",
+                    "provider_native_timestamp": _iso(-60), "price": 2480.0,
+                },
+            },
+        }
+        engine._runtime_state["crypto_rankings_snapshot_v1"] = {
+            "crypto_quote_handoffs_v1": [{
+                "symbol": "ETH/USD", "quote_received": True,
+                "provider_bid": 2490.0, "provider_ask": 2491.0,
+                "provider_quote_timestamp": native_timestamp,
+                "quote_observed_at": _iso(-1), "quote_provider": "alpaca",
+            }],
+        }
+        observations = engine._canonical_active_position_observations_v1({
+            "ETHUSD": {"symbol": "ETHUSD", "asset_type": "crypto", "lane_id": "CRYPTO", "position_id": "eth-position"},
+        })
+        self.assertEqual(observations["ETHUSD"]["provider_native_timestamp"], native_timestamp)
+        self.assertEqual(observations["ETHUSD"]["observation_source"], "crypto_rankings_snapshot_v1.crypto_quote_handoffs_v1")
+
+    def test_crypto_handoff_is_consumed_by_loss_and_profit_management(self):
+        engine = self._engine()
+        native_timestamp = _iso(-2)
+        engine._runtime_state["crypto_rankings_snapshot_v1"] = {
+            "crypto_quote_handoffs_v1": [{
+                "symbol": "ETH/USD", "quote_received": True,
+                "provider_bid": 2490.0, "provider_ask": 2491.0,
+                "provider_quote_timestamp": native_timestamp,
+                "quote_observed_at": _iso(-1), "quote_provider": "alpaca",
+            }],
+        }
+        open_row = {
+            "symbol": "ETHUSD", "asset_type": "crypto", "asset_class": "crypto",
+            "position_id": "eth-position", "lane_id": "CRYPTO", "entry_price": 2480.0,
+        }
+        broker_row = {
+            "symbol": "ETHUSD", "asset_type": "crypto", "asset_class": "crypto",
+            "current_price": 2490.5, "avg_entry_price": 2480.0, "qty": 1.0,
+        }
+        quotes = engine._loss_containment_quote_evidence(
+            {"ETHUSD": broker_row}, managed_rows_by_symbol={"ETHUSD": open_row},
+        )
+        with patch("engine.paper_autopilot.run_loss_containment_review_v1", return_value={"state": {"decisions": {}}}) as loss_review:
+            engine._loss_containment_review_phase(
+                open_rows=[open_row], broker_position_by_symbol={"ETHUSD": broker_row},
+                latest_price_by_symbol=quotes, broker_fetch_succeeded=True,
+            )
+        self.assertEqual(
+            loss_review.call_args.kwargs["latest_price_by_symbol"]["ETHUSD"]["provider_native_timestamp"],
+            native_timestamp,
+        )
+        with patch("engine.paper_autopilot.run_profit_protection_review_v1", return_value={"state": {"decisions": {}}}) as profit_review:
+            engine._profit_protection_review_phase(
+                open_rows=[open_row], broker_position_by_symbol={"ETHUSD": broker_row},
+                broker_fetch_succeeded=True,
+            )
+        self.assertEqual(
+            profit_review.call_args.kwargs["broker_positions"]["ETHUSD"]["provider_native_timestamp"],
+            native_timestamp,
+        )
+
     def test_profit_management_replaces_missing_broker_timestamp_from_fmp_observation(self):
         engine = self._engine()
         native_timestamp = _iso(-2)

@@ -748,6 +748,52 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(fault["classification"], "PROVIDER_EXTERNAL")
         self.assertEqual(result["code_repair_packages"], [])
 
+    def test_fresh_crypto_quote_with_management_gap_is_internal_handoff_mismatch(self):
+        issues = self._monitor()._issues(
+            {
+                "loss_containment_state_v1": {
+                    "decisions": {
+                        "crypto-position": {
+                            "symbol": "ETHUSD", "position_id": "crypto-position",
+                            "lane": "CRYPTO",
+                            "exact_blockers": ["MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE"],
+                        },
+                    },
+                },
+                "crypto_rankings_snapshot_v1": {
+                    "crypto_quote_handoffs_v1": [{
+                        "symbol": "ETH/USD", "quote_received": True,
+                        "provider_bid": 2490.0, "provider_ask": 2491.0,
+                        "provider_quote_timestamp": _iso(-2),
+                        "quote_observed_at": _iso(-1), "quote_provider": "alpaca",
+                    }],
+                },
+            },
+            {"equity_session_open": False, "preopen_window": False},
+        )
+        fault = next(row for row in issues if row["fault_type"] == "PRODUCER_FRESH_CONSUMER_UNAVAILABLE")
+        self.assertEqual(fault["lanes"], ["CRYPTO"])
+        self.assertEqual(fault["classification"], "INTERNAL_CONSUMER_HANDOFF_MISMATCH")
+
+    def test_crypto_quote_absent_everywhere_remains_provider_external(self):
+        issues = self._monitor()._issues(
+            {
+                "loss_containment_state_v1": {
+                    "decisions": {
+                        "crypto-position": {
+                            "symbol": "ETHUSD", "position_id": "crypto-position",
+                            "lane": "CRYPTO",
+                            "exact_blockers": ["MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE"],
+                        },
+                    },
+                },
+                "crypto_rankings_snapshot_v1": {"crypto_quote_handoffs_v1": []},
+            },
+            {"equity_session_open": False, "preopen_window": False},
+        )
+        fault = next(row for row in issues if row["fault_type"] == "PRODUCER_FRESH_CONSUMER_UNAVAILABLE")
+        self.assertEqual(fault["classification"], "PROVIDER_EXTERNAL")
+
     def test_disconnected_ws_does_not_duplicate_subscription_fault(self):
         result = self._monitor().run_if_due(
             runtime_state={

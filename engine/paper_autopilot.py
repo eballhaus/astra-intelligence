@@ -12928,6 +12928,114 @@ class PaperAutopilotEngine:
         payload = dict(state or self._runtime_state.get("loss_containment_state_v1") or {})
         save_loss_containment_state_v1(self.loss_containment_state_path, payload)
 
+    @staticmethod
+    def _crypto_active_position_observations_v1(runtime_state: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+        """Read the worker-owned crypto quote handoff without another request.
+
+        Crypto ranking and active-position management share the worker's
+        persisted quote handoff.  The handoff is a list because it records
+        rejected candidates too, so normalize it into the existing observation
+        contract here and retain only real provider quotes with a usable price.
+        """
+        snapshot = dict(runtime_state.get("crypto_rankings_snapshot_v1") or {})
+        raw_handoffs = runtime_state.get("crypto_quote_handoffs_v1") or snapshot.get("crypto_quote_handoffs_v1") or []
+        if isinstance(raw_handoffs, Mapping):
+            handoffs = [dict(row, symbol=row.get("symbol") or symbol) for symbol, row in raw_handoffs.items() if isinstance(row, Mapping)]
+        else:
+            handoffs = [dict(row) for row in raw_handoffs if isinstance(row, Mapping)]
+        snapshot_rows = {}
+        for raw_row in snapshot.get("rows") or []:
+            if not isinstance(raw_row, Mapping):
+                continue
+            try:
+                identity = canonical_crypto_market_symbol_v1(raw_row.get("symbol"))
+            except Exception:
+                continue
+            snapshot_rows[identity["internal_pair"]] = dict(raw_row)
+
+        observations: dict[str, dict[str, Any]] = {}
+        for handoff in handoffs:
+            if handoff.get("quote_received") is not True:
+                continue
+            try:
+                identity = canonical_crypto_market_symbol_v1(handoff.get("symbol"))
+            except Exception:
+                continue
+            pair = identity["internal_pair"]
+            candidate = dict(snapshot_rows.get(pair) or {})
+            native_timestamp = _pick_first_text(
+                handoff.get("provider_quote_timestamp"),
+                handoff.get("quote_timestamp"),
+                candidate.get("provider_native_timestamp"),
+                candidate.get("provider_quote_timestamp"),
+                candidate.get("quote_timestamp"),
+            )
+            bid = _to_float(
+                candidate.get("bid"),
+                _to_float(handoff.get("snapshot_bid"), _to_float(handoff.get("provider_bid"), 0.0)),
+            )
+            ask = _to_float(
+                candidate.get("ask"),
+                _to_float(handoff.get("snapshot_ask"), _to_float(handoff.get("provider_ask"), 0.0)),
+            )
+            price = _to_float(candidate.get("price"), 0.0)
+            if price <= 0.0:
+                price = ((bid + ask) / 2.0) if bid > 0.0 and ask > 0.0 and ask >= bid else max(bid, ask)
+            if not native_timestamp or price <= 0.0:
+                continue
+            candidate.update({
+                "symbol": pair,
+                "canonical_market_symbol": pair,
+                "asset_type": "crypto",
+                "asset_class": "crypto",
+                "price": price,
+                "bid": bid if bid > 0.0 else None,
+                "ask": ask if ask > 0.0 else None,
+                "bp": bid if bid > 0.0 else None,
+                "ap": ask if ask > 0.0 else None,
+                "provider_native_timestamp": native_timestamp,
+                "provider_quote_timestamp": native_timestamp,
+                "quote_timestamp": native_timestamp,
+                "provider": str(candidate.get("provider") or candidate.get("provider_used") or handoff.get("quote_provider") or "").lower() or None,
+                "provider_used": str(candidate.get("provider_used") or candidate.get("provider") or handoff.get("quote_provider") or "").lower() or None,
+                "provider_provenance": str(candidate.get("provider_provenance") or "CRYPTO_QUOTE_HANDOFF"),
+                "receive_timestamp": handoff.get("quote_observed_at") or candidate.get("receive_timestamp"),
+                "retrieval_timestamp": handoff.get("quote_observed_at") or candidate.get("retrieval_timestamp"),
+                "market_source_type": SOURCE_QUOTE,
+                "observation_source": "crypto_rankings_snapshot_v1.crypto_quote_handoffs_v1",
+            })
+            previous = observations.get(pair)
+            if previous is None or native_timestamp > _pick_first_text(previous.get("provider_native_timestamp")):
+                observations[pair] = candidate
+
+        # A persisted candidate row is still a valid source if an older state
+        # writer omitted the separate handoff list. Freshness is validated by
+        # the caller using the same provider-native timestamp contract.
+        for pair, raw_row in snapshot_rows.items():
+            if pair in observations:
+                continue
+            candidate = dict(raw_row)
+            native_timestamp = _pick_first_text(
+                candidate.get("provider_native_timestamp"),
+                candidate.get("provider_quote_timestamp"),
+                candidate.get("quote_timestamp"),
+            )
+            if not native_timestamp or _to_float(candidate.get("price"), 0.0) <= 0.0:
+                continue
+            candidate.update({
+                "symbol": pair,
+                "canonical_market_symbol": pair,
+                "asset_type": "crypto",
+                "asset_class": "crypto",
+                "provider_native_timestamp": native_timestamp,
+                "provider_quote_timestamp": native_timestamp,
+                "quote_timestamp": native_timestamp,
+                "market_source_type": SOURCE_QUOTE,
+                "observation_source": "crypto_rankings_snapshot_v1.rows",
+            })
+            observations[pair] = candidate
+        return observations
+
     def _canonical_active_position_observations_v1(
         self,
         managed_rows_by_symbol: Mapping[str, Mapping[str, Any]] | None = None,
@@ -12946,6 +13054,11 @@ class PaperAutopilotEngine:
             for symbol, row in dict(managed_rows_by_symbol or {}).items()
             if str(symbol or "").strip() and isinstance(row, Mapping)
         }
+        crypto_observations = self._crypto_active_position_observations_v1(self._runtime_state)
+        crypto_by_alias: dict[str, dict[str, Any]] = {}
+        for pair, observation in crypto_observations.items():
+            for alias in _broker_position_symbol_aliases_v1(pair):
+                crypto_by_alias[alias] = observation
         fmp_observations = dict(
             dict(self._runtime_state.get("active_equity_fmp_observations_v1") or {}).get("observations") or {}
         )
@@ -12972,6 +13085,11 @@ class PaperAutopilotEngine:
         }
         for symbol in symbols:
             managed_row = dict(managed.get(symbol) or {})
+            if not managed_row:
+                for alias in _broker_position_symbol_aliases_v1(symbol):
+                    managed_row = dict(managed.get(alias) or {})
+                    if managed_row:
+                        break
             managed_aliases = {
                 value for value in (
                     _pick_first_text(managed_row.get("canonical_position_id")),
@@ -12980,15 +13098,36 @@ class PaperAutopilotEngine:
                 ) if value
             }
             candidates: list[tuple[float, int, dict[str, Any]]] = []
+            asset_type = _norm_asset(managed_row.get("asset_type") or managed_row.get("asset_class") or "stock")
+            if asset_type != "crypto" and str(managed_row.get("lane_id") or managed_row.get("lane") or "").upper() == "CRYPTO":
+                asset_type = "crypto"
+            crypto_observation = None
+            if asset_type == "crypto":
+                for alias in _broker_position_symbol_aliases_v1(symbol):
+                    crypto_observation = crypto_by_alias.get(alias)
+                    if crypto_observation:
+                        break
             # Prefer the newest valid native observation; WS wins only when
             # timestamps are equally current. FMP remains the existing fallback.
-            for source_priority, observation in enumerate((ws_observations.get(symbol), fmp_observations.get(symbol))):
+            sources = [(0, ws_observations.get(symbol)), (1, fmp_observations.get(symbol))]
+            if asset_type == "crypto":
+                sources.append((2, crypto_observation))
+            for source_priority, observation in sources:
                 if not isinstance(observation, Mapping):
                     continue
                 candidate = dict(observation)
-                if str(candidate.get("symbol") or symbol).upper().strip() != symbol:
+                candidate_symbol = str(candidate.get("symbol") or symbol).upper().strip()
+                if asset_type == "crypto":
+                    if not (_broker_position_symbol_aliases_v1(candidate_symbol) & _broker_position_symbol_aliases_v1(symbol)):
+                        continue
+                elif candidate_symbol != symbol:
                     continue
                 candidate["symbol"] = symbol
+                if asset_type == "crypto":
+                    try:
+                        candidate["canonical_market_symbol"] = canonical_crypto_market_symbol_v1(symbol)["internal_pair"]
+                    except Exception:
+                        pass
                 observation_aliases = {
                     value for value in (
                         _pick_first_text(candidate.get("canonical_position_id")),
@@ -13076,6 +13215,11 @@ class PaperAutopilotEngine:
             if not symbol:
                 continue
             managed_row = dict(managed.get(symbol) or {})
+            if not managed_row:
+                for alias in _broker_position_symbol_aliases_v1(symbol):
+                    managed_row = dict(managed.get(alias) or {})
+                    if managed_row:
+                        break
             trace_key = _pick_first_text(
                 managed_row.get("canonical_position_id"),
                 managed_row.get("lifecycle_id"),
@@ -13104,6 +13248,11 @@ class PaperAutopilotEngine:
             }
             asset_type = _norm_asset(broker_position.get("asset_type") or broker_position.get("asset_class") or "stock")
             cached_observation = dict(active_observations.get(symbol) or {})
+            if not cached_observation and asset_type == "crypto":
+                for alias in _broker_position_symbol_aliases_v1(symbol):
+                    cached_observation = dict(active_observations.get(alias) or {})
+                    if cached_observation:
+                        break
             cached_timestamp = canonical_market_timestamp_v1(
                 cached_observation,
                 source_type=SOURCE_QUOTE,

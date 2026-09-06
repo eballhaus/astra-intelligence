@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from zoneinfo import ZoneInfo
 
+from engine.astra_canonical_market_timestamp_v1 import SOURCE_QUOTE, canonical_market_timestamp_v1
+from engine.provider_router import canonical_crypto_market_symbol_v1
+
 
 VERSION = "ASTRA_TRADING_HOURS_INTEGRITY_MONITOR_V1"
 RECOVERY_VERSION = "ASTRA_SAFE_RUNTIME_RECOVERY_V1"
@@ -99,6 +102,13 @@ def _lane(value: Any) -> str:
 
 def _truthy(value: Any) -> bool:
     return value is True or str(value or "").strip().lower() in {"1", "true", "yes", "ready", "qualified", "selected", "filled"}
+
+
+def _positive_number(value: Any) -> bool:
+    try:
+        return float(value) > 0.0
+    except (TypeError, ValueError):
+        return False
 
 
 def _event_time(*values: Any) -> str:
@@ -423,6 +433,58 @@ class AstraTradingReadinessV1:
             bool(_dict(observations.get(symbol)).get("provider_native_timestamp"))
             for symbol in symbols
         )
+
+    @staticmethod
+    def _crypto_observation_producer_has_current_evidence(runtime: Mapping[str, Any], symbols: set[str]) -> bool:
+        """Compare crypto management failures with the worker quote handoff."""
+        if not symbols:
+            return False
+        snapshot = _dict(runtime.get("crypto_rankings_snapshot_v1"))
+        raw_handoffs = runtime.get("crypto_quote_handoffs_v1") or snapshot.get("crypto_quote_handoffs_v1") or []
+        handoffs = (
+            [dict(row, symbol=row.get("symbol") or symbol) for symbol, row in raw_handoffs.items() if isinstance(row, Mapping)]
+            if isinstance(raw_handoffs, Mapping)
+            else [dict(row) for row in raw_handoffs if isinstance(row, Mapping)]
+        )
+        rows = [_dict(row) for row in snapshot.get("rows") or [] if isinstance(row, Mapping)]
+        available: set[str] = set()
+        for source in [*handoffs, *rows]:
+            if source in handoffs and source.get("quote_received") is not True:
+                continue
+            try:
+                identity = canonical_crypto_market_symbol_v1(source.get("symbol"))
+            except Exception:
+                continue
+            native_timestamp = _text(
+                source.get("provider_quote_timestamp")
+                or source.get("provider_native_timestamp")
+                or source.get("quote_timestamp")
+            )
+            has_price = any(
+                _positive_number(source.get(field))
+                for field in ("price", "bid", "ask", "provider_bid", "provider_ask", "snapshot_bid", "snapshot_ask")
+            )
+            evidence = canonical_market_timestamp_v1(
+                {**source, "provider_native_timestamp": native_timestamp},
+                source_type=SOURCE_QUOTE,
+                max_age_seconds=20.0,
+            )
+            if native_timestamp and has_price and bool(evidence.get("executable_freshness")):
+                available.update({
+                    _text(identity.get("internal_pair")).upper(),
+                    _text(identity.get("provider_response_compact_key")).upper(),
+                })
+        requested: set[str] = set()
+        for symbol in symbols:
+            try:
+                identity = canonical_crypto_market_symbol_v1(symbol)
+            except Exception:
+                return False
+            requested.update({
+                _text(identity.get("internal_pair")).upper(),
+                _text(identity.get("provider_response_compact_key")).upper(),
+            })
+        return requested.issubset(available)
 
     @staticmethod
     def _issue_contract(issue: Mapping[str, Any]) -> dict[str, Any]:
@@ -1388,13 +1450,17 @@ class AstraTradingReadinessV1:
             _dict(_dict(runtime.get("loss_containment_state_v1")).get("decisions")),
             _dict(_dict(runtime.get("profit_protection_state_v1")).get("decisions")),
         )
-        timestamp_failures = []
+        equity_timestamp_failures = []
+        crypto_timestamp_failures = []
         for decisions in decision_sets:
             for row in decisions.values():
                 if not isinstance(row, Mapping):
                     continue
                 symbol = _text(row.get("symbol")).upper()
-                if active_symbols and symbol not in active_symbols:
+                lane = self._lane_from_row(row)
+                asset_type = _text(row.get("asset_type") or row.get("asset_class")).lower()
+                is_crypto = lane == "CRYPTO" or asset_type in {"crypto", "cryptocurrency"}
+                if active_symbols and symbol not in active_symbols and not is_crypto:
                     continue
                 position_id = _text(
                     row.get("canonical_position_id")
@@ -1417,11 +1483,11 @@ class AstraTradingReadinessV1:
                     "MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE" in str(row.get("first_causal_blocker") or row.get("reason") or "")
                     or "MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE" in blockers
                 ):
-                    timestamp_failures.append(row)
-        if active_symbols and timestamp_failures:
+                    (crypto_timestamp_failures if is_crypto else equity_timestamp_failures).append(row)
+        if active_symbols and equity_timestamp_failures:
             timestamp_failure_symbols = {
                 _text(row.get("symbol")).upper()
-                for row in timestamp_failures
+                for row in equity_timestamp_failures
                 if _text(row.get("symbol"))
             }
             current_producer_evidence = self._observation_producer_has_current_evidence(
@@ -1435,11 +1501,38 @@ class AstraTradingReadinessV1:
                 "severity": "HIGH",
                 "repair_action": "REMATERIALIZE_MANAGEMENT_EVIDENCE",
                 "evidence": (
-                    str(len(timestamp_failures))
+                    str(len(equity_timestamp_failures))
                     if current_producer_evidence
                     else "provider_observation_unavailable_before_management"
                 ),
                 **({} if current_producer_evidence else {"classification": "PROVIDER_EXTERNAL"}),
+            })
+        if crypto_timestamp_failures:
+            timestamp_failure_symbols = {
+                _text(row.get("symbol")).upper()
+                for row in crypto_timestamp_failures
+                if _text(row.get("symbol"))
+            }
+            current_producer_evidence = self._crypto_observation_producer_has_current_evidence(
+                runtime,
+                timestamp_failure_symbols,
+            )
+            issues.append({
+                "fault_type": "PRODUCER_FRESH_CONSUMER_UNAVAILABLE",
+                "component": "PaperAutopilot.management_observation_handoff.crypto",
+                "lanes": ["CRYPTO"],
+                "severity": "HIGH",
+                "repair_action": "REMATERIALIZE_MANAGEMENT_EVIDENCE",
+                "evidence": (
+                    str(len(crypto_timestamp_failures))
+                    if current_producer_evidence
+                    else "provider_observation_unavailable_before_management"
+                ),
+                **(
+                    {"classification": "INTERNAL_CONSUMER_HANDOFF_MISMATCH"}
+                    if current_producer_evidence
+                    else {"classification": "PROVIDER_EXTERNAL"}
+                ),
             })
 
         recovery = _dict(runtime.get("position_lane_horizon_recovery_v1"))
