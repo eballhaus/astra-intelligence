@@ -117,6 +117,51 @@ class LegacySwingBrokerMarketEvidenceTests(unittest.TestCase):
             self.assertEqual(trace["evidence_accumulation_capacity_v1"]["capacity_authority_state"], "CURRENT")
             self.assertFalse(engine._runtime_state.get("last_full_cycle_at"))
 
+    def test_active_crypto_refresh_precedes_management_and_is_reused(self):
+        with tempfile.TemporaryDirectory() as state_dir:
+            engine = PaperAutopilotEngine(
+                db_path=f"{state_dir}/paper.db",
+                state_path=f"{state_dir}/paper_autopilot_state.json",
+                enabled=True,
+            )
+            engine._refresh_legacy_swing_canary_pre_submit = lambda _positions: {
+                "market_activity": {"cycle_state": "CYCLE_PARTIAL_BUDGET"}
+            }  # type: ignore[method-assign]
+            engine._refresh_legacy_forward_activations = lambda _positions: {}  # type: ignore[method-assign]
+            engine._run_due_day_lane_close_stage = lambda _positions: {  # type: ignore[method-assign]
+                "reviewed": 0, "submitted": 0, "blocked": 0,
+            }
+            engine._refresh_active_equity_fmp_observations_v1 = lambda: {}  # type: ignore[method-assign]
+            engine._alpaca_safety_snapshot = lambda: {"broker_execution_enabled": True}  # type: ignore[method-assign]
+            engine._broker_open_symbols_snapshot = lambda: {  # type: ignore[method-assign]
+                "broker_reconciliation_active": True,
+                "broker_positions_fetch_ok": True,
+                "broker_position_by_symbol": {},
+                "broker_open_symbols": set(),
+                "broker_open_positions_count": 0,
+            }
+            engine._fetch_open_positions = lambda: [{  # type: ignore[method-assign]
+                "symbol": "ETHUSD", "asset_type": "crypto", "lane_id": "CRYPTO",
+            }]
+            engine._reconcile_current_position_broker_dust_mismatches_v1 = lambda _snapshot: {}  # type: ignore[method-assign]
+            engine._reconcile_entry_price_lineage_v1 = lambda _snapshot: {}  # type: ignore[method-assign]
+            engine._archive_historical_reconciliation_collisions_v1 = lambda: {}  # type: ignore[method-assign]
+            engine._evidence_capacity_snapshot_v1 = lambda *_args: {"capacity_authority_state": "CURRENT"}  # type: ignore[method-assign]
+            events = []
+            engine.refresh_crypto_rankings_fn = lambda: events.append("crypto") or {"status": "CURRENT"}
+            engine._loss_containment_quote_evidence = lambda *_args, **_kwargs: events.append("management") or {}  # type: ignore[method-assign]
+            engine._loss_containment_review_phase = lambda **_kwargs: {}  # type: ignore[method-assign]
+            engine._profit_protection_review_phase = lambda **_kwargs: {}  # type: ignore[method-assign]
+            engine._execution_critical_reconciliation_phase = lambda: {}  # type: ignore[method-assign]
+            engine._run_fmp_production_verification_v1 = lambda *_args: {}  # type: ignore[method-assign]
+            engine._position_evidence_and_advisory_phase = lambda *_args, **_kwargs: ({}, {}, {}, {})  # type: ignore[method-assign]
+            engine._refresh_provider_consumption_telemetry_v1 = lambda *_args: {}  # type: ignore[method-assign]
+            engine._collect_candidate_rows = lambda: []  # type: ignore[method-assign]
+
+            engine.run_cycle()
+
+            self.assertEqual(events, ["crypto", "management"])
+
     def test_legacy_partial_backlog_cannot_starve_canonical_cycle(self):
         with tempfile.TemporaryDirectory() as state_dir:
             engine = PaperAutopilotEngine(state_path=f"{state_dir}/paper_autopilot_state.json", enabled=True)

@@ -14801,6 +14801,8 @@ class PaperAutopilotEngine:
             # This is the same bounded worker-owned refresh and has no order
             # submission path; the later position-aware pass reuses its cache.
             legacy_canary_refresh: dict[str, Any] = {}
+            crypto_refresh: dict[str, Any] = {}
+            crypto_refresh_attempted = False
             preflight_broker_snapshot: dict[str, Any] = {}
             try:
                 # Partial cycles are the normal runtime path under a bounded
@@ -14825,6 +14827,21 @@ class PaperAutopilotEngine:
                 legacy_canary_refresh = self._refresh_legacy_swing_canary_pre_submit(preflight_positions)
                 self._note_worker_progress("active_equity_fmp_observation")
                 self._refresh_active_equity_fmp_observations_v1()
+                # Refresh the existing worker-owned crypto handoff before
+                # active-position management. The partial-cycle path used
+                # to refresh it after management, making the fresh quote
+                # available only to the next cycle.
+                preflight_open_rows = list(self._fetch_open_positions() or [])
+                active_crypto_positions = any(
+                    _norm_asset(row.get("asset_type") or row.get("asset_class") or "") == "crypto"
+                    or str(row.get("lane_id") or row.get("lane") or "").upper().strip() == "CRYPTO"
+                    for row in preflight_open_rows
+                    if isinstance(row, Mapping)
+                )
+                if active_crypto_positions and callable(self.refresh_crypto_rankings_fn):
+                    self._note_worker_progress("crypto_ranking_refresh_pre_management")
+                    crypto_refresh = dict(self.refresh_crypto_rankings_fn() or {})
+                    crypto_refresh_attempted = True
                 self._save_state_file()
             except Exception as exc:
                 legacy_canary_refresh = {"observation_state": "FAILED", "error": str(exc)[:180]}
@@ -14872,16 +14889,17 @@ class PaperAutopilotEngine:
                     self._fetch_open_positions(),
                     safety,
                 )
-                crypto_refresh: dict[str, Any] = {}
-                if callable(self.refresh_crypto_rankings_fn):
+                if not crypto_refresh_attempted and callable(self.refresh_crypto_rankings_fn):
                     try:
                         self._note_worker_progress("crypto_ranking_refresh")
                         crypto_refresh = dict(self.refresh_crypto_rankings_fn() or {})
+                        crypto_refresh_attempted = True
                     except Exception as exc:
                         crypto_refresh = {
                             "status": "FAILED_FAIL_CLOSED",
                             "exact_blocker": f"crypto_ranking_refresh_exception:{str(exc)[:120]}",
                         }
+                        crypto_refresh_attempted = True
                 # The candidate slice is assembled below.  Refresh against
                 # that exact slice rather than a second cached collection so
                 # a partial-cycle DAY contract cannot lose its symbol-matched
