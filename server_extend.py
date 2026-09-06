@@ -21676,7 +21676,29 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         return {"status": "REJECTED_NOT_WORKER_OWNER", "provider_calls_used": 0, "broker_actions_used": 0}
     now = time.time()
     previous = dict(getattr(PAPER_AUTOPILOT, "_runtime_state", {}).get("crypto_rankings_snapshot_v1") or {})
-    if previous.get("rows") and previous.get("quote_provider") not in {"", "local_snapshot", None} and now - float(previous.get("generated_at_epoch") or 0.0) <= max(30.0, float(RANKINGS_ENDPOINT_TTL_SECONDS)):
+    from engine.provider_router import canonical_crypto_market_symbol_v1
+
+    open_crypto_rows = _paper_autopilot_crypto_open_rows_v1()
+    active_management_symbols: list[str] = []
+    for row in open_crypto_rows:
+        try:
+            symbol = canonical_crypto_market_symbol_v1(row.get("symbol"))["internal_pair"]
+        except (KeyError, TypeError, ValueError):
+            continue
+        if symbol and symbol not in active_management_symbols:
+            active_management_symbols.append(symbol)
+    previous_handoff_symbols: set[str] = set()
+    for handoff in list(previous.get("crypto_quote_handoffs_v1") or []):
+        if not isinstance(handoff, dict) or handoff.get("quote_received") is not True:
+            continue
+        try:
+            symbol = canonical_crypto_market_symbol_v1(handoff.get("symbol"))["internal_pair"]
+        except (KeyError, TypeError, ValueError):
+            continue
+        if handoff.get("provider_quote_timestamp") or handoff.get("quote_timestamp"):
+            previous_handoff_symbols.add(symbol)
+    missing_active_handoffs = set(active_management_symbols) - previous_handoff_symbols
+    if previous.get("rows") and previous.get("quote_provider") not in {"", "local_snapshot", None} and not missing_active_handoffs and now - float(previous.get("generated_at_epoch") or 0.0) <= max(30.0, float(RANKINGS_ENDPOINT_TTL_SECONDS)):
         return {"status": "CURRENT_CACHE_REUSED", "generated_at": previous.get("generated_at"), "rows": len(previous.get("rows") or []), "provider_calls_used": 0, "broker_actions_used": 0}
     if previous.get("status") == "FAILED_FAIL_CLOSED" and now - float(previous.get("generated_at_epoch") or 0.0) <= 120.0:
         return {"status": "RECENT_FAILURE_COOLDOWN", "exact_blocker": previous.get("exact_blocker"), "provider_calls_used": 0, "broker_actions_used": 0}
@@ -21699,6 +21721,7 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
     cursor = int(previous.get("discovery_cursor") or 0) % len(discovered)
     from engine.astra_crypto_executable_pair_quality_v1 import (
         apply_crypto_executable_quality_tiebreak_v1,
+        prioritize_active_crypto_pairs_v1,
         record_crypto_quote_observation_v1,
         select_crypto_hybrid_rotation_batch_v1,
     )
@@ -21730,6 +21753,13 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
             batch_size=batch_size,
         )
         symbols = list(rotation_plan["batch_pairs"])
+    rotation_plan = prioritize_active_crypto_pairs_v1(
+        rotation_plan,
+        active_management_symbols,
+        discovered,
+        batch_size=batch_size,
+    )
+    symbols = list(rotation_plan["batch_pairs"])
     end = datetime.now(UTC)
     start = end - timedelta(hours=6)
     output, failures, volume_audit, quote_integrity_rows = [], [], [], []
@@ -21879,11 +21909,15 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         "crypto_volume_audit": volume_audit, "failed_pairs": failures,
         "crypto_quote_integrity_rows": quote_integrity_rows,
         "crypto_quote_handoffs_v1": quote_handoffs,
+        "open_position_management_symbols": active_management_symbols,
+        "open_position_management_symbols_evaluated": list(rotation_plan.get("management_priority_symbols_evaluated") or []),
+        "open_position_management_symbols_deferred": list(rotation_plan.get("management_priority_symbols_deferred") or []),
+        "open_position_management_symbols_missing_from_universe": list(rotation_plan.get("management_priority_symbols_missing_from_universe") or []),
         "crypto_executable_pair_quality_v1": executable_pair_quality,
         "crypto_quote_integrity": {"pairs_requested": len(symbols), "pairs_with_quote": sum(1 for row in quote_integrity_rows if row.get("quote_received")), "pairs_with_bid_ask": sum(1 for row in quote_integrity_rows if row.get("bid_present") and row.get("ask_present")), "pairs_with_calculated_spread": sum(1 for row in quote_integrity_rows if row.get("spread_present")), "pairs_missing_bid_ask": sum(1 for row in quote_integrity_rows if not (row.get("bid_present") and row.get("ask_present"))), "pairs_persisted": sum(1 for row in quote_integrity_rows if row.get("candidate_persisted"))},
         "capability_refresh": capability_refresh,
         "pairs_evaluated_this_cycle": len(symbols), "rotation_cycles_remaining": max(0, math.ceil(len(discovered) / batch_size) - 1),
-        "rotation_observability": {"evaluated_symbols": symbols, "core_pairs_in_discovery": [pair for pair in ("BTC/USD", "ETH/USD", "LINK/USD", "LTC/USD") if pair in discovered], "fair_rotation_enforced": True, "market_data_diagnostic_active": diagnostic_active, "market_data_diagnostic_remaining": max(0, len(diagnostic_set) - (diagnostic_cursor + len(symbols) if diagnostic_active else diagnostic_cursor)), "crypto_rotation_mode": rotation_plan["crypto_rotation_mode"], "priority_pair": rotation_plan["priority_pair"], "priority_reason": rotation_plan["priority_reason"], "priority_pass_rate": rotation_plan["priority_pass_rate"], "exploration_pairs": rotation_plan["exploration_pairs"], "batch_pairs": rotation_plan["batch_pairs"], "priority_source": rotation_plan["priority_source"], "provider_calls_used": provider_calls_used, "broker_actions_used": 0},
+        "rotation_observability": {"evaluated_symbols": symbols, "core_pairs_in_discovery": [pair for pair in ("BTC/USD", "ETH/USD", "LINK/USD", "LTC/USD") if pair in discovered], "fair_rotation_enforced": True, "market_data_diagnostic_active": diagnostic_active, "market_data_diagnostic_remaining": max(0, len(diagnostic_set) - (diagnostic_cursor + len(symbols) if diagnostic_active else diagnostic_cursor)), "crypto_rotation_mode": rotation_plan["crypto_rotation_mode"], "priority_pair": rotation_plan["priority_pair"], "priority_reason": rotation_plan["priority_reason"], "priority_pass_rate": rotation_plan["priority_pass_rate"], "exploration_pairs": rotation_plan["exploration_pairs"], "batch_pairs": rotation_plan["batch_pairs"], "priority_source": rotation_plan["priority_source"], "management_priority_symbols": rotation_plan.get("management_priority_symbols", []), "management_priority_symbols_evaluated": rotation_plan.get("management_priority_symbols_evaluated", []), "management_priority_symbols_deferred": rotation_plan.get("management_priority_symbols_deferred", []), "management_priority_symbols_missing_from_universe": rotation_plan.get("management_priority_symbols_missing_from_universe", []), "management_priority_applied": rotation_plan.get("management_priority_applied", False), "provider_calls_used": provider_calls_used, "broker_actions_used": 0},
     }
     PAPER_AUTOPILOT._runtime_state["crypto_rankings_snapshot_v1"] = snapshot
     PAPER_AUTOPILOT._runtime_state["crypto_quote_handoffs_v1"] = quote_handoffs

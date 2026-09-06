@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import Any, Iterable, Mapping
 
 from engine.astra_multilane_activation_v2 import is_natural_paper_truth, strict_broker_truth
+from engine.provider_router import canonical_crypto_market_symbol_v1
 
 
 VERSION = "1.0.0"
@@ -77,7 +78,14 @@ def _lane(row: Mapping[str, Any]) -> str:
 
 
 def _symbol(row: Mapping[str, Any]) -> str:
-    return _upper(row.get("symbol") or row.get("canonical_symbol") or row.get("ticker")).replace(" ", "")
+    raw = _upper(row.get("symbol") or row.get("canonical_symbol") or row.get("ticker")).replace(" ", "")
+    asset = _upper(row.get("asset_class") or row.get("asset_type"))
+    if "/" in raw or asset in {"CRYPTO", "CRYPTOCURRENCY"} or raw.endswith("USD"):
+        try:
+            return canonical_crypto_market_symbol_v1(raw)["internal_pair"]
+        except (KeyError, TypeError, ValueError):
+            pass
+    return raw
 
 
 def _lifecycle_id(row: Mapping[str, Any]) -> str:
@@ -166,12 +174,20 @@ def _observation_map(runtime: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
         for symbol, row in _dict(observations).items():
             if isinstance(row, Mapping) and _symbol({"symbol": symbol}):
                 candidates.append((precedence, {"symbol": symbol, **dict(row), "observation_source": key}))
-    crypto = _dict(runtime.get("crypto_quote_handoffs_v1"))
-    if not crypto:
-        crypto = _dict(_dict(runtime.get("crypto_rankings_snapshot_v1")).get("crypto_quote_handoffs_v1"))
-    for symbol, row in crypto.items():
+    crypto_raw = runtime.get("crypto_quote_handoffs_v1")
+    if crypto_raw in (None, {}, []):
+        crypto_raw = _dict(runtime.get("crypto_rankings_snapshot_v1")).get("crypto_quote_handoffs_v1")
+    if isinstance(crypto_raw, Mapping):
+        crypto_rows = [
+            {"symbol": symbol, **dict(row)}
+            for symbol, row in crypto_raw.items()
+            if isinstance(row, Mapping)
+        ]
+    else:
+        crypto_rows = [dict(row) for row in list(crypto_raw or []) if isinstance(row, Mapping)]
+    for row in crypto_rows:
         if isinstance(row, Mapping):
-            candidates.append((2, {"symbol": symbol, **dict(row), "observation_source": "crypto_quote_handoffs_v1"}))
+            candidates.append((2, {**dict(row), "observation_source": "crypto_quote_handoffs_v1"}))
     result: dict[str, dict[str, Any]] = {}
     for _, row in candidates:
         symbol = _symbol(row)
@@ -616,11 +632,13 @@ def build_natural_truth_lifecycle_intelligence_v1(
             "lifecycle_deadline": deadline or {"status": "NOT_DUE"},
             "current_fault": {key: fault.get(key) for key in ("fault_type", "classification", "earliest_stage", "failing_invariant", "owner_file", "owner_function") if fault.get(key) not in (None, "")},
             "observation": {
-                "provider": _text(observation.get("provider") or observation.get("provenance")) or None,
-                "provider_native_timestamp": _text(observation.get("provider_native_timestamp")) or None,
-                "receive_timestamp": _text(observation.get("receive_timestamp") or observation.get("received_at")) or None,
-                "freshness_state": _upper(observation.get("freshness_state") or observation.get("freshness")) or "UNAVAILABLE",
-                "age_seconds": _age_seconds(observation.get("provider_native_timestamp"), current),
+                "provider": _text(observation.get("provider") or observation.get("provider_used") or observation.get("quote_provider") or observation.get("provenance")) or None,
+                "provider_native_timestamp": _text(observation.get("provider_native_timestamp") or observation.get("provider_quote_timestamp") or observation.get("quote_timestamp")) or None,
+                "receive_timestamp": _text(observation.get("receive_timestamp") or observation.get("received_at") or observation.get("quote_observed_at")) or None,
+                "freshness_state": _upper(observation.get("freshness_state") or observation.get("freshness")) or (
+                    "CURRENT" if (_age_seconds(observation.get("provider_native_timestamp") or observation.get("provider_quote_timestamp") or observation.get("quote_timestamp"), current) or float("inf")) <= 20.0 else "STALE"
+                ),
+                "age_seconds": _age_seconds(observation.get("provider_native_timestamp") or observation.get("provider_quote_timestamp") or observation.get("quote_timestamp"), current),
                 "source": _text(observation.get("observation_source")) or None,
             },
             "pre_exit_reconciliation_assurance": _pre_exit_assurance(row),

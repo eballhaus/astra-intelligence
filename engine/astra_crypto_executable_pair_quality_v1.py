@@ -10,6 +10,8 @@ from datetime import UTC, datetime
 from functools import cmp_to_key
 from typing import Any, Mapping
 
+from engine.provider_router import canonical_crypto_market_symbol_v1
+
 
 SCHEMA_VERSION = "1.0.0"
 MAX_PAIRS = 32
@@ -261,6 +263,52 @@ def select_crypto_hybrid_rotation_batch_v1(
         "batch_pairs": batch_pairs,
         "next_cursor": next_cursor,
     }
+
+
+def prioritize_active_crypto_pairs_v1(
+    rotation: Mapping[str, Any] | None,
+    active_symbols: list[Any] | tuple[Any, ...] | None,
+    universe: list[Any] | tuple[Any, ...] | None,
+    *,
+    batch_size: int = 3,
+) -> dict[str, Any]:
+    """Keep canonical open crypto positions inside the existing batch budget.
+
+    This changes observation order only. Candidate ranking, pair eligibility,
+    provider routing, and the bounded batch size remain owned by the existing
+    worker path.
+    """
+    plan = dict(rotation or {})
+    size = max(0, min(int(batch_size or 0), len(list(universe or []))))
+
+    def pair(value: Any) -> str:
+        try:
+            return str(canonical_crypto_market_symbol_v1(value)["internal_pair"])
+        except (KeyError, TypeError, ValueError):
+            return _symbol(value).replace("-", "/")
+
+    universe_pairs = {pair(value) for value in (universe or []) if pair(value)}
+    active_pairs: list[str] = []
+    for value in active_symbols or ():
+        normalized = pair(value)
+        if normalized and normalized not in active_pairs:
+            active_pairs.append(normalized)
+    covered = [value for value in active_pairs if value in universe_pairs]
+    selected = [pair(value) for value in (plan.get("batch_pairs") or []) if pair(value)]
+    selected = list(dict.fromkeys(selected))
+    prioritized = [*covered, *(value for value in selected if value not in covered)]
+    batch_pairs = prioritized[:size]
+    plan.update({
+        "batch_pairs": batch_pairs,
+        "exploration_pairs": [value for value in batch_pairs if value not in covered],
+        "management_priority_symbols": active_pairs,
+        "management_priority_symbols_in_universe": covered,
+        "management_priority_symbols_evaluated": [value for value in covered if value in batch_pairs],
+        "management_priority_symbols_deferred": [value for value in covered if value not in batch_pairs],
+        "management_priority_symbols_missing_from_universe": [value for value in active_pairs if value not in universe_pairs],
+        "management_priority_applied": bool(covered and not [value for value in covered if value not in batch_pairs] and batch_pairs[:len(covered)] == covered),
+    })
+    return plan
 
 
 def apply_crypto_executable_quality_tiebreak_v1(

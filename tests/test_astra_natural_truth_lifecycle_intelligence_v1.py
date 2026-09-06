@@ -119,6 +119,44 @@ def test_open_lifecycle_joins_canonical_identity_and_preserves_fresh_observation
     assert result["safety"]["production_truths_created"] == 0
 
 
+def test_compact_crypto_position_symbol_joins_slash_form_observation() -> None:
+    runtime = {
+        "position_lane_horizon_recovery_v1": {"positions": [{
+            "symbol": "ETHUSD",
+            "canonical_lifecycle_id": "crypto-life",
+            "entry_fill_id": "crypto-entry",
+            "lane": "CRYPTO",
+            "asset_type": "crypto",
+            "horizon": "day_trade",
+            "canonical_identity_status": "RESOLVED",
+        }]},
+        "crypto_quote_handoffs_v1": [{
+            "symbol": "ETH/USD",
+            "quote_received": True,
+            "provider_quote_timestamp": "2026-08-20T13:30:00Z",
+            "quote_observed_at": "2026-08-20T13:30:01Z",
+            "price": 3000.0,
+            "quote_provider": "alpaca",
+        }],
+        "position_exit_readiness_v1": {"positions": [{
+            "symbol": "ETH/USD",
+            "canonical_position_id": "crypto-life",
+            "exit_readiness_state": "HOLD",
+            "recommendation": "HOLD",
+        }]},
+    }
+    result = build_natural_truth_lifecycle_intelligence_v1(
+        runtime_state=runtime,
+        readiness=_readiness(),
+        current_commit="test",
+        now=datetime(2026, 8, 20, 13, 30, 5, tzinfo=UTC),
+    )
+    row = result["current_lifecycle_state"][0]
+    assert row["symbol"] == "ETH/USD"
+    assert row["observation"]["provider_native_timestamp"] == "2026-08-20T13:30:00Z"
+    assert row["observation"]["freshness_state"] == "CURRENT"
+
+
 def test_same_session_deadline_is_not_reported_as_natural_open_position() -> None:
     runtime = {
         "position_lane_horizon_recovery_v1": {"positions": [{

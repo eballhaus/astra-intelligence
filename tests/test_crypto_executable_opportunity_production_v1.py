@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 from engine.astra_crypto_executable_pair_quality_v1 import (
     apply_crypto_executable_quality_tiebreak_v1,
+    prioritize_active_crypto_pairs_v1,
     quality_for_crypto_pair_v1,
     record_crypto_quote_observation_v1,
     select_crypto_hybrid_rotation_batch_v1,
@@ -39,6 +40,25 @@ def _state(symbol: str, ages: list[float]) -> dict:
 
 
 class CryptoExecutablePairQualityTests(unittest.TestCase):
+    def test_open_positions_are_prioritized_without_growing_rotation_batch(self):
+        rotation = select_crypto_hybrid_rotation_batch_v1(
+            ["ADA/USD", "ETH/USD", "SHIB/USD", "SOL/USD"], 0, {}, batch_size=3
+        )
+        prioritized = prioritize_active_crypto_pairs_v1(
+            rotation, ["ETHUSD", "SHIB/USD"], ["ADA/USD", "ETH/USD", "SHIB/USD", "SOL/USD"], batch_size=3
+        )
+        self.assertEqual(prioritized["batch_pairs"][:2], ["ETH/USD", "SHIB/USD"])
+        self.assertEqual(len(prioritized["batch_pairs"]), 3)
+        self.assertEqual(prioritized["management_priority_symbols_evaluated"], ["ETH/USD", "SHIB/USD"])
+        self.assertEqual(prioritized["management_priority_symbols_deferred"], [])
+
+    def test_open_position_not_in_discovery_universe_is_reported_not_injected(self):
+        rotation = {"batch_pairs": ["ADA/USD"], "exploration_pairs": ["ADA/USD"]}
+        prioritized = prioritize_active_crypto_pairs_v1(
+            rotation, ["ETH/USD"], ["ADA/USD"], batch_size=3
+        )
+        self.assertEqual(prioritized["batch_pairs"], ["ADA/USD"])
+        self.assertEqual(prioritized["management_priority_symbols_missing_from_universe"], ["ETH/USD"])
     def test_repeatedly_fresh_pair_becomes_positive_after_bounded_sample(self):
         quality = quality_for_crypto_pair_v1(_state("ADA/USD", [3, 5, 7, 9]), "ADA/USD")
         self.assertEqual(quality["quality"], "RELIABLE_EXECUTABLE")
