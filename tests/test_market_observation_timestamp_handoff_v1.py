@@ -209,13 +209,15 @@ class MarketObservationTimestampHandoffTests(unittest.TestCase):
                 "quote_observed_at": _iso(-1), "quote_provider": "alpaca",
             }],
         }
-        engine._runtime_state["position_lane_horizon_recovery_v1"] = {
-            "positions": [{
+        engine.position_lane_horizon_recovery = type(
+            "RecoveryLedger",
+            (),
+            {"snapshot": lambda _self: {"positions": [{
                 "symbol": "ETHUSD", "asset_class": "crypto", "lane": "CRYPTO",
                 "canonical_position_id": "ETH/USD:2026-08-26T20:19:05",
                 "canonical_lifecycle_id": "ETH/USD:2026-08-26T20:19:05",
-            }],
-        }
+            }]}},
+        )()
         quotes = engine._loss_containment_quote_evidence(
             {"ETHUSD": {"symbol": "ETHUSD", "asset_type": "crypto", "current_price": 2490.5}},
             managed_rows_by_symbol={},

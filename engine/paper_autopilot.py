@@ -13209,13 +13209,31 @@ class PaperAutopilotEngine:
         # paper_positions projection after identity rematerialization. Reuse
         # the canonical recovery rows so loss containment enumerates the same
         # active identities as profit protection without another provider call.
-        for recovery_row in list(
-            (dict(self._runtime_state.get("position_lane_horizon_recovery_v1") or {}).get("positions") or [])
-        ):
+        recovery = dict(self._runtime_state.get("position_lane_horizon_recovery_v1") or {})
+        if not recovery:
+            recovery_owner = getattr(self, "position_lane_horizon_recovery", None)
+            snapshot_fn = getattr(recovery_owner, "snapshot", None)
+            if callable(snapshot_fn):
+                try:
+                    recovery = dict(snapshot_fn() or {})
+                except Exception:
+                    recovery = {}
+        broker_symbols = set(dict(broker_position_by_symbol or {}))
+        for recovery_row in list(recovery.get("positions") or []):
             if not isinstance(recovery_row, Mapping):
                 continue
             recovery_symbol = str(recovery_row.get("symbol") or "").upper().strip()
-            if recovery_symbol and recovery_symbol not in managed:
+            if (
+                recovery_symbol
+                and recovery_symbol not in managed
+                and (
+                    not broker_symbols
+                    or any(
+                        alias in broker_symbols
+                        for alias in _broker_position_symbol_aliases_v1(recovery_symbol)
+                    )
+                )
+            ):
                 managed[recovery_symbol] = dict(recovery_row)
         active_observations = self._canonical_active_position_observations_v1(managed)
         trace_rows: dict[str, dict[str, Any]] = {}
