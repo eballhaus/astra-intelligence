@@ -13210,14 +13210,65 @@ class PaperAutopilotEngine:
         # the canonical recovery rows so loss containment enumerates the same
         # active identities as profit protection without another provider call.
         recovery = dict(self._runtime_state.get("position_lane_horizon_recovery_v1") or {})
-        if not list(recovery.get("positions") or []):
-            recovery_owner = getattr(self, "position_lane_horizon_recovery", None)
-            snapshot_fn = getattr(recovery_owner, "snapshot", None)
-            if callable(snapshot_fn):
-                try:
-                    recovery = dict(snapshot_fn() or {})
-                except Exception:
-                    recovery = {}
+        recovery_owner = getattr(self, "position_lane_horizon_recovery", None)
+        snapshot_fn = getattr(recovery_owner, "snapshot", None)
+        if callable(snapshot_fn):
+            try:
+                owner_recovery = dict(snapshot_fn() or {})
+            except Exception:
+                owner_recovery = {}
+            owner_rows = [
+                dict(row) for row in (owner_recovery.get("positions") or [])
+                if isinstance(row, Mapping)
+            ]
+            runtime_rows = [
+                dict(row) for row in (recovery.get("positions") or [])
+                if isinstance(row, Mapping)
+            ]
+            if not runtime_rows:
+                recovery = owner_recovery
+            elif owner_rows:
+                # The in-memory envelope may be valid but incomplete after a
+                # restart or broker rematerialization. Supplement it with
+                # missing canonical owner rows without replacing conflicting
+                # lifecycle identities.
+                combined_rows = list(runtime_rows)
+                for owner_row in owner_rows:
+                    owner_symbol = str(owner_row.get("symbol") or "").upper().strip()
+                    owner_aliases = set(_broker_position_symbol_aliases_v1(owner_symbol))
+                    matching_row = next(
+                        (
+                            row for row in combined_rows
+                            if owner_aliases.intersection(
+                                _broker_position_symbol_aliases_v1(
+                                    str(row.get("symbol") or "").upper().strip()
+                                )
+                            )
+                        ),
+                        None,
+                    )
+                    if matching_row is None:
+                        combined_rows.append(owner_row)
+                        continue
+                    owner_ids = {
+                        value for value in (
+                            _pick_first_text(owner_row.get("canonical_position_id")),
+                            _pick_first_text(owner_row.get("canonical_lifecycle_id")),
+                            _pick_first_text(owner_row.get("lifecycle_id")),
+                            _pick_first_text(owner_row.get("position_id")),
+                        ) if value
+                    }
+                    matching_ids = {
+                        value for value in (
+                            _pick_first_text(matching_row.get("canonical_position_id")),
+                            _pick_first_text(matching_row.get("canonical_lifecycle_id")),
+                            _pick_first_text(matching_row.get("lifecycle_id")),
+                            _pick_first_text(matching_row.get("position_id")),
+                        ) if value
+                    }
+                    if not matching_ids or not owner_ids or matching_ids.intersection(owner_ids):
+                        combined_rows.append(owner_row)
+                recovery = {**recovery, "positions": combined_rows}
         broker_symbols = set(dict(broker_position_by_symbol or {}))
         for recovery_row in list(recovery.get("positions") or []):
             if not isinstance(recovery_row, Mapping):
@@ -14894,7 +14945,7 @@ class PaperAutopilotEngine:
                 active_crypto_positions = any(
                     _norm_asset(row.get("asset_type") or row.get("asset_class") or "") == "crypto"
                     or str(row.get("lane_id") or row.get("lane") or "").upper().strip() == "CRYPTO"
-                    for row in preflight_open_rows
+                    for row in [*preflight_open_rows, *preflight_positions.values()]
                     if isinstance(row, Mapping)
                 )
                 if active_crypto_positions and callable(self.refresh_crypto_rankings_fn):

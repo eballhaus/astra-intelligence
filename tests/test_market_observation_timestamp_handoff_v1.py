@@ -202,7 +202,10 @@ class MarketObservationTimestampHandoffTests(unittest.TestCase):
         engine = self._engine()
         native_timestamp = _iso(-2)
         engine._runtime_state["position_lane_horizon_recovery_v1"] = {
-            "status": "CURRENT", "positions": [],
+            "status": "CURRENT", "positions": [{
+                "symbol": "AAPL", "asset_class": "stock", "lane": "DAY",
+                "canonical_position_id": "AAPL:unrelated",
+            }],
         }
         engine._runtime_state["crypto_rankings_snapshot_v1"] = {
             "crypto_quote_handoffs_v1": [{
