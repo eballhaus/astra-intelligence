@@ -147,7 +147,7 @@ class SentinelCausalHandoffIntegrityTests(unittest.TestCase):
         fact = next(row for row in monitors["facts"] if row["kind"] == "HORIZON_DEADLINE_MISSED")
         self.assertEqual(fact["consumer_state"], "STALE_PROVIDER_NATIVE_TIMESTAMP")
 
-    def test_native_same_session_deadline_surfaces_for_day_and_scalp(self):
+    def test_native_same_session_deadline_is_a_session_wait_when_regular_session_is_closed(self):
         monitors = collect_platform_integrity_monitors_v2({
             "position_lane_horizon_recovery": {"positions": [
                 {"symbol": "GEHC", "lane": "SCALP", "canonical_lifecycle_id": "scalp-life", "same_session_exit_required": True},
@@ -175,8 +175,23 @@ class SentinelCausalHandoffIntegrityTests(unittest.TestCase):
         scalp = next(row for row in facts if row["lifecycle_id"] == "scalp-life")
         self.assertEqual(scalp["first_incomplete_stage"], "EXIT_ORDER")
         self.assertEqual(scalp["deadline_source"], "native_lane_exit_lifecycle_v1.reason")
-        signal = classify_causal_handoff_facts_v1([scalp])["signals"][0]
-        self.assertEqual(signal["causal_finding_v1"]["first_incomplete_stage"], "EXIT_ORDER")
+        classified = classify_causal_handoff_facts_v1([scalp])
+        self.assertEqual(classified["signals"], [])
+        self.assertEqual(classified["nondefects"][0]["category"], "SESSION_WAIT")
+        self.assertTrue(classified["nondefects"][0]["legitimate_fail_closed"])
+        self.assertEqual(classified["nondefects"][0]["first_incomplete_stage"], "EXIT_ORDER")
+
+    def test_same_session_deadline_without_a_session_wait_remains_an_exit_blocker(self):
+        result = classify_causal_handoff_facts_v1([{
+            "kind": "HORIZON_DEADLINE_MISSED",
+            "lane": "SCALP",
+            "symbol": "GEHC",
+            "lifecycle_id": "life-3",
+            "consumer_blocker": "EXIT_EVALUATION_MISSING",
+            "first_incomplete_stage": "EXIT_DECISION",
+        }])
+        self.assertEqual(result["nondefects"], [])
+        self.assertEqual(result["signals"][0]["category"], "HORIZON_DEADLINE_MISSED")
 
     def test_scanner_publishes_bounded_causal_root_to_existing_sentinel_path(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -120,6 +120,19 @@ def _event_time(*values: Any) -> str:
     return ""
 
 
+def _wall_clock_timestamp_is_current(value: Any, *, maximum_age_seconds: float) -> bool:
+    """Validate persisted readiness age across worker-process restarts."""
+    stamp = _text(value)
+    if not stamp:
+        return False
+    try:
+        observed = datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone(UTC)
+    except ValueError:
+        return False
+    age = (datetime.now(UTC) - observed).total_seconds()
+    return -30.0 <= age <= float(maximum_age_seconds)
+
+
 def _read(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -1652,7 +1665,20 @@ class AstraTradingReadinessV1:
         )
         current_discovery_flow = self._current_equity_candidate_flow(runtime_state)
         recheck_cached_discovery = bool(session.get("equity_session_open")) and cached_discovery_fault and current_discovery_flow
-        if not force and previous and previous_watchdog and watchdog_migrated and now - float(previous.get("scan_monotonic") or 0.0) < interval and not recheck_cached_discovery:
+        monotonic_current = now - float(previous.get("scan_monotonic") or 0.0) < interval
+        wall_clock_current = _wall_clock_timestamp_is_current(
+            previous.get("generated_at"),
+            maximum_age_seconds=interval,
+        )
+        if (
+            not force
+            and previous
+            and previous_watchdog
+            and watchdog_migrated
+            and monotonic_current
+            and wall_clock_current
+            and not recheck_cached_discovery
+        ):
             return {**previous, "due": False, "provider_calls_used": 0, "broker_actions_used": 0}
 
         actions = dict(actions or {})

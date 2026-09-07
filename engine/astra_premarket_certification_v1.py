@@ -456,6 +456,14 @@ def build_runtime_certification_v1(
             ("RESOURCE_NOT_ACCEPTABLE", resource_ok), (revision_reason, revision_match),
             (source_identity_reason, source_identity_ok),
         ) if reason and not passed]},
+        "readiness_artifact": {
+            "passed": readiness_current,
+            "state": "CURRENT" if readiness_current else "STALE_READINESS_ARTIFACT",
+            "generated_at": ready.get("generated_at"),
+            "age_seconds": readiness_age,
+            "maximum_age_seconds": 900.0,
+            "source": "AstraTradingReadinessV1.generated_at",
+        },
         "discovery": {"passed": discovery_ok, "source": "AstraTradingReadinessV1.discovery_integrity"},
         "entry_funnel": {"passed": entry_ok, "source": "AstraTradingReadinessV1 + canonical multilane matrix", "matrix_available": bool(matrix)},
         "observation": {"passed": observation_ok, "active_symbols": sorted(active_symbols), "ws_flowing": ws_flowing, "approved_fallback_fresh": fallback_fresh, "equity_evidence_expected": equity_expected},
@@ -491,6 +499,8 @@ def build_runtime_certification_v1(
         reasons.append(revision_reason)
     if source_identity_reason:
         reasons.append(source_identity_reason)
+    if not readiness_current:
+        reasons.append("STALE_READINESS_ARTIFACT")
     if external_faults:
         reasons.extend(sorted({_runtime_text(row.get("fault_type")) for row in external_faults if _runtime_text(row.get("fault_type"))}))
     if not full_technical_pass and not reasons:

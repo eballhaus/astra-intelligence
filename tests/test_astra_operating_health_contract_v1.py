@@ -96,6 +96,23 @@ class OperatingHealthContractTests(unittest.TestCase):
             self.assertEqual(allowed["lanes"]["CRYPTO"]["blocker_validity"], "UNCLASSIFIED_FAIL_CLOSED")
             self.assertEqual(unavailable["lanes"]["CRYPTO"]["blocker_validity"], "UNCLASSIFIED_FAIL_CLOSED")
 
+    def test_authoritative_full_capacity_classifies_duplicate_pending_as_a_valid_wait(self):
+        with tempfile.TemporaryDirectory() as root:
+            payload = AstraOperatingHealthContractV1(root).build(
+                multilane={"lanes": {"CRYPTO": {"first_blocker": "duplicate_pending"}}},
+                worker_state={}, continuous={}, sentinel={},
+                canonical_capacity_facts={"CRYPTO": {
+                    "authority_current": True,
+                    "allowed": False,
+                    "capacity_decision": "CAPACITY_FULL",
+                    "positions_remaining": 0,
+                    "reserve_available": False,
+                }},
+            )
+            crypto = payload["lanes"]["CRYPTO"]
+            self.assertEqual(crypto["blocker_validity"], "VALID_CAPACITY_WAIT")
+            self.assertEqual(crypto["waiting_state"], "LEGITIMATE_WAIT")
+
     def test_high_sentinel_root_prevents_false_control_plane_agreement(self):
         with tempfile.TemporaryDirectory() as root:
             payload = AstraOperatingHealthContractV1(root).build(

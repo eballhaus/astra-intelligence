@@ -18,6 +18,13 @@ VERSION = "1.0.0"
 LANES = ("DAY", "SCALP", "SWING", "CRYPTO")
 MAX_LEDGER_ROWS = 200
 LATENCY_DELAY_SECONDS = 300.0
+_CAPACITY_WAIT_BLOCKERS = {
+    "capacity_concentration",
+    "capacity_full",
+    "duplicate_pending",
+    "lane_reserve_exhausted",
+    "pending_lane_reserve_exhausted",
+}
 
 
 def _now() -> str:
@@ -52,6 +59,27 @@ def _epoch(value: Any) -> float | None:
         return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
     except ValueError:
         return None
+
+
+def _capacity_wait_is_proven(blocker: str, capacity_fact: dict[str, Any]) -> bool:
+    """Classify only an authoritative full-capacity gate as a natural wait."""
+    if blocker.strip().lower() not in _CAPACITY_WAIT_BLOCKERS:
+        return False
+    if not bool(capacity_fact.get("authority_current")) or bool(capacity_fact.get("allowed")):
+        return False
+    decision = _text(capacity_fact.get("capacity_decision")).upper()
+    reserve_status = _text(capacity_fact.get("lane_reserve_status")).upper()
+    positions_remaining = capacity_fact.get("positions_remaining")
+    try:
+        no_positions_remaining = positions_remaining is not None and int(positions_remaining) <= 0
+    except (TypeError, ValueError):
+        no_positions_remaining = False
+    return (
+        decision in {"LANE_RESERVE_EXHAUSTED", "CAPACITY_FULL", "RESERVE_EXHAUSTED"}
+        or reserve_status in {"LANE_RESERVE_EXHAUSTED", "CAPACITY_FULL", "RESERVE_EXHAUSTED"}
+        or capacity_fact.get("reserve_available") is False
+        or no_positions_remaining
+    )
 
 
 def _record_identity(row: dict[str, Any]) -> set[str]:
@@ -231,14 +259,7 @@ class AstraOperatingHealthContractV1:
                 "VALID_SCHEDULING_WAIT",
                 "VALID_MARKET_DATA_LIMITATION",
             }
-            capacity_exhausted = (
-                bool(capacity_fact.get("authority_current"))
-                and not bool(capacity_fact.get("allowed"))
-                and _text(capacity_fact.get("capacity_decision")) == "LANE_RESERVE_EXHAUSTED"
-                and _text(capacity_fact.get("lane_reserve_status")) == "LANE_RESERVE_EXHAUSTED"
-                and not bool(capacity_fact.get("reserve_available"))
-                and blocker == "capacity_concentration"
-            )
+            capacity_exhausted = _capacity_wait_is_proven(blocker, capacity_fact)
             if capacity_exhausted:
                 blocker_validity = "VALID_CAPACITY_WAIT"
                 waiting_state = "LEGITIMATE_WAIT"

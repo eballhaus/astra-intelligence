@@ -109,6 +109,20 @@ def classify_causal_handoff_facts_v1(facts: list[dict[str, Any]] | None, *, limi
         elif kind == "WORKER_LEASE_STALE" or _text(fact.get("lease_state")) in {"STALE_DEAD_LEASE", "LEASE_PROCESS_OWNERSHIP_CONTRADICTION"}:
             handoff = "worker shutdown -> canonical worker lease cleanup"
             signals.append(_signal(fact, kind="WORKER_LEASE_PROCESS_OWNERSHIP_CONTRADICTION", category="CAUSAL_HANDOFF_LOSS", handoff=handoff, repair="remove only an identity-matching released lock; recover a dead lease only after canonical ownership is disproven", severity="HIGH"))
+        elif kind == "HORIZON_DEADLINE_MISSED" and _regular_session_wait_mode(fact):
+            mode = _regular_session_wait_mode(fact)
+            nondefects.append({
+                **base,
+                "category": "SESSION_WAIT",
+                "lane": fact.get("lane"),
+                "symbol": fact.get("symbol"),
+                "lifecycle_id": fact.get("lifecycle_id"),
+                "first_bad_handoff": _text(fact.get("first_bad_handoff")) or "canonical session gate -> existing exit execution",
+                "first_incomplete_stage": fact.get("first_incomplete_stage"),
+                "consumer_blocker": fact.get("consumer_blocker") or fact.get("consumer_state"),
+                "legitimate_fail_closed": True,
+                "reason": f"regular_session_required:{mode}",
+            })
         elif kind == "HORIZON_DEADLINE_MISSED":
             handoff = _text(fact.get("first_bad_handoff")) or "canonical horizon deadline -> natural exit evaluation"
             signals.append(_signal(fact, kind=kind, category="HORIZON_DEADLINE_MISSED", handoff=handoff, repair="ensure the existing natural exit owner evaluates the canonical deadline; do not create a parallel exit path", severity="CRITICAL"))
@@ -247,9 +261,28 @@ _SAME_SESSION_DEADLINE_REASONS = {
     "scalp_lane_overnight_breach",
     "scalp_lane_session_close_required",
 }
+_REGULAR_SESSION_WAIT_MODES = {
+    "after_hours",
+    "holiday_closed",
+    "market_closed",
+    "overnight",
+    "pre_open",
+    "preopen",
+    "weekend_closed",
+}
 _TERMINAL_NATIVE_EXIT_STATES = {
     "BROKER_ZERO_CONFIRMED", "CLOSED", "LEARNING_ACKNOWLEDGED",
 }
+
+
+def _regular_session_wait_mode(fact: dict[str, Any]) -> str:
+    """Return a known session wait marker without inferring an exit failure."""
+    blocker = _text(fact.get("consumer_blocker") or fact.get("consumer_state"))
+    prefix, separator, mode = blocker.partition(":")
+    if prefix.upper() != "REGULAR_SESSION_REQUIRED" or not separator:
+        return ""
+    normalized = mode.strip().lower()
+    return normalized if normalized in _REGULAR_SESSION_WAIT_MODES else ""
 
 
 def _native_deadline_fact(native: dict[str, Any], position_id: Any) -> dict[str, Any] | None:

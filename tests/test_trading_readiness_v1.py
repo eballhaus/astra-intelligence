@@ -493,6 +493,56 @@ class TradingReadinessTests(unittest.TestCase):
             "ASTRA_ALL_LANE_TRUTH_PRODUCTION_WATCHDOG_V2",
         )
 
+    def test_wall_clock_stale_readiness_cannot_be_hidden_by_old_process_monotonic_clock(self):
+        monitor = self._monitor()
+        first = monitor.run_if_due(runtime_state={"last_execution_trace": {}}, worker_state={})
+        self.assertTrue(first["due"])
+        payload = __import__("json").loads(monitor.path.read_text(encoding="utf-8"))
+        payload["scan_monotonic"] = time.monotonic() + 999999.0
+        payload["generated_at"] = _iso(-301)
+        monitor.path.write_text(__import__("json").dumps(payload), encoding="utf-8")
+        result = monitor.run_if_due(runtime_state={"last_execution_trace": {}}, worker_state={})
+        self.assertTrue(result["due"])
+
+    def test_readiness_certification_exposes_stale_readiness_artifact(self):
+        from engine.astra_premarket_certification_v1 import build_runtime_certification_v1
+
+        now = datetime.now(UTC)
+        stale = (now - timedelta(seconds=901)).isoformat().replace("+00:00", "Z")
+        result = build_runtime_certification_v1(
+            worker_state={
+                "active_worker_present": True,
+                "active_worker_pid": 1,
+                "last_known_worker_pid": 0,
+                "process_role": "PAPER_AUTOPILOT_WORKER",
+                "heartbeat_at": now.isoformat().replace("+00:00", "Z"),
+                "cycle_count": 1,
+                "cycle_state": "COMPLETE",
+                "last_cycle_completed_at": now.isoformat().replace("+00:00", "Z"),
+                "resource_state": "RESOURCE_NORMAL",
+                "runtime_revision": "rev-1",
+            },
+            runtime_state={"crypto_operational_integrity_readiness_v1": {"status": "READY"}},
+            readiness={
+                "generated_at": stale,
+                "session": {"equity_session_open": False, "preopen_window": False, "check_phase": "CRYPTO_CONTINUOUS_CHECK"},
+                "discovery_integrity": "READY",
+                "position_management_integrity": "READY",
+                "strict_truth_integrity": "READY",
+                "crypto_lifecycle_integrity": "READY",
+                "active_faults": [],
+                "truth_production_watchdog": {"lanes": {}},
+            },
+            backend_health={"ok": True, "runtime_revision": "rev-1"},
+            expected_revision="rev-1",
+            worker_revision="rev-1",
+            backend_revision="rev-1",
+            now=now,
+        )
+        self.assertFalse(result["checks"]["readiness_artifact"]["passed"])
+        self.assertEqual(result["checks"]["readiness_artifact"]["state"], "STALE_READINESS_ARTIFACT")
+        self.assertIn("STALE_READINESS_ARTIFACT", result["next_recheck_reason"])
+
     def test_post_close_phase_keeps_scheduled_integrity_check_cadence(self):
         monitor = self._monitor()
         monitor._session = lambda: {
