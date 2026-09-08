@@ -17158,22 +17158,36 @@ def _refresh_alpaca_ws_allocation(*, force_reconcile=False):
                 PAPER_AUTOPILOT._runtime_state["alpaca_ws_active_position_monitor_v1"] = dict(status_reader() or {})
             return
         now = time.time()
-        # Only broker-linked, canonical PaperAutopilot equity positions may
-        # subscribe.  PositionTracker includes legacy rows and broker dust,
-        # which belong to reconciliation rather than live position monitoring.
+        # Only broker-linked, canonical PaperAutopilot positions may subscribe.
+        # PositionTracker includes legacy rows and broker dust, which belong to
+        # reconciliation rather than live position monitoring.  Equity and
+        # crypto feeds remain separate, but this worker-owned allocation is the
+        # single source of truth for both.
         from engine.astra_canonical_ownership_contract_v1 import is_broker_linked_active_position
-        open_positions = PAPER_AUTOPILOT._fetch_open_positions(asset_type="stock")
-        open_symbols = [
-            str(r.get("symbol") or "").upper().strip()
-            for r in open_positions
+
+        def is_crypto_position(row):
+            asset = str(row.get("asset_type") or row.get("asset_class") or "").lower()
+            lane = str(row.get("lane_id") or row.get("lane") or "").upper()
+            return asset in {"crypto", "cryptocurrency"} or lane == "CRYPTO"
+
+        open_positions = PAPER_AUTOPILOT._fetch_open_positions()
+        eligible_positions = [
+            r for r in open_positions
             if isinstance(r, dict)
             and is_broker_linked_active_position(r, allow_dust=False)
-            and str(r.get("lane_id") or r.get("lane") or "").upper() in {"DAY", "SCALP", "SWING"}
-            # Canonical broker-linked positions may predate candidate-id
-            # persistence.  Their canonical lifecycle/position identity is
-            # sufficient for observation-only WS coverage.
+            and str(r.get("lane_id") or r.get("lane") or "").upper() in {"DAY", "SCALP", "SWING", "CRYPTO"}
             and str(r.get("canonical_position_id") or r.get("lifecycle_id") or r.get("position_id") or "").strip()
             and str(r.get("symbol") or "").strip()
+        ]
+        open_symbols = [
+            str(r.get("symbol") or "").upper().strip()
+            for r in eligible_positions
+            if not is_crypto_position(r)
+        ]
+        open_crypto_symbols = [
+            str(r.get("symbol") or "").upper().strip()
+            for r in eligible_positions
+            if is_crypto_position(r)
         ]
         near_symbols = _near_entry_candidates(limit=ALPACA_WS_NEAR_ENTRY_SLOTS)
         if not near_symbols:
@@ -17190,7 +17204,7 @@ def _refresh_alpaca_ws_allocation(*, force_reconcile=False):
                 if len(fallback) >= ALPACA_WS_NEAR_ENTRY_SLOTS:
                     break
             near_symbols = fallback
-        signature = f"{','.join(sorted(open_symbols))}|{','.join(sorted(near_symbols))}"
+        signature = f"{','.join(sorted(open_symbols))}|{','.join(sorted(open_crypto_symbols))}|{','.join(sorted(near_symbols))}"
         if (
             not force_reconcile
             and
@@ -17205,6 +17219,7 @@ def _refresh_alpaca_ws_allocation(*, force_reconcile=False):
             return
         ALPACA_WS_MONITOR.configure_symbols(
             open_position_symbols=open_symbols,
+            open_crypto_position_symbols=open_crypto_symbols,
             near_entry_symbols=near_symbols,
         )
         status_reader = getattr(ALPACA_WS_MONITOR, "status", None)

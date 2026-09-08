@@ -137,6 +137,143 @@ class AlpacaWSMonitorTests(unittest.TestCase):
         self.assertEqual(status["priority_classes"]["open_positions"], 2)
         self.assertEqual(status["priority_classes"]["near_entry"], 0)
 
+    def test_crypto_symbols_use_the_worker_owned_crypto_feed(self):
+        monitor = AlpacaWSMonitor()
+        with patch.dict(
+            os.environ,
+            {
+                "ASTRA_PROCESS_ROLE": "worker",
+                "ASTRA_ALPACA_WS_ENABLED": "0",
+                "ASTRA_ALPACA_CRYPTO_WS_ENABLED": "0",
+            },
+            clear=False,
+        ):
+            result = monitor.configure_symbols(
+                open_position_symbols=["AAPL", "ETH/USD"],
+                open_crypto_position_symbols=["ETHUSD", "SHIB-USD"],
+            )
+            status = monitor.status()
+        self.assertEqual(result["desired_crypto_symbol_count"], 2)
+        self.assertEqual(status["desired_symbols"], ["AAPL"])
+        self.assertEqual(status["crypto_desired_symbols"], ["ETH/USD", "SHIB/USD"])
+        self.assertEqual(monitor._endpoint(), "wss://stream.data.alpaca.markets/v2/iex")
+        self.assertEqual(monitor._crypto_endpoint(), "wss://stream.data.alpaca.markets/v1beta3/crypto/us")
+
+    def test_crypto_stream_auth_subscription_and_quote_contract(self):
+        class Connection:
+            def __init__(self):
+                self.sent: list[str] = []
+                self.closed = False
+                self.messages = [
+                    '[{"T":"success","msg":"authenticated"}]',
+                    '[{"T":"subscription","quotes":["ETH/USD","SHIB/USD"],"trades":[]}]',
+                    '[{"T":"q","S":"ETH/USD","bp":3500.0,"ap":3500.5,"t":"2026-09-08T17:32:34.128479537Z","i":"eth-quote-1"}]',
+                    '[{"T":"q","S":"SHIB/USD","bp":0.00000543,"ap":0.00000546,"t":"2026-09-08T17:32:34.228479537Z","i":"shib-quote-1"}]',
+                ]
+
+            def send(self, payload):
+                self.sent.append(payload)
+
+            def recv(self, timeout):
+                if self.messages:
+                    return self.messages.pop(0)
+                raise TimeoutError()
+
+            def close(self):
+                self.closed = True
+
+        connection = Connection()
+        endpoints: list[str] = []
+
+        def connect(endpoint, **_options):
+            endpoints.append(endpoint)
+            return connection
+
+        monitor = AlpacaWSMonitor(connect=connect)
+        monitor._desired_crypto_symbols = {"ETH/USD", "SHIB/USD"}
+        with patch.dict(
+            os.environ,
+            {
+                "ASTRA_PROCESS_ROLE": "worker",
+                "ASTRA_ALPACA_WS_ENABLED": "0",
+                "ASTRA_ALPACA_CRYPTO_WS_ENABLED": "1",
+            },
+            clear=False,
+        ), patch.object(AlpacaWSMonitor, "_credentials", return_value=("key", "secret")):
+            thread = __import__("threading").Thread(target=monitor._run)
+            thread.start()
+            for _ in range(100):
+                if monitor._crypto_stats["messages_received"] >= 2:
+                    break
+                __import__("time").sleep(0.01)
+            monitor._stop.set()
+            monitor._wake.set()
+            thread.join(timeout=2)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(endpoints, ["wss://stream.data.alpaca.markets/v1beta3/crypto/us"])
+        sent = [__import__("json").loads(payload) for payload in connection.sent]
+        self.assertEqual(sent[0]["action"], "auth")
+        self.assertEqual(sent[1], {"action": "subscribe", "quotes": ["ETH/USD", "SHIB/USD"]})
+        self.assertEqual(monitor._crypto_stats["auth_state"], "AUTHENTICATED")
+        self.assertEqual(monitor._crypto_stats["subscription_state"], "SUBSCRIBED")
+        self.assertEqual(monitor._subscribed_crypto_symbols, {"ETH/USD", "SHIB/USD"})
+        eth = monitor.get_quote("ETHUSD", max_age_seconds=20)
+        shib = monitor.get_quote("SHIB/USD", max_age_seconds=20)
+        self.assertEqual(eth["symbol"], "ETH/USD")
+        self.assertEqual(eth["provider_used"], "ALPACA_WS_CRYPTO")
+        self.assertEqual(eth["provider_native_timestamp"], "2026-09-08T17:32:34.128479537Z")
+        self.assertEqual(eth["provider_quote_timestamp"], "2026-09-08T17:32:34.128479537Z")
+        self.assertNotEqual(eth["provider_native_timestamp"], eth["receive_timestamp_utc"])
+        self.assertEqual(shib["quote_record_id"], "shib-quote-1")
+        self.assertEqual(monitor.status()["connection_count"], 0)
+
+    def test_crypto_subscription_deduplicates_unchanged_symbols(self):
+        monitor = AlpacaWSMonitor()
+        monitor._desired_crypto_symbols = {"ETH/USD"}
+        monitor._subscribed_crypto_symbols = {"ETH/USD"}
+        sent: list[dict] = []
+
+        class Connection:
+            def send(self, payload):
+                sent.append(__import__("json").loads(payload))
+
+        self.assertFalse(monitor._sync_subscriptions(Connection(), stream="crypto", mark_subscribed=False))
+        self.assertEqual(sent, [])
+
+    def test_canonical_management_consumes_fresh_crypto_ws_quote(self):
+        engine = PaperAutopilotEngine(
+            db_path=os.path.join(tempfile.mkdtemp(prefix="astra_crypto_ws_management_"), "paper.db"),
+            state_path=os.path.join(tempfile.mkdtemp(prefix="astra_crypto_ws_management_state_"), "state.json"),
+            enabled=False,
+        )
+        monitor = AlpacaWSMonitor()
+        monitor.configure_symbols(open_crypto_position_symbols=["ETH/USD"])
+        monitor._record_message({
+            "T": "q", "S": "ETH/USD", "bp": 3500.0, "ap": 3500.5,
+            "t": _iso(), "i": "eth-management-quote",
+        }, stream="crypto")
+        engine._runtime_state["alpaca_ws_active_position_monitor_v1"] = monitor.status()
+        engine._runtime_state["active_equity_fmp_observations_v1"] = {
+            "observations": {
+                "ETH/USD": {
+                    "symbol": "ETH/USD", "price": 1.0,
+                    "provider_native_timestamp": "2000-01-01T00:00:00Z",
+                    "provider_used": "FMP",
+                }
+            }
+        }
+        selected = engine._canonical_active_position_observations_v1({
+            "ETH/USD": {
+                "symbol": "ETH/USD", "asset_type": "crypto", "lane_id": "CRYPTO",
+                "canonical_position_id": "position-eth", "lifecycle_id": "life-eth",
+            }
+        })
+        self.assertEqual(selected["ETH/USD"]["provider_used"], "ALPACA_WS_CRYPTO")
+        self.assertEqual(selected["ETH/USD"]["quote_record_id"], "eth-management-quote")
+        self.assertEqual(selected["ETH/USD"]["canonical_position_id"], "position-eth")
+        self.assertNotEqual(selected["ETH/USD"]["provider_native_timestamp"], "2000-01-01T00:00:00Z")
+
     def test_iex_observation_retains_provenance_and_is_not_market_truth(self):
         monitor = AlpacaWSMonitor()
         monitor._record_message({
@@ -316,6 +453,11 @@ class AllocationBoundaryTests(unittest.TestCase):
                 "lane_id": "UNKNOWN", "candidate_id": "candidate-l", "lifecycle_id": "life-l",
                 "entry_fill_id": "fill-l",
             },
+            {
+                "symbol": "ETH/USD", "asset_type": "crypto", "status": "OPEN", "quantity": 1,
+                "lane_id": "CRYPTO", "candidate_id": "candidate-eth", "lifecycle_id": "life-eth",
+                "entry_fill_id": "fill-eth",
+            },
         ]
         with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}, clear=False), patch.object(server_extend, "ALPACA_WS_MONITOR", monitor), patch.object(
             server_extend.PAPER_AUTOPILOT, "_fetch_open_positions", return_value=rows
@@ -324,6 +466,7 @@ class AllocationBoundaryTests(unittest.TestCase):
         ):
             server_extend._refresh_alpaca_ws_allocation()
         self.assertEqual(monitor.kwargs["open_position_symbols"], ["AAPL"])
+        self.assertEqual(monitor.kwargs["open_crypto_position_symbols"], ["ETH/USD"])
         self.assertEqual(monitor.kwargs["near_entry_symbols"], ["MSFT"])
 
     def test_unchanged_allocation_refreshes_async_stream_status(self):
