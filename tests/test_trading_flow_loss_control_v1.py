@@ -207,24 +207,24 @@ class TrustedQuoteCandidateFlowTests(unittest.TestCase):
         engine = self._engine({})
         engine._runtime_state["alpaca_ws_active_position_monitor_v1"] = {"observations": {}}
         provider_timestamp = _iso()
-        with patch(
-            "engine.alpaca_ws_monitor.ALPACA_WS_MONITOR.status",
-            return_value={
-                "observations": {
-                    "AAPL": {
-                        "symbol": "AAPL",
-                        "price": 101.25,
-                        "provider_native_timestamp": provider_timestamp,
-                        "receive_timestamp": time.time(),
-                        "provider_used": "ALPACA_WS_IEX",
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}, clear=False), patch(
+                "engine.alpaca_ws_monitor.ALPACA_WS_MONITOR.status",
+                return_value={
+                    "observations": {
+                        "AAPL": {
+                            "symbol": "AAPL",
+                            "price": 101.25,
+                            "provider_native_timestamp": provider_timestamp,
+                            "receive_timestamp": time.time(),
+                            "provider_used": "ALPACA_WS_IEX",
+                        }
                     }
-                }
-            },
-        ):
-            quotes = engine._loss_containment_quote_evidence(
-                {"AAPL": {"current_price": 101.25}},
-                managed_rows_by_symbol={"AAPL": {"position_id": "position-aapl"}},
-            )
+                },
+            ):
+                quotes = engine._loss_containment_quote_evidence(
+                    {"AAPL": {"current_price": 101.25}},
+                    managed_rows_by_symbol={"AAPL": {"position_id": "position-aapl"}},
+                )
 
         self.assertEqual(quotes["AAPL"]["provider_used"], "ALPACA_WS_IEX")
         self.assertEqual(quotes["AAPL"]["provider_native_timestamp"], provider_timestamp)

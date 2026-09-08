@@ -226,7 +226,8 @@ class AlpacaWSMonitorTests(unittest.TestCase):
         self.assertEqual(eth["provider_quote_timestamp"], "2026-09-08T17:32:34.128479537Z")
         self.assertNotEqual(eth["provider_native_timestamp"], eth["receive_timestamp_utc"])
         self.assertEqual(shib["quote_record_id"], "shib-quote-1")
-        self.assertEqual(monitor.status()["connection_count"], 0)
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}, clear=False):
+            self.assertEqual(monitor.status()["connection_count"], 0)
 
     def test_crypto_subscription_deduplicates_unchanged_symbols(self):
         monitor = AlpacaWSMonitor()
@@ -253,7 +254,8 @@ class AlpacaWSMonitorTests(unittest.TestCase):
             "T": "q", "S": "ETH/USD", "bp": 3500.0, "ap": 3500.5,
             "t": _iso(), "i": "eth-management-quote",
         }, stream="crypto")
-        engine._runtime_state["alpaca_ws_active_position_monitor_v1"] = monitor.status()
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}, clear=False):
+            engine._runtime_state["alpaca_ws_active_position_monitor_v1"] = monitor.status()
         engine._runtime_state["active_equity_fmp_observations_v1"] = {
             "observations": {
                 "ETH/USD": {
@@ -273,6 +275,30 @@ class AlpacaWSMonitorTests(unittest.TestCase):
         self.assertEqual(selected["ETH/USD"]["quote_record_id"], "eth-management-quote")
         self.assertEqual(selected["ETH/USD"]["canonical_position_id"], "position-eth")
         self.assertNotEqual(selected["ETH/USD"]["provider_native_timestamp"], "2000-01-01T00:00:00Z")
+
+    def test_compact_crypto_position_consumes_slash_form_ws_quote(self):
+        engine = PaperAutopilotEngine(
+            db_path=os.path.join(tempfile.mkdtemp(prefix="astra_crypto_ws_compact_"), "paper.db"),
+            state_path=os.path.join(tempfile.mkdtemp(prefix="astra_crypto_ws_compact_state_"), "state.json"),
+            enabled=False,
+        )
+        monitor = AlpacaWSMonitor()
+        monitor.configure_symbols(open_crypto_position_symbols=["ETH/USD"])
+        monitor._record_message({
+            "T": "q", "S": "ETH/USD", "bp": 3500.0, "ap": 3500.5,
+            "t": _iso(), "i": "eth-compact-management-quote",
+        }, stream="crypto")
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}, clear=False):
+            engine._runtime_state["alpaca_ws_active_position_monitor_v1"] = monitor.status()
+        selected = engine._canonical_active_position_observations_v1({
+            "ETHUSD": {
+                "symbol": "ETHUSD", "asset_type": "crypto", "lane_id": "CRYPTO",
+                "canonical_position_id": "position-eth", "lifecycle_id": "life-eth",
+            }
+        })
+        self.assertEqual(selected["ETHUSD"]["provider_used"], "ALPACA_WS_CRYPTO")
+        self.assertEqual(selected["ETHUSD"]["symbol"], "ETHUSD")
+        self.assertEqual(selected["ETHUSD"]["canonical_position_id"], "position-eth")
 
     def test_iex_observation_retains_provenance_and_is_not_market_truth(self):
         monitor = AlpacaWSMonitor()

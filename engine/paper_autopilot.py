@@ -13068,15 +13068,29 @@ class PaperAutopilotEngine:
         # The worker refreshes the persisted status after its management pass.
         # Read the same canonical owner before that persistence boundary so a
         # healthy live observation is not forced through the next-cycle cache.
-        try:
-            from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
+        # Only the worker owns in-memory websocket observations. API/backend
+        # consumers must use the persisted worker snapshot rather than reading
+        # a process-local monitor that cannot be their canonical producer.
+        if str(os.getenv("ASTRA_PROCESS_ROLE", "api") or "api").strip().lower() == "worker":
+            try:
+                from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
 
-            live_status = dict(ALPACA_WS_MONITOR.status() or {})
-            live_observations = dict(live_status.get("observations") or {})
-            if live_observations:
-                ws_observations.update(live_observations)
-        except Exception:
-            pass
+                live_status = dict(ALPACA_WS_MONITOR.status() or {})
+                live_observations = dict(live_status.get("observations") or {})
+                if live_observations:
+                    ws_observations.update(live_observations)
+            except Exception:
+                pass
+        # The websocket producer keeps crypto pairs in Alpaca's canonical
+        # slash form, while broker/recovery rows may use compact symbols.
+        # Retain all bounded observations per alias so a stale persisted row
+        # cannot mask a newer live row during the management pass.
+        ws_crypto_by_alias: dict[str, list[dict[str, Any]]] = {}
+        for raw_symbol, raw_observation in ws_observations.items():
+            if not isinstance(raw_observation, Mapping):
+                continue
+            for alias in _broker_position_symbol_aliases_v1(raw_symbol):
+                ws_crypto_by_alias.setdefault(alias, []).append(dict(raw_observation))
         selected: dict[str, dict[str, Any]] = {}
         symbols = set(managed) | {
             str(symbol or "").upper().strip()
@@ -13102,14 +13116,21 @@ class PaperAutopilotEngine:
             if asset_type != "crypto" and str(managed_row.get("lane_id") or managed_row.get("lane") or "").upper() == "CRYPTO":
                 asset_type = "crypto"
             crypto_observation = None
+            ws_crypto_observations: list[dict[str, Any]] = []
             if asset_type == "crypto":
+                for alias in _broker_position_symbol_aliases_v1(symbol):
+                    ws_crypto_observations.extend(ws_crypto_by_alias.get(alias, []))
                 for alias in _broker_position_symbol_aliases_v1(symbol):
                     crypto_observation = crypto_by_alias.get(alias)
                     if crypto_observation:
                         break
             # Prefer the newest valid native observation; WS wins only when
             # timestamps are equally current. FMP remains the existing fallback.
-            sources = [(0, ws_observations.get(symbol)), (1, fmp_observations.get(symbol))]
+            sources = (
+                ([(0, observation) for observation in ws_crypto_observations]
+                 if asset_type == "crypto" else [(0, ws_observations.get(symbol))])
+                + [(1, fmp_observations.get(symbol))]
+            )
             if asset_type == "crypto":
                 sources.append((2, crypto_observation))
             for source_priority, observation in sources:
