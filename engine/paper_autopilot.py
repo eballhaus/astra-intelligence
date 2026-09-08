@@ -13738,6 +13738,7 @@ class PaperAutopilotEngine:
         *,
         loss_containment: Mapping[str, Any] | None = None,
         profit_protection: Mapping[str, Any] | None = None,
+        canonical_quote_evidence: Mapping[str, Mapping[str, Any]] | None = None,
         broker_positions_verified: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
         """Project worker-cached evidence into complete, non-executing advisories.
@@ -13754,6 +13755,7 @@ class PaperAutopilotEngine:
             recovery,
             market_evidence=dict(self._runtime_state.get("legacy_swing_market_evidence") or {}),
             fmp_evidence=dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {}),
+            canonical_quote_evidence=canonical_quote_evidence,
         )
         save_position_evidence_completeness_v1(evidence, os.path.dirname(self.position_evidence_completeness_state_path) or "state")
         self._runtime_state["position_evidence_completeness_v1"] = evidence
@@ -15060,6 +15062,7 @@ class PaperAutopilotEngine:
                         broker_position_by_symbol,
                         loss_containment=loss_containment_review_partial,
                         profit_protection=profit_protection_review_partial,
+                        canonical_quote_evidence=latest_price_by_symbol_partial,
                         broker_positions_verified=bool(broker_snapshot.get("broker_positions_fetch_ok", False)),
                     )
                     provider_consumption_telemetry_partial = self._refresh_provider_consumption_telemetry_v1(legacy_position_risk_triage_partial)
@@ -15448,6 +15451,7 @@ class PaperAutopilotEngine:
                     broker_position_by_symbol,
                     loss_containment=loss_containment_review,
                     profit_protection=profit_protection_review,
+                    canonical_quote_evidence=latest_price_by_symbol,
                     broker_positions_verified=bool(broker_snapshot.get("broker_positions_fetch_ok", False)),
                 )
                 provider_consumption_telemetry = self._refresh_provider_consumption_telemetry_v1(

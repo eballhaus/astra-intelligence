@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 
 from engine.astra_position_evidence_completeness_v1 import (
     build_position_evidence_completeness_v1,
@@ -42,6 +43,48 @@ class PositionEvidenceAndAdvisoryTests(unittest.TestCase):
         rows = {row["symbol"]: row for row in evidence["positions"]}
         self.assertEqual(rows["AAA"]["momentum_status"], "IMPROVING")
         self.assertEqual(rows["BBB"]["quote_status"], "MISSING")
+
+    def test_worker_canonical_quote_overrides_stale_legacy_projection(self):
+        native = (datetime.now(UTC) - timedelta(seconds=2)).isoformat().replace("+00:00", "Z")
+        legacy = {"legacy-a": {
+            "LATEST_QUOTE": {
+                "symbol": "AAA", "response_state": "SUCCESS", "freshness_state": "CURRENT",
+                "quote_timestamp": "2020-01-01T00:00:00Z", "bid": 90, "ask": 91,
+            },
+        }}
+        evidence = build_position_evidence_completeness_v1(
+            {"AAA": {"symbol": "AAA"}}, self.recovery,
+            market_evidence=legacy,
+            canonical_quote_evidence={"AAA": {
+                "symbol": "AAA", "price": 100, "provider_used": "alpaca_market_data",
+                "provider_native_timestamp": native,
+                "retrieval_timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            }},
+        )
+        row = evidence["positions"][0]
+        self.assertEqual(row["quote_status"], "FRESH")
+        self.assertEqual(row["quote_source"], "alpaca_market_data")
+        self.assertEqual(row["quote_evidence_at"], native)
+
+    def test_stale_worker_canonical_quote_remains_fail_closed(self):
+        stale = (datetime.now(UTC) - timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
+        legacy = {"legacy-a": {
+            "LATEST_QUOTE": {
+                "symbol": "AAA", "response_state": "SUCCESS", "freshness_state": "CURRENT",
+                "quote_timestamp": "2999-01-01T00:00:00Z", "bid": 90, "ask": 91,
+            },
+        }}
+        evidence = build_position_evidence_completeness_v1(
+            {"AAA": {"symbol": "AAA"}}, self.recovery,
+            market_evidence=legacy,
+            canonical_quote_evidence={"AAA": {
+                "symbol": "AAA", "price": 100, "provider_used": "alpaca_market_data",
+                "provider_native_timestamp": stale,
+            }},
+        )
+        row = evidence["positions"][0]
+        self.assertEqual(row["quote_status"], "STALE")
+        self.assertEqual(row["quote_evidence_at"], stale)
 
     def test_advisory_has_one_row_per_broker_position_and_never_executes(self):
         evidence = build_position_evidence_completeness_v1(self.positions, self.recovery)

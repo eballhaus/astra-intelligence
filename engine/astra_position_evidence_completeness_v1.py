@@ -12,6 +12,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
 
+from engine.astra_canonical_market_timestamp_v1 import SOURCE_QUOTE, canonical_market_timestamp_v1
+
 
 SCHEMA_VERSION = "astra_position_evidence_completeness_v1"
 
@@ -70,6 +72,36 @@ def _by_symbol(records: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     return result
 
 
+def _canonical_quotes_by_symbol(records: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Index the already-collected worker quote handoff without refreshing it."""
+    result: dict[str, dict[str, Any]] = {}
+    for key, raw in (records or {}).items():
+        if not isinstance(raw, Mapping):
+            continue
+        symbol = _text(raw.get("symbol") or key).upper()
+        if symbol:
+            result[symbol] = dict(raw)
+    return result
+
+
+def _canonical_quote_status(record: Mapping[str, Any]) -> tuple[dict[str, Any], str, float | None, bool]:
+    """Normalize a worker quote while preserving its native timestamp contract."""
+    quote = dict(record or {})
+    evidence = canonical_market_timestamp_v1(quote, source_type=SOURCE_QUOTE, max_age_seconds=20.0)
+    native_timestamp = evidence.get("provider_native_timestamp")
+    if not native_timestamp:
+        return quote, "PRODUCER_FAILED", evidence.get("age_seconds"), False
+    normalized = {
+        **quote,
+        "response_state": "SUCCESS",
+        "freshness_state": "CURRENT" if evidence.get("executable_freshness") else "STALE",
+        "quote_timestamp": native_timestamp,
+        "received_at": quote.get("receive_timestamp") or quote.get("retrieval_timestamp"),
+    }
+    status = "FRESH" if evidence.get("executable_freshness") else "STALE"
+    return normalized, status, evidence.get("age_seconds"), True
+
+
 def _atomic_write(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
@@ -93,6 +125,7 @@ def build_position_evidence_completeness_v1(
     *,
     market_evidence: Mapping[str, Any] | None = None,
     fmp_evidence: Mapping[str, Any] | None = None,
+    canonical_quote_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return exactly one evidence availability row for every broker-open symbol."""
     recovery_by_symbol = {_text(row.get("symbol")).upper(): dict(row) for row in recovery.get("positions") or [] if isinstance(row, Mapping)}
@@ -102,6 +135,7 @@ def build_position_evidence_completeness_v1(
         for row in (fmp_evidence or {}).values()
         if isinstance(row, Mapping) and _text(row.get("symbol"))
     }
+    canonical_quotes = _canonical_quotes_by_symbol(canonical_quote_evidence or {})
     rows: list[dict[str, Any]] = []
     for symbol, raw_position in sorted((broker_positions or {}).items()):
         position = dict(raw_position or {})
@@ -111,12 +145,25 @@ def build_position_evidence_completeness_v1(
         bars = dict(bundle.get("HISTORICAL_BARS") or bundle.get("HISTORICAL_BARS_ALPACA") or {})
         fmp = dict(fmp_by_symbol.get(symbol) or {})
         auxiliary = dict(fmp.get("auxiliary_context") or {})
-        quote_status, quote_age = _status(quote, timestamp="quote_timestamp", fresh_seconds=90, aging_seconds=15 * 60)
+        canonical_quote = canonical_quotes.get(symbol)
+        canonical_quote_present = False
+        if canonical_quote:
+            canonical_quote, canonical_status, canonical_age, canonical_quote_present = _canonical_quote_status(canonical_quote)
+            if canonical_quote_present:
+                # The worker handoff is the same current evidence consumed by
+                # management. A legacy projection cannot replace it, even when
+                # that projection reports a different quote age.
+                quote = canonical_quote
+                quote_status, quote_age = canonical_status, canonical_age
+            else:
+                quote_status, quote_age = _status(quote, timestamp="quote_timestamp", fresh_seconds=90, aging_seconds=15 * 60)
+        else:
+            quote_status, quote_age = _status(quote, timestamp="quote_timestamp", fresh_seconds=90, aging_seconds=15 * 60)
         fmp_quote = dict(auxiliary.get("quote") or {})
         fmp_quote_status, fmp_quote_age = _status(fmp_quote, timestamp="response_at", fresh_seconds=90, aging_seconds=15 * 60)
         # FMP is a bounded fallback.  It may enrich a stale/missing broker
         # quote, but can never replace a fresh canonical broker quote.
-        if quote_status in {"MISSING", "STALE", "PRODUCER_FAILED", "EXTERNALLY_UNAVAILABLE"} and fmp_quote_status in {"FRESH", "AGING"}:
+        if not canonical_quote_present and quote_status in {"MISSING", "STALE", "PRODUCER_FAILED", "EXTERNALLY_UNAVAILABLE"} and fmp_quote_status in {"FRESH", "AGING"}:
             quote = {
                 "provider": "FMP", "response_state": "SUCCESS", "freshness_state": fmp_quote.get("freshness_state"),
                 "quote_timestamp": fmp_quote.get("response_at"), "received_at": fmp_quote.get("response_at"),
@@ -156,7 +203,7 @@ def build_position_evidence_completeness_v1(
             "legacy_status": "LEGACY" if _text(recovery_row.get("metadata_generation")).upper() != "V1_MANDATORY" else "V1_MANDATORY",
             "canonical_lane_status": _text(recovery_row.get("lane_status")) or "UNAVAILABLE",
             "canonical_horizon_status": _text(recovery_row.get("horizon_status")) or "UNAVAILABLE",
-            "quote_status": quote_status, "quote_source": quote.get("provider"), "quote_evidence_at": quote.get("quote_timestamp") or quote.get("received_at"), "quote_age_seconds": quote_age,
+            "quote_status": quote_status, "quote_source": quote.get("provider") or quote.get("provider_used"), "quote_evidence_at": quote.get("quote_timestamp") or quote.get("provider_native_timestamp") or quote.get("received_at"), "quote_age_seconds": quote_age,
             "completed_bar_status": bar_status, "completed_bar_source": bars.get("provider"), "completed_bar_evidence_at": bars.get("last_bar_at") or bars.get("received_at"), "completed_bar_age_seconds": bar_age,
             "momentum_status": momentum, "momentum_source": bars.get("provider") if momentum != "MISSING" else None,
             "liquidity_status": "FRESH" if quote_status == "FRESH" and _number(quote.get("bid")) > 0 and _number(quote.get("ask")) >= _number(quote.get("bid")) else "MISSING",
