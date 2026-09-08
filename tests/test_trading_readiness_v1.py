@@ -743,6 +743,50 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(result["active_faults"], [])
         self.assertEqual(result["code_repair_packages"], [])
 
+    def test_duplicate_pending_capacity_wait_is_not_a_code_repair_package(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {
+                    "candidate_source": "top_buys",
+                    "candidates_seen": 6,
+                },
+                "astra_multilane_completion_matrix_v1": {
+                    "generated_at": _iso(-1),
+                    "lanes": {
+                        "CRYPTO": {
+                            "first_blocker": "duplicate_pending",
+                            "managed_capacity_positions": 2,
+                            "candidate_count": 6,
+                            "fresh_candidate_count": 6,
+                            "stages": {
+                                "market_data": {
+                                    "status": "PASS",
+                                    "verification_state": "CURRENT",
+                                },
+                                "candidate_discovery": {
+                                    "status": "PASS",
+                                    "verification_state": "CURRENT",
+                                },
+                                "candidate_freshness": {
+                                    "status": "PASS",
+                                    "verification_state": "CURRENT",
+                                },
+                                "eligibility": {
+                                    "status": "FAIL_UNKNOWN_CLOSED",
+                                    "verification_state": "CURRENT",
+                                    "first_bad_handoff": "candidate contract -> eligibility gate",
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            worker_state={},
+        )
+        self.assertEqual(result["crypto_readiness"], "TECHNICALLY_READY")
+        self.assertEqual(result["active_faults"], [])
+        self.assertFalse(result["code_repair_required"])
+
     def test_lifecycle_broker_ambiguity_does_not_block_day_lane(self):
         result = self._monitor().run_if_due(
             runtime_state={
