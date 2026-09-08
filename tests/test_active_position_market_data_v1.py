@@ -300,6 +300,37 @@ class AlpacaWSMonitorTests(unittest.TestCase):
         self.assertEqual(selected["ETHUSD"]["symbol"], "ETHUSD")
         self.assertEqual(selected["ETHUSD"]["canonical_position_id"], "position-eth")
 
+    def test_loss_containment_consumes_compact_crypto_ws_quote(self):
+        engine = PaperAutopilotEngine(
+            db_path=os.path.join(tempfile.mkdtemp(prefix="astra_crypto_ws_loss_"), "paper.db"),
+            state_path=os.path.join(tempfile.mkdtemp(prefix="astra_crypto_ws_loss_state_"), "state.json"),
+            enabled=False,
+        )
+        monitor = AlpacaWSMonitor()
+        monitor._desired_crypto_symbols = {"ETH/USD"}
+        monitor._record_message({
+            "T": "q", "S": "ETH/USD", "bp": 3500.0, "ap": 3500.5,
+            "t": _iso(), "i": "eth-loss-quote",
+        }, stream="crypto")
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}, clear=False):
+            engine._runtime_state["alpaca_ws_active_position_monitor_v1"] = monitor.status()
+        engine._runtime_state["position_lane_horizon_recovery_v1"] = {
+            "positions": [{
+                "symbol": "ETHUSD", "asset_class": "crypto",
+                "canonical_position_id": "position-eth", "lane": "CRYPTO",
+            }],
+        }
+        quotes = engine._loss_containment_quote_evidence(
+            {"ETHUSD": {"symbol": "ETHUSD", "asset_class": "crypto", "current_price": 3500.25}},
+            managed_rows_by_symbol={"ETHUSD": {
+                "symbol": "ETHUSD", "asset_class": "crypto",
+                "canonical_position_id": "position-eth", "lane_id": "CRYPTO",
+            }},
+        )
+        self.assertEqual(quotes["ETHUSD"]["provider_used"], "ALPACA_WS_CRYPTO")
+        self.assertEqual(quotes["ETHUSD"]["provider_native_timestamp"], quotes["ETHUSD"]["provider_quote_timestamp"])
+        self.assertEqual(quotes["ETHUSD"]["canonical_position_id"], "position-eth")
+
     def test_iex_observation_retains_provenance_and_is_not_market_truth(self):
         monitor = AlpacaWSMonitor()
         monitor._record_message({
