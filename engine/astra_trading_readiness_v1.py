@@ -438,7 +438,11 @@ class AstraTradingReadinessV1:
         return blocker in _NATURAL_MATRIX_BLOCKERS or "RESERVE_EXHAUSTED" in blocker
 
     @staticmethod
-    def _observation_producer_has_current_evidence(runtime: Mapping[str, Any], symbols: set[str]) -> bool:
+    def _observation_producer_has_current_evidence(
+        runtime: Mapping[str, Any],
+        symbols: set[str],
+        failure_at_by_symbol: Mapping[str, str] | None = None,
+    ) -> bool:
         """Use either canonical equity observation producer as source proof."""
         if not symbols:
             return False
@@ -459,7 +463,23 @@ class AstraTradingReadinessV1:
                         source_type=SOURCE_QUOTE,
                         max_age_seconds=20.0,
                     )
-                    if evidence.get("executable_freshness"):
+                    failure_at = _text((failure_at_by_symbol or {}).get(symbol))
+                    native_timestamp = evidence.get("provider_native_timestamp")
+                    failure_time = None
+                    native_time = None
+                    if failure_at and native_timestamp:
+                        try:
+                            failure_time = datetime.fromisoformat(failure_at.replace("Z", "+00:00"))
+                            native_time = datetime.fromisoformat(str(native_timestamp).replace("Z", "+00:00"))
+                        except (TypeError, ValueError):
+                            failure_time = None
+                            native_time = None
+                    available_at_failure = not (
+                        failure_time
+                        and native_time
+                        and native_time > failure_time + timedelta(seconds=1)
+                    )
+                    if evidence.get("executable_freshness") and available_at_failure:
                         current = True
                         break
                 if current:
@@ -1529,9 +1549,15 @@ class AstraTradingReadinessV1:
                 for row in equity_timestamp_failures
                 if self._lane_from_row(row) in {"DAY", "SCALP", "SWING"}
             }) or ["DAY", "SCALP", "SWING"]
+            failure_at_by_symbol = {
+                _text(row.get("symbol")).upper(): _text(row.get("as_of") or row.get("generated_at"))
+                for row in equity_timestamp_failures
+                if _text(row.get("symbol")) and _text(row.get("as_of") or row.get("generated_at"))
+            }
             current_producer_evidence = self._observation_producer_has_current_evidence(
                 runtime,
                 timestamp_failure_symbols,
+                failure_at_by_symbol,
             )
             issues.append({
                 "fault_type": "PRODUCER_FRESH_CONSUMER_UNAVAILABLE",

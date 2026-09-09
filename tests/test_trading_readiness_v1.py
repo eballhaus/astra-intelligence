@@ -901,6 +901,38 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(fault["lanes"], ["DAY"])
         self.assertEqual(fault["classification"], "INTERNAL_CONSUMER_HANDOFF_MISMATCH")
 
+    def test_quote_arriving_after_management_failure_remains_provider_external(self):
+        issues = self._monitor()._issues(
+            {
+                "loss_containment_state_v1": {
+                    "decisions": {
+                        "swing-position": {
+                            "symbol": "RIOT", "position_id": "swing-position",
+                            "lane": "SWING", "as_of": _iso(-5),
+                            "exact_blockers": ["MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE"],
+                        },
+                    },
+                },
+                "active_equity_fmp_observations_v1": {
+                    "canonical_active_equity_symbols": ["RIOT"],
+                },
+                "alpaca_ws_active_position_monitor_v1": {
+                    "observations": {
+                        "RIOT": {
+                            "symbol": "RIOT",
+                            "provider": "Alpaca",
+                            "provider_native_timestamp": _iso(-1),
+                            "receive_timestamp": _iso(),
+                        },
+                    },
+                },
+            },
+            {"equity_session_open": True, "preopen_window": False},
+        )
+        fault = next(row for row in issues if row["fault_type"] == "PRODUCER_FRESH_CONSUMER_UNAVAILABLE")
+        self.assertEqual(fault["lanes"], ["SWING"])
+        self.assertEqual(fault["classification"], "PROVIDER_EXTERNAL")
+
     def test_crypto_quote_absent_everywhere_remains_provider_external(self):
         issues = self._monitor()._issues(
             {
