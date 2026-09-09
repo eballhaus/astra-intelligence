@@ -188,6 +188,68 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertTrue(result["due"])
         self.assertNotIn("DISCOVERY_LEGACY_BYPASS", [row["fault_type"] for row in result["active_faults"]])
 
+    def test_fresh_persisted_top_buys_overrides_partial_legacy_marker(self):
+        monitor = self._monitor()
+        snapshot_path = monitor.state_dir / "snapshots" / "top_buys_runtime_snapshot_v1.json"
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_path.write_text(
+            __import__("json").dumps({
+                "schema_version": "astra_top_buys_runtime_snapshot_v1",
+                "published_at_utc": _iso(),
+                "source_generated_at_utc": _iso(),
+                "source": "fresh_build_full",
+                "row_count": 2,
+                "payload": {
+                    "last_updated_utc": _iso(),
+                    "stocks": {"final": [{"symbol": "AAPL"}, {"symbol": "MSFT"}]},
+                },
+            }),
+            encoding="utf-8",
+        )
+        result = monitor.run_if_due(
+            runtime_state={
+                "equity_discovery_rebuild_v1": {
+                    "candidate_source_available": False,
+                    "generated_at": _iso(-3600),
+                },
+                "last_execution_trace": {
+                    "final_blocker_reason": "legacy_market_evidence_bounded",
+                },
+            },
+            worker_state={},
+        )
+        self.assertNotIn(
+            "DISCOVERY_LEGACY_BYPASS",
+            [row["fault_type"] for row in result["active_faults"]],
+        )
+
+    def test_stale_persisted_top_buys_does_not_override_legacy_marker(self):
+        monitor = self._monitor()
+        snapshot_path = monitor.state_dir / "snapshots" / "top_buys_runtime_snapshot_v1.json"
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_path.write_text(
+            __import__("json").dumps({
+                "schema_version": "astra_top_buys_runtime_snapshot_v1",
+                "source_generated_at_utc": _iso(-301),
+                "source": "fresh_build_full",
+                "row_count": 1,
+                "payload": {"stocks": {"final": [{"symbol": "AAPL"}]}},
+            }),
+            encoding="utf-8",
+        )
+        result = monitor.run_if_due(
+            runtime_state={
+                "last_execution_trace": {
+                    "final_blocker_reason": "legacy_market_evidence_bounded",
+                },
+            },
+            worker_state={},
+        )
+        self.assertIn(
+            "DISCOVERY_LEGACY_BYPASS",
+            [row["fault_type"] for row in result["active_faults"]],
+        )
+
     def test_fresh_canonical_zero_candidates_is_not_a_discovery_code_fault(self):
         result = self._monitor().run_if_due(
             runtime_state={

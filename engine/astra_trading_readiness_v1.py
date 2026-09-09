@@ -30,6 +30,7 @@ _CANONICAL_EQUITY_CANDIDATE_SOURCES = {
     "rankings_rows_fallback",
 }
 _CANDIDATE_EVIDENCE_MAX_AGE_SECONDS = 900.0
+_CANONICAL_TOP_BUYS_SNAPSHOT_MAX_AGE_SECONDS = 180.0
 TRUTH_PATH_STAGES = (
     "DISCOVERY",
     "CANDIDATE",
@@ -159,6 +160,71 @@ class AstraTradingReadinessV1:
         self.state_dir = Path(state_dir)
         self.path = self.state_dir / "astra_trading_readiness_v1.json"
 
+    def _canonical_equity_discovery_snapshot(self) -> dict[str, Any]:
+        """Read the existing worker-boundary top-buys snapshot for readiness.
+
+        The snapshot is produced by the canonical discovery publisher. This
+        read-only projection prevents a transient partial-cycle marker from
+        hiding a fresh persisted source without creating a second source of
+        candidates or adding provider traffic.
+        """
+        path = self.state_dir / "snapshots" / "top_buys_runtime_snapshot_v1.json"
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                raw = json.load(handle)
+        except (OSError, TypeError, ValueError):
+            return {}
+        if not isinstance(raw, dict) or raw.get("schema_version") != "astra_top_buys_runtime_snapshot_v1":
+            return {}
+        payload = raw.get("payload")
+        if not isinstance(payload, dict):
+            return {}
+
+        stocks = payload.get("stocks")
+        stock_count = 0
+        if isinstance(stocks, dict):
+            for key in ("final", "qualified", "fill", "watchlist"):
+                rows = stocks.get(key)
+                if isinstance(rows, list):
+                    stock_count = max(stock_count, len(rows))
+        else:
+            for key in ("rows", "top_buys"):
+                rows = payload.get(key)
+                if isinstance(rows, list):
+                    equity_rows = [
+                        row for row in rows
+                        if isinstance(row, dict)
+                        and str(row.get("asset_type") or row.get("asset_class") or "stock").lower()
+                        not in {"crypto", "cryptocurrency"}
+                    ]
+                    stock_count = max(stock_count, len(equity_rows))
+        if stock_count <= 0:
+            return {}
+
+        source_timestamp = str(
+            raw.get("source_generated_at_utc")
+            or payload.get("last_updated_utc")
+            or payload.get("generated_at")
+            or ""
+        ).strip()
+        freshness = "SNAPSHOT_STALE"
+        if source_timestamp:
+            try:
+                observed = datetime.fromisoformat(source_timestamp.replace("Z", "+00:00"))
+                age = (datetime.now(UTC) - observed).total_seconds()
+                if -30.0 <= age <= _CANONICAL_TOP_BUYS_SNAPSHOT_MAX_AGE_SECONDS:
+                    freshness = "SNAPSHOT_CURRENT"
+            except ValueError:
+                pass
+        return {
+            "candidate_source": "top_buys",
+            "candidate_source_count": stock_count,
+            "candidates_seen": stock_count,
+            "candidate_snapshot_freshness": freshness,
+            "source_generated_at_utc": source_timestamp,
+            "generated_at": source_timestamp,
+        }
+
     def persist_snapshot(self, summary: Mapping[str, Any]) -> None:
         """Persist a worker-owned enriched snapshot without changing its facts."""
         _write(self.path, _dict(summary))
@@ -229,7 +295,8 @@ class AstraTradingReadinessV1:
         trace = _dict(runtime.get("last_execution_trace"))
         summary = _dict(runtime.get("last_cycle_summary"))
         partial = _dict(summary.get("partial_candidate_microphase"))
-        containers = (trace, partial, summary)
+        persisted = _dict(runtime.get("_canonical_equity_discovery_snapshot_v1"))
+        containers = (trace, partial, summary, persisted)
         saw_canonical_source = False
         saw_stale_source = False
 
@@ -238,6 +305,7 @@ class AstraTradingReadinessV1:
                 "candidate_generated_at",
                 "candidate_snapshot_generated_at",
                 "snapshot_generated_at",
+                "source_generated_at_utc",
                 "generated_at",
                 "completed_at",
                 "last_autopilot_cycle_at",
@@ -1719,7 +1787,11 @@ class AstraTradingReadinessV1:
             _text(row.get("fault_type")).upper() == "DISCOVERY_LEGACY_BYPASS"
             for row in _rows(previous.get("active_faults"))
         )
-        current_discovery_flow = self._current_equity_candidate_flow(runtime_state)
+        canonical_discovery = self._canonical_equity_discovery_snapshot()
+        runtime_for_discovery = dict(runtime_state)
+        if canonical_discovery:
+            runtime_for_discovery["_canonical_equity_discovery_snapshot_v1"] = canonical_discovery
+        current_discovery_flow = self._current_equity_candidate_flow(runtime_for_discovery)
         recheck_cached_discovery = bool(session.get("equity_session_open")) and cached_discovery_fault and current_discovery_flow
         monotonic_current = now - float(previous.get("scan_monotonic") or 0.0) < interval
         wall_clock_current = _wall_clock_timestamp_is_current(
@@ -1744,6 +1816,8 @@ class AstraTradingReadinessV1:
         commit = _text(runtime_state.get("commit") or worker_state.get("commit") or previous.get("commit"))
         observed_runtime = dict(runtime_state)
         observed_runtime["_worker_state"] = worker_state
+        if canonical_discovery:
+            observed_runtime["_canonical_equity_discovery_snapshot_v1"] = canonical_discovery
         raw_issues = self._issues(observed_runtime, session)
         # A shared fault can be emitted by more than one existing diagnostic
         # owner.  Keep one bounded repair decision per fault key.
