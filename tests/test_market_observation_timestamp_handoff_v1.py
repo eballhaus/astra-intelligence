@@ -242,6 +242,48 @@ class MarketObservationTimestampHandoffTests(unittest.TestCase):
         self.assertEqual(consumed["provider_native_timestamp"], fresher_timestamp)
         self.assertEqual(consumed["provider_used"], "Alpaca")
 
+    def test_loss_review_refreshes_newer_canonical_observation_before_evaluation(self):
+        engine = self._engine()
+        older_timestamp = _iso(-10)
+        fresher_timestamp = _iso(-2)
+        engine._runtime_state["active_equity_fmp_observations_v1"] = {
+            "observations": {
+                "AAPL": {
+                    "symbol": "AAPL",
+                    "canonical_position_id": "aapl-position",
+                    "provider": "Alpaca",
+                    "provider_native_timestamp": fresher_timestamp,
+                    "receive_timestamp": fresher_timestamp,
+                    "price": 100.5,
+                },
+            },
+        }
+        open_row = {
+            "symbol": "AAPL", "asset_type": "stock", "asset_class": "stock",
+            "position_id": "aapl-position", "lane_id": "DAY", "entry_price": 99.0,
+        }
+        broker_row = {
+            "symbol": "AAPL", "asset_type": "stock", "asset_class": "stock",
+            "current_price": 100.5, "avg_entry_price": 99.0, "qty": 1.0,
+        }
+        older_quote = {
+            "symbol": "AAPL",
+            "canonical_position_id": "aapl-position",
+            "provider": "Alpaca",
+            "provider_native_timestamp": older_timestamp,
+            "receive_timestamp": older_timestamp,
+            "price": 100.0,
+        }
+        with patch("engine.paper_autopilot.run_loss_containment_review_v1", return_value={"state": {"decisions": {}}}) as loss_review:
+            engine._loss_containment_review_phase(
+                open_rows=[open_row],
+                broker_position_by_symbol={"AAPL": broker_row},
+                latest_price_by_symbol={"AAPL": older_quote},
+                broker_fetch_succeeded=True,
+            )
+        consumed = loss_review.call_args.kwargs["latest_price_by_symbol"]["AAPL"]
+        self.assertEqual(consumed["provider_native_timestamp"], fresher_timestamp)
+
     def test_loss_management_reuses_recovery_identity_when_db_projection_is_missing(self):
         engine = self._engine()
         native_timestamp = _iso(-2)

@@ -13606,6 +13606,36 @@ class PaperAutopilotEngine:
         prior_state = self._load_loss_containment_state()
         recovery: dict[str, Any] = {}
 
+        # A websocket quote can arrive between quote collection and this
+        # review boundary. Re-read the same bounded canonical observation
+        # owner so loss containment cannot persist an older broker-mark
+        # projection while profit protection consumes the newer quote.
+        refresh_rows = {
+            str((row or {}).get("symbol") or "").upper().strip(): dict(row or {})
+            for row in db_rows
+            if isinstance(row, Mapping) and str((row or {}).get("symbol") or "").strip()
+        }
+        refreshed_observations = self._canonical_active_position_observations_v1(refresh_rows)
+        for symbol, observation in refreshed_observations.items():
+            observation_evidence = canonical_market_timestamp_v1(
+                observation,
+                source_type=SOURCE_QUOTE,
+                max_age_seconds=20.0,
+            )
+            if not observation_evidence.get("executable_freshness"):
+                continue
+            existing_evidence = canonical_market_timestamp_v1(
+                latest_prices.get(symbol) or {},
+                source_type=SOURCE_QUOTE,
+                max_age_seconds=20.0,
+            )
+            if (
+                not existing_evidence.get("executable_freshness")
+                or float(observation_evidence.get("age_seconds") or 0.0)
+                < float(existing_evidence.get("age_seconds") or 0.0)
+            ):
+                latest_prices[symbol] = dict(observation)
+
         # Broker positions are authoritative for current open-position existence.
         # broker_fetch_succeeded is the canonical signal:
         #   True  -> use broker positions (empty is authoritative empty)
