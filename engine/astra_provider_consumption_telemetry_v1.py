@@ -242,6 +242,17 @@ def _requires_assignment(row: Mapping[str, Any]) -> bool:
     return _assignment_scope(row) not in {"generic_router_quote", "generic_diagnostic"}
 
 
+def _assignment_coverage_verifiable(rows: list[dict[str, Any]]) -> bool:
+    """Only compare provider and consumer counts when the producer declares coverage.
+
+    Provider responses and consumption acknowledgements are often aggregate
+    records.  Without an explicit identity/coverage assertion, comparing
+    their counts would manufacture an assignment defect from unrelated rows.
+    """
+    required = [row for row in rows if _requires_assignment(row)]
+    return not required or all(row.get("assignment_coverage_verifiable") is True for row in required)
+
+
 def _event_counts(events: list[dict[str, Any]], consumer_events: list[dict[str, Any]], family: str) -> dict[str, Any]:
     scoped = [row for row in events if _family(row) == family]
     assigned = [row for row in consumer_events if str(row.get("endpoint_family") or "unknown") == family and bool(row.get("assigned"))]
@@ -255,6 +266,7 @@ def _event_counts(events: list[dict[str, Any]], consumer_events: list[dict[str, 
     failures = [row for row in network if row not in successful]
     accepted = [row for row in successful if _number(row.get("useful_fields_count")) > 0]
     assignment_required = [row for row in accepted if _requires_assignment(row)]
+    assignment_coverage_verifiable = _assignment_coverage_verifiable(assignment_required)
     generic_router_quotes = [row for row in accepted if _assignment_scope(row) == "generic_router_quote"]
     position_targeted = [row for row in accepted if _assignment_scope(row) == "position_targeted_evidence"]
     candidate_targeted = [row for row in accepted if _assignment_scope(row) == "candidate_targeted_evidence"]
@@ -273,6 +285,8 @@ def _event_counts(events: list[dict[str, Any]], consumer_events: list[dict[str, 
         "responses_accepted": len(accepted), "responses_rejected": max(0, len(successful) - len(accepted)) + len(rejected_by_consumer),
         "responses_assigned": len(assigned), "responses_consumed": len(consumed),
         "assignment_required_accepted": len(assignment_required),
+        "assignment_coverage_verifiable": assignment_coverage_verifiable,
+        "assignment_coverage_unverified": bool(assignment_required) and not assignment_coverage_verifiable,
         "generic_router_quote_accepted": len(generic_router_quotes),
         "position_targeted_accepted": len(position_targeted),
         "candidate_targeted_accepted": len(candidate_targeted),
@@ -401,9 +415,34 @@ def build_provider_consumption_telemetry_v1(
     families = sorted({_family(row) for row in events} | {str(row.get("endpoint_family") or "unknown") for row in consumer_rows})
     family_rows = [_event_counts(events, consumer_rows, family) for family in families]
     complete = bool(family_rows) and not any(
-        row["assignment_required_accepted"] > row["responses_assigned"] + row["responses_rejected"] or row["responses_assigned"] > row["responses_consumed"] or row["byte_telemetry_missing"] > 0
+        (
+            row["assignment_coverage_verifiable"]
+            and row["assignment_required_accepted"] > row["responses_assigned"] + row["responses_rejected"]
+        )
+        or row["responses_assigned"] > row["responses_consumed"]
+        or row["byte_telemetry_missing"] > 0
         for row in family_rows
     )
+    assignment_coverage_unverified_count = sum(
+        bool(row.get("assignment_coverage_unverified")) for row in family_rows
+    )
+    assignment_coverage_verifiable = bool(family_rows) and all(
+        not row["assignment_required_accepted"] or row["assignment_coverage_verifiable"]
+        for row in family_rows
+    )
+    measurable_assignment_gap = bool(assignment_required) and assignment_coverage_verifiable and not consumed and not rejected
+    provider.update({
+        "assignment_coverage_verifiable": assignment_coverage_verifiable,
+        "assignment_coverage_unverified_count": assignment_coverage_unverified_count,
+        "successful_but_unconsumed_count": int(measurable_assignment_gap),
+        "success_not_consumed_count": int(measurable_assignment_gap),
+        "bounded_usage_status": (
+            "CONFIGURED_UNUSED" if configured and not attempts else
+            "SUCCESS_NOT_CONSUMED" if measurable_assignment_gap else
+            "GENERIC_ROUTER_QUOTE_ACTIVITY" if generic_router_quotes and not assignment_required else
+            "ACTIVE" if consumed else "FAIL_CLOSED"
+        ),
+    })
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": _now(),
@@ -412,13 +451,14 @@ def build_provider_consumption_telemetry_v1(
         "providers": [{**provider, "endpoint_families": family_rows, "telemetry_complete": complete}],
         "endpoint_families": family_rows,
         "telemetry_complete": complete,
+        "assignment_coverage_unverified_count": assignment_coverage_unverified_count,
         "configured_but_unused_count": int(bool(configured and not attempts)),
-        "successful_but_unconsumed_count": int(bool(assignment_required and not consumed and not rejected)),
+        "successful_but_unconsumed_count": int(measurable_assignment_gap),
         "provider_starvation_count": int(bool(configured and not attempts)),
         "budget_warning_count": int(any(str(row.get("blocked_reason") or "") in {"call_limit", "bandwidth_budget"} for row in events)),
         "governor_blocked_count": len(governor_blocked),
         "expected_traffic_missing_count": int(bool(configured and not attempts)),
-        "success_not_consumed_count": int(bool(assignment_required and not consumed and not rejected)),
+        "success_not_consumed_count": int(measurable_assignment_gap),
         "stale_evidence_count": 0,
         "byte_telemetry_mismatch_count": len(byte_missing),
         "provider_calls_used": 0,

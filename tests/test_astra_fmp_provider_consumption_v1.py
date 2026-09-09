@@ -166,7 +166,7 @@ class FmpProviderConsumptionTests(unittest.TestCase):
                 }) + "\n")
                 handle.write(json.dumps({
                     "timestamp": "2026-07-24T00:00:01Z", "endpoint_family": "quote",
-                    "assignment_scope": "position_targeted_evidence", "ok": True,
+                    "assignment_scope": "position_targeted_evidence", "assignment_coverage_verifiable": True, "ok": True,
                     "useful_fields_count": 2, "bytes_actual_if_available": 43, "status_code": 200,
                 }) + "\n")
             telemetry = build_provider_consumption_telemetry_v1(
@@ -372,13 +372,39 @@ class FmpProviderConsumptionTests(unittest.TestCase):
             "last_consumer": "", "endpoint_families": [{
                 "endpoint_family": "quote", "responses_accepted": 1,
                 "assignment_required_accepted": 1, "responses_assigned": 0,
-                "responses_consumed": 0,
+                "responses_consumed": 0, "assignment_coverage_verifiable": True,
             }],
         }]}
         signals, _waiting, _compliance = ContinuousSystemIntegrityScannerV1._signals(
             {"provider_consumption_telemetry": targeted}, {}, 10,
         )
         self.assertIn("PROVIDER_SUCCESS_NOT_ASSIGNED", {row["kind"] for row in signals})
+
+    def test_unverifiable_aggregate_assignment_gap_is_waiting_not_a_defect(self):
+        telemetry = {"providers": [{
+            "provider": "FMP", "configured": True, "attempted_calls": 8,
+            "responses_accepted": 8, "telemetry_complete": True,
+            "endpoint_families": [{
+                "endpoint_family": "completed_bars", "scheduled": 8,
+                "responses_accepted": 8, "assignment_required_accepted": 8,
+                "responses_assigned": 1, "responses_consumed": 1,
+                "assignment_coverage_verifiable": False,
+            }],
+        }]}
+        signals, waiting, _compliance = ContinuousSystemIntegrityScannerV1._signals(
+            {"provider_consumption_telemetry": telemetry}, {}, 10,
+        )
+        self.assertNotIn("PROVIDER_SUCCESS_NOT_ASSIGNED", {row["kind"] for row in signals})
+        self.assertIn("provider_assignment_coverage_unverifiable", {row["reason"] for row in waiting})
+
+        with tempfile.TemporaryDirectory() as directory:
+            scanner = ContinuousSystemIntegrityScannerV1(directory)
+            payload = scanner.run_if_due(
+                worker_state={"active_worker_present": True, "process_role": "PAPER_AUTOPILOT_WORKER"},
+                runtime_state={}, safety={"paper_mode_verified": True},
+                context={"provider_consumption_telemetry": telemetry},
+            )
+            self.assertFalse(payload["cortex_summary"]["code_repair_required"])
 
     def test_worker_verification_is_bounded_and_never_creates_trade_artifacts(self):
         class Router:

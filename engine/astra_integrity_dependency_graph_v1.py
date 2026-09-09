@@ -91,6 +91,12 @@ def root_cause_from_signal_v1(signal: dict[str, Any]) -> dict[str, Any]:
     severity = str(signal.get("severity") or "HIGH")
     finding_id = "finding-" + hashlib.sha256((root_id + "|" + kind).encode("utf-8")).hexdigest()[:16]
     causal = dict(signal.get("causal_finding_v1") or {})
+    safe_correction_available = bool(signal.get("safe_correction_available"))
+    escalation_class = str(signal.get("escalation_class") or (
+        "CODE_REPAIR_REQUIRED" if signal.get("code_repair_required") is True else
+        "RUNTIME_REPAIR_AVAILABLE" if safe_correction_available else
+        "HUMAN_REVIEW_REQUIRED"
+    ))
     return {"root_cause_id": root_id, "finding_id": finding_id, "governance_issue_id": root_id,
             "verification_id": "verification-" + root_id.removeprefix("root-"), "category": category, "severity": severity,
             "confidence": str(signal.get("confidence") or ("VERIFIED" if kind not in {"UNKNOWN_SYSTEM_DEFECT"} else "LOW")),
@@ -98,8 +104,9 @@ def root_cause_from_signal_v1(signal: dict[str, Any]) -> dict[str, Any]:
             "affected_endpoints": list(signal.get("affected_endpoints") or []), "downstream_symptoms": symptoms,
             "affected_position_identity": position_identity or None,
             "likely_owner": owner, "smallest_safe_repair": repair,
-            "safe_correction_available": bool(signal.get("safe_correction_available")),
-            "human_repair_required": not bool(signal.get("safe_correction_available")),
+            "safe_correction_available": safe_correction_available,
+            "human_repair_required": not safe_correction_available,
+            "escalation_class": escalation_class,
             "verification_plan": "three consistent worker-owned scans with source-compliant consumers",
             "recurrence_state": "OPEN",
             "causal_handoff_integrity_v1": causal,

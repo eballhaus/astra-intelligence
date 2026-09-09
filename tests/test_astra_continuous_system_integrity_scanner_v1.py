@@ -130,10 +130,17 @@ class ContinuousSystemIntegrityScannerTests(unittest.TestCase):
 
     def test_verification_window_does_not_resolve_on_one_clean_cycle(self):
         self._scan(truth_arbitration={"contradictions": [{"fact_id": "LOCAL_OPEN_CRYPTO_POSITION_COUNT"}]})
+        prior = json.loads(self.scanner.root_path.read_text(encoding="utf-8"))
+        prior_last_seen = prior["root_causes"][0]["last_detected_at"]
         self.scanner.summary_path.unlink()  # Make the test invoke another scan immediately.
         next_payload = self._scan()
         state = next_payload["active_root_causes"][0]["state"]
         self.assertEqual(state, "VERIFYING")
+        self.assertEqual(next_payload["active_root_causes"][0]["operational_class"], "VERIFICATION_PENDING")
+        self.assertEqual(next_payload["active_root_causes"][0]["last_detected_at"], prior_last_seen)
+        self.assertEqual(next_payload["current_active_root_causes"], [])
+        self.assertEqual(next_payload["current_code_repair_required"], [])
+        self.assertFalse(next_payload["cortex_summary"]["code_repair_required"])
 
     def test_root_cause_ownership_is_deterministic(self):
         root = root_cause_from_signal_v1({"kind": "QUOTE_FIELDS_DROPPED", "canonical_fact_ids": ["CURRENT_QUOTE_BID"]})
