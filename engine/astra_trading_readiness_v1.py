@@ -439,14 +439,34 @@ class AstraTradingReadinessV1:
 
     @staticmethod
     def _observation_producer_has_current_evidence(runtime: Mapping[str, Any], symbols: set[str]) -> bool:
-        """Use the existing materialized observation owner as the source proof."""
-        observations = _dict(_dict(runtime.get("active_equity_fmp_observations_v1")).get("observations"))
-        if not observations or not symbols:
+        """Use either canonical equity observation producer as source proof."""
+        if not symbols:
             return False
-        return all(
-            bool(_dict(observations.get(symbol)).get("provider_native_timestamp"))
-            for symbol in symbols
+        source_maps = (
+            _dict(_dict(runtime.get("active_equity_fmp_observations_v1")).get("observations")),
+            _dict(_dict(runtime.get("alpaca_ws_active_position_monitor_v1")).get("observations")),
         )
+        for symbol in symbols:
+            current = False
+            for observations in source_maps:
+                for key, raw_observation in observations.items():
+                    observation = _dict(raw_observation)
+                    observation_symbol = _text(observation.get("symbol") or key).upper()
+                    if observation_symbol != symbol:
+                        continue
+                    evidence = canonical_market_timestamp_v1(
+                        observation,
+                        source_type=SOURCE_QUOTE,
+                        max_age_seconds=20.0,
+                    )
+                    if evidence.get("executable_freshness"):
+                        current = True
+                        break
+                if current:
+                    break
+            if not current:
+                return False
+        return True
 
     @staticmethod
     def _crypto_observation_producer_has_current_evidence(runtime: Mapping[str, Any], symbols: set[str]) -> bool:
@@ -1504,6 +1524,11 @@ class AstraTradingReadinessV1:
                 for row in equity_timestamp_failures
                 if _text(row.get("symbol"))
             }
+            affected_lanes = sorted({
+                self._lane_from_row(row)
+                for row in equity_timestamp_failures
+                if self._lane_from_row(row) in {"DAY", "SCALP", "SWING"}
+            }) or ["DAY", "SCALP", "SWING"]
             current_producer_evidence = self._observation_producer_has_current_evidence(
                 runtime,
                 timestamp_failure_symbols,
@@ -1511,7 +1536,7 @@ class AstraTradingReadinessV1:
             issues.append({
                 "fault_type": "PRODUCER_FRESH_CONSUMER_UNAVAILABLE",
                 "component": "PaperAutopilot.management_observation_handoff",
-                "lanes": ["DAY", "SCALP", "SWING"],
+                "lanes": affected_lanes,
                 "severity": "HIGH",
                 "repair_action": "REMATERIALIZE_MANAGEMENT_EVIDENCE",
                 "evidence": (
@@ -1519,7 +1544,11 @@ class AstraTradingReadinessV1:
                     if current_producer_evidence
                     else "provider_observation_unavailable_before_management"
                 ),
-                **({} if current_producer_evidence else {"classification": "PROVIDER_EXTERNAL"}),
+                **(
+                    {"classification": "INTERNAL_CONSUMER_HANDOFF_MISMATCH"}
+                    if current_producer_evidence
+                    else {"classification": "PROVIDER_EXTERNAL"}
+                ),
             })
         if crypto_timestamp_failures:
             timestamp_failure_symbols = {

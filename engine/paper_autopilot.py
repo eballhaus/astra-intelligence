@@ -14421,6 +14421,7 @@ class PaperAutopilotEngine:
         self,
         open_rows: list[dict[str, Any]] | None = None,
         broker_position_by_symbol: dict[str, dict[str, Any]] | None = None,
+        latest_price_by_symbol: dict[str, dict[str, Any]] | None = None,
         max_positions: int = 100,
         broker_fetch_succeeded: bool | None = None,
     ) -> dict[str, Any]:
@@ -14514,6 +14515,35 @@ class PaperAutopilotEngine:
             if identity_symbol and identity_symbol not in observation_identity_rows:
                 observation_identity_rows[identity_symbol] = dict(identity_row)
         observations = self._canonical_active_position_observations_v1(observation_identity_rows)
+        # Reuse the quote map already collected by loss containment in this
+        # cycle. This keeps both management consumers on one canonical,
+        # provider-timestamped handoff without another provider request.
+        for symbol, quote in dict(latest_price_by_symbol or {}).items():
+            if not isinstance(quote, Mapping):
+                continue
+            normalized_symbol = str(symbol or quote.get("symbol") or "").upper().strip()
+            if not normalized_symbol:
+                continue
+            quote_evidence = canonical_market_timestamp_v1(
+                quote,
+                source_type=SOURCE_QUOTE,
+                max_age_seconds=20.0,
+            )
+            if not quote_evidence.get("executable_freshness"):
+                continue
+            existing = observations.get(normalized_symbol)
+            existing_evidence = canonical_market_timestamp_v1(
+                existing or {},
+                source_type=SOURCE_QUOTE,
+                max_age_seconds=20.0,
+            )
+            if (
+                existing is None
+                or not existing_evidence.get("executable_freshness")
+                or float(quote_evidence.get("age_seconds") or 0.0)
+                < float(existing_evidence.get("age_seconds") or 0.0)
+            ):
+                observations[normalized_symbol] = dict(quote)
         for symbol, observation in observations.items():
             expected_aliases = canonical_position_aliases.get(str(symbol or "").upper().strip(), set())
             observation_aliases = {
@@ -14530,14 +14560,31 @@ class PaperAutopilotEngine:
             if not broker_row:
                 continue
             # Preserve the broker mark as the price source. This supplemental
-            # metadata only proves when the independently observed market data
-            # occurred and when Astra received it.
-            if observation.get("provider_native_timestamp") and not broker_row.get("provider_native_timestamp"):
-                broker_row["provider_native_timestamp"] = observation.get("provider_native_timestamp")
-            if observation.get("receive_timestamp") and not broker_row.get("retrieval_timestamp"):
-                broker_row["retrieval_timestamp"] = observation.get("receive_timestamp")
-            if observation.get("provider") and not broker_row.get("provider_used"):
-                broker_row["provider_used"] = observation.get("provider")
+            # metadata only proves when the freshest independently observed
+            # market data occurred and when Astra received it.
+            observation_evidence = canonical_market_timestamp_v1(
+                observation,
+                source_type=SOURCE_QUOTE,
+                max_age_seconds=20.0,
+            )
+            existing_evidence = canonical_market_timestamp_v1(
+                broker_row,
+                source_type=SOURCE_QUOTE,
+                max_age_seconds=20.0,
+            )
+            if observation_evidence.get("executable_freshness") and (
+                not existing_evidence.get("executable_freshness")
+                or float(observation_evidence.get("age_seconds") or 0.0)
+                < float(existing_evidence.get("age_seconds") or 0.0)
+            ):
+                native_timestamp = observation_evidence.get("provider_native_timestamp")
+                broker_row["provider_native_timestamp"] = native_timestamp
+                broker_row["provider_quote_timestamp"] = native_timestamp
+                broker_row["quote_timestamp"] = native_timestamp
+                if observation.get("receive_timestamp"):
+                    broker_row["retrieval_timestamp"] = observation.get("receive_timestamp")
+                if observation.get("provider"):
+                    broker_row["provider_used"] = observation.get("provider")
             broker_positions[str(symbol or "").upper().strip()] = broker_row
 
         lc_state = self._runtime_state.get("loss_containment_state_v1") or {}
@@ -15043,6 +15090,7 @@ class PaperAutopilotEngine:
                     "broker_actions_used": 0,
                 }
                 loss_containment_review_partial: dict[str, Any] = {}
+                latest_price_by_symbol_partial: dict[str, dict[str, Any]] = {}
                 try:
                     self._note_worker_progress("loss_containment_review")
                     broker_position_by_symbol = dict(broker_snapshot.get("broker_position_by_symbol") or {})
@@ -15069,7 +15117,9 @@ class PaperAutopilotEngine:
                     self._note_worker_progress("profit_protection_review")
                     broker_position_by_symbol = dict(broker_snapshot.get("broker_position_by_symbol") or {})
                     profit_protection_review_partial = self._profit_protection_review_phase(
+                        open_rows=partial_open_rows,
                         broker_position_by_symbol=broker_position_by_symbol,
+                        latest_price_by_symbol=latest_price_by_symbol_partial,
                         max_positions=100,
                         broker_fetch_succeeded=bool(broker_snapshot.get("broker_positions_fetch_ok", False)),
                     )
@@ -15424,6 +15474,7 @@ class PaperAutopilotEngine:
             except Exception as exc:
                 quarantine_review = {"observation_state": "FAILED", "error": str(exc)[:180]}
             loss_containment_review: dict[str, Any] = {}
+            latest_price_by_symbol: dict[str, dict[str, Any]] = {}
             try:
                 self._note_worker_progress("loss_containment_review")
                 latest_price_by_symbol = self._loss_containment_quote_evidence(
@@ -15449,6 +15500,7 @@ class PaperAutopilotEngine:
                 profit_protection_review = self._profit_protection_review_phase(
                     open_rows=open_rows_initial,
                     broker_position_by_symbol=broker_position_by_symbol,
+                    latest_price_by_symbol=latest_price_by_symbol,
                     max_positions=100,
                     broker_fetch_succeeded=bool(broker_snapshot.get("broker_positions_fetch_ok", False)),
                 )

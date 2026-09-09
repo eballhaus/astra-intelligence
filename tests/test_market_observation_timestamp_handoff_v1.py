@@ -198,6 +198,50 @@ class MarketObservationTimestampHandoffTests(unittest.TestCase):
             native_timestamp,
         )
 
+    def test_fresher_loss_quote_replaces_older_profit_observation_projection(self):
+        engine = self._engine()
+        older_timestamp = _iso(-10)
+        fresher_timestamp = _iso(-2)
+        engine.get_latest_row_fn = lambda *_args: self.fail("canonical quote handoff should avoid a provider call")
+        engine._runtime_state["active_equity_fmp_observations_v1"] = {
+            "observations": {
+                "AAPL": {
+                    "symbol": "AAPL",
+                    "canonical_position_id": "aapl-position",
+                    "provider": "FMP",
+                    "provider_native_timestamp": older_timestamp,
+                    "receive_timestamp": older_timestamp,
+                    "price": 100.0,
+                },
+            },
+        }
+        open_row = {
+            "symbol": "AAPL", "asset_type": "stock", "asset_class": "stock",
+            "position_id": "aapl-position", "lane_id": "DAY", "entry_price": 99.0,
+        }
+        broker_row = {
+            "symbol": "AAPL", "asset_type": "stock", "asset_class": "stock",
+            "current_price": 100.5, "avg_entry_price": 99.0, "qty": 1.0,
+        }
+        latest_quote = {
+            "symbol": "AAPL",
+            "canonical_position_id": "aapl-position",
+            "provider": "Alpaca",
+            "provider_native_timestamp": fresher_timestamp,
+            "receive_timestamp": fresher_timestamp,
+            "price": 100.5,
+        }
+        with patch("engine.paper_autopilot.run_profit_protection_review_v1", return_value={"state": {"decisions": {}}}) as profit_review:
+            engine._profit_protection_review_phase(
+                open_rows=[open_row],
+                broker_position_by_symbol={"AAPL": broker_row},
+                latest_price_by_symbol={"AAPL": latest_quote},
+                broker_fetch_succeeded=True,
+            )
+        consumed = profit_review.call_args.kwargs["broker_positions"]["AAPL"]
+        self.assertEqual(consumed["provider_native_timestamp"], fresher_timestamp)
+        self.assertEqual(consumed["provider_used"], "Alpaca")
+
     def test_loss_management_reuses_recovery_identity_when_db_projection_is_missing(self):
         engine = self._engine()
         native_timestamp = _iso(-2)

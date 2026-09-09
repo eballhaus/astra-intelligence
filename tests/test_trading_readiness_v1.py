@@ -869,6 +869,38 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(fault["lanes"], ["CRYPTO"])
         self.assertEqual(fault["classification"], "INTERNAL_CONSUMER_HANDOFF_MISMATCH")
 
+    def test_fresh_equity_ws_quote_with_management_gap_is_internal_and_lane_local(self):
+        issues = self._monitor()._issues(
+            {
+                "loss_containment_state_v1": {
+                    "decisions": {
+                        "day-position": {
+                            "symbol": "AAPL", "position_id": "day-position",
+                            "lane": "DAY",
+                            "exact_blockers": ["MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE"],
+                        },
+                    },
+                },
+                "active_equity_fmp_observations_v1": {
+                    "canonical_active_equity_symbols": ["AAPL"],
+                },
+                "alpaca_ws_active_position_monitor_v1": {
+                    "observations": {
+                        "AAPL": {
+                            "symbol": "AAPL",
+                            "provider": "Alpaca",
+                            "provider_native_timestamp": _iso(-2),
+                            "receive_timestamp": _iso(-1),
+                        },
+                    },
+                },
+            },
+            {"equity_session_open": True, "preopen_window": False},
+        )
+        fault = next(row for row in issues if row["fault_type"] == "PRODUCER_FRESH_CONSUMER_UNAVAILABLE")
+        self.assertEqual(fault["lanes"], ["DAY"])
+        self.assertEqual(fault["classification"], "INTERNAL_CONSUMER_HANDOFF_MISMATCH")
+
     def test_crypto_quote_absent_everywhere_remains_provider_external(self):
         issues = self._monitor()._issues(
             {
