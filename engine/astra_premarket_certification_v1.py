@@ -499,10 +499,11 @@ def build_runtime_certification_v1(
     worker_role = _runtime_text(worker.get("process_role")).upper() == "PAPER_AUTOPILOT_WORKER"
     worker_count = int(_runtime_number(worker.get("worker_count"), 1 if active_worker else 0))
     cycle_count = _runtime_number(worker.get("cycle_count"), _runtime_number(worker.get("worker_cycle_count"), -1))
+    cycle_state = _runtime_text(worker.get("cycle_state")).upper()
     cycle_progressing = cycle_count >= 0 and bool(
         _runtime_text(worker.get("last_cycle_completed_at"))
-        or _runtime_text(worker.get("cycle_state")).upper() in {"ACTIVE_BOUNDED", "COMPLETE", "PARTIAL_TIME_LIMIT", "PARTIAL_SYMBOL_LIMIT"}
-    )
+        or cycle_state in {"ACTIVE_BOUNDED", "COMPLETE", "PARTIAL_TIME_LIMIT", "PARTIAL_SYMBOL_LIMIT"}
+    ) or cycle_state in {"ACTIVE_BOUNDED", "PARTIAL_TIME_LIMIT", "PARTIAL_SYMBOL_LIMIT"}
     resource_state = _runtime_text(worker.get("resource_state") or _runtime_dict(worker.get("resource")).get("resource_state")).upper()
     resource_ok = resource_state in {"RESOURCE_NORMAL", "RESOURCE_ELEVATED"}
     expected = _runtime_text(expected_revision) or current_runtime_revision()

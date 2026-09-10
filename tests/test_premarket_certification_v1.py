@@ -267,6 +267,19 @@ class PreMarketCertificationContractTests(unittest.TestCase):
         self.assertTrue(result["management_certified"])
         self.assertTrue(result["restart_survivability_certified"])
 
+    def test_bounded_partial_cycle_without_counter_snapshot_is_progressing(self):
+        now, worker, runtime, readiness, backend, _ = self._runtime_fixture()
+        worker.pop("cycle_count")
+        worker.pop("last_cycle_completed_at")
+        worker["cycle_state"] = "PARTIAL_TIME_LIMIT"
+        result = build_runtime_certification_v1(
+            worker_state=worker, runtime_state=runtime, readiness=readiness,
+            backend_health=backend, expected_revision="rev-1", worker_revision="rev-1",
+            backend_revision="rev-1", now=now,
+        )
+        self.assertTrue(result["runtime_certified"])
+        self.assertNotIn("CYCLE_NOT_PROGRESSING", result["checks"]["runtime"]["reasons"])
+
     def test_crypto_certification_does_not_depend_on_equity_observation(self):
         now, worker, runtime, readiness, backend, _ = self._runtime_fixture()
         runtime["active_equity_fmp_observations_v1"] = {"canonical_active_equity_symbols": ["GEHC"], "observations": {}}
