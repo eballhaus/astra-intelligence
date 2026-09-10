@@ -404,7 +404,12 @@ def _lane_downstream_readiness(
         technical_state = "NATURAL_WAIT" if not first_blocker.upper().startswith("SESSION_") else "SESSION_WAIT"
     else:
         technical_state = "TECHNICALLY_READY" if downstream_ready else "NATURAL_WAIT"
-    oldest_age = lifecycle_lane.get("oldest_lifecycle_age_seconds")
+    stall_ages = [
+        _runtime_number(row.get("duration_seconds"), -1.0)
+        for row in persistent_blockers
+        if row.get("duration_seconds") not in (None, "")
+    ]
+    oldest_age = max(stall_ages) if stall_ages else None
     return {
         "lane": lane,
         "technical_state": technical_state,
