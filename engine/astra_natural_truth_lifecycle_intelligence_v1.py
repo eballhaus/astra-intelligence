@@ -356,7 +356,7 @@ def _fault_for(row: Mapping[str, Any], faults: Iterable[Mapping[str, Any]]) -> d
 def _wait_classification(fault: Mapping[str, Any], *, completed: bool, identity_missing: bool) -> str:
     if completed:
         return "COMPLETED"
-    classification = _upper(fault.get("classification"))
+    classification = _upper(fault.get("classification") or fault.get("verification_result"))
     if classification in {"BROKER_EXTERNAL", "PROVIDER_EXTERNAL", "DEGRADED_EXTERNAL"} or identity_missing:
         return "EXTERNAL_WAIT"
     if classification in {"CODE_REPAIR_REQUIRED", "RUNTIME_REPAIR_IN_PROGRESS"}:
@@ -471,7 +471,7 @@ def _persistent_blocker_classification(
     if deadline:
         blocker = _upper(deadline.get("blocker"))
         return "SESSION_WAIT" if blocker.startswith("REGULAR_SESSION_REQUIRED") else "NATURAL_WAIT"
-    classification = _upper(fault.get("classification"))
+    classification = _upper(fault.get("classification") or fault.get("verification_result"))
     if classification in {
         "BROKER_EXTERNAL", "PROVIDER_EXTERNAL", "DEGRADED_EXTERNAL",
         "RUNTIME_REPAIR_IN_PROGRESS", "CODE_REPAIR_REQUIRED",

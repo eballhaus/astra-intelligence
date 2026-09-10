@@ -447,7 +447,7 @@ def test_persistent_source_state_is_not_collapsed_into_external_wait() -> None:
         }]},
     }
     ready = _readiness(fault={
-        "fault_type": "ENTRY_HANDOFF_DEFECT", "classification": "CODE_REPAIR_REQUIRED",
+        "fault_type": "ENTRY_HANDOFF_DEFECT", "verification_result": "CODE_REPAIR_REQUIRED",
         "earliest_stage": "ELIGIBILITY", "failing_invariant": "ELIGIBILITY_ADVANCES",
         "first_seen": "2026-08-20T13:00:00Z", "occurrence_count": 3, "lanes": ["DAY"],
     })
