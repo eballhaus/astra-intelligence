@@ -177,6 +177,30 @@ class OperatingHealthContractTests(unittest.TestCase):
             self.assertEqual(payload["truth_to_learning_ledger"][0]["final_state"], "CONSUMED")
             self.assertEqual(payload["truth_to_learning_ledger"][0]["consumer"], "canonical_lifecycle_learning")
 
+    def test_persistent_lifecycle_summary_is_visible_without_changing_lane_capacity(self):
+        blocker = {"lane": "CRYPTO", "symbol": "ETH/USD", "lifecycle_id": "crypto-life"}
+        with tempfile.TemporaryDirectory() as root:
+            payload = AstraOperatingHealthContractV1(root).build(
+                multilane={"lanes": {"CRYPTO": {"first_blocker": "capacity_full"}}},
+                worker_state={}, continuous={}, sentinel={},
+                lifecycle_intelligence={
+                    "lane_truth_starvation_scorecard": {"CRYPTO": {
+                        "persistent_blocker_count": 1,
+                        "persistent_blockers": [blocker],
+                        "persistent_blocker_state": "PERSISTENT_EXTERNAL_BLOCKER",
+                        "oldest_lifecycle_age_seconds": 100.0,
+                        "capacity_held_by_persistent_lifecycles": 1,
+                        "truth_throughput_delayed": True,
+                    }},
+                    "persistent_stall_summary": {"active_lifecycle_blockers": 1},
+                },
+            )
+        crypto = payload["lanes"]["CRYPTO"]
+        self.assertEqual(crypto["persistent_blocker_count"], 1)
+        self.assertEqual(crypto["persistent_blocker_state"], "PERSISTENT_EXTERNAL_BLOCKER")
+        self.assertTrue(crypto["lane_containment"])
+        self.assertEqual(payload["persistent_stall_summary"]["active_lifecycle_blockers"], 1)
+
     def test_learning_utilization_uses_existing_records_without_claiming_missing_outcomes(self):
         with tempfile.TemporaryDirectory() as root:
             truth = {

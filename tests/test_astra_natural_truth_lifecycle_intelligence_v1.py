@@ -364,3 +364,95 @@ def test_open_position_wait_is_not_entry_truth_starvation() -> None:
     scorecard = result["lane_truth_starvation_scorecard"]["CRYPTO"]
     assert scorecard["current_truth_blocker"] == "NATURAL_OPEN_POSITION"
     assert scorecard["truth_starvation_status"] == "NATURAL_OPEN_POSITION"
+
+
+def test_same_session_overdue_lifecycle_is_a_stall_not_an_unbounded_wait() -> None:
+    runtime = {
+        "position_lane_horizon_recovery_v1": {"positions": [{
+            "symbol": "GEHC", "canonical_lifecycle_id": "scalp-life", "entry_fill_id": "entry-gech",
+            "lane": "SCALP", "same_session_exit_required": True, "overnight_allowed": False,
+            "canonical_identity_status": "RESOLVED",
+        }]},
+        "native_lane_exit_lifecycle_v1": {"scalp-life": {
+            "symbol": "GEHC", "lane_id": "SCALP", "closure_state": "EXIT_BLOCKED_EXECUTION",
+            "reason": "scalp_lane_overnight_breach", "exact_blocker": "REGULAR_SESSION_REQUIRED:after_hours",
+            "last_evaluated_at": "2026-08-20T20:00:00Z",
+        }},
+    }
+    ready = _readiness()
+    ready["session"] = {"market_session_mode": "after_hours"}
+    result = build_natural_truth_lifecycle_intelligence_v1(
+        runtime_state=runtime, readiness=ready, current_commit="test",
+        now=datetime(2026, 8, 20, 21, 0, tzinfo=UTC),
+    )
+    row = result["current_lifecycle_state"][0]
+    assert row["persistent_blocker_state"] == "LIFECYCLE_PROGRESS_STALLED"
+    assert row["persistent_blocker_classification"] == "SESSION_WAIT"
+    assert row["blocker_persistence_count"] == 1
+    assert row["persistent_blocker"]["code_repair_justified"] is False
+
+
+def test_repeated_provider_wait_becomes_persistent_external_without_code_repair() -> None:
+    fault = {
+        "fault_type": "PRODUCER_FRESH_CONSUMER_UNAVAILABLE", "classification": "PROVIDER_EXTERNAL",
+        "earliest_stage": "OBSERVATION", "evidence": "provider_quote_unavailable",
+        "first_seen": "2026-08-20T13:00:00Z", "repair_action": "REMATERIALIZE_MANAGEMENT_EVIDENCE",
+        "lanes": ["CRYPTO"],
+    }
+    runtime = {
+        "position_lane_horizon_recovery_v1": {"positions": [{
+            "symbol": "ETHUSD", "canonical_lifecycle_id": "crypto-life", "entry_fill_id": "crypto-entry",
+            "lane": "CRYPTO", "asset_type": "crypto", "canonical_identity_status": "RESOLVED",
+        }]},
+        "active_equity_fmp_observations_v1": {"observations": {"ETHUSD": {
+            "provider_native_timestamp": "2026-08-20T12:00:00Z", "freshness_state": "STALE",
+        }}},
+    }
+    ready = _readiness(fault=fault)
+    result = None
+    for minute in (1, 2, 3):
+        result = build_natural_truth_lifecycle_intelligence_v1(
+            runtime_state=runtime, readiness=ready, current_commit="test",
+            now=datetime(2026, 8, 20, 13, minute, tzinfo=UTC),
+        )
+        runtime["astra_natural_truth_lifecycle_intelligence_v1"] = result
+    assert result is not None
+    row = result["current_lifecycle_state"][0]
+    assert row["persistent_blocker_state"] == "PERSISTENT_EXTERNAL_BLOCKER"
+    assert row["persistent_blocker_classification"] == "PROVIDER_EXTERNAL"
+    assert row["blocker_persistence_count"] == 3
+    assert result["persistent_stall_summary"]["code_repair_required"] == 0
+    assert result["lane_truth_starvation_scorecard"]["CRYPTO"]["persistent_blocker_count"] == 1
+
+
+def test_swing_carry_is_not_a_persistent_stall() -> None:
+    runtime = _runtime()
+    runtime["position_lane_horizon_recovery_v1"]["positions"][0]["lane"] = "SWING"
+    runtime["position_lane_horizon_recovery_v1"]["positions"][0]["original_lane"] = "SWING"
+    result = build_natural_truth_lifecycle_intelligence_v1(
+        runtime_state=runtime, readiness=_readiness(), current_commit="test",
+        now=datetime(2026, 8, 20, 13, 31, tzinfo=UTC),
+    )
+    row = result["current_lifecycle_state"][0]
+    assert row["wait_classification"] == "NATURAL_WAIT"
+    assert row["persistent_blocker_state"] == "NONE"
+    assert result["persistent_lifecycle_blockers"] == []
+
+
+def test_persistent_source_state_is_not_collapsed_into_external_wait() -> None:
+    runtime = {
+        "position_lane_horizon_recovery_v1": {"positions": [{
+            "symbol": "AAPL", "canonical_lifecycle_id": "source-life", "entry_fill_id": "source-entry",
+            "lane": "DAY", "canonical_identity_status": "RESOLVED",
+        }]},
+    }
+    ready = _readiness(fault={
+        "fault_type": "ENTRY_HANDOFF_DEFECT", "classification": "CODE_REPAIR_REQUIRED",
+        "earliest_stage": "ELIGIBILITY", "failing_invariant": "ELIGIBILITY_ADVANCES",
+        "first_seen": "2026-08-20T13:00:00Z", "occurrence_count": 3, "lanes": ["DAY"],
+    })
+    result = build_natural_truth_lifecycle_intelligence_v1(
+        runtime_state=runtime, readiness=ready, current_commit="test",
+        now=datetime(2026, 8, 20, 13, 5, tzinfo=UTC),
+    )
+    assert result["lane_truth_starvation_scorecard"]["DAY"]["persistent_blocker_state"] == "CODE_REPAIR_REQUIRED"

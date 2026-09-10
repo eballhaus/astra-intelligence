@@ -20,6 +20,8 @@ LANES = ("DAY", "SCALP", "SWING", "CRYPTO")
 MAX_POSITIONS = 80
 MAX_TRUTHS = 250
 MAX_LESSONS = 100
+MAX_PERSISTENT_BLOCKERS = 80
+PERSISTENCE_REPETITION_THRESHOLD = 3
 
 
 def _dict(value: Any) -> dict[str, Any]:
@@ -70,6 +72,21 @@ def _timestamp(value: Any) -> datetime | None:
 def _age_seconds(value: Any, now: datetime) -> float | None:
     parsed = _timestamp(value)
     return round(max(0.0, (now - parsed).total_seconds()), 3) if parsed else None
+
+
+def _first_timestamp_value(row: Mapping[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = _text(row.get(key))
+        if value and _timestamp(value):
+            return value
+    return None
+
+
+def _entry_timestamp(row: Mapping[str, Any]) -> str | None:
+    return _first_timestamp_value(
+        row,
+        "entry_filled_at", "entry_timestamp", "entry_time", "opened_at", "created_at",
+    )
 
 
 def _lane(row: Mapping[str, Any]) -> str:
@@ -448,6 +465,142 @@ def _lifecycle_stage(row: Mapping[str, Any], management: Mapping[str, Any], obse
     return "NATURAL_EXIT", "EXIT_FILLED", _wait_classification(fault, completed=False, identity_missing=False)
 
 
+def _persistent_blocker_classification(
+    deadline: Mapping[str, Any], fault: Mapping[str, Any], wait: str,
+) -> str:
+    if deadline:
+        blocker = _upper(deadline.get("blocker"))
+        return "SESSION_WAIT" if blocker.startswith("REGULAR_SESSION_REQUIRED") else "NATURAL_WAIT"
+    classification = _upper(fault.get("classification"))
+    if classification in {
+        "BROKER_EXTERNAL", "PROVIDER_EXTERNAL", "DEGRADED_EXTERNAL",
+        "RUNTIME_REPAIR_IN_PROGRESS", "CODE_REPAIR_REQUIRED",
+    }:
+        return classification
+    return "EXTERNAL_WAIT" if wait == "EXTERNAL_WAIT" else "NATURAL_WAIT"
+
+
+def _prior_rows_by_key(previous: Mapping[str, Any], key: str) -> dict[str, dict[str, Any]]:
+    rows = _rows(previous.get(key), MAX_PERSISTENT_BLOCKERS)
+    return {
+        _text(row.get("fingerprint")): row
+        for row in rows
+        if _text(row.get("fingerprint"))
+    }
+
+
+def _blocker_record(
+    *,
+    row: Mapping[str, Any],
+    current_stage: str,
+    expected_next: str,
+    wait: str,
+    deadline: Mapping[str, Any],
+    fault: Mapping[str, Any],
+    previous: Mapping[str, Any],
+    now: datetime,
+) -> dict[str, Any] | None:
+    """Track repeated blockers without converting external waits to defects."""
+    lifecycle = _lifecycle_id(row)
+    lane, symbol = _lane(row), _symbol(row)
+    if not lifecycle or not lane:
+        return None
+    classification = _persistent_blocker_classification(deadline, fault, wait)
+    blocker = _text(deadline.get("blocker")) if deadline else _text(
+        fault.get("evidence") or fault.get("failing_invariant") or fault.get("fault_type")
+    )
+    if not blocker:
+        return None
+    blocker_stage = _text(
+        deadline.get("first_incomplete_stage") if deadline else fault.get("earliest_stage")
+    ) or current_stage
+    fingerprint = ":".join((lane, lifecycle, blocker_stage, blocker))
+    prior = _prior_rows_by_key(previous, "persistent_blocker_history").get(fingerprint)
+    if prior is None:
+        prior = _prior_rows_by_key(previous, "persistent_lifecycle_blockers").get(fingerprint)
+    observed_occurrences = _number(fault.get("occurrence_count")) or 0
+    repetition_count = max(
+        1,
+        observed_occurrences,
+        (_number(prior.get("repetition_count")) or 0) + 1 if prior else 1,
+    )
+    first_seen = (
+        _first_timestamp_value(fault, "first_seen", "first_detected_at")
+        or _text(deadline.get("evidence_timestamp"))
+        or (_text(prior.get("first_seen")) if prior else None)
+    )
+    # This timestamp means first observed by this bounded lifecycle view when
+    # the canonical owner retained no earlier event timestamp.
+    first_seen_source = "canonical_fault" if _first_timestamp_value(fault, "first_seen", "first_detected_at") else "canonical_deadline" if deadline.get("evidence_timestamp") else "current_observation"
+    if not first_seen:
+        first_seen = now.isoformat().replace("+00:00", "Z")
+    duration = _age_seconds(first_seen, now)
+    if deadline:
+        persistent_state = "LIFECYCLE_PROGRESS_STALLED"
+    elif classification == "CODE_REPAIR_REQUIRED":
+        persistent_state = "CODE_REPAIR_REQUIRED"
+    elif classification == "RUNTIME_REPAIR_IN_PROGRESS":
+        persistent_state = "RUNTIME_REPAIR_IN_PROGRESS"
+    elif classification in {"BROKER_EXTERNAL", "PROVIDER_EXTERNAL", "DEGRADED_EXTERNAL"} and repetition_count >= PERSISTENCE_REPETITION_THRESHOLD:
+        persistent_state = "PERSISTENT_EXTERNAL_BLOCKER"
+    else:
+        persistent_state = "EXTERNAL_WAIT" if classification not in {"NATURAL_WAIT", "SESSION_WAIT"} else classification
+    capacity_held = row.get("capacity_held") is not False
+    return {
+        "fingerprint": fingerprint,
+        "lane": lane,
+        "symbol": symbol or None,
+        "lifecycle_id": lifecycle,
+        "current_stage": current_stage,
+        "blocker_stage": blocker_stage,
+        "blocker": blocker,
+        "classification": classification,
+        "persistent_state": persistent_state,
+        "first_seen": first_seen,
+        "first_seen_source": first_seen_source,
+        "last_seen": now.isoformat().replace("+00:00", "Z"),
+        "duration_seconds": duration,
+        "repetition_count": repetition_count,
+        "capacity_held": capacity_held,
+        "capacity_impact": "LANE_CAPACITY_HELD" if capacity_held else "NONE",
+        "truth_throughput_impact": "STRICT_TRUTH_PENDING_COMPLETION" if not _text(row.get("strict_truth_state")) else "NONE",
+        "expected_next_transition": expected_next,
+        "safe_recovery_exists": bool(_text(fault.get("repair_action"))),
+        "recovery_action": _text(fault.get("repair_action")) or None,
+        "recovery_state": _text(fault.get("recovery_state") or fault.get("verification_result")) or classification,
+        "code_repair_justified": classification == "CODE_REPAIR_REQUIRED",
+        "active": True,
+        "source": _text(fault.get("owner_file")) or "canonical lifecycle deadline",
+    }
+
+
+def _stage_transition_timestamp(
+    *,
+    current_stage: str,
+    row: Mapping[str, Any],
+    management: Mapping[str, Any],
+    observation: Mapping[str, Any],
+    deadline: Mapping[str, Any],
+    fault: Mapping[str, Any],
+    previous_row: Mapping[str, Any],
+    now: datetime,
+) -> tuple[str | None, str]:
+    if _upper(previous_row.get("current_stage")) == _upper(current_stage):
+        prior = _first_timestamp_value(previous_row, "stage_transition_at")
+        if prior:
+            return prior, "persisted_lifecycle_view"
+    candidate = (
+        _text(deadline.get("evidence_timestamp"))
+        or _first_timestamp_value(fault, "first_seen", "first_detected_at")
+        or _first_timestamp_value(management, "evaluated_at", "evaluation_time", "updated_at", "generated_at")
+        or _first_timestamp_value(observation, "provider_native_timestamp", "provider_quote_timestamp", "quote_timestamp")
+        or _entry_timestamp(row)
+    )
+    if candidate and _timestamp(candidate):
+        return candidate, "canonical_stage_evidence"
+    return None, "not_retained"
+
+
 def _pre_exit_assurance(row: Mapping[str, Any]) -> dict[str, Any]:
     required = {
         "lifecycle_id": _lifecycle_id(row),
@@ -578,6 +731,12 @@ def build_natural_truth_lifecycle_intelligence_v1(
     runtime = _dict(runtime_state)
     ready = _dict(readiness)
     current = _now(now)
+    previous_intelligence = _dict(runtime.get("astra_natural_truth_lifecycle_intelligence_v1"))
+    previous_lifecycles = {
+        _lifecycle_id(row): row
+        for row in _rows(previous_intelligence.get("current_lifecycle_state"), MAX_POSITIONS)
+        if _lifecycle_id(row)
+    }
     truths = _truth_rows(truth_records)
     strict_truths = [row for row in truths if _truth_is_strict(row)]
     learning_rows = _rows(learning_records, MAX_TRUTHS)
@@ -607,6 +766,35 @@ def build_natural_truth_lifecycle_intelligence_v1(
             wait = "COMPLETED"
         elif not deadline:
             wait = _wait_classification(fault, completed=False, identity_missing=identity_missing)
+        previous_row = previous_lifecycles.get(lifecycle, {})
+        stage_transition_at, stage_transition_source = _stage_transition_timestamp(
+            current_stage=current_stage,
+            row=row,
+            management=management,
+            observation=observation,
+            deadline=deadline,
+            fault=fault,
+            previous_row=previous_row,
+            now=current,
+        )
+        blocker = _blocker_record(
+            row=row,
+            current_stage=current_stage,
+            expected_next=expected_next,
+            wait=wait,
+            deadline=deadline,
+            fault=fault,
+            previous=previous_intelligence,
+            now=current,
+        )
+        entry_timestamp = _entry_timestamp(row)
+        management_timestamp = _first_timestamp_value(
+            management,
+            "evaluated_at", "evaluation_time", "updated_at", "generated_at",
+        )
+        lifecycle_age = _age_seconds(entry_timestamp, current)
+        stage_age = _age_seconds(stage_transition_at, current)
+        exit_readiness_age = _age_seconds(management_timestamp, current)
         continuity = {
             "lifecycle_id": lifecycle or None,
             "lane": _lane(row) or None,
@@ -628,9 +816,30 @@ def build_natural_truth_lifecycle_intelligence_v1(
             "learning_acknowledgement_state": "ACKNOWLEDGED" if truth and (_truth_key(truth) in learning_ids or truth.get("learning_acknowledged")) else "PENDING",
             "current_stage": current_stage,
             "expected_next_stage": expected_next,
+            "expected_next_transition": expected_next,
             "wait_classification": wait,
+            "entry_timestamp": entry_timestamp,
+            "lifecycle_age_seconds": lifecycle_age,
+            "stage_transition_at": stage_transition_at,
+            "stage_transition_source": stage_transition_source,
+            "time_in_current_stage_seconds": stage_age,
+            "last_meaningful_state_transition_at": stage_transition_at,
+            "time_since_meaningful_transition_seconds": stage_age,
+            "exit_readiness_evaluated_at": management_timestamp,
+            "exit_readiness_age_seconds": exit_readiness_age,
+            "blocker_persistence_count": blocker.get("repetition_count") if blocker else 0,
+            "blocker_first_seen": blocker.get("first_seen") if blocker else None,
+            "blocker_last_seen": blocker.get("last_seen") if blocker else None,
+            "capacity_held": row.get("capacity_held") is not False,
+            "truth_throughput_delayed": bool(not truth and lifecycle),
+            "persistent_blocker_state": blocker.get("persistent_state") if blocker else "NONE",
+            "persistent_blocker_classification": blocker.get("classification") if blocker else None,
             "lifecycle_deadline": deadline or {"status": "NOT_DUE"},
-            "current_fault": {key: fault.get(key) for key in ("fault_type", "classification", "earliest_stage", "failing_invariant", "owner_file", "owner_function") if fault.get(key) not in (None, "")},
+            "current_fault": {key: fault.get(key) for key in (
+                "fault_type", "classification", "earliest_stage", "failing_invariant",
+                "owner_file", "owner_function", "evidence", "first_seen", "last_seen",
+                "occurrence_count", "recovery_state", "verification_result", "repair_action",
+            ) if fault.get(key) not in (None, "")},
             "observation": {
                 "provider": _text(observation.get("provider") or observation.get("provider_used") or observation.get("quote_provider") or observation.get("provenance")) or None,
                 "provider_native_timestamp": _text(observation.get("provider_native_timestamp") or observation.get("provider_quote_timestamp") or observation.get("quote_timestamp")) or None,
@@ -650,6 +859,7 @@ def build_natural_truth_lifecycle_intelligence_v1(
                 "learning_source": "astra_operating_health_contract_v1" if _truth_key(truth) in learning_ids else None,
             },
         }
+        continuity["persistent_blocker"] = blocker
         lifecycle_state.append(continuity)
         if truth:
             quality, attribution = _quality_and_attribution(truth)
@@ -705,6 +915,24 @@ def build_natural_truth_lifecycle_intelligence_v1(
         "source": "bounded broker_truth_records_v1 + current readiness faults + operating health learning ledger",
         "status": "PASS" if truth_gaps + learning_gaps == 0 else "UNEXPLAINED_GAP",
     }
+    persistent_lifecycle_blockers = [
+        dict(row["persistent_blocker"])
+        for row in lifecycle_state
+        if isinstance(row.get("persistent_blocker"), Mapping)
+        and row["persistent_blocker"].get("persistent_state") in {
+            "PERSISTENT_EXTERNAL_BLOCKER", "LIFECYCLE_PROGRESS_STALLED",
+            "RUNTIME_REPAIR_IN_PROGRESS", "CODE_REPAIR_REQUIRED",
+        }
+    ]
+    observed_lifecycle_blockers = [
+        dict(row["persistent_blocker"])
+        for row in lifecycle_state
+        if isinstance(row.get("persistent_blocker"), Mapping)
+    ]
+    prior_blocker_history = _prior_rows_by_key(previous_intelligence, "persistent_blocker_history")
+    for blocker in observed_lifecycle_blockers:
+        prior_blocker_history[blocker["fingerprint"]] = blocker
+    persistent_blocker_history = list(prior_blocker_history.values())[-MAX_PERSISTENT_BLOCKERS:]
     lessons = _rows(runtime.get("canonical_lifecycle_lessons_v1"), MAX_LESSONS)
     shadow = {
         "owner": "astra_shadow_exit_intelligence_v1 and existing replay/counterfactual modules",
@@ -715,6 +943,45 @@ def build_natural_truth_lifecycle_intelligence_v1(
         "promoted_to_broker_truth": False,
     }
     lane_rows = {lane: _scorecard(lane, ready, runtime, lifecycle_state, strict_truths, learning_ids) for lane in LANES}
+    for lane, scorecard in lane_rows.items():
+        blockers = [
+            blocker for blocker in persistent_lifecycle_blockers
+            if _text(blocker.get("lane")).upper() == lane
+        ]
+        first_seen_values = [
+            _timestamp(blocker.get("first_seen"))
+            for blocker in blockers
+            if _timestamp(blocker.get("first_seen"))
+        ]
+        last_seen_values = [
+            _timestamp(blocker.get("last_seen"))
+            for blocker in blockers
+            if _timestamp(blocker.get("last_seen"))
+        ]
+        oldest_age = max(
+            [float(row.get("lifecycle_age_seconds")) for row in lifecycle_state if _lane(row) == lane and row.get("lifecycle_age_seconds") is not None]
+            or [0.0]
+        )
+        scorecard.update({
+            "oldest_lifecycle_age_seconds": round(oldest_age, 3) if oldest_age else None,
+            "persistent_blocker_count": len(blockers),
+            "persistent_blockers": blockers[:8],
+            "blocker_persistence_count": max([int(row.get("repetition_count") or 0) for row in blockers] or [0]),
+            "blocker_first_seen": min(first_seen_values).isoformat().replace("+00:00", "Z") if first_seen_values else None,
+            "blocker_last_seen": max(last_seen_values).isoformat().replace("+00:00", "Z") if last_seen_values else None,
+            "capacity_held_by_persistent_lifecycles": sum(1 for row in blockers if row.get("capacity_held")),
+            "truth_throughput_delayed": any(
+                _lane(row) == lane and bool(row.get("truth_throughput_delayed"))
+                for row in lifecycle_state
+            ),
+            "persistent_blocker_state": (
+                "CODE_REPAIR_REQUIRED" if any(row.get("persistent_state") == "CODE_REPAIR_REQUIRED" for row in blockers)
+                else "RUNTIME_REPAIR_IN_PROGRESS" if any(row.get("persistent_state") == "RUNTIME_REPAIR_IN_PROGRESS" for row in blockers)
+                else "LIFECYCLE_PROGRESS_STALLED" if any(row.get("persistent_state") == "LIFECYCLE_PROGRESS_STALLED" for row in blockers)
+                else "PERSISTENT_EXTERNAL_BLOCKER" if blockers else "NONE"
+            ),
+            "lane_containment": True,
+        })
     historical = _dict(historical_certification)
     historical_summary = {
         "status": _text(historical.get("status")) or "NOT_RUN",
@@ -732,6 +999,17 @@ def build_natural_truth_lifecycle_intelligence_v1(
         "owner": "canonical lifecycle/truth/learning owners; integration adapter only",
         "current_lifecycle_state": lifecycle_state,
         "lane_truth_starvation_scorecard": lane_rows,
+        "persistent_lifecycle_blockers": persistent_lifecycle_blockers[:MAX_PERSISTENT_BLOCKERS],
+        "persistent_blocker_history": persistent_blocker_history,
+        "persistent_stall_summary": {
+            "active_lifecycle_blockers": len(persistent_lifecycle_blockers),
+            "lifecycle_progress_stalled": sum(row.get("persistent_state") == "LIFECYCLE_PROGRESS_STALLED" for row in persistent_lifecycle_blockers),
+            "persistent_external_blockers": sum(row.get("persistent_state") == "PERSISTENT_EXTERNAL_BLOCKER" for row in persistent_lifecycle_blockers),
+            "code_repair_required": sum(row.get("persistent_state") == "CODE_REPAIR_REQUIRED" for row in persistent_lifecycle_blockers),
+            "lane_contained": True,
+            "source": "canonical lifecycle intelligence over worker-committed state",
+            "diagnostic_only": True,
+        },
         "truth_accounting_integrity": truth_accounting,
         "truth_quality_assessments": quality_rows[:MAX_TRUTHS],
         "outcome_attribution": attribution_rows[:MAX_TRUTHS],

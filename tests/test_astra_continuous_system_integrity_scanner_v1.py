@@ -267,6 +267,55 @@ class ContinuousSystemIntegrityScannerTests(unittest.TestCase):
         self.assertEqual(day["status"], "EXTERNAL_WAIT")
         self.assertEqual(day["activity_classification"], "PROVIDER_EXTERNAL")
 
+    def test_persistent_lifecycle_blocker_is_forwarded_with_lane_containment(self):
+        blocker = {
+            "lane": "CRYPTO", "symbol": "ETH/USD", "lifecycle_id": "crypto-life",
+            "persistent_state": "PERSISTENT_EXTERNAL_BLOCKER", "classification": "PROVIDER_EXTERNAL",
+            "blocker_stage": "OBSERVATION", "blocker": "provider_quote_unavailable",
+            "repetition_count": 3, "capacity_held": True,
+        }
+        payload = self._scan(
+            trading_readiness={
+                "lane_readiness": {"CRYPTO": "DEGRADED"},
+                "lane_activity_truth_starvation_v1": {"lanes": {
+                    "CRYPTO": {"classification": "PROVIDER_EXTERNAL", "activity_warning": "NORMAL"},
+                }},
+            },
+            lifecycle_intelligence={
+                "lane_truth_starvation_scorecard": {"CRYPTO": {
+                    "persistent_blocker_state": "PERSISTENT_EXTERNAL_BLOCKER",
+                    "persistent_blocker_count": 1,
+                    "persistent_blockers": [blocker],
+                    "capacity_held_by_persistent_lifecycles": 1,
+                    "truth_throughput_delayed": True,
+                }},
+                "persistent_lifecycle_blockers": [blocker],
+            },
+        )
+        crypto = payload["cortex_summary"]["lane_operations_summary_v1"]["lanes"]["CRYPTO"]
+        self.assertEqual(crypto["status"], "EXTERNAL_WAIT")
+        self.assertEqual(crypto["persistent_blocker_count"], 1)
+        self.assertTrue(crypto["truth_throughput_delayed"])
+        self.assertTrue(crypto["lane_containment"])
+        self.assertEqual(payload["cortex_summary"]["persistent_lifecycle_blockers"][0]["lifecycle_id"], "crypto-life")
+
+    def test_persistent_source_state_is_blocked_not_external_wait(self):
+        payload = self._scan(
+            trading_readiness={
+                "lane_readiness": {"DAY": "DEGRADED"},
+                "lane_activity_truth_starvation_v1": {"lanes": {
+                    "DAY": {"classification": "NATURAL_WAIT", "activity_warning": "NORMAL"},
+                }},
+            },
+            lifecycle_intelligence={"lane_truth_starvation_scorecard": {"DAY": {
+                "persistent_blocker_state": "CODE_REPAIR_REQUIRED",
+                "persistent_blocker_count": 1,
+                "persistent_blockers": [{"lane": "DAY", "lifecycle_id": "source-life"}],
+            }}},
+        )
+        day = payload["cortex_summary"]["lane_operations_summary_v1"]["lanes"]["DAY"]
+        self.assertEqual(day["status"], "BLOCKED")
+
     def test_current_allowed_capacity_with_a_pending_candidate_gate_remains_a_sentinel_defect(self):
         payload = self._scan(
             canonical_capacity_fact={"authority_current": True, "allowed": True, "capacity_decision": "AVAILABLE"},

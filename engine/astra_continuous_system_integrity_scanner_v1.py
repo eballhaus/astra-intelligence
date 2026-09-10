@@ -104,18 +104,31 @@ def _operational_class(root: dict[str, Any]) -> str:
     return "MONITORING_ONLY"
 
 
-def _lane_operations_summary(readiness: dict[str, Any]) -> dict[str, Any]:
+def _lane_operations_summary(
+    readiness: dict[str, Any],
+    lifecycle_intelligence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Bound lane health before Sentinel, Governance, and Cortex consume it."""
     activity = _dict(_dict(readiness.get("lane_activity_truth_starvation_v1")).get("lanes"))
     lane_readiness = _dict(readiness.get("lane_readiness"))
+    lifecycle = _dict(lifecycle_intelligence)
+    lifecycle_scorecard = _dict(lifecycle.get("lane_truth_starvation_scorecard"))
     lanes: dict[str, dict[str, Any]] = {}
     for lane in ("SCALP", "DAY", "SWING", "CRYPTO"):
         row = _dict(activity.get(lane))
         technical = _text(lane_readiness.get(lane)) or "UNAVAILABLE"
         classification = _text(row.get("classification")) or "NO_CURRENT_ACTIVITY_FACT"
         warning = _text(row.get("activity_warning")) or "NORMAL"
+        lifecycle_lane = _dict(lifecycle_scorecard.get(lane))
+        persistent_state = _text(lifecycle_lane.get("persistent_blocker_state")) or "NONE"
         if classification in {"RUNTIME_REPAIRABLE", "CODE_REPAIR_REQUIRED"}:
             status = "DEGRADED" if classification == "RUNTIME_REPAIRABLE" else "BLOCKED"
+        elif persistent_state == "CODE_REPAIR_REQUIRED":
+            status = "BLOCKED"
+        elif persistent_state == "RUNTIME_REPAIR_IN_PROGRESS":
+            status = "DEGRADED"
+        elif persistent_state == "LIFECYCLE_PROGRESS_STALLED":
+            status = "PERSISTENT_STALL"
         elif classification in {"PROVIDER_EXTERNAL", "BROKER_EXTERNAL"}:
             status = "EXTERNAL_WAIT"
         elif warning in {"WATCH", "STARVATION_RISK", "DEEP_REVIEW"}:
@@ -133,9 +146,15 @@ def _lane_operations_summary(readiness: dict[str, Any]) -> dict[str, Any]:
             "first_causal_stage": _text(row.get("first_causal_stage")),
             "reason": _text(row.get("reason")),
             "recovery_state": _text(row.get("existing_recovery_state")),
+            "persistent_blocker_state": persistent_state,
+            "persistent_blocker_count": _number(lifecycle_lane.get("persistent_blocker_count")),
+            "persistent_lifecycle_blockers": list(lifecycle_lane.get("persistent_blockers") or [])[:8],
+            "capacity_held_by_persistent_lifecycles": _number(lifecycle_lane.get("capacity_held_by_persistent_lifecycles")),
+            "truth_throughput_delayed": bool(lifecycle_lane.get("truth_throughput_delayed")),
+            "lane_containment": True,
             "drill_down_ref": f"astra_trading_readiness_v1.lane_activity_truth_starvation_v1.lanes.{lane}",
         }
-    priority = [lane for lane, row in lanes.items() if row["status"] in {"BLOCKED", "DEGRADED", "DEEP_REVIEW", "STARVATION_RISK", "WATCH"}]
+    priority = [lane for lane, row in lanes.items() if row["status"] in {"BLOCKED", "DEGRADED", "PERSISTENT_STALL", "DEEP_REVIEW", "STARVATION_RISK", "WATCH"}]
     return {
         "schema_version": "ASTRA_LANE_OPERATIONS_SUMMARY_V1",
         "lanes": lanes,
@@ -813,7 +832,10 @@ class ContinuousSystemIntegrityScannerV1:
             ][-limits["max_issues"]:]
             current_readiness = _dict(context.get("trading_readiness"))
             lane_readiness = _dict(current_readiness.get("lane_readiness"))
-            lane_operations = _lane_operations_summary(current_readiness)
+            lane_operations = _lane_operations_summary(
+                current_readiness,
+                _dict(context.get("lifecycle_intelligence") or runtime_state.get("astra_natural_truth_lifecycle_intelligence_v1")),
+            )
             readiness_lanes = {"DAY", "SCALP", "SWING", "CRYPTO"}
             all_lanes_technically_ready = bool(lane_readiness) and readiness_lanes.issubset(lane_readiness) and all(
                 str(lane_readiness.get(lane)).upper() == "TECHNICALLY_READY" for lane in readiness_lanes
@@ -876,11 +898,20 @@ class ContinuousSystemIntegrityScannerV1:
                            "nondefect_count": len(platform_integrity.get("nondefects") or []),
                        },
                        "crypto_market_data": crypto_market_data,
+                       "persistent_lifecycle_blockers": [
+                           row for row in (
+                               _dict(context.get("lifecycle_intelligence") or runtime_state.get("astra_natural_truth_lifecycle_intelligence_v1")).get("persistent_lifecycle_blockers") or []
+                           ) if isinstance(row, dict)
+                       ][:limits["max_issues"]],
                        "governance_summary": {"root_causes": len(current_active), "human_repair_required": len(human), "current_code_repair_required": len(current_code_repair), "verification_pending": len(verification_pending), "safe_corrections": len(corrections), "sentinel_single_scan_owner": True,
                                               "lane_operations_summary_v1": lane_operations,
                                               "platform_integrity_status": {key: dict(value).get("status") for key, value in platform_integrity.items() if key in {"price_data_truth", "lifecycle_proof_deadline", "broker_position_execution_truth", "resource_provider_reliability"}},
                                               "profit_capture_trade_effectiveness_v2": dict(trade_effectiveness.get("cortex_summary") or {})},
-                        "cortex_summary": {"system_integrity_summary": status, "highest_impact_root_causes": current_active[:5], "verification_pending": verification_pending[:5], "downstream_symptoms_grouped": True,
+                       "cortex_summary": {"system_integrity_summary": status, "highest_impact_root_causes": current_active[:5], "verification_pending": verification_pending[:5], "persistent_lifecycle_blockers": [
+                                           row for row in (
+                                               _dict(context.get("lifecycle_intelligence") or runtime_state.get("astra_natural_truth_lifecycle_intelligence_v1")).get("persistent_lifecycle_blockers") or []
+                                           ) if isinstance(row, dict)
+                                       ][:limits["max_issues"]], "downstream_symptoms_grouped": True,
                                            "overall_trading_readiness": current_readiness.get("trading_integrity_state") or "UNAVAILABLE",
                                            "day_readiness": current_readiness.get("day_readiness") or "UNAVAILABLE",
                                            "scalp_readiness": current_readiness.get("scalp_readiness") or "UNAVAILABLE",

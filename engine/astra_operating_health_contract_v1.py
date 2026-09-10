@@ -236,18 +236,22 @@ class AstraOperatingHealthContractV1:
         truth_records: list[dict[str, Any]] | None = None,
         learning_records: list[dict[str, Any]] | None = None,
         canonical_capacity_facts: dict[str, Any] | None = None,
+        lifecycle_intelligence: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         matrix = _dict(multilane)
         truths = self._strict_truths([_dict(row) for row in (truth_records or [])])
         learning = [_dict(row) for row in (learning_records or [])]
         learned_ids = set().union(*(_record_identity(row) for row in learning)) if learning else set()
         capacity_facts = _dict(canonical_capacity_facts)
+        lifecycle = _dict(lifecycle_intelligence)
+        lifecycle_scorecard = _dict(lifecycle.get("lane_truth_starvation_scorecard"))
         lanes: dict[str, Any] = {}
         for lane in LANES:
             row = _dict(_dict(matrix.get("lanes")).get(lane))
             capacity_fact = _dict(capacity_facts.get(lane))
             lane_truths = [truth for truth in truths if _text(truth.get("lane") or truth.get("lane_id")).upper() == lane]
             consumed = [truth for truth in lane_truths if _record_identity(truth) & learned_ids]
+            lifecycle_lane = _dict(lifecycle_scorecard.get(lane))
             blocker = _text(row.get("first_blocker"), "CANDIDATE_OBSERVATION_PENDING")
             valid_wait = blocker in {
                 "CANDIDATE_OBSERVATION_PENDING", "NO_CURRENT_MARKET_OPPORTUNITY", "MARKET_CLOSED",
@@ -287,6 +291,13 @@ class AstraOperatingHealthContractV1:
                 "truths_consumed_by_learning": len(consumed),
                 "cortex_acknowledged": bool(consumed), "governance_acknowledged": bool(consumed),
                 "candidate_observation_state": row.get("candidate_observation_state"),
+                "persistent_blocker_count": _number(lifecycle_lane.get("persistent_blocker_count")),
+                "persistent_blockers": list(lifecycle_lane.get("persistent_blockers") or [])[:8],
+                "persistent_blocker_state": _text(lifecycle_lane.get("persistent_blocker_state"), "NONE"),
+                "oldest_lifecycle_age_seconds": lifecycle_lane.get("oldest_lifecycle_age_seconds"),
+                "capacity_held_by_persistent_lifecycles": _number(lifecycle_lane.get("capacity_held_by_persistent_lifecycles")),
+                "truth_throughput_delayed": bool(lifecycle_lane.get("truth_throughput_delayed")),
+                "lane_containment": True,
             }
         root_causes = list(_dict(sentinel).get("active_root_causes") or [])
         campaign = _dict(_dict(continuous).get("current_campaign"))
@@ -328,6 +339,7 @@ class AstraOperatingHealthContractV1:
                 "states": utilization_states,
                 "natural_effectiveness_evidence_required": True,
             },
+            "persistent_stall_summary": dict(lifecycle.get("persistent_stall_summary") or {}),
             "sentinel_status": _dict(sentinel).get("status"), "governance_status": _dict(continuous).get("status"),
             "cortex_status": _dict(cortex).get("status"), "control_plane_agreement": control_agree,
             "control_plane_disagreement_reason": None if control_agree else "sentinel_has_high_or_critical_root_cause; governance remains fail-closed for execution",

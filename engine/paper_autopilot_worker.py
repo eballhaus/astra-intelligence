@@ -809,6 +809,7 @@ class PaperAutopilotWorker:
                 "broker_position_truth_facts": [dict(row) for row in list(runtime.get("broker_position_truth_facts_v1") or []) if isinstance(row, dict)][:20],
                 "price_truth_facts": [dict(row) for row in list(runtime.get("price_truth_facts_v1") or []) if isinstance(row, dict)][:20],
                 "position_evidence_completeness": dict(runtime.get("position_evidence_completeness_v1") or {}),
+                "lifecycle_intelligence": dict(runtime.get("astra_natural_truth_lifecycle_intelligence_v1") or {}),
                 "unified_position_advisory": dict(runtime.get("unified_position_advisory_v1") or {}),
                 "copilot_position_advisory_handoff": dict(runtime.get("copilot_position_advisory_handoff_v1") or {}),
                 "shadow_exit_diagnostics": dict(runtime.get("shadow_exit_diagnostics_v1") or {}),
@@ -843,6 +844,7 @@ class PaperAutopilotWorker:
             truth_records=truth_rows,
             learning_records=learning_rows,
             canonical_capacity_facts={"CRYPTO": dict(lane.get("canonical_capacity_fact") or {})},
+            lifecycle_intelligence=dict(runtime.get("astra_natural_truth_lifecycle_intelligence_v1") or {}),
         )
         self.operating_health_contract.write(operating_health)
         runtime["astra_operating_health_contract_v1"] = dict(operating_health)
