@@ -1172,6 +1172,9 @@ class PaperAutopilotWorker:
                 pages_consumed=min(self.limits.maximum_pages_per_symbol * symbol_budget, int(market.get("pages_consumed_this_cycle") or 0)),
                 records_persisted=int(market.get("records_persisted_this_cycle") or 0),
                 **self._evidence_summary(),
+                alpaca_ws_active_position_monitor_v1=dict(
+                    getattr(self.autopilot, "_runtime_state", {}).get("alpaca_ws_active_position_monitor_v1") or {}
+                ),
                 last_error=str(trace.get("worker_cycle_error") or "")[:240],
                 next_cycle_at=utc_now(),
             )
