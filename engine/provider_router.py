@@ -27,6 +27,7 @@ from engine.api_call_manager import (
     record_rate_limit,
 )
 from engine.astra_provider_consumption_telemetry_v1 import append_fmp_provider_event_v1
+from engine.sec_edgar_fundamentals_v1 import SecEdgarAdapter
 
 
 # Public websocket fallbacks are intentionally limited to the verified active
@@ -506,6 +507,12 @@ class ProviderRouter:
             )
         except Exception:
             self._max_backfill_provider_probes = 1
+        # SEC access is read-only context. It uses this router's request
+        # owner so coalescing, timeout, and governor accounting remain shared;
+        # it is not added to quote/provider priority.
+        self._sec_edgar_adapter = SecEdgarAdapter(
+            request_fn=lambda url, **kwargs: self._request("SEC_EDGAR", url, **kwargs),
+        )
 
     def provider_role_matrix(self) -> dict[str, Any]:
         return {
@@ -551,6 +558,10 @@ class ProviderRouter:
                 "MORALIS": {
                     "role": ["crypto_support_fallback"],
                     "mode": "crypto_support",
+                },
+                "SEC_EDGAR": {
+                    "role": ["read_only_company_identity", "read_only_xbrl_facts"],
+                    "mode": "optional_fundamental_context",
                 },
             },
         }
@@ -1855,6 +1866,15 @@ class ProviderRouter:
             return outcome("MALFORMED_RESPONSE", status=status, error="context_fields_empty", received=1, latency=latency, response_bytes=response_bytes)
         self._mark_result(provider, True, latency)
         return outcome("SUCCESS", status=status, fields=fields, received=1, latency=latency, response_bytes=response_bytes)
+
+    def fetch_sec_company_context(self, symbol: str, *, cik: str | None = None) -> dict[str, Any]:
+        """Fetch bounded SEC identity/XBRL context without changing routing.
+
+        This is intentionally opt-in for future consumers. Existing FMP
+        callers and provider priority remain unchanged until a later
+        side-by-side migration proves the replacement contract.
+        """
+        return self._sec_edgar_adapter.fetch_company_context(symbol, cik=cik)
 
     def fetch_fmp_earnings_context(self, symbol: str) -> dict[str, Any]:
         return self._fetch_fmp_event_context(symbol, endpoint_family="earnings")

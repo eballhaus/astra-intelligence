@@ -676,3 +676,182 @@ class BroadUniverseIntakePromotionV1:
             if sym and sym not in dedup:
                 dedup[sym] = row
         return list(dedup.values())
+
+
+def _discovery_timestamp_epoch(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        if isinstance(value, (int, float)):
+            number = float(value)
+            if number > 1_000_000_000_000:
+                number /= 1000.0
+            return number if number > 1_000_000_000 else None
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def derive_alpaca_sip_market_discovery_v1(
+    rows: Iterable[dict[str, Any]] | None,
+    *,
+    mode: str,
+    limit: int = MARKET_DISCOVERY_LIMIT,
+    max_quote_age_seconds: float | None = None,
+    now_timestamp: float | None = None,
+) -> dict[str, Any]:
+    """Derive bounded mover indexes from canonical Alpaca market rows.
+
+    This helper is deliberately provider-independent at the call site: a
+    future SIP publisher supplies current rows, while the existing discovery
+    owner keeps custody of filtering and rotation. It only creates
+    discovery evidence, never executable candidates.
+    """
+    normalized_mode = str(mode or "").strip().lower()
+    if normalized_mode not in {"biggest_gainers", "most_actives"}:
+        return {"status": "UNSUPPORTED_MODE", "mode": normalized_mode, "rows": [], "executable_evidence": False}
+    bounded_limit = max(1, min(int(limit or MARKET_DISCOVERY_LIMIT), MARKET_DISCOVERY_LIMIT))
+    now = float(now_timestamp if now_timestamp is not None else time.time())
+    dedup: dict[str, dict[str, Any]] = {}
+    for raw in rows or []:
+        if not isinstance(raw, dict):
+            continue
+        symbol = _norm_symbol(raw.get("symbol"))
+        if not symbol or not BroadUniverseIntakePromotionV1._is_common_stock_discovery_row(raw):
+            continue
+        provider = str(raw.get("provider") or raw.get("provider_used") or "").strip().upper()
+        feed = str(raw.get("feed") or raw.get("data_feed") or "").strip().upper()
+        if provider not in {"ALPACA_SIP", "ALPACA_WS_SIP", "ALPACA"} and feed != "SIP":
+            continue
+        native_timestamp = (
+            raw.get("provider_native_timestamp")
+            or raw.get("provider_quote_timestamp")
+            or raw.get("quote_timestamp")
+            or raw.get("timestamp")
+        )
+        native_epoch = _discovery_timestamp_epoch(native_timestamp)
+        if native_epoch is None:
+            continue
+        freshness_state = str(raw.get("freshness_state") or "").strip().upper()
+        if freshness_state and freshness_state not in {"CURRENT", "FRESH", "VALID"}:
+            continue
+        if max_quote_age_seconds is not None:
+            age = max(0.0, now - native_epoch)
+            if age > max(0.0, float(max_quote_age_seconds)):
+                continue
+        price = _to_float(raw.get("price", raw.get("current_price", raw.get("close"))), 0.0)
+        previous_close = _to_float(raw.get("previous_close", raw.get("prev_close")), 0.0)
+        volume = _to_float(raw.get("session_volume", raw.get("volume")), 0.0)
+        trade_count = _to_int(raw.get("trade_count", raw.get("trades")), 0)
+        if price <= 0.0:
+            continue
+        if normalized_mode == "biggest_gainers":
+            if previous_close <= 0.0:
+                continue
+            metric = ((price - previous_close) / previous_close) * 100.0
+            if metric <= 0.0:
+                continue
+        else:
+            if volume <= 0.0 and trade_count <= 0:
+                continue
+            metric = volume if volume > 0.0 else float(trade_count)
+        candidate = {
+            "symbol": symbol,
+            "price": price,
+            "previous_close": previous_close if previous_close > 0.0 else None,
+            "volume": volume if volume > 0.0 else None,
+            "trade_count": trade_count if trade_count > 0 else None,
+            "change_percent": round(metric, 8) if normalized_mode == "biggest_gainers" else None,
+            "activity_metric": metric,
+            "provider": "ALPACA_SIP",
+            "provider_native_timestamp": native_timestamp,
+            "discovery_source": f"alpaca_sip_derived_{normalized_mode}",
+            "candidate_discovery_source": f"alpaca_sip_derived_{normalized_mode}",
+            "discovery_evidence_only": True,
+            "executable_evidence": False,
+            "provenance": {
+                "source": "ALPACA_SIP",
+                "source_timestamp": native_timestamp,
+                "calculation": "session_price_change_from_previous_close" if normalized_mode == "biggest_gainers" else "session_volume_or_trade_count",
+            },
+        }
+        prior = dedup.get(symbol)
+        if prior is None or candidate["activity_metric"] > prior["activity_metric"]:
+            dedup[symbol] = candidate
+    ordered = sorted(
+        dedup.values(),
+        key=lambda row: (
+            _to_float(row.get("change_percent"), 0.0) if normalized_mode == "biggest_gainers" else _to_float(row.get("activity_metric"), 0.0),
+            _to_float(row.get("volume"), 0.0),
+            str(row.get("symbol") or ""),
+        ),
+        reverse=True,
+    )[:bounded_limit]
+    return {
+        "status": "READY" if ordered else "NO_VALID_CANONICAL_ROWS",
+        "mode": normalized_mode,
+        "provider": "ALPACA_SIP",
+        "source": f"alpaca_sip_derived_{normalized_mode}",
+        "rows": ordered,
+        "executable_evidence": False,
+        "candidate_evidence_fabricated": False,
+    }
+
+
+def build_alpaca_reference_universe_v1(
+    rows: Iterable[dict[str, Any]] | None,
+    *,
+    limit: int = AUTHORITATIVE_UNIVERSE_LIMIT,
+) -> dict[str, Any]:
+    """Apply the existing liquid-common-stock filter to canonical references.
+
+    The current FMP refresh remains unchanged. This pure handoff contract is
+    for a later Alpaca asset/reference cutover and cannot create evidence.
+    """
+    bounded_limit = max(1, min(int(limit or AUTHORITATIVE_UNIVERSE_LIMIT), AUTHORITATIVE_UNIVERSE_LIMIT))
+    accepted: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in rows or []:
+        if not isinstance(raw, dict):
+            continue
+        row = dict(raw)
+        provider = str(row.get("provider") or row.get("source") or "").strip().upper()
+        if provider not in {"ALPACA", "ALPACA_REFERENCE", "ALPACA_SIP"}:
+            continue
+        row["symbol"] = _norm_symbol(row.get("symbol"))
+        if not row["symbol"] or row["symbol"] in seen:
+            continue
+        # Accept canonical reference aliases without changing the existing
+        # filter thresholds or its common-stock semantics.
+        row.setdefault("marketCap", row.get("market_cap"))
+        row.setdefault("price", row.get("last_price", row.get("current_price")))
+        row.setdefault("volume", row.get("session_volume"))
+        if "active" in row:
+            row["isActivelyTrading"] = row.get("active")
+        if "is_etf" in row:
+            row["isEtf"] = row.get("is_etf")
+        if "is_fund" in row:
+            row["isFund"] = row.get("is_fund")
+        if not BroadUniverseIntakePromotionV1._is_liquid_common_stock(row):
+            continue
+        seen.add(row["symbol"])
+        accepted.append(row)
+    accepted.sort(key=lambda row: str(row.get("symbol") or ""))
+    symbols = [str(row["symbol"]) for row in accepted[:bounded_limit]]
+    return {
+        "status": "READY" if symbols else "NO_VALID_CANONICAL_ROWS",
+        "symbols": symbols,
+        "rows": accepted[:bounded_limit],
+        "source": "ALPACA_REFERENCE_EXISTING_LIQUID_COMMON_STOCK_FILTER",
+        "provider": "ALPACA_REFERENCE",
+        "authoritative": bool(symbols),
+        "candidate_evidence_fabricated": False,
+    }
