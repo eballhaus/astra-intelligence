@@ -29,6 +29,12 @@ from engine.api_call_manager import (
 from engine.astra_provider_consumption_telemetry_v1 import append_fmp_provider_event_v1
 
 
+# Public websocket fallbacks are intentionally limited to the verified active
+# position markets. This prevents a wrapped/related token from becoming an
+# implicit substitute for the requested ETH or SHIB market.
+PUBLIC_CRYPTO_FALLBACK_PAIRS_V1 = frozenset({"ETH/USD", "SHIB/USD"})
+
+
 def _alpaca_secret_key() -> str:
     for name in ("APCA_API_SECRET_KEY", "ALPACA_SECRET_KEY", "ALPACA_API_SECRET"):
         value = str(os.getenv(name, "") or "").strip()
@@ -109,6 +115,129 @@ def _coerce_ts_seconds(value: Any) -> float | None:
         return datetime.fromisoformat(s).timestamp()
     except Exception:
         return None
+
+
+def normalize_public_crypto_websocket_quote_v1(
+    provider: str,
+    message: dict[str, Any],
+    *,
+    receive_timestamp: float | None = None,
+) -> list[dict[str, Any]]:
+    """Normalize public Kraken/Coinbase BBO events into Astra's quote contract.
+
+    This is deliberately market-data-only: no receipt timestamp can substitute
+    for a missing provider-native event timestamp, and unknown products are
+    rejected rather than mapped to a related or wrapped asset.
+    """
+    name = str(provider or "").upper().strip()
+    raw = dict(message or {}) if isinstance(message, dict) else {}
+    received = float(receive_timestamp if receive_timestamp is not None else time.time())
+    received_utc = datetime.fromtimestamp(received, UTC).isoformat().replace("+00:00", "Z")
+    rows: list[dict[str, Any]] = []
+    if name == "KRAKEN":
+        if raw.get("channel") != "ticker":
+            return rows
+        candidates = list(raw.get("data") or [])
+        timestamp_for = lambda row: row.get("timestamp")
+        symbol_for = lambda row: row.get("symbol")
+        bid_for = lambda row: row.get("bid")
+        ask_for = lambda row: row.get("ask")
+        source = "KRAKEN_PUBLIC_WS"
+    elif name == "COINBASE":
+        if raw.get("channel") != "ticker":
+            return rows
+        candidates = [
+            ticker for event in list(raw.get("events") or []) if isinstance(event, dict)
+            for ticker in list(event.get("tickers") or []) if isinstance(ticker, dict)
+        ]
+        timestamp_for = lambda _row: raw.get("timestamp")
+        symbol_for = lambda row: row.get("product_id")
+        bid_for = lambda row: row.get("best_bid")
+        ask_for = lambda row: row.get("best_ask")
+        source = "COINBASE_PUBLIC_WS"
+    else:
+        return rows
+    for raw_row in candidates:
+        if not isinstance(raw_row, dict):
+            continue
+        try:
+            identity = canonical_crypto_market_symbol_v1(symbol_for(raw_row))
+        except (TypeError, ValueError, IndexError):
+            continue
+        if identity["internal_pair"] not in PUBLIC_CRYPTO_FALLBACK_PAIRS_V1:
+            continue
+        native_timestamp = str(timestamp_for(raw_row) or "").strip()
+        native_epoch = _coerce_ts_seconds(native_timestamp)
+        bid = _to_float(bid_for(raw_row), 0.0)
+        ask = _to_float(ask_for(raw_row), 0.0)
+        if native_epoch is None or bid <= 0.0 or ask <= 0.0 or ask < bid:
+            continue
+        midpoint = (bid + ask) / 2.0
+        rows.append({
+            "symbol": identity["internal_pair"],
+            "canonical_market_symbol": identity["internal_pair"],
+            "asset_type": "crypto",
+            "asset_class": "crypto",
+            "price": midpoint,
+            "bid": bid,
+            "ask": ask,
+            "bp": bid,
+            "ap": ask,
+            "mid": midpoint,
+            "spread_pct": ((ask - bid) / midpoint) * 100.0 if midpoint > 0.0 else None,
+            "provider": source,
+            "provider_used": source,
+            "provider_provenance": f"{name}_PUBLIC_READ_ONLY_WEBSOCKET",
+            "provider_native_timestamp": native_timestamp,
+            "provider_quote_timestamp": native_timestamp,
+            "quote_timestamp": native_timestamp,
+            "receive_timestamp": received,
+            "receive_timestamp_utc": received_utc,
+            "market_observation_only": True,
+            "consolidated_market_truth": False,
+            "quote_quality": f"{name.lower()}_public_ws_bbo",
+        })
+    return rows
+
+
+def select_crypto_websocket_quote_v1(
+    alpaca_quote: dict[str, Any] | None,
+    kraken_quote: dict[str, Any] | None,
+    coinbase_quote: dict[str, Any] | None,
+    *,
+    max_age_seconds: float = 20.0,
+    now_timestamp: float | None = None,
+) -> dict[str, Any] | None:
+    """Select one native-fresh crypto quote under the fixed fallback policy.
+
+    A fresh Alpaca quote remains primary even when a public fallback is newer.
+    Kraken is considered only after Alpaca fails native freshness, followed by
+    Coinbase.  Receive time is kept for observability, never freshness.
+    """
+    now = float(now_timestamp if now_timestamp is not None else time.time())
+    for priority, quote in enumerate((alpaca_quote, kraken_quote, coinbase_quote)):
+        candidate = dict(quote or {}) if isinstance(quote, dict) else {}
+        timestamp = candidate.get("provider_native_timestamp") or candidate.get("provider_quote_timestamp") or candidate.get("quote_timestamp")
+        native_epoch = _coerce_ts_seconds(timestamp)
+        bid = _to_float(candidate.get("bid") or candidate.get("bp"), 0.0)
+        ask = _to_float(candidate.get("ask") or candidate.get("ap"), 0.0)
+        if native_epoch is None or bid <= 0.0 or ask <= 0.0 or ask < bid:
+            continue
+        age = max(0.0, now - native_epoch)
+        if age > float(max_age_seconds):
+            continue
+        candidate["bid"] = bid
+        candidate["ask"] = ask
+        candidate_price = _to_float(candidate.get("price"), 0.0)
+        candidate["price"] = candidate_price if candidate_price > 0.0 else (bid + ask) / 2.0
+        candidate["quote_age_seconds"] = round(age, 6)
+        candidate["crypto_fallback_selection_priority"] = priority
+        candidate["crypto_fallback_selection_state"] = (
+            "ALPACA_PRIMARY_FRESH" if priority == 0 else
+            "KRAKEN_FALLBACK_FRESH" if priority == 1 else "COINBASE_FALLBACK_FRESH"
+        )
+        return candidate
+    return None
 
 
 def _provider_base_confidence(provider: str) -> float:

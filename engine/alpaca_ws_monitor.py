@@ -9,7 +9,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from engine.provider_router import canonical_crypto_market_symbol_v1
+from engine.provider_router import (
+    canonical_crypto_market_symbol_v1,
+    normalize_public_crypto_websocket_quote_v1,
+    select_crypto_websocket_quote_v1,
+)
 from engine.runtime_environment import load_runtime_environment
 
 
@@ -71,6 +75,7 @@ class AlpacaWSMonitor:
         self._stream_threads: dict[str, threading.Thread] = {}
         self._connection: Any = None
         self._crypto_connection: Any = None
+        self._public_crypto_connections: dict[str, Any] = {"KRAKEN": None, "COINBASE": None}
         self._desired_symbols: set[str] = set()
         self._desired_crypto_symbols: set[str] = set()
         self._open_symbols: set[str] = set()
@@ -80,6 +85,7 @@ class AlpacaWSMonitor:
         self._subscribed_crypto_symbols: set[str] = set()
         self._quotes: dict[str, dict[str, Any]] = {}
         self._crypto_quotes: dict[str, dict[str, Any]] = {}
+        self._public_crypto_quotes: dict[str, dict[str, dict[str, Any]]] = {"KRAKEN": {}, "COINBASE": {}}
         self._stats: dict[str, Any] = {
             "messages_received": 0,
             "reconnects": 0,
@@ -101,6 +107,19 @@ class AlpacaWSMonitor:
             "last_message_utc": None,
             "last_connected_utc": None,
             "last_disconnected_utc": None,
+        }
+        self._public_crypto_stats: dict[str, dict[str, Any]] = {
+            provider: {
+                "messages_received": 0,
+                "reconnects": 0,
+                "errors": 0,
+                "last_error": "",
+                "subscription_state": "UNSUBSCRIBED",
+                "last_message_utc": None,
+                "last_connected_utc": None,
+                "last_disconnected_utc": None,
+            }
+            for provider in ("KRAKEN", "COINBASE")
         }
 
     @staticmethod
@@ -185,7 +204,9 @@ class AlpacaWSMonitor:
         open_crypto_limited = sorted(open_crypto_symbols)[:crypto_cap]
         near_limited = [symbol for symbol in sorted(near_symbols) if symbol not in open_symbols]
         desired = open_limited + near_limited[: max(0, cap - len(open_limited))]
+        public_connections_to_close: list[Any] = []
         with self._lock:
+            previous_crypto_symbols = set(self._desired_crypto_symbols)
             self._open_symbols = set(open_limited)
             self._open_crypto_symbols = set(open_crypto_limited)
             self._near_entry_symbols = set(desired) - self._open_symbols
@@ -196,6 +217,24 @@ class AlpacaWSMonitor:
                 symbol: row for symbol, row in self._crypto_quotes.items()
                 if symbol in self._desired_crypto_symbols
             }
+            self._public_crypto_quotes = {
+                provider: {
+                    symbol: row for symbol, row in quotes.items()
+                    if symbol in self._desired_crypto_symbols
+                }
+                for provider, quotes in self._public_crypto_quotes.items()
+            }
+            # Public feeds subscribe to the bounded active-position set. A
+            # symbol-set change reconnects the existing owner once instead of
+            # stacking duplicate subscriptions on a live socket.
+            if previous_crypto_symbols != self._desired_crypto_symbols:
+                public_connections_to_close = list(self._public_crypto_connections.values())
+        for connection in public_connections_to_close:
+            try:
+                if connection is not None:
+                    connection.close()
+            except Exception:
+                pass
         self._ensure_thread()
         self._wake.set()
         return {
@@ -426,6 +465,127 @@ class AlpacaWSMonitor:
             _enabled("ASTRA_ALPACA_WS_ENABLED", False),
         )
 
+    @staticmethod
+    def _public_crypto_stream_enabled() -> bool:
+        # Public streams are only subscribed for the worker's bounded active
+        # crypto symbol set. They remain read-only fallback observations.
+        return _enabled(
+            "ASTRA_CRYPTO_PUBLIC_WS_FALLBACK_ENABLED",
+            AlpacaWSMonitor._crypto_stream_enabled(),
+        )
+
+    @staticmethod
+    def _public_crypto_endpoint(provider: str) -> str:
+        return {
+            "KRAKEN": "wss://ws.kraken.com/v2",
+            "COINBASE": "wss://advanced-trade-ws.coinbase.com",
+        }.get(str(provider or "").upper(), "")
+
+    def _selected_crypto_quote(self, symbol: str, *, max_age_seconds: float = 20.0) -> dict[str, Any] | None:
+        pair = canonical_crypto_market_symbol_v1(symbol)["internal_pair"]
+        with self._lock:
+            selected = select_crypto_websocket_quote_v1(
+                self._crypto_quotes.get(pair),
+                self._public_crypto_quotes["KRAKEN"].get(pair),
+                self._public_crypto_quotes["COINBASE"].get(pair),
+                max_age_seconds=max_age_seconds,
+            )
+        return selected
+
+    def _record_public_crypto_message(self, provider: str, message: dict[str, Any]) -> None:
+        """Record only valid provider-native public BBO observations."""
+        name = str(provider or "").upper()
+        if name not in self._public_crypto_quotes:
+            return
+        receive = time.time()
+        rows = normalize_public_crypto_websocket_quote_v1(name, message, receive_timestamp=receive)
+        if not rows:
+            return
+        with self._lock:
+            quotes = self._public_crypto_quotes[name]
+            for row in rows:
+                symbol = str(row.get("symbol") or "")
+                if symbol in self._desired_crypto_symbols:
+                    quotes[symbol] = dict(row)
+            stats = self._public_crypto_stats[name]
+            stats["messages_received"] += len(rows)
+            stats["last_error"] = ""
+            stats["last_message_utc"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+    def _send_public_crypto_subscriptions(self, connection: Any, provider: str) -> None:
+        with self._lock:
+            symbols = sorted(self._desired_crypto_symbols)
+        if provider == "KRAKEN":
+            self._send(connection, {
+                "method": "subscribe",
+                "params": {"channel": "ticker", "symbol": symbols, "event_trigger": "bbo", "snapshot": True},
+            })
+        elif provider == "COINBASE":
+            products = [pair.replace("/", "-") for pair in symbols]
+            self._send(connection, {"type": "subscribe", "channel": "ticker", "product_ids": products})
+            # Coinbase documents heartbeat as the public way to retain sparse
+            # subscriptions; heartbeat records are not quote evidence.
+            self._send(connection, {"type": "subscribe", "channel": "heartbeats"})
+
+    def _run_public_crypto_stream(self, provider: str) -> None:
+        retry_seconds = 1.0
+        name = str(provider or "").upper()
+        endpoint = self._public_crypto_endpoint(name)
+        while not self._stop.is_set() and self._stream_desired("crypto") and endpoint:
+            connector = self._connector()
+            if connector is None:
+                with self._lock:
+                    stats = self._public_crypto_stats[name]
+                    stats["errors"] += 1
+                    stats["last_error"] = "websocket_client_unavailable"
+                break
+            connection = None
+            try:
+                connection = connector(endpoint, open_timeout=8, close_timeout=3, ping_interval=20.0, ping_timeout=None)
+                with self._lock:
+                    self._public_crypto_connections[name] = connection
+                    stats = self._public_crypto_stats[name]
+                    stats["subscription_state"] = "SUBSCRIBING"
+                    stats["last_error"] = ""
+                    stats["last_connected_utc"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                self._send_public_crypto_subscriptions(connection, name)
+                while not self._stop.is_set() and self._stream_desired("crypto"):
+                    try:
+                        raw = connection.recv(timeout=1.0)
+                    except TimeoutError:
+                        continue
+                    message = json.loads(raw)
+                    with self._lock:
+                        stats = self._public_crypto_stats[name]
+                        if ((name == "KRAKEN" and message.get("method") == "subscribe" and message.get("success") is True)
+                                or (name == "COINBASE" and message.get("channel") == "subscriptions")):
+                            stats["subscription_state"] = "SUBSCRIBED"
+                    self._record_public_crypto_message(name, message)
+                    retry_seconds = 1.0
+            except Exception as exc:
+                if not self._stop.is_set() and self._stream_desired("crypto"):
+                    with self._lock:
+                        stats = self._public_crypto_stats[name]
+                        stats["errors"] += 1
+                        stats["reconnects"] += 1
+                        stats["last_error"] = str(exc)[:180]
+                        stats["last_disconnected_utc"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                        stats["subscription_state"] = "FAILED"
+            finally:
+                with self._lock:
+                    if self._public_crypto_connections.get(name) is connection:
+                        self._public_crypto_connections[name] = None
+                try:
+                    if connection is not None:
+                        connection.close()
+                except Exception:
+                    pass
+            if self._stop.is_set() or not self._stream_desired("crypto"):
+                break
+            self._wake.wait(timeout=min(30.0, retry_seconds))
+            self._wake.clear()
+            retry_seconds = min(30.0, retry_seconds * 2.0)
+
     def _stream_desired(self, stream: str) -> set[str]:
         with self._lock:
             return set(self._desired_crypto_symbols if stream == "crypto" else self._desired_symbols)
@@ -449,10 +609,23 @@ class AlpacaWSMonitor:
                     )
                     self._stream_threads[stream] = thread
                     thread.start()
+            if self._public_crypto_stream_enabled() and self._stream_desired("crypto"):
+                for provider in ("KRAKEN", "COINBASE"):
+                    stream = f"public_crypto_{provider.lower()}"
+                    thread = self._stream_threads.get(stream)
+                    if thread is None or not thread.is_alive():
+                        thread = threading.Thread(
+                            target=self._run_public_crypto_stream,
+                            args=(provider,),
+                            name=f"astra-{provider.lower()}-crypto-observer",
+                            daemon=True,
+                        )
+                        self._stream_threads[stream] = thread
+                        thread.start()
             self._wake.wait(timeout=0.25)
             self._wake.clear()
         with self._lock:
-            connections = [self._connection, self._crypto_connection]
+            connections = [self._connection, self._crypto_connection, *self._public_crypto_connections.values()]
         for connection in connections:
             try:
                 if connection is not None:
@@ -565,7 +738,18 @@ class AlpacaWSMonitor:
                     crypto_sym = canonical_crypto_market_symbol_v1(sym)["internal_pair"]
                 except (TypeError, ValueError, IndexError):
                     crypto_sym = ""
+                # Preserve the legacy direct-monitor contract for Alpaca rows;
+                # authoritative active-position observations use the native
+                # freshness selector in status().  Direct callers can use a
+                # public fallback only when Alpaca has no current row at all.
                 quote = dict(self._crypto_quotes.get(crypto_sym) or {}) if crypto_sym else {}
+                if not quote and crypto_sym:
+                    quote = dict(select_crypto_websocket_quote_v1(
+                        None,
+                        self._public_crypto_quotes["KRAKEN"].get(crypto_sym),
+                        self._public_crypto_quotes["COINBASE"].get(crypto_sym),
+                        max_age_seconds=max_age_seconds,
+                    ) or {})
         if not quote:
             shared = self._read_shared_status()
             shared_observations = dict(shared.get("observations") or {})
@@ -602,6 +786,8 @@ class AlpacaWSMonitor:
             subscribed_crypto = sorted(self._subscribed_crypto_symbols)
             stats = dict(self._stats)
             crypto_stats = dict(self._crypto_stats)
+            public_crypto_stats = {provider: dict(stats) for provider, stats in self._public_crypto_stats.items()}
+            public_connections = {provider: connection is not None for provider, connection in self._public_crypto_connections.items()}
             priorities = {
                 "open_positions": len(self._open_symbols),
                 "open_crypto_positions": len(self._open_crypto_symbols),
@@ -612,11 +798,12 @@ class AlpacaWSMonitor:
                 for symbol in desired
                 if isinstance(self._quotes.get(symbol), dict)
             }
-            observations.update({
-                symbol: dict(self._crypto_quotes[symbol])
+            selected_crypto_observations = {
+                symbol: selected
                 for symbol in desired_crypto
-                if isinstance(self._crypto_quotes.get(symbol), dict)
-            })
+                if (selected := self._selected_crypto_quote(symbol, max_age_seconds=20.0)) is not None
+            }
+            observations.update(selected_crypto_observations)
         now = time.time()
         connected_at = _utc_epoch(stats.get("last_connected_utc"))
         last_message_at = _utc_epoch(stats.get("last_message_utc"))
@@ -673,10 +860,11 @@ class AlpacaWSMonitor:
         )
         return {
             "enabled": _enabled("ASTRA_ALPACA_WS_ENABLED", False) or self._crypto_stream_enabled(),
-            "running": bool(connected or crypto_connected),
-            "connection_count": int(bool(connected)) + int(bool(crypto_connected)),
+            "running": bool(connected or crypto_connected or any(public_connections.values())),
+            "connection_count": int(bool(connected)) + int(bool(crypto_connected)) + sum(int(value) for value in public_connections.values()),
             "equity_connection_count": int(bool(connected)),
             "crypto_connection_count": int(bool(crypto_connected)),
+            "public_crypto_connection_count": sum(int(value) for value in public_connections.values()),
             "feed": "iex",
             "crypto_feed": "us",
             "provider_provenance": "FAST_IEX_OBSERVATION",
@@ -693,6 +881,13 @@ class AlpacaWSMonitor:
             "owner_process_role": "worker" if self._is_canonical_owner() else "api",
             "shared_state_consumed": False,
             "observations": observations,
+            "crypto_public_fallback_enabled": self._public_crypto_stream_enabled(),
+            "crypto_public_fallback_stats": public_crypto_stats,
+            "crypto_public_fallback_connections": public_connections,
+            "crypto_provider_selection": {
+                symbol: selected.get("crypto_fallback_selection_state")
+                for symbol, selected in selected_crypto_observations.items()
+            },
             "transport_health": transport_health,
             "equity_transport_health": equity_health,
             "crypto_transport_health": crypto_health,
@@ -727,7 +922,7 @@ class AlpacaWSMonitor:
     def request_reconnect(self) -> dict[str, Any]:
         """Request one bounded reconnect on the existing monitor thread."""
         with self._lock:
-            connections = [self._connection, self._crypto_connection]
+            connections = [self._connection, self._crypto_connection, *self._public_crypto_connections.values()]
         self._wake.set()
         for connection in connections:
             try:
