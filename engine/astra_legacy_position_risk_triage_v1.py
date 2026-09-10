@@ -68,6 +68,7 @@ def triage_legacy_position_v1(
     """Return an explainable non-executing recommendation from current facts."""
     row = dict(position or {})
     fmp = dict(fmp_context or {})
+    context_provider = _text(fmp.get("provider")).upper() or "FMP"
     completeness = dict(evidence or {})
     fields = dict(fmp.get("normalized_fields") or {})
     symbol = _text(row.get("symbol")).upper()
@@ -80,8 +81,8 @@ def triage_legacy_position_v1(
     opportunity = _text(row.get("opportunity_cost_state")) or _text(completeness.get("opportunity_cost_status")) or "UNAVAILABLE"
     replacement_state = _text((replacement or {}).get("state")) or "UNAVAILABLE"
     missing = []
-    if str(fmp.get("response_state") or "").upper() != "SUCCESS" and completeness.get("fundamentals_status") not in {"FRESH", "AGING"}:
-        missing.append(_text(completeness.get("first_missing_producer")) or "FMP_CONTEXT_UNAVAILABLE")
+    if str(fmp.get("response_state") or "").upper() not in {"SUCCESS", "PARTIAL"} and completeness.get("fundamentals_status") not in {"FRESH", "AGING"}:
+        missing.append(_text(completeness.get("first_missing_producer")) or f"{context_provider}_CONTEXT_UNAVAILABLE")
     if momentum in {"UNAVAILABLE", "MISSING", "STALE"}:
         missing.append("MOMENTUM_EVIDENCE_UNAVAILABLE" if momentum != "STALE" else "MOMENTUM_EVIDENCE_STALE")
     broken = thesis.upper() in {"BROKEN", "INVALIDATED"} or catalyst.upper() in {"BROKEN", "NEGATIVE_CATALYST"}
@@ -118,9 +119,10 @@ def triage_legacy_position_v1(
             "replacement_state": replacement_state,
             "market_regime_state": _text(row.get("market_regime_state") or completeness.get("market_regime_status")) or "UNAVAILABLE",
             "fmp_profile_fields": sorted(fields),
+            "profile_context_provider": context_provider if fields else None,
         },
         "evidence_missing": missing,
-        "provider_sources": ["FMP"] if fields else [],
+        "provider_sources": [context_provider] if fields else [],
         "first_causal_blocker": blocker,
         "plain_english_reason": f"{recommendation}: {blocker.lower().replace('_', ' ')}.",
         "advisory_only": True,
@@ -166,6 +168,7 @@ def build_legacy_position_risk_triage_v1(
         **{f"{key}_count": int(value) for key, value in counts.items()},
         "insufficient_evidence_count": sum(row.get("decision_status") == "INSUFFICIENT_EVIDENCE" for row in positions),
         "FMP_evidence_used_count": sum(bool(row.get("provider_sources")) for row in positions),
+        "profile_context_used_count": sum(bool(row.get("provider_sources")) for row in positions),
         "positions": positions,
         "execution_authority": "DISABLED",
         "advisory_only": True,

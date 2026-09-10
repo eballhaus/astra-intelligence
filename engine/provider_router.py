@@ -14,7 +14,7 @@ import os
 import threading
 import time
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import requests
@@ -528,7 +528,7 @@ class ProviderRouter:
                     "mode": "active_secondary",
                 },
                 "FINNHUB": {
-                    "role": ["context_sentiment_helper", "shortlist_quote_backup"],
+                    "role": ["context_sentiment_helper", "shortlist_quote_backup", "earnings_context", "news_catalyst_context"],
                     "mode": "active_secondary",
                 },
                 "EODHD": {
@@ -1881,6 +1881,179 @@ class ProviderRouter:
 
     def fetch_fmp_news_context(self, symbol: str) -> dict[str, Any]:
         return self._fetch_fmp_event_context(symbol, endpoint_family="news_catalyst")
+
+    def _fetch_finnhub_context(self, symbol: str, *, endpoint_family: str) -> dict[str, Any]:
+        """Fetch bounded advisory context through the existing router owner.
+
+        Finnhub is already the canonical news/context provider elsewhere in
+        Astra. These adapters keep that ownership consistent for the worker's
+        legacy-SWING context refresh while retaining FMP as migration fallback.
+        They never create executable evidence or broker authority.
+        """
+        provider, sym = "FINNHUB", _safe_symbol(symbol)
+        requested_at = _now_iso()
+        endpoint_specs = {
+            "earnings": (
+                "https://finnhub.io/api/v1/calendar/earnings",
+                "/api/v1/calendar/earnings?symbol={symbol}",
+                lambda: {
+                    "from": (datetime.now(UTC) - timedelta(days=180)).date().isoformat(),
+                    "to": (datetime.now(UTC) + timedelta(days=180)).date().isoformat(),
+                    "symbol": sym,
+                    "token": None,
+                },
+            ),
+            "news_catalyst": (
+                "https://finnhub.io/api/v1/company-news",
+                "/api/v1/company-news?symbol={symbol}",
+                lambda: {
+                    "symbol": sym,
+                    "from": (datetime.now(UTC) - timedelta(days=14)).date().isoformat(),
+                    "to": datetime.now(UTC).date().isoformat(),
+                    "token": None,
+                },
+            ),
+        }
+
+        def outcome(
+            state: str,
+            *,
+            status: int | None = None,
+            error: str = "",
+            fields: dict[str, Any] | None = None,
+            records_received: int = 0,
+            records_valid: int = 0,
+            latency: float = 0.0,
+            response_bytes: int = 0,
+        ) -> dict[str, Any]:
+            return {
+                "provider": provider,
+                "endpoint_family": endpoint_family,
+                "endpoint_template": endpoint_specs.get(endpoint_family, ("", "", None))[1],
+                "symbol": sym,
+                "requested_at": requested_at,
+                "response_at": _now_iso(),
+                "http_status": int(status or 0),
+                "authentication_state": "PRESENT" if bool(self._key_for(provider, "stock")) else "MISSING",
+                "entitlement_state": "UNKNOWN" if state == "SUCCESS" else "UNVERIFIED",
+                "response_state": state,
+                "error_category": str(error or ""),
+                "records_received": int(records_received),
+                "records_valid": int(records_valid),
+                "normalized_fields": dict(fields or {}),
+                "latency_ms": round(_to_float(latency, 0.0), 3),
+                "response_bytes": int(max(0, response_bytes)),
+                "broker_actions": 0,
+                "secret_exposed": False,
+            }
+
+        spec = endpoint_specs.get(endpoint_family)
+        if spec is None:
+            return outcome("UNSUPPORTED_ENDPOINT", error="unsupported_finnhub_context_family")
+        if not sym:
+            return outcome("MALFORMED_RESPONSE", error="symbol_required")
+        key = self._key_for(provider, "stock")
+        if not key:
+            return outcome("AUTHENTICATION_FAILED", error="missing_finnhub_credential")
+        if self._provider_in_cooldown(provider):
+            return outcome("RATE_LIMITED", error="provider_cooldown")
+
+        url, _template, params_factory = spec
+        params = dict(params_factory())
+        params["token"] = key
+        data, status, error, latency = self._request(provider, url, params=params)
+        response_bytes = self._request_bytes(provider, url, params)
+        if error:
+            state = (
+                "AUTHENTICATION_FAILED" if int(status or 0) in {401, 403} else
+                "RATE_LIMITED" if int(status or 0) == 429 else
+                "TIMEOUT" if "timeout" in str(error).lower() else
+                "PROVIDER_ERROR"
+            )
+            self._mark_result(provider, False, latency, rate_limited=state == "RATE_LIMITED")
+            self._set_last_error(provider, str(error))
+            return outcome(state, status=status, error=str(error), latency=latency, response_bytes=response_bytes)
+
+        if endpoint_family == "news_catalyst":
+            raw_rows = data.get("_list") if isinstance(data, dict) and isinstance(data.get("_list"), list) else []
+            rows = [dict(row) for row in raw_rows if isinstance(row, dict)]
+            valid_rows = [
+                row for row in rows
+                if row.get("headline") and _coerce_ts_seconds(row.get("datetime")) is not None
+            ]
+            valid_rows.sort(key=lambda row: _coerce_ts_seconds(row.get("datetime")) or 0.0, reverse=True)
+            row = valid_rows[0] if valid_rows else {}
+            native_epoch = _coerce_ts_seconds(row.get("datetime"))
+            published_at = (
+                datetime.fromtimestamp(native_epoch, UTC).isoformat().replace("+00:00", "Z")
+                if native_epoch is not None else None
+            )
+            fields = {
+                "headline": row.get("headline"),
+                "summary": row.get("summary"),
+                "published_at": published_at,
+                "published_timestamp": row.get("datetime"),
+                "source": row.get("source"),
+                "url": row.get("url"),
+                "news_id": row.get("id"),
+                "related": row.get("related"),
+                "category": row.get("category"),
+            }
+        else:
+            raw_rows = data.get("earningsCalendar") if isinstance(data, dict) else []
+            if not isinstance(raw_rows, list):
+                raw_rows = []
+            rows = [
+                dict(row) for row in raw_rows
+                if isinstance(row, dict)
+                and (not row.get("symbol") or _safe_symbol(row.get("symbol")) == sym)
+                and str(row.get("date") or "").strip()
+            ]
+            rows.sort(key=lambda row: str(row.get("date") or ""))
+            today = datetime.now(UTC).date().isoformat()
+            future = [row for row in rows if str(row.get("date")) >= today]
+            prior = [row for row in rows if str(row.get("date")) < today]
+            next_row = future[0] if future else {}
+            previous_row = prior[-1] if prior else {}
+            latest = next_row or previous_row
+            history = []
+            for row in list(reversed(rows))[:8]:
+                history.append({
+                    "date": row.get("date"),
+                    "eps_actual": row.get("epsActual"),
+                    "eps_estimate": row.get("epsEstimate"),
+                    "revenue_actual": row.get("revenueActual"),
+                    "revenue_estimate": row.get("revenueEstimate"),
+                    "surprise": row.get("surprise"),
+                    "surprise_percent": row.get("surprisePercent"),
+                    "hour": row.get("hour"),
+                })
+            fields = {
+                "earnings_date": next_row.get("date") or previous_row.get("date"),
+                "next_earnings_date": next_row.get("date"),
+                "previous_earnings_date": previous_row.get("date"),
+                "eps": latest.get("epsActual"),
+                "eps_actual": latest.get("epsActual"),
+                "eps_estimate": latest.get("epsEstimate"),
+                "revenue": latest.get("revenueActual"),
+                "revenue_actual": latest.get("revenueActual"),
+                "revenue_estimate": latest.get("revenueEstimate"),
+                "surprise": latest.get("surprise"),
+                "surprise_percent": latest.get("surprisePercent"),
+                "earnings_history": history,
+            }
+        fields = {name: value for name, value in fields.items() if value not in (None, "", [])}
+        if not fields:
+            self._mark_result(provider, False, latency)
+            return outcome("MALFORMED_RESPONSE", status=status, error="context_fields_empty", records_received=len(rows), latency=latency, response_bytes=response_bytes)
+        self._mark_result(provider, True, latency)
+        return outcome("SUCCESS", status=status, fields=fields, records_received=len(rows), records_valid=1, latency=latency, response_bytes=response_bytes)
+
+    def fetch_finnhub_earnings_context(self, symbol: str) -> dict[str, Any]:
+        return self._fetch_finnhub_context(symbol, endpoint_family="earnings")
+
+    def fetch_finnhub_news_context(self, symbol: str) -> dict[str, Any]:
+        return self._fetch_finnhub_context(symbol, endpoint_family="news_catalyst")
 
     def fetch_fmp_historical_bars(self, symbol: str, *, timeframe: str = "1Hour", limit: int = 20) -> dict[str, Any]:
         """Fetch bounded FMP intraday bars for the legacy-SWING worker.

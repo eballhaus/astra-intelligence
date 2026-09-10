@@ -1777,6 +1777,9 @@ class PaperAutopilotEngine:
         self._legacy_swing_fmp_router = kwargs.get("legacy_swing_fmp_router")
         if self._legacy_swing_fmp_router is None:
             self._legacy_swing_fmp_router = ProviderRouter()
+        self._legacy_swing_sec_fetcher = kwargs.get("legacy_swing_sec_fetcher") or getattr(
+            self._legacy_swing_fmp_router, "fetch_sec_company_context", None
+        )
         self._legacy_swing_fmp_fetcher = kwargs.get("legacy_swing_fmp_fetcher") or getattr(
             self._legacy_swing_fmp_router, "fetch_fmp_profile_context", None
         )
@@ -4667,7 +4670,7 @@ class PaperAutopilotEngine:
 
     @staticmethod
     def _legacy_swing_fmp_is_current(record: dict[str, Any], now: datetime) -> bool:
-        if str(record.get("response_state") or "").upper() != "SUCCESS":
+        if str(record.get("response_state") or "").upper() not in {"SUCCESS", "PARTIAL"}:
             return False
         try:
             value = str(record.get("as_of") or record.get("response_at") or "").replace("Z", "+00:00")
@@ -4675,6 +4678,31 @@ class PaperAutopilotEngine:
         except (TypeError, ValueError):
             return False
         return (now - observed).total_seconds() <= 6 * 60 * 60
+
+    def _legacy_swing_profile_context(self, symbol: str) -> dict[str, Any]:
+        """Prefer exact SEC identity/facts and retain FMP as migration fallback."""
+        sec_fetcher = getattr(self, "_legacy_swing_sec_fetcher", None)
+        if callable(sec_fetcher):
+            try:
+                sec_response = dict(sec_fetcher(symbol) or {})
+            except Exception:
+                sec_response = {}
+            sec_state = str(sec_response.get("response_state") or "").upper()
+            if sec_state in {"SUCCESS", "PARTIAL"} and dict(sec_response.get("normalized_fields") or {}):
+                return sec_response
+        fmp_fetcher = getattr(self, "_legacy_swing_fmp_fetcher", None)
+        if callable(fmp_fetcher):
+            try:
+                return dict(fmp_fetcher(symbol) or {})
+            except Exception:
+                pass
+        return {
+            "provider": "FMP",
+            "endpoint_family": "company_profile",
+            "symbol": str(symbol or "").upper().strip(),
+            "response_state": "PROVIDER_UNAVAILABLE",
+            "error_category": "profile_context_client_unavailable",
+        }
 
     def _refresh_legacy_swing_fmp_evidence(
         self,
@@ -4748,22 +4776,19 @@ class PaperAutopilotEngine:
             activity["requests_attempted_this_cycle"] += 1
             activity["request_count"] += 1
             activity["last_attempt_at"] = now_iso
-            response = (
-                dict(self._legacy_swing_fmp_fetcher(symbol) or {})
-                if callable(self._legacy_swing_fmp_fetcher)
-                else {"provider": "FMP", "endpoint_family": "company_profile", "symbol": symbol,
-                      "response_state": "PROVIDER_UNAVAILABLE", "error_category": "fmp_client_unavailable"}
-            )
+            response = self._legacy_swing_profile_context(symbol)
             state = str(response.get("response_state") or "PROVIDER_ERROR").upper()
-            success = state == "SUCCESS" and bool(response.get("normalized_fields"))
+            success = state in {"SUCCESS", "PARTIAL"} and bool(response.get("normalized_fields"))
+            provider = str(response.get("provider") or "FMP").upper()
+            record_prefix = "legacy-fmp" if provider == "FMP" else f"legacy-{provider.lower()}"
             retry_count = int(previous.get("retry_count") or 0) + (0 if success else 1)
             backoff_minutes = 60 if retry_count >= 2 else 15
             fmp_record = {
                 "schema_version": "legacy_swing_fmp_evidence_v1",
-                "record_id": f"legacy-fmp:company-profile:{activation_id}",
-                "activity_id": f"legacy-fmp-activity:{activation_id}:{now.date().isoformat()}",
-                "provider": "FMP", "endpoint_family": str(response.get("endpoint_family") or "company_profile"),
-                "request_id": f"legacy-fmp-request:{activation_id}:{now.strftime('%Y%m%d%H')}",
+                "record_id": f"{record_prefix}:company-profile:{activation_id}",
+                "activity_id": f"{record_prefix}-activity:{activation_id}:{now.date().isoformat()}",
+                "provider": provider, "endpoint_family": str(response.get("endpoint_family") or "company_profile"),
+                "request_id": f"{record_prefix}-request:{activation_id}:{now.strftime('%Y%m%d%H')}",
                 "symbol": symbol, "position_id": record.get("position_id") or record.get("baseline_id"),
                 "activation_id": record.get("activation_id") or activation_id,
                 "requested_at": response.get("requested_at") or now_iso,
@@ -4814,14 +4839,15 @@ class PaperAutopilotEngine:
         # cycle under the same FMP budget and preserve it on the exact
         # activation record for downstream evidence projection.
         event_specs = (
-            ("earnings", "fetch_fmp_earnings_context", 6 * 60 * 60),
-            ("news_catalyst", "fetch_fmp_news_context", 15 * 60),
-            ("quote", "get_quote", 90),
+            ("earnings", ("fetch_finnhub_earnings_context", "fetch_fmp_earnings_context"), 6 * 60 * 60),
+            ("news_catalyst", ("fetch_finnhub_news_context", "fetch_fmp_news_context"), 15 * 60),
+            ("quote", ("get_quote",), 90),
         )
         event_cursor = int(prior_activity.get("event_rotation_cursor") or 0) % len(event_specs)
-        event_family, fetcher_name, event_max_age = event_specs[event_cursor]
-        event_fetcher = getattr(getattr(self, "_legacy_swing_fmp_router", None), fetcher_name, None)
-        if callable(event_fetcher):
+        event_family, fetcher_names, event_max_age = event_specs[event_cursor]
+        router = getattr(self, "_legacy_swing_fmp_router", None)
+        event_fetcher_available = any(callable(getattr(router, name, None)) for name in fetcher_names)
+        if event_fetcher_available:
             for activation_id, raw in ordered:
                 record = dict(raw or {})
                 symbol = str(record.get("symbol") or "").upper().strip()
@@ -4840,6 +4866,7 @@ class PaperAutopilotEngine:
                     except (TypeError, ValueError):
                         pass
                 if event_family == "quote":
+                    event_fetcher = getattr(router, fetcher_names[0], None)
                     quote = dict(event_fetcher(
                         symbol, asset_type="stock", preferred_providers=["FMP"], cache_max_age_seconds=90,
                     ) or {})
@@ -4855,11 +4882,27 @@ class PaperAutopilotEngine:
                         "error_category": str(quote.get("data_unavailable_reason") or quote.get("rejection_reason") or ""),
                     }
                 else:
-                    response = dict(event_fetcher(symbol) or {})
+                    response = {}
+                    for fetcher_name in fetcher_names:
+                        event_fetcher = getattr(router, fetcher_name, None)
+                        if not callable(event_fetcher):
+                            continue
+                        try:
+                            candidate_response = dict(event_fetcher(symbol) or {})
+                        except Exception:
+                            candidate_response = {}
+                        candidate_state = str(candidate_response.get("response_state") or "").upper()
+                        if candidate_state == "SUCCESS" and dict(candidate_response.get("normalized_fields") or {}):
+                            response = candidate_response
+                            break
+                        if not response:
+                            response = candidate_response
                 state = str(response.get("response_state") or "PROVIDER_ERROR").upper()
                 success = state == "SUCCESS" and bool(response.get("normalized_fields"))
+                event_provider = str(response.get("provider") or "FMP").upper()
+                event_prefix = "legacy-fmp" if event_provider == "FMP" else f"legacy-{event_provider.lower()}"
                 auxiliary[event_family] = {
-                    "record_id": f"legacy-fmp:{event_family}:{activation_id}", "provider": "FMP",
+                    "record_id": f"{event_prefix}:{event_family}:{activation_id}", "provider": event_provider,
                     "endpoint_family": event_family, "symbol": symbol,
                     "requested_at": response.get("requested_at") or now_iso, "response_at": response.get("response_at") or now_iso,
                     "response_state": state, "freshness_state": "CURRENT" if success else "UNAVAILABLE",
@@ -14424,16 +14467,18 @@ class PaperAutopilotEngine:
         return result
 
     def _consume_fmp_profile_context_v1(self, symbol: str, profile: Mapping[str, Any]) -> None:
-        """Publish only an accepted FMP profile as advisory evidence for triage."""
+        """Publish accepted profile/context evidence as advisory triage input."""
         response = dict(profile or {})
-        if str(response.get("response_state") or "") != "SUCCESS" or not dict(response.get("normalized_fields") or {}):
+        if str(response.get("response_state") or "").upper() not in {"SUCCESS", "PARTIAL"} or not dict(response.get("normalized_fields") or {}):
             return
         records = dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {})
-        key = f"fmp-production-profile:{str(symbol or '').upper()}"
+        provider = str(response.get("provider") or "FMP").upper()
+        key_prefix = "fmp" if provider == "FMP" else provider.lower()
+        key = f"{key_prefix}-production-profile:{str(symbol or '').upper()}"
         records[key] = {
             "record_id": key,
             "symbol": str(symbol or "").upper(),
-            "provider": "FMP",
+            "provider": provider,
             "endpoint_family": str(response.get("endpoint_family") or "company_profile"),
             "requested_at": response.get("requested_at"),
             "response_at": response.get("response_at"),

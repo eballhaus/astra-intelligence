@@ -419,6 +419,54 @@ class BroadUniverseIntakePromotionV1:
             _safe_write_json(self.market_snapshot_path, payload)
         return {**payload, "cache_hit": False, "cache_age_seconds": 0.0}
 
+    def market_discovery_from_canonical_rows_v1(
+        self,
+        rows: Iterable[dict[str, Any]] | None,
+        *,
+        now_timestamp: float | None = None,
+    ) -> dict[str, Any]:
+        """Route future SIP rows through this owner's existing mover cache.
+
+        The current FMP refresh remains the compatibility path until the paid
+        SIP cutover. This method is a dormant handoff contract, not a provider
+        call and not executable candidate authority.
+        """
+        combined: dict[str, dict[str, Any]] = {}
+        results = {}
+        for mode in ("biggest_gainers", "most_actives"):
+            result = derive_alpaca_sip_market_discovery_v1(
+                rows, mode=mode, limit=MARKET_DISCOVERY_LIMIT, now_timestamp=now_timestamp,
+            )
+            results[mode] = result
+            for raw in result.get("rows") or []:
+                symbol = _norm_symbol(raw.get("symbol"))
+                if not symbol:
+                    continue
+                candidate = dict(raw)
+                existing = combined.get(symbol)
+                if existing is None or self._market_priority(candidate) > self._market_priority(existing):
+                    combined[symbol] = candidate
+        ordered = sorted(combined.values(), key=self._market_priority, reverse=True)[:MARKET_DISCOVERY_LIMIT]
+        payload = {
+            "updated_ts": float(now_timestamp if now_timestamp is not None else time.time()),
+            "updated_at": _now_iso(),
+            "rows": ordered,
+            "provider": "ALPACA_SIP",
+            "source": "alpaca_sip_derived_market_discovery",
+            "gainers_status": results["biggest_gainers"].get("status"),
+            "most_actives_status": results["most_actives"].get("status"),
+            "executable_evidence": False,
+            "candidate_evidence_fabricated": False,
+        }
+        return {**payload, "cache_hit": False, "cache_age_seconds": 0.0}
+
+    def reference_universe_from_canonical_rows_v1(
+        self,
+        rows: Iterable[dict[str, Any]] | None,
+    ) -> dict[str, Any]:
+        """Apply the current universe filter to future Alpaca references."""
+        return build_alpaca_reference_universe_v1(rows, limit=AUTHORITATIVE_UNIVERSE_LIMIT)
+
     def _fmp_budget(self) -> dict[str, Any]:
         usage = _safe_read_json(self.fmp_usage_path, {})
         manifest = _safe_read_json(self.fmp_manifest_path, {})
