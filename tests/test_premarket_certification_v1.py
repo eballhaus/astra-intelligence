@@ -222,6 +222,20 @@ class PreMarketCertificationContractTests(unittest.TestCase):
         self.assertTrue(all(row["code_repair_required"] for row in result["lane_downstream_readiness"].values()))
         self.assertTrue(all(row["technical_state"] == "CODE_REPAIR_REQUIRED" for row in result["lane_downstream_readiness"].values()))
 
+    def test_lane_entry_fault_does_not_block_unrelated_lane(self):
+        now, worker, runtime, readiness, backend, _ = self._runtime_fixture()
+        readiness["active_faults"] = [{
+            "fault_type": "ENTRY_FUNNEL_STAGE_BLOCKED", "classification": "CODE_REPAIR_REQUIRED",
+            "lanes": ["CRYPTO"], "earliest_stage": "QUALIFIED",
+        }]
+        result = build_runtime_certification_v1(
+            worker_state=worker, runtime_state=runtime, readiness=readiness,
+            backend_health=backend, expected_revision="rev-1", worker_revision="rev-1",
+            backend_revision="rev-1", now=now,
+        )
+        self.assertTrue(result["lane_downstream_readiness"]["DAY"]["downstream_path_ready"])
+        self.assertEqual(result["lane_downstream_readiness"]["CRYPTO"]["technical_state"], "CODE_REPAIR_REQUIRED")
+
     def test_fresh_active_observation_and_restart_are_required(self):
         now, worker, runtime, readiness, backend, _ = self._runtime_fixture()
         stamp = now.isoformat().replace("+00:00", "Z")

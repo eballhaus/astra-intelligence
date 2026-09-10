@@ -326,8 +326,6 @@ def _lane_downstream_readiness(
     readiness: Mapping[str, Any],
     runtime: Mapping[str, Any],
     backend_ok: bool,
-    discovery_ok: bool,
-    entry_ok: bool,
     truth_ok: bool,
     lifecycle_truth_ok: bool,
 ) -> dict[str, Any]:
@@ -349,6 +347,20 @@ def _lane_downstream_readiness(
     lifecycle_lane = _runtime_dict(_runtime_dict(lifecycle.get("lane_truth_starvation_scorecard")).get(lane))
     persistent_state = _runtime_text(lifecycle_lane.get("persistent_blocker_state")).upper()
     persistent_blockers = [row for row in lifecycle_lane.get("persistent_blockers") or [] if isinstance(row, Mapping)]
+    lane_discovery_fault = any(
+        _runtime_text(row.get("earliest_stage")).upper() == "DISCOVERY"
+        or _runtime_text(row.get("fault_type")).upper().startswith("DISCOVERY")
+        for row in lane_faults
+    )
+    lane_entry_fault = any(
+        _runtime_text(row.get("earliest_stage")).upper() in {
+            "CANDIDATE", "QUALIFIED", "ELIGIBILITY", "ORDER_READY", "ENTRY",
+        }
+        or _runtime_text(row.get("fault_type")).upper().startswith("ENTRY")
+        for row in lane_faults
+    )
+    lane_discovery_ok = _runtime_text(readiness.get("discovery_integrity")).upper() == "READY" and not lane_discovery_fault
+    lane_entry_ok = lane_discovery_ok and not lane_entry_fault
     first_blocker = (
         _runtime_text(persistent_blockers[0].get("blocker")) if persistent_blockers else ""
     ) or _runtime_text(watchdog.get("current_earliest_blocker") or watchdog.get("reason"))
@@ -372,6 +384,12 @@ def _lane_downstream_readiness(
     management_ready = bool(not provider_fault and not code_faults and lane_observation_ready)
     if lane_positions:
         management_ready = management_ready and bool(watchdog.get("last_management_evaluation_time"))
+    if not first_blocker and lane_positions and not lane_observation_ready:
+        first_blocker = "OPEN_POSITION_OBSERVATION_UNAVAILABLE"
+        stage = stage or "OBSERVATION"
+    elif not first_blocker and lane_positions and not management_ready:
+        first_blocker = "OPEN_POSITION_MANAGEMENT_PENDING"
+        stage = stage or "MANAGEMENT"
     exit_path_ready = not code_faults and not provider_fault and not broker_fault and persistent_state not in {
         "LIFECYCLE_PROGRESS_STALLED", "CODE_REPAIR_REQUIRED", "RUNTIME_REPAIR_IN_PROGRESS",
     }
@@ -383,7 +401,7 @@ def _lane_downstream_readiness(
     provider_ready = bool(not provider_fault and lane_observation_ready)
     broker_ready = bool(backend_ok and not broker_fault)
     downstream_ready = bool(
-        discovery_ok and entry_ok and provider_ready and broker_ready and management_ready
+        lane_discovery_ok and lane_entry_ok and provider_ready and broker_ready and management_ready
         and exit_path_ready and truth_learning_ready and capacity_ready
     )
     if code_faults:
@@ -597,8 +615,6 @@ def build_runtime_certification_v1(
             readiness=ready,
             runtime=runtime,
             backend_ok=backend_ok,
-            discovery_ok=discovery_ok,
-            entry_ok=entry_ok,
             truth_ok=truth_ok,
             lifecycle_truth_ok=lifecycle_truth_ok,
         )
