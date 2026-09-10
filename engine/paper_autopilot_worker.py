@@ -924,7 +924,12 @@ class PaperAutopilotWorker:
             current = dict(runtime)
             try:
                 from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
-                current["alpaca_ws_active_position_monitor_v1"] = dict(ALPACA_WS_MONITOR.status() or {})
+                monitor_status = dict(ALPACA_WS_MONITOR.status() or {})
+                # Keep the worker-owned monitor snapshot available to API
+                # consumers. This is observation-only and avoids an API
+                # process creating a competing websocket owner.
+                current["alpaca_ws_active_position_monitor_v1"] = monitor_status
+                runtime["alpaca_ws_active_position_monitor_v1"] = monitor_status
             except Exception:
                 pass
             # The canonical truth registry is bounded by its existing loader.
