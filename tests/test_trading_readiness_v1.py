@@ -1060,6 +1060,69 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(day["current_earliest_blocked_stage"], "RECONCILIATION")
         self.assertEqual(day["technical_truth_starvation_status"], "RECONCILIATION_FAILURE")
         self.assertEqual(result["active_faults"][0]["fault_type"], "RECONCILIATION_FAILURE")
+        self.assertEqual(result["active_faults"][0]["owner_function"], "PaperAutopilot._refresh_authorized_lane_exit_pending")
+        self.assertEqual(result["active_faults"][0]["failing_invariant"], "BROKER_FILLED_EXIT_RECONCILES_TO_CANONICAL_LIFECYCLE")
+
+    def test_entry_handoff_root_preserves_entry_owner_invariant_and_lane(self):
+        monitor = self._monitor()
+        issues = monitor._issues(
+            {
+                "system_integrity_scanner_v1": {
+                    "active_root_causes": [{
+                        "category": "CAUSAL_HANDOFF_LOSS",
+                        "state": "OPEN",
+                        "current_vs_historical": "CURRENT",
+                        "severity": "HIGH",
+                        "first_bad_handoff": "DIRECT_CANDIDATE_FIELD -> PaperAutopilot._entry_commitment_gate_v1",
+                        "causal_handoff_integrity_v1": {
+                            "category": "CAUSAL_HANDOFF_LOSS",
+                            "lane": "CRYPTO",
+                            "field": "entry_edge_score",
+                            "consumer": "PaperAutopilot._entry_commitment_gate_v1",
+                            "consumer_state": "UNAVAILABLE",
+                            "first_bad_handoff": "DIRECT_CANDIDATE_FIELD -> PaperAutopilot._entry_commitment_gate_v1",
+                        },
+                    }],
+                },
+            },
+            {"equity_session_open": False, "preopen_window": False},
+        )
+        issue = issues[0]
+        self.assertEqual(issue["fault_type"], "ENTRY_FUNNEL_STAGE_BLOCKED")
+        self.assertEqual(issue["lanes"], ["CRYPTO"])
+        self.assertEqual(issue["scope"], "LANE")
+        self.assertEqual(issue["earliest_stage"], "QUALIFIED")
+        self.assertEqual(issue["owner_file"], "engine/paper_autopilot.py")
+        self.assertEqual(issue["owner_function"], "PaperAutopilot._entry_commitment_gate_v1")
+        annotated = monitor._annotate_issue(issue)
+        self.assertEqual(annotated["failing_invariant"], "LANE_CANDIDATE_CONTRACT_ADVANCES")
+        self.assertNotEqual(annotated["earliest_stage"], "RECONCILIATION")
+
+    def test_explicitly_shared_causal_handoff_may_scope_all_lanes(self):
+        issue = AstraTradingReadinessV1._causal_handoff_issue(
+            {"category": "CAUSAL_HANDOFF_LOSS", "first_bad_handoff": "shared candidate contract -> shared gate"},
+            {"shared_scope": True, "field": "entry_edge_score", "consumer": "shared gate"},
+        )
+        self.assertEqual(issue["lanes"], ["DAY", "SCALP", "SWING", "CRYPTO"])
+        self.assertEqual(issue["scope"], "ALL")
+
+    def test_historical_causal_root_cannot_become_current_repair_package(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "system_integrity_scanner_v1": {
+                    "active_root_causes": [{
+                        "category": "CAUSAL_HANDOFF_LOSS",
+                        "state": "RESOLVED",
+                        "current_vs_historical": "HISTORICAL",
+                        "first_bad_handoff": "DIRECT_CANDIDATE_FIELD -> PaperAutopilot._entry_commitment_gate_v1",
+                        "causal_handoff_integrity_v1": {"lane": "CRYPTO", "field": "entry_edge_score"},
+                    }],
+                },
+            },
+            worker_state={},
+        )
+        self.assertEqual(result["active_faults"], [])
+        self.assertFalse(result["code_repair_required"])
 
     def test_consumed_learning_without_ack_timestamp_does_not_claim_event_time(self):
         event_time = _iso(-10)

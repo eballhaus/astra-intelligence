@@ -477,6 +477,9 @@ class AstraTradingReadinessV1:
     @staticmethod
     def _issue_stage(issue: Mapping[str, Any]) -> str:
         fault = _text(issue.get("fault_type")).upper()
+        explicit_stage = _text(issue.get("earliest_stage")).upper()
+        if explicit_stage in TRUTH_PATH_STAGES:
+            return explicit_stage
         if fault in {"CAUSAL_HANDOFF_LOSS", "RECONCILIATION_FAILURE"}:
             return "RECONCILIATION"
         if fault == "STRICT_TRUTH_LEARNING_HANDOFF_FAILURE":
@@ -504,6 +507,96 @@ class AstraTradingReadinessV1:
             or info.get("upstream_blocker")
         ).upper()
         return blocker in _NATURAL_MATRIX_BLOCKERS or "RESERVE_EXHAUSTED" in blocker
+
+    @staticmethod
+    def _causal_handoff_issue(root: Mapping[str, Any], causal: Mapping[str, Any]) -> dict[str, Any]:
+        """Preserve the first handoff's stage instead of guessing reconciliation."""
+        handoff = _text(root.get("first_bad_handoff") or causal.get("first_bad_handoff"))
+        handoff_lower = handoff.lower()
+        consumer = _text(causal.get("consumer"))
+        consumer_lower = consumer.lower()
+        field = _text(causal.get("field")).lower()
+        consumer_state = _text(causal.get("consumer_state")).upper()
+        lane = _lane(causal.get("lane") or root.get("lane"))
+        shared_scope = bool(causal.get("shared_scope") or root.get("shared_scope"))
+        lanes = [lane] if lane else list(LANES) if shared_scope else []
+        scope = (
+            "LIFECYCLE"
+            if _text(causal.get("lifecycle_id")) and _text(causal.get("symbol"))
+            else "LANE"
+            if lane
+            else "ALL"
+            if shared_scope
+            else "UNRESOLVED"
+        )
+
+        reconciliation = (
+            consumer_state == "AWAITING_BROKER_ZERO"
+            or "broker-confirmed exit fill" in handoff_lower
+            or "reconciliation" in handoff_lower
+            or "lifecycle closure" in handoff_lower
+        )
+        entry_handoff = (
+            "entry_commitment" in consumer_lower
+            or "entry_commitment" in handoff_lower
+            or "eligibility" in handoff_lower
+            or "candidate contract" in handoff_lower
+            or field in {"entry_edge_score", "persona_disagreement_index"}
+        )
+        if reconciliation:
+            issue = {
+                "fault_type": "RECONCILIATION_FAILURE",
+                "component": _text(root.get("likely_owner") or causal.get("consumer")) or "canonical_lifecycle_closure",
+                "lanes": [lane] if lane else list(LANES) if shared_scope else [],
+                "severity": _text(root.get("severity")).upper() or "HIGH",
+                "repair_action": "",
+                "evidence": handoff or _text(root.get("finding_id")),
+            }
+            if (
+                _text(causal.get("symbol"))
+                and _text(causal.get("lifecycle_id"))
+                and consumer_state == "AWAITING_BROKER_ZERO"
+            ):
+                issue.update({
+                    "classification": "BROKER_EXTERNAL",
+                    "scope": "LIFECYCLE",
+                    "symbol": _text(causal.get("symbol")).upper(),
+                    "lifecycle_id": _text(causal.get("lifecycle_id")),
+                })
+            return issue
+
+        if entry_handoff:
+            consumer_function = consumer or "PaperAutopilot._entry_commitment_gate_v1"
+            return {
+                "fault_type": "ENTRY_FUNNEL_STAGE_BLOCKED",
+                "component": consumer_function,
+                "lanes": lanes,
+                "scope": scope,
+                "severity": _text(root.get("severity")).upper() or "HIGH",
+                "repair_action": "",
+                "evidence": handoff or _text(root.get("finding_id")),
+                "earliest_stage": _text(causal.get("first_incomplete_stage")).upper() or "QUALIFIED",
+                "owner_file": "engine/paper_autopilot.py" if consumer_function.startswith("PaperAutopilot.") else "",
+                "owner_function": consumer_function if consumer_function.startswith("PaperAutopilot.") else "",
+                "diagnostic_owner_file": "engine/astra_trading_readiness_v1.py",
+                "diagnostic_owner_function": "AstraTradingReadinessV1._issues",
+                "failing_invariant": "LANE_CANDIDATE_CONTRACT_ADVANCES",
+                "expected_contract": "the current candidate contract reaches the existing lane eligibility gate",
+                "smallest_repair_scope": "repair only the recorded candidate-to-gate handoff",
+            }
+
+        return {
+            "fault_type": "CAUSAL_HANDOFF_LOSS",
+            "component": consumer or _text(root.get("likely_owner")) or "canonical evidence handoff",
+            "lanes": lanes,
+            "scope": scope,
+            "severity": _text(root.get("severity")).upper() or "HIGH",
+            "repair_action": "",
+            "evidence": handoff or _text(root.get("finding_id")),
+            "earliest_stage": _text(causal.get("first_incomplete_stage")).upper(),
+            "owner_function": consumer,
+            "failing_invariant": _text(causal.get("failing_invariant")) or "CAUSAL_HANDOFF_LOSS",
+        }
 
     @staticmethod
     def _observation_producer_has_current_evidence(
@@ -687,11 +780,17 @@ class AstraTradingReadinessV1:
             },
         }
         contract = dict(contracts.get(fault) or {})
-        contract.setdefault("owner_file", _text(issue.get("owner_file")) or "OWNER_NOT_RESOLVED")
-        contract.setdefault("owner_function", _text(issue.get("owner_function")) or "OWNER_FUNCTION_NOT_RESOLVED")
-        contract.setdefault("failing_invariant", fault or "UNKNOWN_INVARIANT")
-        contract.setdefault("expected_contract", "the canonical stage invariant passes")
-        contract.setdefault("smallest_repair_scope", "bounded owner-level repair only")
+        for key, fallback in (
+            ("owner_file", "OWNER_NOT_RESOLVED"),
+            ("owner_function", "OWNER_FUNCTION_NOT_RESOLVED"),
+            ("failing_invariant", fault or "UNKNOWN_INVARIANT"),
+            ("expected_contract", "the canonical stage invariant passes"),
+            ("smallest_repair_scope", "bounded owner-level repair only"),
+        ):
+            if _text(issue.get(key)):
+                contract[key] = issue[key]
+            else:
+                contract.setdefault(key, fallback)
         contract.setdefault("relevant_test_owners", [])
         return contract
 
@@ -732,6 +831,8 @@ class AstraTradingReadinessV1:
             "proven_root_cause": _text(issue.get("evidence")),
             "owner_file": _text(issue.get("owner_file")),
             "owner_function": _text(issue.get("owner_function")),
+            "diagnostic_owner_file": _text(issue.get("diagnostic_owner_file")),
+            "diagnostic_owner_function": _text(issue.get("diagnostic_owner_function")),
             "failing_invariant": _text(issue.get("failing_invariant")),
             "expected_contract": _text(issue.get("expected_contract")),
             "actual_contract": _text(issue.get("evidence")),
@@ -1448,29 +1549,7 @@ class AstraTradingReadinessV1:
                 continue
             causal = _dict(root.get("causal_handoff_integrity_v1"))
             if category == "CAUSAL_HANDOFF_LOSS":
-                lane = _lane(causal.get("lane") or root.get("lane"))
-                issue = {
-                    "fault_type": "RECONCILIATION_FAILURE",
-                    "component": _text(root.get("likely_owner") or causal.get("consumer")) or "canonical_lifecycle_closure",
-                    "lanes": [lane] if lane else list(LANES),
-                    "severity": _text(root.get("severity")).upper() or "HIGH",
-                    "repair_action": "",
-                    "evidence": _text(root.get("first_bad_handoff") or causal.get("first_bad_handoff") or root.get("finding_id")),
-                }
-                # A broker aggregate residual can keep one lifecycle
-                # fail-closed without disabling unrelated lane operation.
-                if (
-                    _text(causal.get("symbol"))
-                    and _text(causal.get("lifecycle_id"))
-                    and _text(causal.get("consumer_state")).upper() == "AWAITING_BROKER_ZERO"
-                ):
-                    issue.update({
-                        "classification": "BROKER_EXTERNAL",
-                        "scope": "LIFECYCLE",
-                        "symbol": _text(causal.get("symbol")).upper(),
-                        "lifecycle_id": _text(causal.get("lifecycle_id")),
-                    })
-                issues.append(issue)
+                issues.append(self._causal_handoff_issue(root, causal))
             elif category == "CYCLE_WITHIN_BOUNDS":
                 # Scanner records persist across cycles. A historical or
                 # verification row cannot reactivate a passing worker cycle.

@@ -185,6 +185,8 @@ def causal_facts_from_candidate_traces_v1(rows: list[dict[str, Any]] | None, *, 
             "current": True,
             "candidate_id": row.get("candidate_id"),
             "lifecycle_id": row.get("lifecycle_id"),
+            "lane": row.get("lane") or row.get("lane_id") or row.get("canonical_lane"),
+            "symbol": row.get("symbol") or row.get("canonical_symbol"),
             "evidence_timestamp": row.get("timestamp_utc") or row.get("generated_at"),
             "consumer": "PaperAutopilot candidate execution",
         }

@@ -6,6 +6,7 @@ import unittest
 from engine.astra_continuous_system_integrity_scanner_v1 import ContinuousSystemIntegrityScannerV1
 from engine.astra_sentinel_causal_handoff_integrity_v1 import (
     classify_causal_handoff_facts_v1,
+    causal_facts_from_candidate_traces_v1,
     collect_platform_integrity_monitors_v2,
 )
 
@@ -21,6 +22,22 @@ class SentinelCausalHandoffIntegrityTests(unittest.TestCase):
             "consumer_value": None, "current": True,
         })
         self.assertEqual(result["signals"][0]["category"], "CAUSAL_HANDOFF_LOSS")
+
+    def test_candidate_trace_preserves_lane_and_symbol_for_causal_scope(self):
+        facts = causal_facts_from_candidate_traces_v1([{
+            "candidate_id": "candidate-1",
+            "lane": "CRYPTO",
+            "symbol": "ETH/USD",
+            "entry_commitment_trace_v1": {
+                "entry_edge_score_provenance": "DIRECT_CANDIDATE_FIELD",
+                "input_sources": {"entry_edge_score": "DEFAULT"},
+            },
+        }])
+        self.assertEqual(facts[0]["lane"], "CRYPTO")
+        self.assertEqual(facts[0]["symbol"], "ETH/USD")
+        signal = classify_causal_handoff_facts_v1(facts)["signals"][0]
+        self.assertEqual(signal["causal_finding_v1"]["lane"], "CRYPTO")
+        self.assertEqual(signal["causal_finding_v1"]["symbol"], "ETH/USD")
 
     def test_persona_placeholder_used_as_measured_is_shadowing(self):
         result = self._classify({
