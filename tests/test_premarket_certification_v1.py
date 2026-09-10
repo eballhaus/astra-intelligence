@@ -186,6 +186,42 @@ class PreMarketCertificationContractTests(unittest.TestCase):
         self.assertEqual(result["current_code_repair_required"], [])
         self.assertEqual(result["current_external_blockers"][0]["classification"], "BROKER_EXTERNAL")
 
+    def test_lane_downstream_readiness_is_bounded_and_lane_local(self):
+        now, worker, runtime, readiness, backend, _ = self._runtime_fixture()
+        readiness["active_faults"] = [{
+            "fault_type": "PRODUCER_FRESH_CONSUMER_UNAVAILABLE", "classification": "PROVIDER_EXTERNAL",
+            "lanes": ["CRYPTO"], "earliest_stage": "OBSERVATION",
+        }]
+        result = build_runtime_certification_v1(
+            worker_state=worker, runtime_state=runtime, readiness=readiness,
+            backend_health=backend, expected_revision="rev-1", worker_revision="rev-1",
+            backend_revision="rev-1", now=now,
+        )
+        lanes = result["lane_downstream_readiness"]
+        self.assertEqual(set(lanes), {"DAY", "SCALP", "SWING", "CRYPTO"})
+        self.assertTrue(lanes["DAY"]["downstream_path_ready"])
+        self.assertTrue(lanes["DAY"]["provider_ready"])
+        self.assertEqual(lanes["CRYPTO"]["technical_state"], "PROVIDER_EXTERNAL")
+        self.assertFalse(lanes["CRYPTO"]["management_ready"])
+        for row in lanes.values():
+            self.assertIn("persistent_stall_count", row)
+            self.assertIn("oldest_stall_age_seconds", row)
+            self.assertIn("code_repair_required", row)
+
+    def test_shared_fault_is_exposed_to_each_lane_without_new_authority(self):
+        now, worker, runtime, readiness, backend, _ = self._runtime_fixture()
+        readiness["active_faults"] = [{
+            "fault_type": "WORKER_HEARTBEAT_STALE", "classification": "CODE_REPAIR_REQUIRED",
+            "lanes": ["ALL"], "earliest_stage": "RUNTIME",
+        }]
+        result = build_runtime_certification_v1(
+            worker_state=worker, runtime_state=runtime, readiness=readiness,
+            backend_health=backend, expected_revision="rev-1", worker_revision="rev-1",
+            backend_revision="rev-1", now=now,
+        )
+        self.assertTrue(all(row["code_repair_required"] for row in result["lane_downstream_readiness"].values()))
+        self.assertTrue(all(row["technical_state"] == "CODE_REPAIR_REQUIRED" for row in result["lane_downstream_readiness"].values()))
+
     def test_fresh_active_observation_and_restart_are_required(self):
         now, worker, runtime, readiness, backend, _ = self._runtime_fixture()
         stamp = now.isoformat().replace("+00:00", "Z")

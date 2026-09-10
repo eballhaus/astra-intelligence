@@ -319,6 +319,112 @@ def _runtime_natural_waits(readiness: Mapping[str, Any], runtime: Mapping[str, A
     return waits
 
 
+def _lane_downstream_readiness(
+    *,
+    lane: str,
+    faults: Sequence[Mapping[str, Any]],
+    readiness: Mapping[str, Any],
+    runtime: Mapping[str, Any],
+    backend_ok: bool,
+    discovery_ok: bool,
+    entry_ok: bool,
+    truth_ok: bool,
+    lifecycle_truth_ok: bool,
+) -> dict[str, Any]:
+    """Expose bounded per-lane readiness from the existing certification facts."""
+    lane_faults = [
+        row for row in faults
+        if lane in (row.get("lanes") or []) or "ALL" in (row.get("lanes") or [])
+    ]
+    code_faults = [row for row in lane_faults if _runtime_text(row.get("classification")).upper() == "CODE_REPAIR_REQUIRED" or _runtime_text(row.get("verification_result")).upper() == "CODE_REPAIR_REQUIRED"]
+    provider_fault = any(
+        _runtime_text(row.get("classification")).upper() in {"PROVIDER_EXTERNAL", "DEGRADED_EXTERNAL"}
+        or _runtime_text(row.get("fault_type")).upper() in {"ACTIVE_POSITION_NOT_STREAMED", "WS_TRANSPORT_UNHEALTHY", "PRODUCER_FRESH_CONSUMER_UNAVAILABLE"}
+        for row in lane_faults
+    )
+    broker_fault = any(_runtime_text(row.get("classification")).upper() == "BROKER_EXTERNAL" for row in lane_faults)
+    watchdog = _runtime_dict(_runtime_dict(readiness.get("truth_production_watchdog")).get("lanes")).get(lane)
+    watchdog = _runtime_dict(watchdog)
+    lifecycle = _runtime_dict(runtime.get("astra_natural_truth_lifecycle_intelligence_v1"))
+    lifecycle_lane = _runtime_dict(_runtime_dict(lifecycle.get("lane_truth_starvation_scorecard")).get(lane))
+    persistent_state = _runtime_text(lifecycle_lane.get("persistent_blocker_state")).upper()
+    persistent_blockers = [row for row in lifecycle_lane.get("persistent_blockers") or [] if isinstance(row, Mapping)]
+    first_blocker = (
+        _runtime_text(persistent_blockers[0].get("blocker")) if persistent_blockers else ""
+    ) or _runtime_text(watchdog.get("current_earliest_blocker") or watchdog.get("reason"))
+    if not first_blocker:
+        first_blocker = _runtime_text(lane_faults[0].get("evidence") or lane_faults[0].get("failing_invariant")) if lane_faults else ""
+    stage = (
+        (_runtime_text(persistent_blockers[0].get("blocker_stage")) if persistent_blockers else "")
+        or (_runtime_text(lane_faults[0].get("earliest_stage")) if lane_faults else "")
+    )
+    stage_class = _runtime_text(lane_faults[0].get("classification")) if lane_faults else ""
+    blocker_class = _runtime_text(persistent_blockers[0].get("classification")) if persistent_blockers else ""
+    lane_positions = [
+        row for row in _runtime_dict(lifecycle).get("current_lifecycle_state") or []
+        if isinstance(row, Mapping) and _runtime_text(row.get("lane")).upper() == lane
+    ]
+    lane_observation_ready = not lane_positions or all(
+        bool(_runtime_text(_runtime_dict(row.get("observation")).get("provider_native_timestamp")))
+        and _runtime_text(_runtime_dict(row.get("observation")).get("freshness_state")).upper() not in {"STALE", "EXPIRED", "UNAVAILABLE", "MISSING"}
+        for row in lane_positions
+    )
+    management_ready = bool(not provider_fault and not code_faults and lane_observation_ready)
+    if lane_positions:
+        management_ready = management_ready and bool(watchdog.get("last_management_evaluation_time"))
+    exit_path_ready = not code_faults and not provider_fault and not broker_fault and persistent_state not in {
+        "LIFECYCLE_PROGRESS_STALLED", "CODE_REPAIR_REQUIRED", "RUNTIME_REPAIR_IN_PROGRESS",
+    }
+    truth_learning_ready = bool(truth_ok and lifecycle_truth_ok and not any(
+        _runtime_text(row.get("earliest_stage")).upper() in {"STRICT_TRUTH", "LEARNING"}
+        for row in lane_faults
+    ))
+    capacity_ready = not any(_runtime_text(row.get("earliest_stage")).upper() == "CAPACITY" for row in lane_faults)
+    provider_ready = bool(not provider_fault and lane_observation_ready)
+    broker_ready = bool(backend_ok and not broker_fault)
+    downstream_ready = bool(
+        discovery_ok and entry_ok and provider_ready and broker_ready and management_ready
+        and exit_path_ready and truth_learning_ready and capacity_ready
+    )
+    if code_faults:
+        technical_state = "CODE_REPAIR_REQUIRED"
+    elif provider_fault:
+        technical_state = "PROVIDER_EXTERNAL"
+    elif broker_fault:
+        technical_state = "BROKER_EXTERNAL"
+    elif persistent_state == "LIFECYCLE_PROGRESS_STALLED":
+        technical_state = "SESSION_WAIT" if _runtime_text(persistent_blockers[0].get("classification")).upper() == "SESSION_WAIT" else "NATURAL_WAIT"
+    elif stage_class in {"NATURAL_WAIT", "SESSION_WAIT", "VALID_CAPACITY_WAIT"}:
+        technical_state = stage_class
+    elif blocker_class.upper() in {"NATURAL_WAIT", "SESSION_WAIT", "VALID_CAPACITY_WAIT"}:
+        technical_state = blocker_class.upper()
+    elif blocker_class.upper() in {"PROVIDER_EXTERNAL", "BROKER_EXTERNAL"}:
+        technical_state = blocker_class.upper()
+    elif first_blocker.upper().startswith(("NATURAL_", "SESSION_", "CAPACITY_")):
+        technical_state = "NATURAL_WAIT" if not first_blocker.upper().startswith("SESSION_") else "SESSION_WAIT"
+    else:
+        technical_state = "TECHNICALLY_READY" if downstream_ready else "NATURAL_WAIT"
+    oldest_age = lifecycle_lane.get("oldest_lifecycle_age_seconds")
+    return {
+        "lane": lane,
+        "technical_state": technical_state,
+        "current_first_blocker": first_blocker or None,
+        "current_first_stage": stage or None,
+        "downstream_path_ready": downstream_ready,
+        "provider_ready": provider_ready,
+        "broker_ready": broker_ready,
+        "management_ready": management_ready,
+        "exit_path_ready": exit_path_ready,
+        "truth_learning_ready": truth_learning_ready,
+        "capacity_ready": capacity_ready,
+        "persistent_stall_count": _runtime_number(lifecycle_lane.get("persistent_blocker_count"), 0.0),
+        "oldest_stall_age_seconds": oldest_age,
+        "code_repair_required": bool(code_faults),
+        "classification": stage_class or _runtime_text(lifecycle_lane.get("persistent_blocker_classification")) or None,
+        "lane_containment": True,
+    }
+
+
 def build_runtime_certification_v1(
     *,
     worker_state: Mapping[str, Any] | None,
@@ -479,6 +585,20 @@ def build_runtime_certification_v1(
         "crypto_path": {"passed": crypto_ok, "crypto_lifecycle_integrity": crypto_integrity, "equity_observation_isolation": True},
         "restart_survivability": {"passed": restart_survived, "current_worker_pid": worker.get("active_worker_pid"), "prior_worker_pid": worker.get("last_known_worker_pid")},
     }
+    lane_downstream_readiness = {
+        lane: _lane_downstream_readiness(
+            lane=lane,
+            faults=faults,
+            readiness=ready,
+            runtime=runtime,
+            backend_ok=backend_ok,
+            discovery_ok=discovery_ok,
+            entry_ok=entry_ok,
+            truth_ok=truth_ok,
+            lifecycle_truth_ok=lifecycle_truth_ok,
+        )
+        for lane in LANES
+    }
     full_technical_pass = all(bool(check.get("passed")) for check in checks.values())
     pending_recovery = any(
         _runtime_text(row.get("verification_result")).upper() in {"ACTION_DISPATCHED", "RECOVERY_VERIFYING"}
@@ -530,6 +650,7 @@ def build_runtime_certification_v1(
         "truth_path_certified": truth_ok,
         "crypto_path_certified": crypto_ok,
         "restart_survivability_certified": restart_survived,
+        "lane_downstream_readiness": lane_downstream_readiness,
         "checks": checks,
         "active_faults": faults,
         "current_external_blockers": external_faults,
