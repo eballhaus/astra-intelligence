@@ -422,6 +422,12 @@ def _lane_downstream_readiness(
         technical_state = "NATURAL_WAIT" if not first_blocker.upper().startswith("SESSION_") else "SESSION_WAIT"
     else:
         technical_state = "TECHNICALLY_READY" if downstream_ready else "NATURAL_WAIT"
+    reported_classification = (
+        stage_class
+        or blocker_class
+        or _runtime_text(lifecycle_lane.get("persistent_blocker_classification"))
+        or None
+    )
     stall_ages = [
         _runtime_number(row.get("duration_seconds"), -1.0)
         for row in persistent_blockers
@@ -443,7 +449,7 @@ def _lane_downstream_readiness(
         "persistent_stall_count": _runtime_number(lifecycle_lane.get("persistent_blocker_count"), 0.0),
         "oldest_stall_age_seconds": oldest_age,
         "code_repair_required": bool(code_faults),
-        "classification": stage_class or _runtime_text(lifecycle_lane.get("persistent_blocker_classification")) or None,
+        "classification": reported_classification,
         "lane_containment": True,
     }
 

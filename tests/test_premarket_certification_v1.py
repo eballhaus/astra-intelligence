@@ -192,6 +192,14 @@ class PreMarketCertificationContractTests(unittest.TestCase):
             "fault_type": "PRODUCER_FRESH_CONSUMER_UNAVAILABLE", "classification": "PROVIDER_EXTERNAL",
             "lanes": ["CRYPTO"], "earliest_stage": "OBSERVATION",
         }]
+        runtime["astra_natural_truth_lifecycle_intelligence_v1"] = {
+            "lane_truth_starvation_scorecard": {
+                "CRYPTO": {
+                    "persistent_blocker_count": 1,
+                    "persistent_blockers": [{"duration_seconds": 42, "classification": "PROVIDER_EXTERNAL"}],
+                },
+            },
+        }
         result = build_runtime_certification_v1(
             worker_state=worker, runtime_state=runtime, readiness=readiness,
             backend_health=backend, expected_revision="rev-1", worker_revision="rev-1",
@@ -203,6 +211,8 @@ class PreMarketCertificationContractTests(unittest.TestCase):
         self.assertTrue(lanes["DAY"]["provider_ready"])
         self.assertEqual(lanes["CRYPTO"]["technical_state"], "PROVIDER_EXTERNAL")
         self.assertFalse(lanes["CRYPTO"]["management_ready"])
+        self.assertEqual(lanes["CRYPTO"]["oldest_stall_age_seconds"], 42.0)
+        self.assertEqual(lanes["CRYPTO"]["classification"], "PROVIDER_EXTERNAL")
         for row in lanes.values():
             self.assertIn("persistent_stall_count", row)
             self.assertIn("oldest_stall_age_seconds", row)
