@@ -611,7 +611,7 @@ def broker_residual_lookup(
     position_id = _text(row.get("position_id") or row.get("asset_id") or symbol)
 
     def _first_qty(mapping: Mapping[str, Any]) -> float | None:
-        for key in ("qty", "quantity", "qty_available", "residual_qty", "remaining_qty"):
+        for key in ("target_residual_quantity", "broker_residual_quantity", "qty", "quantity", "qty_available", "residual_qty", "remaining_qty"):
             if key in mapping and mapping[key] not in (None, ""):
                 return _num(mapping[key])
         return None
@@ -638,8 +638,29 @@ def broker_residual_lookup(
     status = _text(response.get("lookup_status") or response.get("status")).upper()
     if not response:
         status = "UNKNOWN"
-    if status in {"LOOKUP_TIMEOUT", "LOOKUP_FAILED", "STALE_RESPONSE", "ACCOUNT_MISMATCH", "SYMBOL_MISMATCH", "MALFORMED_RESPONSE", "UNKNOWN"}:
+    if status in {"LOOKUP_TIMEOUT", "LOOKUP_FAILED", "BROKER_LOOKUP_FAILED", "STALE_RESPONSE", "ACCOUNT_MISMATCH", "SYMBOL_MISMATCH", "MALFORMED_RESPONSE", "UNKNOWN"}:
         return _residual_result(position_id, symbol, None, source, status, row, response)
+    if status == "AGGREGATE_POSITION_AMBIGUITY":
+        return _residual_result(position_id, symbol, _first_qty(response), source, status, row, response)
+    if status == "TARGET_RESIDUAL_NONZERO":
+        return _residual_result(position_id, symbol, _first_qty(response), source, status, row, response)
+    if status == "TARGET_RESIDUAL_DUST":
+        residual = _first_qty(response)
+        if residual is None or not bool(response.get("target_attribution_verified")):
+            return _residual_result(position_id, symbol, residual, source, "AGGREGATE_POSITION_AMBIGUITY", row, response)
+        result = _residual_result(position_id, symbol, residual, source, status, row, response, exit_allowed=True, tolerance=0.0000001)
+        result["dust_classification"] = classify_dust_position_v1({
+            **dict(response), "symbol": symbol, "qty": residual,
+            "asset_type": row.get("asset_type") or row.get("asset_class"),
+        })
+        return result
+    if status == "BROKER_ZERO_CONFIRMED":
+        residual = _first_qty(response)
+        if residual is None:
+            residual = 0.0 if bool(response.get("authoritative_not_found")) else None
+        if residual is None:
+            return _residual_result(position_id, symbol, None, source, "MALFORMED_RESPONSE", row, response)
+        return _residual_result(position_id, symbol, residual, source, status, row, response, exit_allowed=True, tolerance=0.0000001)
     if status in {"AUTHORITATIVE_NOT_FOUND", "NOT_FOUND"}:
         if bool(response.get("authoritative_not_found")) and bool(response.get("paper_account_validated", True)) and _text(response.get("symbol") or symbol).upper() == symbol:
             return _residual_result(position_id, symbol, 0.0, source, "AUTHORITATIVE_NOT_FOUND", row, response, exit_allowed=True)
@@ -666,7 +687,7 @@ def broker_residual_lookup(
 
 
 def _residual_result(position_id: str, symbol: str, residual: float | None, source: str, status: str, row: Mapping[str, Any], response: Mapping[str, Any], *, exit_allowed: bool = False, tolerance: float | None = None) -> dict[str, Any]:
-    return {
+    result = {
         "position_id": position_id,
         "symbol": symbol,
         "broker_account": _text(response.get("account") or response.get("account_id") or row.get("broker_account")),
@@ -684,3 +705,14 @@ def _residual_result(position_id: str, symbol: str, residual: float | None, sour
         "strict_truth_eligible": bool(exit_allowed),
         "as_of": _iso(),
     }
+    # Preserve lifecycle-attribution evidence for callers that must keep the
+    # symbol aggregate visible while deciding whether the target may close.
+    for key in (
+        "broker_aggregate_quantity", "target_residual_quantity", "target_position_id",
+        "target_residual_state", "target_attribution_verified", "target_lots",
+        "independent_lots", "unowned_lots", "provenance_status", "provenance_source",
+        "broker_read_calls_used", "broker_actions_used", "lookup_error",
+    ):
+        if key in response:
+            result[key] = response[key]
+    return result

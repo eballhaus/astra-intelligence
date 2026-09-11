@@ -4586,43 +4586,284 @@ class PaperAutopilotEngine:
         self._runtime_state["authorized_lane_exit_pending"] = remaining
         return {"checked": checked, "filled": filled, "pending": len(remaining)}
 
-    def _independent_broker_residual_lookup(self, symbol: str, _position_id: str) -> dict[str, Any]:
-        """Read the complete paper-broker position set for exit reconciliation.
+    @staticmethod
+    def _broker_lot_identity_tokens(source: Mapping[str, Any] | None) -> set[str]:
+        """Return only explicit broker entry identifiers from one local row."""
+        row = dict(source or {})
+        tokens: set[str] = set()
+        scalar_keys = (
+            "entry_order_id", "source_broker_order_id", "broker_entry_order_id",
+            "entry_fill_id", "source_broker_fill_id", "entry_client_order_id",
+            "broker_entry_client_order_id", "broker_order_id", "client_order_id",
+        )
+        list_keys = ("broker_order_ids", "client_order_ids")
+        for key in scalar_keys:
+            value = str(row.get(key) or "").strip()
+            if value:
+                tokens.add(value)
+        for key in list_keys:
+            value = row.get(key)
+            values = value if isinstance(value, (list, tuple, set)) else [value]
+            tokens.update(str(item or "").strip() for item in values if str(item or "").strip())
+        for raw in (row.get("entry_metadata_json"), row.get("row_json")):
+            parsed = _safe_json_load(raw)
+            nested_sources = [parsed] if isinstance(parsed, Mapping) else []
+            for nested_key in ("entry_lane_horizon_contract_v1", "entry_contract", "immutable_entry_contract"):
+                nested = parsed.get(nested_key) if isinstance(parsed, Mapping) else None
+                if isinstance(nested, Mapping):
+                    nested_sources.append(nested)
+            for nested in nested_sources:
+                for key in scalar_keys:
+                    value = str(nested.get(key) or "").strip()
+                    if value:
+                        tokens.add(value)
+        return tokens
 
-        A local lifecycle row and an exit fill prove neither the broker's
-        residual quantity nor a successful not-found result.  This lookup is
-        intentionally separate from both before a position can be closed.
+    def _lifecycle_broker_residual_context(self, symbol: str, position_id: str) -> dict[str, Any]:
+        """Collect lifecycle identities and independent owners without broker I/O."""
+        expected = str(symbol or "").upper().strip()
+        target_id = str(position_id or "").strip()
+        try:
+            open_rows = list(self._fetch_open_positions() or [])
+        except Exception:
+            open_rows = []
+        target_sources: list[Mapping[str, Any]] = []
+        for row in open_rows:
+            item = dict(row or {})
+            if str(item.get("position_id") or "").strip() == target_id:
+                target_sources.append(item)
+
+        runtime_state = getattr(self, "_runtime_state", {})
+        pending = dict(runtime_state.get("authorized_lane_exit_pending") or {}) if isinstance(runtime_state, Mapping) else {}
+        for raw in pending.values():
+            item = dict(raw or {}) if isinstance(raw, Mapping) else {}
+            if str(item.get("position_id") or "").strip() != target_id:
+                continue
+            contract = item.get("contract")
+            if isinstance(contract, Mapping):
+                target_sources.append(dict(contract))
+
+        native = dict(runtime_state.get("native_lane_exit_lifecycle_v1") or {}) if isinstance(runtime_state, Mapping) else {}
+        target_native = native.get(target_id)
+        if isinstance(target_native, Mapping):
+            target_sources.append(dict(target_native))
+        target_tokens: set[str] = set()
+        for source in target_sources:
+            target_tokens.update(self._broker_lot_identity_tokens(source))
+
+        owner_tokens: dict[str, dict[str, Any]] = {}
+        for row in open_rows:
+            item = dict(row or {})
+            if str(item.get("position_id") or "").strip() == target_id:
+                continue
+            if str(item.get("symbol") or "").upper().strip() != expected:
+                continue
+            owner = {
+                "position_id": str(item.get("position_id") or "").strip(),
+                "lifecycle_id": str(item.get("lifecycle_id") or item.get("position_id") or "").strip(),
+                "lane_id": str(item.get("lane_id") or item.get("lane") or "").upper().strip(),
+                "source": "canonical_open_position",
+            }
+            for token in self._broker_lot_identity_tokens(item):
+                owner_tokens[token] = owner
+        for lifecycle_id, raw in native.items():
+            item = dict(raw or {}) if isinstance(raw, Mapping) else {}
+            if str(item.get("position_id") or lifecycle_id).strip() == target_id:
+                continue
+            if str(item.get("symbol") or "").upper().strip() != expected:
+                continue
+            if str(item.get("closure_state") or "").upper().strip() in {
+                "CLOSED", "CLOSED_PENDING_TRUTH", "STRICT_TRUTH_CREATED",
+                "LEARNING_ACKNOWLEDGED", "COMPLETED",
+            }:
+                continue
+            owner = {
+                "position_id": str(item.get("position_id") or lifecycle_id).strip(),
+                "lifecycle_id": str(item.get("lifecycle_id") or lifecycle_id).strip(),
+                "lane_id": str(item.get("lane_id") or item.get("lane") or "").upper().strip(),
+                "source": "native_lane_exit_lifecycle_v1",
+            }
+            for token in self._broker_lot_identity_tokens(item):
+                owner_tokens[token] = owner
+        return {
+            "symbol": expected,
+            "position_id": target_id,
+            "target_tokens": target_tokens,
+            "owner_tokens": owner_tokens,
+            "identity_available": bool(target_tokens),
+        }
+
+    def _lifecycle_broker_provenance(
+        self, symbol: str, aggregate_row: Mapping[str, Any]
+    ) -> tuple[dict[str, Any] | None, int, str]:
+        """Use the existing bounded FIFO provenance snapshot before refreshing it."""
+        expected = str(symbol or "").upper().strip()
+        runtime_state = getattr(self, "_runtime_state", {})
+        cached = dict(runtime_state.get("legacy_retirement_entry_provenance_v1") or {}) if isinstance(runtime_state, Mapping) else {}
+        cached_rows = dict(cached.get("rows") or {})
+        cached_row = dict(cached_rows.get(expected) or {})
+        generated_at = str(cached.get("generated_at") or "").strip()
+        cache_age = _age_seconds_from_iso(generated_at) if generated_at else None
+        cache_valid = bool(cached_row.get("matching_entry_fills")) and cache_age is not None and cache_age <= 900.0
+        if cache_valid:
+            return cached_row, 0, str(cached.get("status") or "BROKER_FIFO_FILL_MATCHED")
+
+        broker = getattr(self, "alpaca_paper_broker", None)
+        if broker is None or not hasattr(broker, "reconstruct_open_position_provenance"):
+            return None, 0, "BROKER_FILL_PROVENANCE_UNAVAILABLE"
+        try:
+            rebuilt = dict(broker.reconstruct_open_position_provenance([dict(aggregate_row)], limit=500) or {})
+            rows = [
+                dict(item)
+                for item in list(rebuilt.get("positions") or [])
+                if isinstance(item, Mapping) and str(item.get("symbol") or "").upper().strip() == expected
+            ]
+            if not rows:
+                return None, int(rebuilt.get("broker_read_calls_used") or 1), "BROKER_FILL_PROVENANCE_UNAVAILABLE"
+            row = rows[0]
+            return row, int(rebuilt.get("broker_read_calls_used") or 1), str(row.get("entry_provenance_status") or "BROKER_FIFO_FILL_PARTIAL")
+        except Exception:
+            return None, 1, "BROKER_FILL_PROVENANCE_UNAVAILABLE"
+
+    def _independent_broker_residual_lookup(self, symbol: str, position_id: str) -> dict[str, Any]:
+        """Resolve broker residual against lifecycle-owned fill lineage.
+
+        The broker position snapshot remains symbol-aggregate evidence.  It is
+        never assigned to this lifecycle unless the existing FIFO fill
+        provenance and canonical lifecycle identifiers prove that assignment.
         """
         broker = self.alpaca_paper_broker
         if broker is None or not hasattr(broker, "positions"):
-            return {"lookup_status": "LOOKUP_FAILED", "symbol": symbol}
+            return {"lookup_status": "BROKER_LOOKUP_FAILED", "symbol": symbol, "position_id": position_id, "broker_actions_used": 0}
         try:
             payload = dict(broker.positions() or {})
         except TimeoutError:
-            return {"lookup_status": "LOOKUP_TIMEOUT", "symbol": symbol}
+            return {"lookup_status": "BROKER_LOOKUP_FAILED", "lookup_error": "LOOKUP_TIMEOUT", "symbol": symbol, "position_id": position_id, "broker_actions_used": 0}
         except Exception:
-            return {"lookup_status": "LOOKUP_FAILED", "symbol": symbol}
-        if not bool(payload.get("ok")):
-            return {"lookup_status": "LOOKUP_FAILED", "symbol": symbol}
+            return {"lookup_status": "BROKER_LOOKUP_FAILED", "symbol": symbol, "position_id": position_id, "broker_actions_used": 0}
+        if not bool(payload.get("ok")) or not isinstance(payload.get("positions"), list):
+            return {"lookup_status": "BROKER_LOOKUP_FAILED", "symbol": symbol, "position_id": position_id, "broker_actions_used": 0}
         expected = str(symbol or "").upper().strip()
-        for raw in list(payload.get("positions") or []):
-            row = dict(raw or {})
-            if str(row.get("symbol") or "").upper().strip() == expected:
-                return {
-                    **row,
-                    "lookup_status": "ZERO_CONFIRMED" if abs(_to_float(row.get("qty"), _to_float(row.get("quantity"), 0.0))) <= 0.0 else "NONZERO_CONFIRMED",
-                    "paper_account_validated": True,
-                    "residual_lookup_authoritative": True,
-                    "retrieval_timestamp": _now_iso(),
-                }
-        # Alpaca's successful complete positions listing authoritatively means
-        # no current position exists for the requested paper-account symbol.
-        return {
-            "lookup_status": "AUTHORITATIVE_NOT_FOUND",
-            "authoritative_not_found": True,
+        aggregate_row = next(
+            (
+                dict(raw)
+                for raw in payload.get("positions") or []
+                if isinstance(raw, Mapping) and str(raw.get("symbol") or "").upper().strip() == expected
+            ),
+            None,
+        )
+        if aggregate_row is None:
+            # A complete, validated paper-account position listing proves no
+            # aggregate symbol position exists; no ownership inference is
+            # needed in this case.
+            return {
+                "lookup_status": "BROKER_ZERO_CONFIRMED",
+                "authoritative_not_found": True,
+                "paper_account_validated": True,
+                "residual_lookup_authoritative": True,
+                "symbol": expected,
+                "position_id": str(position_id or ""),
+                "target_residual_quantity": 0.0,
+                "target_residual_state": "BROKER_ZERO_CONFIRMED",
+                "target_attribution_verified": True,
+                "retrieval_timestamp": _now_iso(),
+                "broker_read_calls_used": 1,
+                "broker_actions_used": 0,
+            }
+
+        aggregate_qty = _to_float(aggregate_row.get("qty"), _to_float(aggregate_row.get("quantity"), 0.0))
+        context = self._lifecycle_broker_residual_context(expected, position_id)
+        if not context.get("identity_available"):
+            return {
+                **aggregate_row,
+                "lookup_status": "BROKER_LOOKUP_FAILED",
+                "lookup_error": "TARGET_LIFECYCLE_IDENTITY_UNAVAILABLE",
+                "paper_account_validated": True,
+                "residual_lookup_authoritative": True,
+                "retrieval_timestamp": _now_iso(),
+                "broker_aggregate_quantity": aggregate_qty,
+                "broker_read_calls_used": 1,
+                "broker_actions_used": 0,
+            }
+        provenance, provenance_calls, provenance_status = self._lifecycle_broker_provenance(expected, aggregate_row)
+        if not provenance or not bool(provenance.get("quantity_coverage_complete")):
+            return {
+                **aggregate_row,
+                "lookup_status": "BROKER_LOOKUP_FAILED",
+                "lookup_error": "BROKER_FILL_PROVENANCE_INCOMPLETE",
+                "paper_account_validated": True,
+                "residual_lookup_authoritative": True,
+                "retrieval_timestamp": _now_iso(),
+                "broker_aggregate_quantity": aggregate_qty,
+                "provenance_status": provenance_status,
+                "broker_read_calls_used": 1 + provenance_calls,
+                "broker_actions_used": 0,
+            }
+
+        target_tokens = set(context.get("target_tokens") or set())
+        owner_tokens = dict(context.get("owner_tokens") or {})
+        target_lots: list[dict[str, Any]] = []
+        independent_lots: list[dict[str, Any]] = []
+        unowned_lots: list[dict[str, Any]] = []
+        for raw_lot in list(provenance.get("matching_entry_fills") or []):
+            lot = dict(raw_lot or {})
+            lot_tokens = self._broker_lot_identity_tokens(lot)
+            target_match = bool(lot_tokens & target_tokens)
+            owner_matches = [owner_tokens[token] for token in lot_tokens if token in owner_tokens]
+            if target_match and owner_matches:
+                unowned_lots.append({**lot, "ambiguity": "TARGET_AND_INDEPENDENT_OWNER"})
+            elif target_match:
+                target_lots.append(lot)
+            elif owner_matches:
+                independent_lots.append({**lot, "owner": owner_matches[0]})
+            else:
+                unowned_lots.append(lot)
+        target_residual = sum(_to_float(lot.get("remaining_qty"), 0.0) for lot in target_lots)
+        base = {
+            **aggregate_row,
             "paper_account_validated": True,
-            "symbol": expected,
+            "residual_lookup_authoritative": True,
             "retrieval_timestamp": _now_iso(),
+            "broker_aggregate_quantity": aggregate_qty,
+            "target_residual_quantity": target_residual,
+            "target_position_id": str(position_id or ""),
+            "target_lots": target_lots,
+            "independent_lots": independent_lots,
+            "unowned_lots": unowned_lots,
+            "provenance_status": provenance_status,
+            "provenance_source": str(provenance.get("entry_provenance_source") or "alpaca_paper_closed_orders_fifo"),
+            "broker_read_calls_used": 1 + provenance_calls,
+            "broker_actions_used": 0,
+        }
+        if unowned_lots:
+            return {
+                **base,
+                "lookup_status": "AGGREGATE_POSITION_AMBIGUITY",
+                "target_residual_state": "AGGREGATE_POSITION_AMBIGUITY",
+                "target_attribution_verified": False,
+            }
+        # These thresholds intentionally mirror the existing equity
+        # reconciliation contract: 1e-7 broker-zero and <0.001 dust.
+        if abs(target_residual) <= 0.0000001:
+            return {
+                **base,
+                "lookup_status": "BROKER_ZERO_CONFIRMED",
+                "target_residual_state": "BROKER_ZERO_CONFIRMED",
+                "target_attribution_verified": True,
+            }
+        if abs(target_residual) < 0.001:
+            return {
+                **base,
+                "lookup_status": "TARGET_RESIDUAL_DUST",
+                "target_residual_state": "TARGET_RESIDUAL_DUST",
+                "target_attribution_verified": True,
+                "is_dust": True,
+            }
+        return {
+            **base,
+            "lookup_status": "TARGET_RESIDUAL_NONZERO",
+            "target_residual_state": "TARGET_RESIDUAL_NONZERO",
+            "target_attribution_verified": True,
         }
 
     @staticmethod
@@ -11722,7 +11963,7 @@ class PaperAutopilotEngine:
                 and client_identity_verified
             )
             dust_safe_closure = bool(
-                str(residual.get("lookup_status") or "") == "DUST_RESIDUAL"
+                str(residual.get("lookup_status") or "") in {"DUST_RESIDUAL", "TARGET_RESIDUAL_DUST"}
                 and bool(dust.get("is_dust"))
                 and identity_verified
                 and submitted_qty > 0.0
