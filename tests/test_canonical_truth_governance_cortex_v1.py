@@ -6,7 +6,14 @@ import tempfile
 import unittest
 
 from engine.astra_canonical_truth_registry_v1 import canonical_fact_registry_v1, fact_envelope_v1
-from engine.astra_truth_arbitration_v1 import TruthContradictionRegistryV1, arbitrate_truth_claims_v1, cortex_truth_summary_v1, read_canonical_open_crypto_positions
+from engine.astra_truth_arbitration_v1 import (
+    CanonicalPositionStoreUnavailable,
+    TruthContradictionRegistryV1,
+    arbitrate_truth_claims_v1,
+    canonical_position_store_status_v1,
+    cortex_truth_summary_v1,
+    read_canonical_open_crypto_positions,
+)
 
 
 class CanonicalTruthGovernanceCortexTests(unittest.TestCase):
@@ -51,6 +58,27 @@ class CanonicalTruthGovernanceCortexTests(unittest.TestCase):
         conn.commit(); conn.close()
         rows = read_canonical_open_crypto_positions(path)
         self.assertEqual([row["position_id"] for row in rows], ["open-crypto"])
+
+    def test_selected_position_store_wins_over_compatibility_store(self):
+        _, path = self._db()
+        compatibility = os.path.join(os.path.dirname(path), "paper_autopilot.db")
+        sqlite3.connect(compatibility).close()
+        status = canonical_position_store_status_v1(path, compatibility_path=compatibility)
+        self.assertEqual(status["status"], "CANONICAL_POSITION_STORE_READY")
+        self.assertEqual(status["canonical_db_path"], os.path.abspath(path))
+        self.assertTrue(status["compatibility_ignored"])
+        self.assertEqual(len(read_canonical_open_crypto_positions(path, strict=True)), 0)
+
+    def test_missing_selected_position_store_does_not_fall_back_to_compatibility(self):
+        with tempfile.TemporaryDirectory() as root:
+            missing = os.path.join(root, "selected.db")
+            compatibility = os.path.join(root, "paper_autopilot.db")
+            sqlite3.connect(compatibility).close()
+            status = canonical_position_store_status_v1(missing, compatibility_path=compatibility)
+            self.assertEqual(status["status"], "CANONICAL_POSITION_STORE_UNAVAILABLE")
+            self.assertEqual(status["reason"], "SELECTED_DB_FILE_MISSING")
+            with self.assertRaises(CanonicalPositionStoreUnavailable):
+                read_canonical_open_crypto_positions(missing, strict=True)
 
     def test_fact_envelope_has_required_canonical_provenance(self):
         fact = fact_envelope_v1("LOCAL_OPEN_CRYPTO_POSITION_COUNT", 0)

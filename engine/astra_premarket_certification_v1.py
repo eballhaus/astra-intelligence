@@ -21,6 +21,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+from engine.astra_trading_readiness_v1 import readiness_artifact_freshness_v1
+
 
 VERSION = "1.0.0"
 RUNTIME_CERTIFICATION_SCHEMA_VERSION = "ASTRA_PREMARKET_TECHNICAL_CERTIFICATION_V1"
@@ -481,9 +483,20 @@ def build_runtime_certification_v1(
     prior = _runtime_dict(previous)
     current = now or datetime.now(timezone.utc)
     generated_at = current.isoformat().replace("+00:00", "Z")
-    faults = _runtime_current_faults(ready)
+    readiness_freshness = readiness_artifact_freshness_v1(ready, worker, now=current)
+    raw_faults = _runtime_current_faults(ready)
+    # A stale artifact remains available for audit provenance, but it cannot
+    # supply current execution/truth blockers or readiness facts.
+    stale_diagnostic_faults = [
+        {**row, "diagnostic_only": True, "diagnostic_state": "STALE_READINESS_ARTIFACT"}
+        for row in raw_faults
+    ] if not readiness_freshness["current"] else []
+    ready_for_current = ready if readiness_freshness["current"] else {
+        "session": _runtime_dict(ready.get("session")),
+    }
+    faults = _runtime_current_faults(ready_for_current)
     fault_types = _runtime_fault_types(faults)
-    session = _runtime_dict(ready.get("session"))
+    session = _runtime_dict(ready_for_current.get("session"))
     equity_expected = bool(
         session.get("equity_session_open")
         or session.get("preopen_window")
@@ -492,8 +505,8 @@ def build_runtime_certification_v1(
             "NEAR_CLOSE_INTEGRITY_CHECK", "POST_CLOSE_LANE_ACCOUNTING",
         }
     )
-    readiness_age = _runtime_age_seconds(ready.get("generated_at"), current)
-    readiness_current = readiness_age is not None and readiness_age <= 900.0
+    readiness_age = readiness_freshness.get("artifact_age_seconds")
+    readiness_current = bool(readiness_freshness.get("current"))
     heartbeat_age = _runtime_age_seconds(worker.get("heartbeat_at"), current)
     active_worker = bool(worker.get("active_worker_present")) and bool(worker.get("active_worker_pid"))
     worker_role = _runtime_text(worker.get("process_role")).upper() == "PAPER_AUTOPILOT_WORKER"
@@ -523,10 +536,10 @@ def build_runtime_certification_v1(
     )
 
     matrix = _runtime_dict(runtime.get("multilane_completion_matrix") or runtime.get("astra_multilane_completion_matrix_v1"))
-    watchdog = _runtime_dict(ready.get("truth_production_watchdog"))
+    watchdog = _runtime_dict(ready_for_current.get("truth_production_watchdog"))
     technical_faults = [row for row in faults if _runtime_technical_fault(row)]
     technical_fault_types = _runtime_fault_types(technical_faults)
-    discovery_ok = _runtime_text(ready.get("discovery_integrity")).upper() == "READY" and not any(
+    discovery_ok = _runtime_text(ready_for_current.get("discovery_integrity")).upper() == "READY" and not any(
         fault.startswith("DISCOVERY") for fault in technical_fault_types
     )
     entry_fault = any(
@@ -551,10 +564,10 @@ def build_runtime_certification_v1(
     fallback_fresh = _runtime_fresh_observations(runtime, active_symbols, current)
     observation_fault = bool(fault_types & {"ACTIVE_POSITION_NOT_STREAMED", "WS_TRANSPORT_UNHEALTHY", "PRODUCER_FRESH_CONSUMER_UNAVAILABLE"})
     observation_ok = not active_symbols or (not equity_expected and not observation_fault) or (not observation_fault and (ws_flowing or fallback_fresh))
-    management_fault = _runtime_text(ready.get("position_management_integrity")).upper() == "FAULT" or "PRODUCER_FRESH_CONSUMER_UNAVAILABLE" in fault_types
+    management_fault = _runtime_text(ready_for_current.get("position_management_integrity")).upper() == "FAULT" or "PRODUCER_FRESH_CONSUMER_UNAVAILABLE" in fault_types
     management_ok = not active_symbols or (not management_fault and (not equity_expected or observation_ok))
     crypto_fault = any(fault.startswith("CRYPTO_") for fault in technical_fault_types)
-    crypto_integrity = _runtime_text(ready.get("crypto_lifecycle_integrity")).upper()
+    crypto_integrity = _runtime_text(ready_for_current.get("crypto_lifecycle_integrity")).upper()
     crypto_snapshot = _runtime_dict(runtime.get("crypto_operational_integrity_readiness_v1"))
     crypto_ok = not crypto_fault and crypto_integrity not in {"FAULT", "BROKEN"} and bool(
         crypto_snapshot or crypto_integrity in {"READY", "TECHNICALLY_READY"}
@@ -565,10 +578,10 @@ def build_runtime_certification_v1(
         _runtime_text(truth_accounting.get("status")).upper() in {"", "PASS"}
         and _runtime_number(truth_accounting.get("unexplained_gaps"), 0.0) == 0.0
     )
-    truth_ok = _runtime_text(ready.get("strict_truth_integrity")).upper() != "FAULT" and bool(watchdog) and lifecycle_truth_ok
+    truth_ok = _runtime_text(ready_for_current.get("strict_truth_integrity")).upper() != "FAULT" and bool(watchdog) and lifecycle_truth_ok
     code_faults = [row for row in faults if _runtime_text(row.get("classification")).upper() == "CODE_REPAIR_REQUIRED" or _runtime_text(row.get("verification_result")).upper() == "CODE_REPAIR_REQUIRED"]
     external_faults = [row for row in faults if _runtime_text(row.get("classification")).upper() in {"BROKER_EXTERNAL", "PROVIDER_EXTERNAL", "DEGRADED_EXTERNAL"}]
-    natural_waits = _runtime_natural_waits(ready, runtime)
+    natural_waits = _runtime_natural_waits(ready_for_current, runtime)
     current_repairs = [
         {
             "fault_type": row.get("fault_type"),
@@ -576,7 +589,7 @@ def build_runtime_certification_v1(
             "attempt": row.get("attempt"),
             "verification_result": row.get("verification_result"),
         }
-        for row in _runtime_rows(ready.get("recoveries"))
+        for row in _runtime_rows(ready_for_current.get("recoveries"))
     ]
     restart_survived = bool(
         active_worker and worker_count == 1 and worker_role and revision_match
@@ -598,13 +611,14 @@ def build_runtime_certification_v1(
             "generated_at": ready.get("generated_at"),
             "age_seconds": readiness_age,
             "maximum_age_seconds": 900.0,
+            "reasons": list(readiness_freshness.get("reasons") or []),
             "source": "AstraTradingReadinessV1.generated_at",
         },
         "discovery": {"passed": discovery_ok, "source": "AstraTradingReadinessV1.discovery_integrity"},
         "entry_funnel": {"passed": entry_ok, "source": "AstraTradingReadinessV1 + canonical multilane matrix", "matrix_available": bool(matrix)},
         "observation": {"passed": observation_ok, "active_symbols": sorted(active_symbols), "ws_flowing": ws_flowing, "approved_fallback_fresh": fallback_fresh, "equity_evidence_expected": equity_expected},
-        "management": {"passed": management_ok, "position_management_integrity": ready.get("position_management_integrity")},
-        "truth_path": {"passed": truth_ok, "strict_truth_integrity": ready.get("strict_truth_integrity")},
+        "management": {"passed": management_ok, "position_management_integrity": ready_for_current.get("position_management_integrity")},
+        "truth_path": {"passed": truth_ok, "strict_truth_integrity": ready_for_current.get("strict_truth_integrity")},
         "lifecycle_truth_continuity": {
             "passed": lifecycle_truth_ok,
             "available": bool(lifecycle_intelligence),
@@ -619,7 +633,7 @@ def build_runtime_certification_v1(
         lane: _lane_downstream_readiness(
             lane=lane,
             faults=faults,
-            readiness=ready,
+            readiness=ready_for_current,
             runtime=runtime,
             backend_ok=backend_ok,
             truth_ok=truth_ok,
@@ -681,6 +695,8 @@ def build_runtime_certification_v1(
         "lane_downstream_readiness": lane_downstream_readiness,
         "checks": checks,
         "active_faults": faults,
+        "stale_diagnostic_faults": stale_diagnostic_faults,
+        "readiness_artifact_freshness": readiness_freshness,
         "current_external_blockers": external_faults,
         "current_natural_waits": natural_waits,
         "current_runtime_repairs": current_repairs,

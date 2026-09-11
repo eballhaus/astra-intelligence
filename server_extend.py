@@ -775,7 +775,13 @@ except Exception:
     ShadowProfitLossProtectionValidationV1 = None  # type: ignore[assignment,misc]
 try:
     from engine.astra_canonical_truth_registry_v1 import canonical_fact_registry_v1, fact_envelope_v1
-    from engine.astra_truth_arbitration_v1 import TruthContradictionRegistryV1, arbitrate_truth_claims_v1, cortex_truth_summary_v1, read_canonical_open_crypto_positions
+    from engine.astra_truth_arbitration_v1 import (
+        TruthContradictionRegistryV1,
+        arbitrate_truth_claims_v1,
+        canonical_position_store_status_v1,
+        cortex_truth_summary_v1,
+        read_canonical_open_crypto_positions,
+    )
     from engine.astra_continuous_system_integrity_scanner_v1 import ContinuousSystemIntegrityScannerV1
     from engine.astra_sentinel_integration_v1 import sentinel_integrity_payload_v1
     from engine.astra_crypto_market_data_capability_matrix_v1 import CryptoMarketDataCapabilityMatrixV1
@@ -786,6 +792,7 @@ except Exception:
     TruthContradictionRegistryV1 = None  # type: ignore[assignment,misc]
     arbitrate_truth_claims_v1 = None  # type: ignore[assignment]
     cortex_truth_summary_v1 = None  # type: ignore[assignment]
+    canonical_position_store_status_v1 = None  # type: ignore[assignment]
     read_canonical_open_crypto_positions = None  # type: ignore[assignment]
     ContinuousSystemIntegrityScannerV1 = None  # type: ignore[assignment,misc]
     sentinel_integrity_payload_v1 = None  # type: ignore[assignment]
@@ -71888,10 +71895,26 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
     integrity = CryptoOperationalIntegrityReadinessV1(STATE).load_snapshot() if CryptoOperationalIntegrityReadinessV1 is not None else {}
     shadow = ShadowProfitLossProtectionValidationV1(STATE).load_snapshot() if ShadowProfitLossProtectionValidationV1 is not None else {}
     capability = dict(ALPACA_PAPER_BROKER.crypto_capability_status(False) or {}) if hasattr(ALPACA_PAPER_BROKER, "crypto_capability_status") else {}
-    worker_arbitration = dict(runtime.get("truth_arbitration_v1") or persisted_state.get("truth_arbitration_v1") or {})
-    worker_facts = dict(worker_arbitration.get("critical_facts") or {})
-    local_fact = dict(worker_facts.get("LOCAL_OPEN_CRYPTO_POSITION_COUNT") or {})
-    local_count = local_fact.get("value", (integrity.get("reconciliation") or {}).get("canonical_local_open_crypto_count"))
+    worker_snapshot = _read_json_file(os.path.join(STATE, "astra_worker_runtime_state_v1.json"), default={})
+    canonical_db_path = str(
+        worker_snapshot.get("canonical_position_db_path")
+        or runtime.get("canonical_position_db_path")
+        or ""
+    ).strip()
+    canonical_store = (
+        dict(canonical_position_store_status_v1(
+            canonical_db_path,
+            compatibility_path=os.path.join(STATE, "paper_autopilot.db"),
+        ) or {})
+        if callable(canonical_position_store_status_v1)
+        else {"status": "CANONICAL_POSITION_STORE_UNAVAILABLE", "reason": "CANONICAL_STORE_HELPER_UNAVAILABLE"}
+    )
+    local_count = None
+    if canonical_store.get("status") == "CANONICAL_POSITION_STORE_READY" and callable(read_canonical_open_crypto_positions):
+        try:
+            local_count = len(read_canonical_open_crypto_positions(canonical_db_path, strict=True))
+        except Exception:
+            local_count = None
     claims = []
     if callable(fact_envelope_v1) and local_count is not None:
         claims.extend([
@@ -71903,7 +71926,20 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
             fact_envelope_v1("CRYPTO_CAPABILITY_TRADABLE_PAIR_COUNT", len(capability.get("tradable_pairs") or []), snapshot_id=str(capability.get("generated_at") or "")),
             fact_envelope_v1("CRYPTO_ELIGIBLE_COMPLETED_LIFECYCLE_COUNT", int(_to_float((shadow.get("lifecycle_evidence_eligibility") or {}).get("eligible_by_lane", {}).get("CRYPTO"), 0))),
         ])
-    arbitration = worker_arbitration if worker_facts else (arbitrate_truth_claims_v1(claims) if callable(arbitrate_truth_claims_v1) else {"critical_facts": {}, "contradictions": [], "status": "UNAVAILABLE_FAIL_CLOSED"})
+    if claims and callable(arbitrate_truth_claims_v1):
+        arbitration = arbitrate_truth_claims_v1(claims)
+    else:
+        arbitration = {
+            "critical_facts": {},
+            "contradictions": [{
+                "fact_id": "LOCAL_OPEN_CRYPTO_POSITION_COUNT",
+                "contradiction_type": "CANONICAL_POSITION_STORE_UNAVAILABLE",
+                "severity": "HIGH",
+                "fail_closed_state": True,
+                "source": canonical_store,
+            }],
+            "status": "UNKNOWN_FAIL_CLOSED",
+        }
     persisted = TruthContradictionRegistryV1(STATE).load() if TruthContradictionRegistryV1 is not None else {"issues": []}
     scanner = ContinuousSystemIntegrityScannerV1(STATE).snapshot() if ContinuousSystemIntegrityScannerV1 is not None else {"status": "UNAVAILABLE_FAIL_CLOSED"}
     matrix = CryptoMarketDataCapabilityMatrixV1(STATE).snapshot() if CryptoMarketDataCapabilityMatrixV1 is not None else {}
@@ -71926,12 +71962,12 @@ def _astra_canonical_truth_governance_v1_payload() -> dict:
     cortex["recovery_status"] = recovery_status
     cortex["recovery_ready"] = recovery_status.get("status") == "RECOVERY_READY"
     completion_warning = str(completion.get("status") or "").upper() == "WARNING"
-    endpoint_status = "WARNING" if active or scanner_roots or completion_warning else "PASS" if worker_facts else arbitration.get("status", "PENDING_WORKER_FACT_SNAPSHOT")
+    endpoint_status = "WARNING" if active or scanner_roots or completion_warning else "PASS" if claims and canonical_store.get("status") == "CANONICAL_POSITION_STORE_READY" else arbitration.get("status", "PENDING_WORKER_FACT_SNAPSHOT")
     return {"endpoint": "/api/astra_canonical_truth_governance_v1", "status": endpoint_status,
             "canonical_fact_registry": canonical_fact_registry_v1(), "critical_facts": arbitration.get("critical_facts", {}),
-            "truth_arbitration": arbitration, "active_contradictions": active,
+            "truth_arbitration": arbitration, "canonical_position_store": canonical_store, "active_contradictions": active,
             "resolved_contradictions": [dict(row) for row in (persisted.get("issues") or []) if isinstance(row, dict) and row.get("state") == "RESOLVED"],
-            "governance_invariants": {"CRYPTO_LOCAL_BROKER_POSITION_COUNTS_RECONCILE": int(_to_float(local_count, 0)) == int(_to_float(capacity.get("crypto_open_positions"), 0)), "CRYPTO_RECONCILIATION_USES_CANONICAL_OPEN_POSITION_STORE": True, "NO_NONCANONICAL_POSITION_SOURCE_OVERRIDES_CANONICAL_TRUTH": True, "CRITICAL_FACT_SCOPE_IS_EXPLICIT": bool(claims)},
+            "governance_invariants": {"CRYPTO_LOCAL_BROKER_POSITION_COUNTS_RECONCILE": local_count is not None and int(_to_float(local_count, 0)) == int(_to_float(capacity.get("crypto_open_positions"), 0)), "CRYPTO_RECONCILIATION_USES_CANONICAL_OPEN_POSITION_STORE": canonical_store.get("status") == "CANONICAL_POSITION_STORE_READY", "NO_NONCANONICAL_POSITION_SOURCE_OVERRIDES_CANONICAL_TRUTH": True, "CRITICAL_FACT_SCOPE_IS_EXPLICIT": bool(claims)},
             "cortex_truth_summary": cortex, "consumer_source_compliance": compliance,
             "system_integrity_summary": {"status": scanner.get("status"), "last_scan_at": scanner.get("last_scan_at"),
                 "active_root_cause_count": len(scanner.get("active_root_causes") or []), "human_repair_required_count": len(scanner.get("human_repairs_required") or [])},

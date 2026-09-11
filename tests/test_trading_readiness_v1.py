@@ -7,7 +7,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 
 from engine.astra_canonical_market_timestamp_v1 import canonical_market_timestamp_v1
-from engine.astra_trading_readiness_v1 import AstraTradingReadinessV1
+from engine.astra_trading_readiness_v1 import AstraTradingReadinessV1, readiness_artifact_freshness_v1
 from engine.paper_autopilot import PaperAutopilotEngine
 
 
@@ -604,6 +604,65 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertFalse(result["checks"]["readiness_artifact"]["passed"])
         self.assertEqual(result["checks"]["readiness_artifact"]["state"], "STALE_READINESS_ARTIFACT")
         self.assertIn("STALE_READINESS_ARTIFACT", result["next_recheck_reason"])
+
+    def test_worker_cycle_advanced_readiness_fault_is_diagnostic_only(self):
+        from engine.astra_premarket_certification_v1 import build_runtime_certification_v1
+
+        now = datetime.now(UTC)
+        stamp = now.isoformat().replace("+00:00", "Z")
+        worker = {
+            "active_worker_present": True, "active_worker_pid": 1, "last_known_worker_pid": 0,
+            "process_role": "PAPER_AUTOPILOT_WORKER", "heartbeat_at": stamp,
+            "cycle_count": 9, "last_cycle_completed_at": stamp,
+            "cycle_state": "COMPLETE", "resource_state": "RESOURCE_NORMAL",
+            "runtime_revision": "rev-1", "worker_revision": "rev-1",
+        }
+        readiness = {
+            "generated_at": stamp, "worker_revision": "rev-1", "worker_cycle_count": 8,
+            "active_faults": [{
+                "fault_type": "ENTRY_FUNNEL_STAGE_BLOCKED", "classification": "CODE_REPAIR_REQUIRED",
+                "lanes": ["CRYPTO"], "earliest_stage": "QUALIFIED",
+            }],
+        }
+        freshness = readiness_artifact_freshness_v1(readiness, worker, now=now)
+        self.assertEqual(freshness["state"], "STALE_READINESS_ARTIFACT")
+        result = build_runtime_certification_v1(
+            worker_state=worker, runtime_state={"crypto_operational_integrity_readiness_v1": {"status": "READY"}},
+            readiness=readiness, backend_health={"ok": True, "runtime_revision": "rev-1"},
+            expected_revision="rev-1", worker_revision="rev-1", backend_revision="rev-1", now=now,
+        )
+        self.assertEqual(result["active_faults"], [])
+        self.assertEqual(result["current_code_repair_required"], [])
+        self.assertEqual(len(result["stale_diagnostic_faults"]), 1)
+        self.assertEqual(result["stale_diagnostic_faults"][0]["diagnostic_only"], True)
+
+    def test_current_readiness_fault_remains_current_when_worker_cycle_matches(self):
+        from engine.astra_premarket_certification_v1 import build_runtime_certification_v1
+
+        now = datetime.now(UTC)
+        stamp = now.isoformat().replace("+00:00", "Z")
+        worker = {
+            "active_worker_present": True, "active_worker_pid": 1, "last_known_worker_pid": 0,
+            "process_role": "PAPER_AUTOPILOT_WORKER", "heartbeat_at": stamp,
+            "cycle_count": 9, "last_cycle_completed_at": stamp,
+            "cycle_state": "COMPLETE", "resource_state": "RESOURCE_NORMAL",
+            "runtime_revision": "rev-1", "worker_revision": "rev-1",
+        }
+        readiness = {
+            "generated_at": stamp, "worker_revision": "rev-1", "worker_cycle_count": 9,
+            "active_faults": [{
+                "fault_type": "ENTRY_FUNNEL_STAGE_BLOCKED", "classification": "CODE_REPAIR_REQUIRED",
+                "lanes": ["CRYPTO"], "earliest_stage": "QUALIFIED",
+            }],
+        }
+        result = build_runtime_certification_v1(
+            worker_state=worker, runtime_state={"crypto_operational_integrity_readiness_v1": {"status": "READY"}},
+            readiness=readiness, backend_health={"ok": True, "runtime_revision": "rev-1"},
+            expected_revision="rev-1", worker_revision="rev-1", backend_revision="rev-1", now=now,
+        )
+        self.assertEqual(result["checks"]["readiness_artifact"]["state"], "CURRENT")
+        self.assertEqual(len(result["current_code_repair_required"]), 1)
+        self.assertEqual(result["stale_diagnostic_faults"], [])
 
     def test_post_close_phase_keeps_scheduled_integrity_check_cadence(self):
         monitor = self._monitor()

@@ -135,6 +135,90 @@ def _wall_clock_timestamp_is_current(value: Any, *, maximum_age_seconds: float) 
     return -30.0 <= age <= float(maximum_age_seconds)
 
 
+def readiness_artifact_freshness_v1(
+    artifact: Mapping[str, Any] | None,
+    worker_state: Mapping[str, Any] | None,
+    *,
+    now: datetime | None = None,
+    maximum_age_seconds: float = 900.0,
+) -> dict[str, Any]:
+    """Decide whether a readiness artifact may describe current worker facts.
+
+    Wall-clock age alone is insufficient: a cached artifact can be young while
+    the canonical worker has already completed newer cycles.  This comparison
+    never changes the artifact; it only prevents its faults from being treated
+    as current execution or truth blockers.
+    """
+    ready = _dict(artifact)
+    worker = _dict(worker_state)
+    current = now or datetime.now(UTC)
+    generated_at = _event_time(ready.get("generated_at"), ready.get("updated_at"))
+    age: float | None = None
+    generated = None
+    if generated_at:
+        try:
+            generated = datetime.fromisoformat(generated_at.replace("Z", "+00:00")).astimezone(UTC)
+            age = (current - generated).total_seconds()
+        except (TypeError, ValueError):
+            generated = None
+    reasons: list[str] = []
+    if generated is None or age is None:
+        reasons.append("READINESS_TIMESTAMP_UNAVAILABLE")
+    elif age < -30.0 or age > float(maximum_age_seconds):
+        reasons.append("READINESS_ARTIFACT_AGE_EXCEEDED")
+
+    artifact_revision = _text(
+        ready.get("worker_revision")
+        or ready.get("runtime_revision")
+        or ready.get("source_revision")
+    )
+    worker_revision = _text(worker.get("runtime_revision") or worker.get("worker_revision"))
+    if artifact_revision and worker_revision and artifact_revision != worker_revision:
+        reasons.append("READINESS_WORKER_REVISION_MISMATCH")
+
+    def cycle_value(value: Any) -> int | None:
+        try:
+            return int(value) if value not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+
+    artifact_cycle = cycle_value(ready.get("worker_cycle_count"))
+    if artifact_cycle is None:
+        artifact_cycle = cycle_value(ready.get("cycle_count"))
+    worker_cycle = cycle_value(worker.get("cycle_count"))
+    if artifact_cycle is not None and worker_cycle is not None and artifact_cycle != worker_cycle:
+        reasons.append("READINESS_WORKER_CYCLE_ADVANCED" if artifact_cycle < worker_cycle else "READINESS_WORKER_CYCLE_INCONSISTENT")
+
+    # Older artifacts may not carry cycle metadata.  The canonical completed
+    # cycle timestamp still proves whether the artifact predates worker state.
+    latest_completed_at = _event_time(
+        worker.get("last_cycle_completed_at"),
+        worker.get("worker_cycle_completed_at"),
+        worker.get("updated_at"),
+    )
+    if generated is not None and latest_completed_at:
+        try:
+            completed = datetime.fromisoformat(latest_completed_at.replace("Z", "+00:00")).astimezone(UTC)
+            if completed > generated and artifact_cycle is None:
+                reasons.append("READINESS_PREDATES_WORKER_CYCLE")
+        except (TypeError, ValueError):
+            pass
+
+    return {
+        "state": "CURRENT" if not reasons else "STALE_READINESS_ARTIFACT",
+        "current": not reasons,
+        "artifact_generated_at": generated_at,
+        "artifact_age_seconds": round(max(0.0, age), 3) if age is not None else None,
+        "maximum_age_seconds": float(maximum_age_seconds),
+        "artifact_revision": artifact_revision,
+        "worker_revision": worker_revision,
+        "artifact_cycle_count": artifact_cycle,
+        "worker_cycle_count": worker_cycle,
+        "worker_latest_completed_at": latest_completed_at,
+        "reasons": list(dict.fromkeys(reasons)),
+    }
+
+
 def _read(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -2149,6 +2233,10 @@ class AstraTradingReadinessV1:
             "recovery_schema_version": RECOVERY_VERSION,
             "autonomy_schema_version": AUTONOMY_VERSION,
             "generated_at": generated_at,
+            "worker_revision": _text(worker_state.get("runtime_revision") or worker_state.get("worker_revision")),
+            "worker_cycle_count": worker_state.get("cycle_count", worker_state.get("worker_cycle_count")),
+            "worker_cycle_id": _text(worker_state.get("cycle_id")),
+            "worker_heartbeat_at": _text(worker_state.get("heartbeat_at")),
             "scan_monotonic": now,
             "due": True,
             "session": session,

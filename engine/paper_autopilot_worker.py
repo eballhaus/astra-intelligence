@@ -36,7 +36,12 @@ from engine.astra_governance_coverage_consolidation_v1 import (
 from engine.crypto_operational_integrity_readiness_v1 import CryptoOperationalIntegrityReadinessV1
 from engine.shadow_profit_loss_protection_validation_v1 import ShadowProfitLossProtectionValidationV1
 from engine.astra_canonical_truth_registry_v1 import fact_envelope_v1
-from engine.astra_truth_arbitration_v1 import TruthContradictionRegistryV1, arbitrate_truth_claims_v1, read_canonical_open_crypto_positions
+from engine.astra_truth_arbitration_v1 import (
+    TruthContradictionRegistryV1,
+    arbitrate_truth_claims_v1,
+    canonical_position_store_status_v1,
+    read_canonical_open_crypto_positions,
+)
 from engine.astra_continuous_system_integrity_scanner_v1 import ContinuousSystemIntegrityScannerV1
 from engine.astra_crypto_market_data_capability_matrix_v1 import CryptoMarketDataCapabilityMatrixV1
 from engine.astra_multilane_completion_matrix_v1 import AstraMultilaneCompletionMatrixV1
@@ -161,6 +166,13 @@ class PaperAutopilotWorker:
             "next_cycle_at": utc_now(),
             "limits": self.limits.__dict__,
             "canonical_state_path": str(WORKER_STATE_PATH),
+            "canonical_position_db_path": str(getattr(self.autopilot, "db_path", "") or ""),
+            "canonical_position_store": {
+                "owner": "PaperAutopilot.db_path",
+                "db_path": str(getattr(self.autopilot, "db_path", "") or ""),
+                "table": "paper_positions",
+                "compatibility_fallback_allowed": False,
+            },
             "full_store_scans": 0,
             "provider_calls_used_by_status": 0,
             "broker_actions_used_by_status": 0,
@@ -586,9 +598,18 @@ class PaperAutopilotWorker:
             positions = [dict(row) for row in (self.autopilot.paper_positions() or []) if isinstance(row, dict)]
             # The worker must inspect the same position store used by the
             # executing engine.  ``paper_autopilot.db`` is a historical
-            # compatibility artifact in some deployments and may be empty.
-            canonical_position_db = str(getattr(self.autopilot, "db_path", "") or (STATE / "paper_autopilot.db"))
-            canonical_crypto_positions = read_canonical_open_crypto_positions(canonical_position_db)
+            # compatibility artifact and is never a fallback authority.
+            canonical_position_db = str(getattr(self.autopilot, "db_path", "") or "").strip()
+            canonical_position_store = canonical_position_store_status_v1(
+                canonical_position_db,
+                compatibility_path=str(STATE / "paper_autopilot.db"),
+            )
+            canonical_position_store_ready = canonical_position_store.get("status") == "CANONICAL_POSITION_STORE_READY"
+            canonical_crypto_positions = (
+                read_canonical_open_crypto_positions(canonical_position_db, strict=True)
+                if canonical_position_store_ready
+                else []
+            )
             broad_crypto_rows = [row for row in positions if str(row.get("asset_class") or row.get("asset_type") or "").lower() in {"crypto", "cryptocurrency"}]
             broad_crypto_count = len(broad_crypto_rows)
             capacity = dict(getattr(self.autopilot, "_runtime_state", {}).get("last_evidence_capacity_snapshot") or {})
@@ -601,11 +622,25 @@ class PaperAutopilotWorker:
                 "consumer": "diagnostic-only compatibility observation",
                 "rejection_reason": "prohibited substitute; not an active-position fact claim",
             }
-            claims = [
-                fact_envelope_v1("LOCAL_OPEN_CRYPTO_POSITION_COUNT", len(canonical_crypto_positions), snapshot_id=str(capacity.get("snapshot_id") or ""), exclusions=["historical", "diagnostic", "reconstructed", "closed", "unfilled"]),
-                fact_envelope_v1("BROKER_OPEN_CRYPTO_POSITION_COUNT", broker_crypto_count, snapshot_id=str(capacity.get("snapshot_id") or "")),
-            ]
-            truth_arbitration = arbitrate_truth_claims_v1(claims)
+            if canonical_position_store_ready:
+                claims = [
+                    fact_envelope_v1("LOCAL_OPEN_CRYPTO_POSITION_COUNT", len(canonical_crypto_positions), snapshot_id=str(capacity.get("snapshot_id") or ""), exclusions=["historical", "diagnostic", "reconstructed", "closed", "unfilled"]),
+                    fact_envelope_v1("BROKER_OPEN_CRYPTO_POSITION_COUNT", broker_crypto_count, snapshot_id=str(capacity.get("snapshot_id") or "")),
+                ]
+                truth_arbitration = arbitrate_truth_claims_v1(claims)
+            else:
+                truth_arbitration = {
+                    "status": "UNKNOWN_FAIL_CLOSED",
+                    "critical_facts": {},
+                    "contradictions": [{
+                        "fact_id": "LOCAL_OPEN_CRYPTO_POSITION_COUNT",
+                        "contradiction_type": "CANONICAL_POSITION_STORE_UNAVAILABLE",
+                        "severity": "HIGH",
+                        "fail_closed_state": True,
+                        "source": dict(canonical_position_store),
+                    }],
+                    "canonical_value_priority": "canonical claim unavailable; compatibility store rejected",
+                }
             truth_arbitration["rejected_diagnostic_claims"] = [rejected_diagnostic_claim]
             truth_arbitration["contradiction_registry"] = self.truth_contradictions.observe(list(truth_arbitration.get("contradictions") or []))
             getattr(self.autopilot, "_runtime_state", {})["truth_arbitration_v1"] = dict(truth_arbitration)
@@ -627,13 +662,19 @@ class PaperAutopilotWorker:
                     capacity,
                     lane_id="CRYPTO",
                     open_symbols=[row.get("symbol") for row in canonical_crypto_positions],
-                ),
+                ) if canonical_position_store_ready else {
+                    "status": "UNKNOWN_FAIL_CLOSED",
+                    "first_causal_blocker": "CANONICAL_POSITION_STORE_UNAVAILABLE",
+                    "source": dict(canonical_position_store),
+                },
                 "lane_state": crypto_activation.get("lane_state"),
-                "broker_reconciliation_ok": bool(capacity.get("broker_positions_fetch_ok")) and broker_crypto_count == len(canonical_crypto_positions),
-                "broker_reconciliation_status": "CURRENT_MATCHED" if broker_crypto_count == len(canonical_crypto_positions) else "COUNT_MISMATCH_FAIL_CLOSED",
-                "canonical_local_position_source": f"{canonical_position_db}.paper_positions",
+                "broker_reconciliation_ok": canonical_position_store_ready and bool(capacity.get("broker_positions_fetch_ok")) and broker_crypto_count == len(canonical_crypto_positions),
+                "broker_reconciliation_status": "CANONICAL_POSITION_STORE_UNAVAILABLE" if not canonical_position_store_ready else "CURRENT_MATCHED" if broker_crypto_count == len(canonical_crypto_positions) else "COUNT_MISMATCH_FAIL_CLOSED",
+                "canonical_local_position_source": f"{canonical_position_db}.paper_positions" if canonical_position_db else "",
+                "canonical_position_store": canonical_position_store,
+                "canonical_position_store_available": canonical_position_store_ready,
                 "canonical_local_position_query_scope": "status=OPEN AND asset_type=crypto",
-                "canonical_local_open_crypto_count": len(canonical_crypto_positions),
+                "canonical_local_open_crypto_count": len(canonical_crypto_positions) if canonical_position_store_ready else None,
                 "noncanonical_rows_observed": broad_crypto_count,
                 "noncanonical_rows_excluded": broad_crypto_count,
                 "historical_rows_excluded": 0,
@@ -641,7 +682,7 @@ class PaperAutopilotWorker:
                 "reconstructed_rows_excluded": 0,
                 "closed_rows_excluded": 0,
                 "unfilled_rows_excluded": 0,
-                "local_crypto_open_count": len(canonical_crypto_positions), "broker_crypto_open_count": broker_crypto_count,
+                "local_crypto_open_count": len(canonical_crypto_positions) if canonical_position_store_ready else None, "broker_crypto_open_count": broker_crypto_count,
             }
             broker = getattr(self.autopilot, "alpaca_paper_broker", None)
             cached_capability = getattr(broker, "cached_crypto_capability", None)

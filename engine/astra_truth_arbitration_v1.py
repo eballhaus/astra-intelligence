@@ -7,6 +7,7 @@ import os
 import sqlite3
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote
 from engine.astra_canonical_ownership_contract_v1 import is_broker_linked_active_position
 
 
@@ -18,19 +19,90 @@ def _id(fact_id: str, kind: str, source: str) -> str:
     return "truth-" + hashlib.sha1(f"{fact_id}|{kind}|{source}".encode()).hexdigest()[:16]
 
 
-def read_canonical_open_crypto_positions(db_path: str, limit: int = 200) -> list[dict[str, Any]]:
+def _canonical_readonly_uri(path: str) -> str:
+    """Build a read-only URI without creating SQLite sidecar files."""
+    resolved = os.path.realpath(path)
+    suffixes = ("-wal", "-shm", "-journal")
+    query = "mode=ro" if any(os.path.exists(resolved + suffix) for suffix in suffixes) else "immutable=1"
+    return f"file:{quote(resolved, safe='/')}?{query}"
+
+
+def canonical_position_store_status_v1(
+    db_path: str,
+    *,
+    compatibility_path: str | None = None,
+) -> dict[str, Any]:
+    """Validate the worker-selected position store without creating a DB.
+
+    ``paper_autopilot.db`` remains a compatibility artifact, but it is never a
+    fallback authority.  This read-only check lets worker consumers fail closed
+    instead of turning an unavailable canonical store into an apparent zero.
+    """
+    selected = str(db_path or "").strip()
+    selected_path = os.path.abspath(os.path.expanduser(selected)) if selected else ""
+    compatibility = str(compatibility_path or "").strip()
+    compatibility_path_abs = os.path.abspath(os.path.expanduser(compatibility)) if compatibility else ""
+    base = {
+        "canonical_db_path": selected_path,
+        "canonical_table": "paper_positions",
+        "canonical_owner": "PaperAutopilot.db_path",
+        "compatibility_db_path": compatibility_path_abs,
+        "compatibility_ignored": bool(compatibility_path_abs and compatibility_path_abs != selected_path),
+    }
+    if not selected_path:
+        return {**base, "status": "CANONICAL_POSITION_STORE_UNAVAILABLE", "reason": "SELECTED_DB_PATH_MISSING"}
+    if not os.path.isfile(selected_path):
+        return {**base, "status": "CANONICAL_POSITION_STORE_UNAVAILABLE", "reason": "SELECTED_DB_FILE_MISSING"}
+    try:
+        readonly_uri = _canonical_readonly_uri(selected_path)
+        conn = sqlite3.connect(readonly_uri, uri=True, timeout=2.0)
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_positions' LIMIT 1"
+            ).fetchone()
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error) as exc:
+        return {
+            **base,
+            "status": "CANONICAL_POSITION_STORE_UNAVAILABLE",
+            "reason": f"READ_ONLY_STORE_CHECK_FAILED:{type(exc).__name__}",
+        }
+    if row is None:
+        return {**base, "status": "CANONICAL_POSITION_STORE_UNAVAILABLE", "reason": "PAPER_POSITIONS_TABLE_MISSING"}
+    return {**base, "status": "CANONICAL_POSITION_STORE_READY", "reason": ""}
+
+
+class CanonicalPositionStoreUnavailable(RuntimeError):
+    """Raised only by strict canonical readers when the selected store is absent."""
+
+
+def read_canonical_open_crypto_positions(
+    db_path: str,
+    limit: int = 200,
+    *,
+    strict: bool = False,
+) -> list[dict[str, Any]]:
     """Read only current crypto rows from the canonical local position table."""
+    status = canonical_position_store_status_v1(db_path) if strict else None
+    if strict and status and status.get("status") != "CANONICAL_POSITION_STORE_READY":
+        raise CanonicalPositionStoreUnavailable(str(status.get("reason") or "canonical_store_unavailable"))
     if not db_path or not os.path.exists(db_path):
+        if strict:
+            raise CanonicalPositionStoreUnavailable("SELECTED_DB_FILE_MISSING")
         return []
     try:
-        conn = sqlite3.connect(db_path, timeout=2.0)
+        readonly_uri = _canonical_readonly_uri(os.path.abspath(os.path.expanduser(str(db_path))))
+        conn = sqlite3.connect(readonly_uri, uri=True, timeout=2.0)
         conn.row_factory = sqlite3.Row
         try:
             rows = conn.execute("SELECT * FROM paper_positions WHERE status='OPEN' AND asset_type='crypto' LIMIT ?", (max(1, min(500, int(limit))),)).fetchall()
         finally:
             conn.close()
         return [row for row in (dict(item) for item in rows) if is_broker_linked_active_position(row, allow_dust=True)]
-    except Exception:
+    except Exception as exc:
+        if strict:
+            raise CanonicalPositionStoreUnavailable(type(exc).__name__) from exc
         return []
 
 
