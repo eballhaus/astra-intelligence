@@ -134,7 +134,16 @@ def normalize_rows(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         return [dict(row) for row in payload if isinstance(row, dict)]
     if isinstance(payload, dict):
-        for key in ("historical", "data", "results", "_list"):
+        for key in (
+            "historical",
+            "data",
+            "results",
+            "_list",
+            "symbolChange",
+            "symbolChanges",
+            "delistedCompanies",
+            "delisted",
+        ):
             value = payload.get(key)
             if isinstance(value, list):
                 return [dict(row) for row in value if isinstance(row, dict)]
@@ -430,7 +439,8 @@ class ArchiveRunner:
 
     def _request(self, *, family: str, symbol: str, endpoint: str, params: dict[str, Any], retry_count: int = 0) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         self._guard_runtime()
-        if safe_int(self.progress.get("total_api_calls"), 0) >= MAX_REQUESTS:
+        request_limit = safe_int(getattr(self, "request_limit", MAX_REQUESTS), MAX_REQUESTS)
+        if safe_int(self.progress.get("total_api_calls"), 0) >= request_limit:
             raise ArchiveStop("max_request_count_reached")
         self.governor.wait()
         requested_at = now_iso()
@@ -453,7 +463,8 @@ class ArchiveRunner:
                     if not chunk:
                         break
                     bytes_read += len(chunk)
-                    if safe_int(self.progress.get("total_payload_bytes"), 0) + bytes_read > MAX_PAYLOAD_BYTES:
+                    payload_ceiling = safe_int(getattr(self, "payload_ceiling_bytes", MAX_PAYLOAD_BYTES), MAX_PAYLOAD_BYTES)
+                    if safe_int(self.progress.get("total_payload_bytes"), 0) + bytes_read > payload_ceiling:
                         raise ArchiveStop("payload_ceiling_exceeded")
                     chunks.append(chunk)
                 body = b"".join(chunks)
