@@ -75,6 +75,131 @@ class AlpacaWSMonitorTests(unittest.TestCase):
         self.assertEqual(status["owner_process_role"], "worker")
         self.assertEqual(status["observations"]["AAPL"]["provider_used"], "ALPACA_WS_IEX")
 
+    def test_sip_feed_requires_entitlement_and_uses_explicit_endpoint(self):
+        monitor = AlpacaWSMonitor()
+        with patch.dict(
+            os.environ,
+            {
+                "ASTRA_PROCESS_ROLE": "worker",
+                "ASTRA_ALPACA_WS_FEED": "sip",
+                "ASTRA_ALPACA_SIP_ENTITLEMENT_VERIFIED": "0",
+            },
+            clear=False,
+        ):
+            self.assertEqual(monitor._endpoint(), "")
+            self.assertEqual(monitor.status()["feed_selection_error"], "sip_entitlement_unverified")
+        with patch.dict(
+            os.environ,
+            {
+                "ASTRA_PROCESS_ROLE": "worker",
+                "ASTRA_ALPACA_WS_FEED": "sip",
+                "ASTRA_ALPACA_SIP_ENTITLEMENT_VERIFIED": "1",
+            },
+            clear=False,
+        ):
+            self.assertEqual(monitor._endpoint(), "wss://stream.data.alpaca.markets/v2/sip")
+
+    def test_invalid_equity_feed_fails_closed(self):
+        monitor = AlpacaWSMonitor()
+        with patch.dict(
+            os.environ,
+            {
+                "ASTRA_PROCESS_ROLE": "worker",
+                "ASTRA_ALPACA_WS_FEED": "consolidated",
+            },
+            clear=False,
+        ):
+            self.assertEqual(monitor._endpoint(), "")
+            self.assertEqual(monitor.status()["feed_selection_error"], "invalid_equity_feed")
+
+    def test_sip_quote_and_bar_normalization_preserves_native_timestamp(self):
+        monitor = AlpacaWSMonitor()
+        native = "2026-09-12T13:00:00.123456789Z"
+        with patch.dict(
+            os.environ,
+            {
+                "ASTRA_PROCESS_ROLE": "worker",
+                "ASTRA_ALPACA_WS_FEED": "sip",
+                "ASTRA_ALPACA_SIP_ENTITLEMENT_VERIFIED": "1",
+            },
+            clear=False,
+        ):
+            monitor._record_message({"T": "q", "S": "SPY", "bp": 500.0, "ap": 500.1, "t": native, "i": "sip-q-1"})
+            monitor._record_message({
+                "T": "b", "S": "SPY", "o": 499.0, "h": 501.0, "l": 498.5,
+                "c": 500.5, "v": 12345, "t": native, "i": "sip-b-1",
+            })
+            quote = monitor.get_quote("SPY", max_age_seconds=20)
+            status = monitor.status()
+        self.assertEqual(quote["provider_used"], "ALPACA_WS_SIP")
+        self.assertEqual(quote["provider_native_timestamp"], native)
+        self.assertEqual(quote["feed"], "sip")
+        self.assertNotEqual(quote["provider_native_timestamp"], quote["receive_timestamp_utc"])
+        self.assertEqual(status["shadow_observations"], {})
+        self.assertEqual(status["shadow_bars"], {})
+        self.assertEqual(status["provider_provenance"], "FAST_SIP_OBSERVATION")
+
+    def test_shadow_sip_observation_is_not_primary_authority(self):
+        monitor = AlpacaWSMonitor()
+        with patch.dict(
+            os.environ,
+            {
+                "ASTRA_PROCESS_ROLE": "worker",
+                "ASTRA_ALPACA_WS_FEED": "iex",
+                "ASTRA_ALPACA_WS_SHADOW_ENABLED": "1",
+                "ASTRA_ALPACA_WS_SHADOW_FEED": "sip",
+                "ASTRA_ALPACA_SIP_ENTITLEMENT_VERIFIED": "1",
+            },
+            clear=False,
+        ):
+            monitor._desired_symbols = {"SPY"}
+            monitor._record_message({"T": "q", "S": "SPY", "bp": 500.0, "ap": 500.1, "t": _iso(), "i": "iex-q-1"})
+            monitor._record_message(
+                {"T": "q", "S": "SPY", "bp": 500.2, "ap": 500.3, "t": _iso(), "i": "sip-q-1"},
+                shadow=True,
+            )
+            primary = monitor.get_quote("SPY", max_age_seconds=20)
+            status = monitor.status()
+            comparison = monitor.compare_shadow(["SPY"])
+        self.assertEqual(primary["provider_used"], "ALPACA_WS_IEX")
+        self.assertEqual(status["observations"]["SPY"]["provider_used"], "ALPACA_WS_IEX")
+        self.assertEqual(status["shadow_observations"]["SPY"]["provider_used"], "ALPACA_WS_SIP_SHADOW")
+        self.assertTrue(status["shadow_observations"]["SPY"]["shadow_only"])
+        self.assertEqual(comparison["production_authority"], "primary_equity_observations")
+        self.assertEqual(comparison["broker_actions"], 0)
+        self.assertEqual(comparison["comparisons"][0]["status"], "COMPARABLE")
+
+    def test_shadow_subscription_does_not_duplicate_existing_symbols(self):
+        monitor = AlpacaWSMonitor()
+        monitor._desired_symbols = {"SPY"}
+        monitor._subscribed_symbols = {"SPY"}
+        monitor._shadow_subscribed_symbols = {"SPY"}
+        monitor._shadow_subscribed_bar_symbols = {"SPY"}
+
+        class Connection:
+            def __init__(self):
+                self.sent = []
+
+            def send(self, payload):
+                self.sent.append(payload)
+
+        with patch.dict(
+            os.environ,
+            {
+                "ASTRA_PROCESS_ROLE": "worker",
+                "ASTRA_ALPACA_WS_FEED": "iex",
+                "ASTRA_ALPACA_WS_SHADOW_FEED": "sip",
+                "ASTRA_ALPACA_SIP_ENTITLEMENT_VERIFIED": "1",
+            },
+            clear=False,
+        ):
+            primary_connection = Connection()
+            shadow_connection = Connection()
+            self.assertFalse(monitor._sync_subscriptions(primary_connection, stream="equity"))
+            self.assertFalse(monitor._sync_subscriptions(shadow_connection, stream="equity", shadow=True))
+        self.assertEqual(primary_connection.sent, [])
+        self.assertEqual(shadow_connection.sent, [])
+
     def test_run_waits_for_auth_and_subscription_ack_and_configures_keepalive(self):
         class Connection:
             def __init__(self):
