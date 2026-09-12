@@ -98,13 +98,21 @@ runtime disagree. A revision string alone is not proof of loaded code.
 
 ## Rate and Credit Efficiency
 
+- Treat supplied `PROVEN STATE` as authoritative unless current evidence directly contradicts it.
+- Start with the smallest relevant files and functions; expand scope only when a concrete dependency requires it.
+- Prefer targeted `rg`, `grep`, `jq`, bounded SQL, and `tail` over full-file, log, or JSON dumps.
 - Reuse persisted findings and repair packages.
 - Do not restart broad audits from scratch or repeat completed audits without regression evidence.
 - Search narrowly around the proven gap and use the smallest bounded task that can resolve it.
 - Reuse existing contracts, helpers, owners, and tests before creating new ones.
 - Avoid duplicate provider/API calls, full-history scans, repeated architecture summaries, and unnecessary runtime restarts.
 - Prefer focused tests first and expand only when a bounded dependency warrants it.
+- For long deterministic jobs, use checkpoint/resume and compact saved reports instead of streaming large output through Codex.
+- Keep commands and reports bounded: summarize counts, limit samples, and save large deterministic output to files.
 - Use the least expensive capable model or tool for bounded audits and simple verification when model selection is available.
+- Final reports should be concise and separate `PROVEN`, `CHANGED`, `VALIDATED`, `UNRESOLVED`, `SAFETY`, and `GIT`.
+- PAPER ONLY: never fabricate candidates, orders, fills, ownership, lifecycle completion, truth, learning, P&L, or evidence.
+- Historical, replay, and Shadow evidence remains separate from natural broker truth.
 
 ## Established Areas
 
