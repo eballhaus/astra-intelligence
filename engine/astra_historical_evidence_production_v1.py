@@ -18,6 +18,10 @@ from typing import Any, Mapping, Sequence
 from engine.astra_historical_learning_compression_helpers_v1 import (
     profile_and_compress_partition_v1,
 )
+from engine.astra_intraday_evidence_index_v1 import (
+    fetch_intraday_raw_window,
+    retrieve_intraday_session_matches,
+)
 
 
 VERSION = "1.0.0"
@@ -286,6 +290,8 @@ def _evidence_item(
         "provenance": {
             "database": str(query["database"]),
             "table": ARCHIVE_TABLE,
+            "summary_table": query.get("summary_table"),
+            "summary_id": query.get("summary_id"),
             "provider": provider,
             "query": dict(query),
             "entry_raw_key": raw_keys[0],
@@ -331,6 +337,80 @@ def _read_rows(db_path: Path, symbols: Sequence[str], asset_type: str, timeframe
             chronology_failures += 1
         previous[row["symbol"]] = row["ts"]
     return rows, {"status": "OK", "raw_rows_read": len(raw), "invalid_rows": invalid, "chronology_failures": chronology_failures}
+
+
+def _read_indexed_intraday_evidence(
+    db_path: Path,
+    *,
+    lane: str,
+    target_symbol: str,
+    symbols: Sequence[str],
+    setup: Mapping[str, Any],
+    start_ts: int,
+    end_ts: int,
+    forward_bars: int,
+    max_matches: int,
+    side: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
+    """Search the compact index, then drill into only selected raw sessions."""
+    index_result = retrieve_intraday_session_matches(
+        db_path,
+        lane=lane,
+        setup=setup,
+        symbols=symbols,
+        history_start_ts=start_ts,
+        history_end_ts=end_ts,
+        query_symbol=target_symbol,
+        query_start_ts=start_ts,
+        query_end_ts=end_ts,
+        as_of_ts=end_ts,
+        max_matches=max_matches,
+    )
+    if index_result.get("status") == "SUMMARY_TABLE_UNAVAILABLE":
+        return None
+    items: list[dict[str, Any]] = []
+    raw_rows_read = 0
+    for match in index_result.get("matches") or []:
+        raw = fetch_intraday_raw_window(
+            db_path,
+            symbol=str(match.get("symbol") or ""),
+            start_ts=int(match.get("raw_start_ts") or 0),
+            end_ts=int(match.get("raw_end_ts") or 0),
+            max_rows=min(MAX_ROWS, forward_bars + 1),
+        )
+        raw_rows_read += len(raw)
+        if len(raw) < forward_bars + 1:
+            continue
+        entry, forward = raw[0], raw[1 : forward_bars + 1]
+        if not _same_archive_session(entry, forward):
+            continue
+        items.append(
+            _evidence_item(
+                entry,
+                forward,
+                lane=lane,
+                target_symbol=target_symbol,
+                setup=setup,
+                similarity=float(match.get("similarity_score") or 0.0),
+                setup_fields=match.get("setup_fields") or [],
+                side=side,
+                query={
+                    "database": str(db_path),
+                    "table": ARCHIVE_TABLE,
+                    "summary_table": "historical_intraday_session_summaries",
+                    "summary_id": match.get("summary_id"),
+                    "as_of_ts": end_ts,
+                },
+            )
+        )
+    return items, {
+        **index_result,
+        "raw_rows_read": raw_rows_read,
+        "candidate_windows": int(index_result.get("summary_rows_searched") or 0),
+        "matches_returned": len(items),
+        "retrieval_mode": "INDEXED_INTRADAY_SUMMARY_FIRST",
+        "full_history_scan_used": False,
+    }
 
 
 def compress_historical_evidence_v1(evidence_items: Sequence[Mapping[str, Any]], *, database: str) -> dict[str, Any]:
@@ -396,30 +476,43 @@ def produce_historical_evidence_v1(
         return {**base, "status": "INVALID_LANE", "evidence_items": [], "compression_handoff": None, "decision_support": _decision_support([])}
     if not target_symbol or start_ts is None or end_ts is None or end_ts <= start_ts or not symbols:
         return {**base, "status": "INVALID_QUERY", "evidence_items": [], "compression_handoff": None, "decision_support": _decision_support([])}
-    rows, read_status = _read_rows(Path(database), symbols, asset_type, requested_timeframe, start_ts, end_ts)
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        grouped.setdefault(row["symbol"], []).append(row)
-    candidates: list[tuple[float, str, dict[str, Any], list[dict[str, Any]], list[str]]] = []
-    for comparison_symbol, series in grouped.items():
-        for index in range(max(0, len(series) - forward_bars)):
-            entry = series[index]
-            forward = series[index + 1 : index + 1 + forward_bars]
-            if len(forward) != forward_bars:
-                continue
-            if lane in {"DAY", "SCALP"} and asset_type == "stock" and not _same_archive_session(entry, forward):
-                continue
-            similarity, used = _similarity(entry, setup)
-            candidates.append((similarity, comparison_symbol, entry, forward, used))
-    candidates.sort(key=lambda item: (-item[0], item[2]["ts"], item[1]))
-    query = base["query"]
-    items = [_evidence_item(entry, forward, lane=lane, target_symbol=target_symbol, setup=setup, similarity=score, setup_fields=used, side=side, query=query) for score, _symbol_name, entry, forward, used in candidates[:max_matches]]
-    status = "READY" if items else "NO_MATCHES" if read_status.get("status") == "OK" else read_status.get("status")
+    indexed_result = None
+    if lane in {"DAY", "SCALP"} and asset_type == "stock" and requested_timeframe == "1Min":
+        indexed_result = _read_indexed_intraday_evidence(
+            Path(database), lane=lane, target_symbol=target_symbol, symbols=symbols, setup=setup,
+            start_ts=start_ts, end_ts=end_ts, forward_bars=forward_bars, max_matches=max_matches, side=side,
+        )
+    if indexed_result is not None:
+        items, read_status = indexed_result
+        candidate_windows = int(read_status.get("candidate_windows") or 0)
+        grouped_symbols = sorted({str(match.get("symbol")) for match in read_status.get("matches") or []})
+    else:
+        rows, read_status = _read_rows(Path(database), symbols, asset_type, requested_timeframe, start_ts, end_ts)
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            grouped.setdefault(row["symbol"], []).append(row)
+        candidates: list[tuple[float, str, dict[str, Any], list[dict[str, Any]], list[str]]] = []
+        for comparison_symbol, series in grouped.items():
+            for index in range(max(0, len(series) - forward_bars)):
+                entry = series[index]
+                forward = series[index + 1 : index + 1 + forward_bars]
+                if len(forward) != forward_bars:
+                    continue
+                if lane in {"DAY", "SCALP"} and asset_type == "stock" and not _same_archive_session(entry, forward):
+                    continue
+                similarity, used = _similarity(entry, setup)
+                candidates.append((similarity, comparison_symbol, entry, forward, used))
+        candidates.sort(key=lambda item: (-item[0], item[2]["ts"], item[1]))
+        query = base["query"]
+        items = [_evidence_item(entry, forward, lane=lane, target_symbol=target_symbol, setup=setup, similarity=score, setup_fields=used, side=side, query=query) for score, _symbol_name, entry, forward, used in candidates[:max_matches]]
+        candidate_windows = len(candidates)
+        grouped_symbols = sorted(grouped)
+    status = "READY" if items else "NO_MATCHES" if read_status.get("status") in {"OK", "NO_MATCHES"} else read_status.get("status")
     compression = compress_historical_evidence_v1(items, database=str(database)) if include_compression and items else None
     return {
         **base,
         "status": status,
-        "retrieval": {**read_status, "symbols_returned": sorted(grouped), "candidate_windows": len(candidates), "matches_returned": len(items), "bounded": True, "full_history_scan_used": False},
+        "retrieval": {**read_status, "symbols_returned": grouped_symbols, "candidate_windows": candidate_windows, "matches_returned": len(items), "bounded": True, "full_history_scan_used": False},
         "evidence_items": items,
         "compression_handoff": compression,
         "decision_support": _decision_support(items),
