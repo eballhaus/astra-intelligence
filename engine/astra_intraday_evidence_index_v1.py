@@ -23,7 +23,9 @@ FEATURE_SCHEMA_VERSION = "intraday_session_features_v1"
 SUMMARY_TABLE = "historical_intraday_session_summaries"
 ARCHIVE_TABLE = "historical_market_bars"
 PROVIDER = "FMP_HIST"
-TIMEFRAME = "1Min"
+DEFAULT_TIMEFRAME = "1Min"
+# Backward-compatible alias for callers that import the established default.
+TIMEFRAME = DEFAULT_TIMEFRAME
 MAX_QUERY_ROWS = 5_000
 MAX_MATCHES = 24
 MAX_RAW_DRILLDOWN_ROWS = 5_000
@@ -41,6 +43,18 @@ SETUP_FEATURE_ALIASES = {
 NY_TZ = ZoneInfo("America/New_York")
 REGULAR_OPEN = time(9, 30)
 REGULAR_CLOSE = time(16, 0)
+
+
+def normalize_intraday_timeframe(timeframe: str | None = None) -> str:
+    """Return a non-empty provider timeframe while preserving the 1Min default."""
+    value = str(timeframe or DEFAULT_TIMEFRAME).strip()
+    return value or DEFAULT_TIMEFRAME
+
+
+def source_endpoint_for_timeframe(timeframe: str | None = None) -> str:
+    """Return the matching FMP stable chart endpoint for an intraday timeframe."""
+    value = normalize_intraday_timeframe(timeframe)
+    return f"/stable/historical-chart/{value.lower()}"
 
 
 def _finite(value: Any, default: float | None = None) -> float | None:
@@ -147,9 +161,18 @@ def _valid_row(row: Mapping[str, Any]) -> bool:
     return bool(high >= max(opening, close) and low <= min(opening, close) and high >= low and (volume is None or volume >= 0))
 
 
-def _feature_summary(rows: list[dict[str, Any]], *, symbol: str, session_date: str, segment: str, metadata: Mapping[str, Any]) -> dict[str, Any] | None:
+def _feature_summary(
+    rows: list[dict[str, Any]],
+    *,
+    symbol: str,
+    session_date: str,
+    segment: str,
+    metadata: Mapping[str, Any],
+    timeframe: str = DEFAULT_TIMEFRAME,
+) -> dict[str, Any] | None:
     if not rows:
         return None
+    timeframe = normalize_intraday_timeframe(timeframe)
     rows = sorted(rows, key=lambda row: int(row["timestamp"]))
     opening = float(rows[0]["open"])
     closing = float(rows[-1]["close"])
@@ -258,7 +281,7 @@ def _feature_summary(rows: list[dict[str, Any]], *, symbol: str, session_date: s
         "setup_volume_bucket": _bucket(setup_volume_ratio, 1.2, 2.0),
         "setup_cutoff_timestamp": int(setup_rows[-1]["timestamp"]),
     }
-    summary_id = f"intraday-summary:{symbol}:{TIMEFRAME}:{PROVIDER}:{session_date}:{segment}:{FEATURE_SCHEMA_VERSION}"
+    summary_id = f"intraday-summary:{symbol}:{timeframe}:{PROVIDER}:{session_date}:{segment}:{FEATURE_SCHEMA_VERSION}"
     regular = segment == "REGULAR"
     context = {
         "sector": metadata.get("sector"),
@@ -280,14 +303,14 @@ def _feature_summary(rows: list[dict[str, Any]], *, symbol: str, session_date: s
     provenance = {
         "raw_table": ARCHIVE_TABLE,
         "raw_provider": PROVIDER,
-        "raw_source_endpoint": "/stable/historical-chart/1min",
-        "raw_timeframe": TIMEFRAME,
+        "raw_source_endpoint": source_endpoint_for_timeframe(timeframe),
+        "raw_timeframe": timeframe,
         "raw_symbol": symbol,
         "raw_start_ts": int(rows[0]["timestamp"]),
         "raw_end_ts": int(rows[-1]["timestamp"]),
         "raw_start_timestamp": _iso(int(rows[0]["timestamp"])),
         "raw_end_timestamp": _iso(int(rows[-1]["timestamp"])),
-        "raw_key_pattern": f"{symbol}|stock|{TIMEFRAME}|<timestamp>|{PROVIDER}",
+        "raw_key_pattern": f"{symbol}|stock|{timeframe}|<timestamp>|{PROVIDER}",
         "regenerable_from_raw": True,
         "historical_replay_only": True,
         "broker_truth_eligible": False,
@@ -298,7 +321,7 @@ def _feature_summary(rows: list[dict[str, Any]], *, symbol: str, session_date: s
         "summary_id": summary_id,
         "symbol": symbol,
         "asset_type": "stock",
-        "timeframe": TIMEFRAME,
+        "timeframe": timeframe,
         "provider": PROVIDER,
         "session_date": session_date,
         "session_segment": segment,
@@ -320,9 +343,16 @@ def _feature_summary(rows: list[dict[str, Any]], *, symbol: str, session_date: s
     }
 
 
-def build_intraday_session_summaries(rows: Iterable[Mapping[str, Any]], *, symbol: str, metadata: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
+def build_intraday_session_summaries(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    symbol: str,
+    metadata: Mapping[str, Any] | None = None,
+    timeframe: str = DEFAULT_TIMEFRAME,
+) -> list[dict[str, Any]]:
     """Build deterministic summaries without copying raw bars into them."""
     metadata = dict(metadata or {})
+    timeframe = normalize_intraday_timeframe(timeframe)
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
     seen: set[int] = set()
     for source in rows:
@@ -335,7 +365,7 @@ def build_intraday_session_summaries(rows: Iterable[Mapping[str, Any]], *, symbo
         grouped.setdefault(_session_segment(timestamp), []).append(row)
     summaries = []
     for (session_date, segment), session_rows in sorted(grouped.items()):
-        summary = _feature_summary(session_rows, symbol=symbol, session_date=session_date, segment=segment, metadata=metadata)
+        summary = _feature_summary(session_rows, symbol=symbol, session_date=session_date, segment=segment, metadata=metadata, timeframe=timeframe)
         if summary:
             summaries.append(summary)
     return summaries
@@ -429,17 +459,19 @@ def retrieve_intraday_session_matches(
     query_end_ts: int | None = None,
     as_of_ts: int | None = None,
     max_matches: int = MAX_MATCHES,
+    timeframe: str = DEFAULT_TIMEFRAME,
 ) -> dict[str, Any]:
     """Search summaries first; return bounded matches and no raw bars."""
     started = time_module.perf_counter()
     lane = str(lane or "").upper()
+    timeframe = normalize_intraday_timeframe(timeframe)
     if lane not in {"DAY", "SCALP"}:
         return {"status": "LANE_NOT_INTRADAY", "matches": [], "summary_rows_searched": 0, "raw_rows_read": 0, "full_raw_scan_used": False, "latency_ms": round((time_module.perf_counter() - started) * 1000.0, 3)}
     path = Path(database)
     if not path.exists():
         return {"status": "ARCHIVE_UNAVAILABLE", "matches": [], "summary_rows_searched": 0, "raw_rows_read": 0, "full_raw_scan_used": False, "latency_ms": round((time_module.perf_counter() - started) * 1000.0, 3)}
     max_matches = max(1, min(MAX_MATCHES, int(max_matches or MAX_MATCHES)))
-    params: list[Any] = [TIMEFRAME, PROVIDER, "REGULAR"]
+    params: list[Any] = [timeframe, PROVIDER, "REGULAR"]
     clauses = ["timeframe=?", "provider=?", "session_segment=?"]
     if symbols:
         normalized = list(dict.fromkeys(str(symbol).upper() for symbol in symbols if str(symbol).strip()))
@@ -489,8 +521,17 @@ def retrieve_intraday_session_matches(
     }
 
 
-def fetch_intraday_raw_window(database: str | Path, *, symbol: str, start_ts: int, end_ts: int, max_rows: int = MAX_RAW_DRILLDOWN_ROWS) -> list[dict[str, Any]]:
+def fetch_intraday_raw_window(
+    database: str | Path,
+    *,
+    symbol: str,
+    start_ts: int,
+    end_ts: int,
+    max_rows: int = MAX_RAW_DRILLDOWN_ROWS,
+    timeframe: str = DEFAULT_TIMEFRAME,
+) -> list[dict[str, Any]]:
     path = Path(database)
+    timeframe = normalize_intraday_timeframe(timeframe)
     if not path.exists():
         return []
     try:
@@ -498,18 +539,24 @@ def fetch_intraday_raw_window(database: str | Path, *, symbol: str, start_ts: in
             connection.row_factory = sqlite3.Row
             rows = connection.execute(
                 f"SELECT symbol,asset_type,timeframe,ts,o,h,l,c,v,provider,ingested_at FROM {ARCHIVE_TABLE} WHERE symbol=? AND asset_type='stock' AND timeframe=? AND provider=? AND ts>=? AND ts<=? ORDER BY ts LIMIT ?",
-                (str(symbol).upper(), TIMEFRAME, PROVIDER, int(start_ts), int(end_ts), max(1, min(MAX_RAW_DRILLDOWN_ROWS, int(max_rows or MAX_RAW_DRILLDOWN_ROWS)))),
+                (str(symbol).upper(), timeframe, PROVIDER, int(start_ts), int(end_ts), max(1, min(MAX_RAW_DRILLDOWN_ROWS, int(max_rows or MAX_RAW_DRILLDOWN_ROWS)))),
             ).fetchall()
     except (OSError, sqlite3.Error):
         return []
     return [{"symbol": row[0], "asset_type": row[1], "timeframe": row[2], "ts": int(row[3]), "timestamp": _iso(int(row[3])), "open": row[4], "high": row[5], "low": row[6], "close": row[7], "volume": row[8], "provider": row[9], "archive_ingested_at": row[10]} for row in rows]
 
 
-def summary_payload_size(connection: sqlite3.Connection) -> int:
+def summary_payload_size(connection: sqlite3.Connection, *, timeframe: str | None = None) -> int:
     try:
-        value = connection.execute(
-            f"SELECT COALESCE(SUM(LENGTH(setup_features_json)+LENGTH(outcome_features_json)+LENGTH(context_json)+LENGTH(quality_json)+LENGTH(provenance_json)+LENGTH(lane_relevance_json)),0) FROM {SUMMARY_TABLE}"
-        ).fetchone()[0]
+        if timeframe:
+            value = connection.execute(
+                f"SELECT COALESCE(SUM(LENGTH(setup_features_json)+LENGTH(outcome_features_json)+LENGTH(context_json)+LENGTH(quality_json)+LENGTH(provenance_json)+LENGTH(lane_relevance_json)),0) FROM {SUMMARY_TABLE} WHERE timeframe=?",
+                (normalize_intraday_timeframe(timeframe),),
+            ).fetchone()[0]
+        else:
+            value = connection.execute(
+                f"SELECT COALESCE(SUM(LENGTH(setup_features_json)+LENGTH(outcome_features_json)+LENGTH(context_json)+LENGTH(quality_json)+LENGTH(provenance_json)+LENGTH(lane_relevance_json)),0) FROM {SUMMARY_TABLE}"
+            ).fetchone()[0]
         return int(value or 0)
     except sqlite3.Error:
         return 0

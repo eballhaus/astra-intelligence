@@ -351,6 +351,7 @@ def _read_indexed_intraday_evidence(
     forward_bars: int,
     max_matches: int,
     side: str,
+    timeframe: str,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
     """Search the compact index, then drill into only selected raw sessions."""
     index_result = retrieve_intraday_session_matches(
@@ -365,6 +366,7 @@ def _read_indexed_intraday_evidence(
         query_end_ts=end_ts,
         as_of_ts=end_ts,
         max_matches=max_matches,
+        timeframe=timeframe,
     )
     if index_result.get("status") == "SUMMARY_TABLE_UNAVAILABLE":
         return None
@@ -377,6 +379,7 @@ def _read_indexed_intraday_evidence(
             start_ts=int(match.get("raw_start_ts") or 0),
             end_ts=int(match.get("raw_end_ts") or 0),
             max_rows=min(MAX_ROWS, forward_bars + 1),
+            timeframe=timeframe,
         )
         raw_rows_read += len(raw)
         if len(raw) < forward_bars + 1:
@@ -477,10 +480,11 @@ def produce_historical_evidence_v1(
     if not target_symbol or start_ts is None or end_ts is None or end_ts <= start_ts or not symbols:
         return {**base, "status": "INVALID_QUERY", "evidence_items": [], "compression_handoff": None, "decision_support": _decision_support([])}
     indexed_result = None
-    if lane in {"DAY", "SCALP"} and asset_type == "stock" and requested_timeframe == "1Min":
+    if lane in {"DAY", "SCALP"} and asset_type == "stock" and requested_timeframe != "1Day":
         indexed_result = _read_indexed_intraday_evidence(
             Path(database), lane=lane, target_symbol=target_symbol, symbols=symbols, setup=setup,
             start_ts=start_ts, end_ts=end_ts, forward_bars=forward_bars, max_matches=max_matches, side=side,
+            timeframe=requested_timeframe,
         )
     if indexed_result is not None:
         items, read_status = indexed_result

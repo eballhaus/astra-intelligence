@@ -22,12 +22,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from engine.astra_intraday_evidence_index_v1 import (
+    DEFAULT_TIMEFRAME,
     FEATURE_SCHEMA_VERSION,
     SUMMARY_TABLE,
     build_intraday_session_summaries,
     ensure_summary_schema,
     fetch_intraday_raw_window,
+    normalize_intraday_timeframe,
     retrieve_intraday_session_matches,
+    source_endpoint_for_timeframe,
     summary_payload_size,
     upsert_intraday_session_summaries,
 )
@@ -59,11 +62,14 @@ VERSION = "1.0.0"
 DEFAULT_STATE_DIR = Path("/Users/Shared/AstraRuntime/state")
 DEFAULT_LOOKBACK_DAYS = 180
 DEFAULT_WINDOW_DAYS = 7
+DEFAULT_15MIN_LOOKBACK_DAYS = 730
+DEFAULT_15MIN_WINDOW_DAYS = 45
 TARGET_SYMBOLS = 300
 TARGET_CALLS_PER_MINUTE = 25
 MAX_CALLS_PER_MINUTE = 50
 MAX_REQUESTS = 24_000
 PAYLOAD_CEILING_BYTES = 10_000_000_000
+FIFTEEN_MIN_PAYLOAD_CEILING_BYTES = 5_000_000_000
 SUMMARY_FAMILY = "intraday_session_summary"
 SUMMARY_INDEX_VERSION = "intraday_summary_index_v1"
 CONTROL_SYMBOLS = ("SPY", "QQQ", "DIA", "IWM")
@@ -119,8 +125,9 @@ def _sector_row(row: dict[str, Any]) -> str:
     return aliases.get(sector, sector)
 
 
-def build_intraday_manifest_300(state_dir: Path) -> list[dict[str, Any]]:
+def build_intraday_manifest_300(state_dir: Path, *, timeframe: str = DEFAULT_TIMEFRAME) -> list[dict[str, Any]]:
     """Select 300 existing liquid/archive symbols by deterministic sector round-robin."""
+    timeframe = normalize_intraday_timeframe(timeframe)
     available = _source_rows(state_dir)
     selected: list[dict[str, Any]] = []
     selected_symbols: set[str] = set()
@@ -134,7 +141,7 @@ def build_intraday_manifest_300(state_dir: Path) -> list[dict[str, Any]]:
         row = {
             "symbol": symbol,
             "asset_type": "stock",
-            "resolution": INTRADAY_TIMEFRAME,
+            "resolution": timeframe,
             "archive_tier": "tier3b_intraday_6_month",
             "sector": source.get("sector"),
             "industry": source.get("industry"),
@@ -176,15 +183,30 @@ def build_intraday_manifest_300(state_dir: Path) -> list[dict[str, Any]]:
 class IntradayArchiveRunner(ArchiveRunner):
     """Archive-only runner using the existing request and runtime guard."""
 
-    def __init__(self, *, state_dir: Path, manifest: list[dict[str, Any]], lookback_days: int, window_days: int, calls_per_minute: int) -> None:
+    def __init__(
+        self,
+        *,
+        state_dir: Path,
+        manifest: list[dict[str, Any]],
+        lookback_days: int,
+        window_days: int,
+        calls_per_minute: int,
+        timeframe: str = DEFAULT_TIMEFRAME,
+        end_date: date | None = None,
+        payload_ceiling_bytes: int | None = None,
+    ) -> None:
         self.state_dir = state_dir
         self.manifest = manifest
         self.manifest_by_symbol = {row["symbol"]: row for row in manifest}
-        self.manifest_path = state_dir / "fmp_intraday_archive_compression_v1_manifest.json"
-        self.progress_path = state_dir / "fmp_intraday_archive_compression_v1_progress.json"
-        self.validation_path = state_dir / "fmp_intraday_archive_compression_v1_validation.json"
-        self.lineage_path = state_dir / "fmp_intraday_archive_compression_v1_request_lineage.jsonl"
-        self.context_path = state_dir / "fmp_intraday_archive_compression_v1_context.jsonl.gz"
+        self.timeframe = normalize_intraday_timeframe(timeframe)
+        self.endpoint = source_endpoint_for_timeframe(self.timeframe)
+        suffix = "" if self.timeframe == DEFAULT_TIMEFRAME else f"_{self.timeframe.lower()}"
+        archive_prefix = f"fmp_intraday_archive_compression_v1{suffix}"
+        self.manifest_path = state_dir / f"{archive_prefix}_manifest.json"
+        self.progress_path = state_dir / f"{archive_prefix}_progress.json"
+        self.validation_path = state_dir / f"{archive_prefix}_validation.json"
+        self.lineage_path = state_dir / f"{archive_prefix}_request_lineage.jsonl"
+        self.context_path = state_dir / f"{archive_prefix}_context.jsonl.gz"
         self.db_path = state_dir / "ai_trading_memory.db"
         self.key, self.key_source = resolve_fmp_key()
         if not self.key:
@@ -193,10 +215,11 @@ class IntradayArchiveRunner(ArchiveRunner):
         self.started_at = now_iso()
         self.stop_reason = ""
         self.malformed_streak = 0
-        self.payload_ceiling_bytes = PAYLOAD_CEILING_BYTES
+        self.payload_ceiling_bytes = int(payload_ceiling_bytes or (FIFTEEN_MIN_PAYLOAD_CEILING_BYTES if self.timeframe == "15Min" else PAYLOAD_CEILING_BYTES))
         self.request_limit = MAX_REQUESTS
-        self.lookback_days = max(1, min(366, int(lookback_days or DEFAULT_LOOKBACK_DAYS)))
-        self.window_days = max(1, min(7, int(window_days or DEFAULT_WINDOW_DAYS)))
+        self.lookback_days = max(1, min(3660, int(lookback_days or DEFAULT_LOOKBACK_DAYS)))
+        self.window_days = max(1, min(366, int(window_days or DEFAULT_WINDOW_DAYS)))
+        self.end_date = end_date or date.today()
         self.progress = self._load_progress()
         self._ensure_paths()
         self._ensure_manifest_file()
@@ -205,7 +228,14 @@ class IntradayArchiveRunner(ArchiveRunner):
     def _load_progress(self) -> dict[str, Any]:
         existing = read_json(self.progress_path, {})
         symbols = [row["symbol"] for row in self.manifest]
-        if not isinstance(existing, dict) or existing.get("manifest_symbols") != symbols or safe_int(existing.get("lookback_days")) != self.lookback_days:
+        if (
+            not isinstance(existing, dict)
+            or existing.get("manifest_symbols") != symbols
+            or safe_int(existing.get("lookback_days")) != self.lookback_days
+            or safe_int(existing.get("window_days")) != self.window_days
+            or existing.get("timeframe") != self.timeframe
+            or existing.get("end_date") != self.end_date.isoformat()
+        ):
             existing = {}
         existing.setdefault("schema_version", "fmp_intraday_archive_compression_v1_progress")
         existing.setdefault("status", "NOT_STARTED")
@@ -214,6 +244,10 @@ class IntradayArchiveRunner(ArchiveRunner):
         existing.setdefault("manifest_symbols", symbols)
         existing.setdefault("lookback_days", self.lookback_days)
         existing.setdefault("window_days", self.window_days)
+        existing.setdefault("timeframe", self.timeframe)
+        existing.setdefault("endpoint", self.endpoint)
+        existing.setdefault("end_date", self.end_date.isoformat())
+        existing.setdefault("payload_ceiling_bytes", self.payload_ceiling_bytes)
         existing.setdefault("per_symbol", {})
         existing.setdefault("total_api_calls", 0)
         existing.setdefault("total_retries", 0)
@@ -239,14 +273,15 @@ class IntradayArchiveRunner(ArchiveRunner):
                 "generator_version": VERSION,
                 "generated_at": now_iso(),
                 "provider": "FMP",
-                "resolution": INTRADAY_TIMEFRAME,
+                "resolution": self.timeframe,
+                "endpoint": self.endpoint,
                 "target_symbol_count": len(self.manifest),
                 "selection_policy": "existing_local_sources_sector_round_robin_with_existing_100_retained",
                 "symbols": self.manifest,
                 "hard_limits": {
                     "target_calls_per_minute": TARGET_CALLS_PER_MINUTE,
                     "absolute_calls_per_minute": MAX_CALLS_PER_MINUTE,
-                    "payload_ceiling_bytes": PAYLOAD_CEILING_BYTES,
+                    "payload_ceiling_bytes": self.payload_ceiling_bytes,
                     "max_retry_per_request": 1,
                 },
             },
@@ -268,7 +303,7 @@ class IntradayArchiveRunner(ArchiveRunner):
             for row in rows:
                 cursor = connection.execute(
                     "INSERT OR IGNORE INTO historical_market_bars(symbol,asset_type,timeframe,ts,o,h,l,c,v,provider,ingested_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                    (row["symbol"], "stock", INTRADAY_TIMEFRAME, row["timestamp"], row["open"], row["high"], row["low"], row["close"], row.get("volume"), FMP_PROVIDER, now_iso()),
+                    (row["symbol"], "stock", self.timeframe, row["timestamp"], row["open"], row["high"], row["low"], row["close"], row.get("volume"), FMP_PROVIDER, now_iso()),
                 )
                 if cursor.rowcount:
                     inserted += 1
@@ -284,7 +319,7 @@ class IntradayArchiveRunner(ArchiveRunner):
             with open_current_read_only(self.db_path) as connection:
                 rows = connection.execute(
                     "SELECT symbol,MIN(ts),MAX(ts) FROM historical_market_bars WHERE provider=? AND asset_type='stock' AND timeframe=? GROUP BY symbol",
-                    (FMP_PROVIDER, INTRADAY_TIMEFRAME),
+                    (FMP_PROVIDER, self.timeframe),
                 ).fetchall()
             return {str(row[0]).upper(): (safe_int(row[1], 0) or None, safe_int(row[2], 0) or None) for row in rows}
         except sqlite3.Error:
@@ -301,8 +336,8 @@ class IntradayArchiveRunner(ArchiveRunner):
     def _run_intraday(self) -> None:
         phase = self.progress
         bounds = self._existing_bounds()
-        lower_bound = date.today() - timedelta(days=self.lookback_days - 1)
-        window_end = date.today()
+        lower_bound = self.end_date - timedelta(days=self.lookback_days - 1)
+        window_end = self.end_date
         while window_end >= lower_bound:
             window_start = max(lower_bound, window_end - timedelta(days=self.window_days - 1))
             window_key = f"{window_start.isoformat()}:{window_end.isoformat()}"
@@ -320,7 +355,7 @@ class IntradayArchiveRunner(ArchiveRunner):
                     self._save_progress()
                     continue
                 params = {"symbol": symbol, "from": window_start.isoformat(), "to": window_end.isoformat()}
-                rows, meta = self._request(family=SUMMARY_FAMILY.replace("summary", "raw"), symbol=symbol, endpoint=INTRADAY_ENDPOINT, params=params)
+                rows, meta = self._request(family=f"{self.timeframe}_raw", symbol=symbol, endpoint=self.endpoint, params=params)
                 clean, quality = normalize_intraday_rows(symbol, rows)
                 inserted, duplicates = self._store_rows(clean) if clean else (0, 0)
                 state.setdefault("windows_completed", []).append(window_key)
@@ -343,9 +378,9 @@ class IntradayArchiveRunner(ArchiveRunner):
     def _build_summaries(self) -> None:
         summary_state = self.progress.setdefault("summary", {"status": "NOT_STARTED"})
         summary_state["status"] = "RUNNING"
-        lower_bound = date.today() - timedelta(days=self.lookback_days - 1)
+        lower_bound = self.end_date - timedelta(days=self.lookback_days - 1)
         start_ts = int(datetime(lower_bound.year, lower_bound.month, lower_bound.day, tzinfo=UTC).timestamp())
-        end_ts = int(datetime.now(UTC).timestamp())
+        end_ts = int(datetime(self.end_date.year, self.end_date.month, self.end_date.day, 23, 59, 59, tzinfo=UTC).timestamp())
         if not self.db_path.exists():
             summary_state["status"] = "ARCHIVE_UNAVAILABLE"
             self._save_progress()
@@ -359,10 +394,10 @@ class IntradayArchiveRunner(ArchiveRunner):
                 symbol = target["symbol"]
                 rows = connection.execute(
                     "SELECT symbol,ts,o,h,l,c,v FROM historical_market_bars WHERE symbol=? AND asset_type='stock' AND timeframe=? AND provider=? AND ts>=? AND ts<=? ORDER BY ts",
-                    (symbol, INTRADAY_TIMEFRAME, FMP_PROVIDER, start_ts, end_ts),
+                    (symbol, self.timeframe, FMP_PROVIDER, start_ts, end_ts),
                 ).fetchall()
                 canonical = [{"symbol": row[0], "timestamp": int(row[1]), "open": row[2], "high": row[3], "low": row[4], "close": row[5], "volume": row[6]} for row in rows]
-                summaries = build_intraday_session_summaries(canonical, symbol=symbol, metadata=target)
+                summaries = build_intraday_session_summaries(canonical, symbol=symbol, metadata=target, timeframe=self.timeframe)
                 total += upsert_intraday_session_summaries(connection, summaries, generated_at=now_iso())
                 completed += 1
                 summary_state["symbols_completed"] = completed
@@ -406,11 +441,11 @@ class IntradayArchiveRunner(ArchiveRunner):
             with open_current_read_only(self.db_path) as connection:
                 rows = connection.execute(
                     f"SELECT symbol,COUNT(*) AS n,MIN(ts),MAX(ts) FROM historical_market_bars WHERE provider=? AND asset_type='stock' AND timeframe=? AND symbol IN ({placeholders}) GROUP BY symbol",
-                    [FMP_PROVIDER, INTRADAY_TIMEFRAME, *symbols],
+                    [FMP_PROVIDER, self.timeframe, *symbols],
                 ).fetchall()
                 duplicate_groups = connection.execute(
                     f"SELECT COUNT(*) FROM (SELECT symbol,asset_type,timeframe,ts FROM historical_market_bars WHERE provider=? AND asset_type='stock' AND timeframe=? AND symbol IN ({placeholders}) GROUP BY symbol,asset_type,timeframe,ts HAVING COUNT(*)>1)",
-                    [FMP_PROVIDER, INTRADAY_TIMEFRAME, *symbols],
+                    [FMP_PROVIDER, self.timeframe, *symbols],
                 ).fetchone()[0]
         except sqlite3.Error:
             return [], 0
@@ -424,28 +459,28 @@ class IntradayArchiveRunner(ArchiveRunner):
                 table = connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (SUMMARY_TABLE,)).fetchone()
                 if not table:
                     return {"status": "SUMMARY_TABLE_UNAVAILABLE", "records": 0}
-                count = int(connection.execute(f"SELECT COUNT(*) FROM {SUMMARY_TABLE}").fetchone()[0])
-                payload_bytes = summary_payload_size(connection)
+                count = int(connection.execute(f"SELECT COUNT(*) FROM {SUMMARY_TABLE} WHERE timeframe=?", (self.timeframe,)).fetchone()[0])
+                payload_bytes = summary_payload_size(connection, timeframe=self.timeframe)
                 schema = connection.execute(f"PRAGMA table_info({SUMMARY_TABLE})").fetchall()
-                first = connection.execute(f"SELECT * FROM {SUMMARY_TABLE} ORDER BY session_date,symbol LIMIT 1").fetchone()
+                first = connection.execute(f"SELECT * FROM {SUMMARY_TABLE} WHERE timeframe=? ORDER BY session_date,symbol LIMIT 1", (self.timeframe,)).fetchone()
             return {"status": "OK", "records": count, "logical_payload_bytes": payload_bytes, "schema_columns": [row[1] for row in schema], "sample_summary_id": first[0] if first else None}
         except sqlite3.Error as exc:
             return {"status": "SUMMARY_READ_FAILED", "records": 0, "error": type(exc).__name__}
 
     def _retrieval_demos(self) -> dict[str, Any]:
-        start_ts = int((datetime.now(UTC) - timedelta(days=self.lookback_days)).timestamp())
-        end_ts = int(datetime.now(UTC).timestamp())
+        start_ts = int(datetime(self.end_date.year, self.end_date.month, self.end_date.day, tzinfo=UTC).timestamp()) - self.lookback_days * 86_400
+        end_ts = int(datetime(self.end_date.year, self.end_date.month, self.end_date.day, 23, 59, 59, tzinfo=UTC).timestamp())
         demos: dict[str, Any] = {}
         for lane, setup in (("SCALP", {"momentum_bucket": "HIGH", "volume_bucket": "HIGH"}), ("DAY", {"direction": "UP", "volatility_bucket": "MEDIUM"}), ("SWING", {"direction": "UP"})):
             if lane == "SWING":
                 demos[lane] = {"mode": "DAILY_FIRST", "intraday_supporting_only": True, "matches": 0, "raw_rows_read": 0}
                 continue
-            result = retrieve_intraday_session_matches(self.db_path, lane=lane, setup=setup, history_start_ts=start_ts, history_end_ts=end_ts, max_matches=5)
+            result = retrieve_intraday_session_matches(self.db_path, lane=lane, setup=setup, history_start_ts=start_ts, history_end_ts=end_ts, max_matches=5, timeframe=self.timeframe)
             first = (result.get("matches") or [None])[0]
             drilldown_rows = 0
             provenance = None
             if first:
-                raw = fetch_intraday_raw_window(self.db_path, symbol=first["symbol"], start_ts=first["raw_start_ts"], end_ts=first["raw_end_ts"])
+                raw = fetch_intraday_raw_window(self.db_path, symbol=first["symbol"], start_ts=first["raw_start_ts"], end_ts=first["raw_end_ts"], timeframe=self.timeframe)
                 drilldown_rows = len(raw)
                 provenance = first.get("provenance")
             demos[lane] = {"mode": "INDEXED_SUMMARY_FIRST", "query": setup, "summary_rows_searched": result.get("summary_rows_searched", 0), "top_n": len(result.get("matches") or []), "raw_drilldown_rows": drilldown_rows, "summary_query_latency_ms": result.get("latency_ms"), "full_raw_scan_used": result.get("full_raw_scan_used"), "provenance": provenance}
@@ -457,12 +492,13 @@ class IntradayArchiveRunner(ArchiveRunner):
         try:
             with open_current_read_only(self.db_path) as connection:
                 row = connection.execute(
-                    f"SELECT summary_id,symbol,raw_start_ts,raw_end_ts,setup_features_json,outcome_features_json FROM {SUMMARY_TABLE} WHERE session_segment='REGULAR' ORDER BY session_date,symbol LIMIT 1"
+                    f"SELECT summary_id,symbol,raw_start_ts,raw_end_ts,setup_features_json,outcome_features_json FROM {SUMMARY_TABLE} WHERE timeframe=? AND session_segment='REGULAR' ORDER BY session_date,symbol LIMIT 1",
+                    (self.timeframe,),
                 ).fetchone()
             if not row:
                 return {"status": "NO_SUMMARY_SAMPLE"}
-            raw = fetch_intraday_raw_window(self.db_path, symbol=row[1], start_ts=int(row[2]), end_ts=int(row[3]))
-            rebuilt = build_intraday_session_summaries(raw, symbol=row[1], metadata={})
+            raw = fetch_intraday_raw_window(self.db_path, symbol=row[1], start_ts=int(row[2]), end_ts=int(row[3]), timeframe=self.timeframe)
+            rebuilt = build_intraday_session_summaries(raw, symbol=row[1], metadata={}, timeframe=self.timeframe)
             rebuilt = next((item for item in rebuilt if item.get("session_segment") == "REGULAR"), None)
             if not rebuilt:
                 return {"status": "RAW_SAMPLE_UNAVAILABLE", "summary_id": row[0]}
@@ -482,7 +518,7 @@ class IntradayArchiveRunner(ArchiveRunner):
         all_ts = [value for row in raw_rows for value in (row.get("earliest_timestamp"), row.get("latest_timestamp")) if value]
         summary = self._summary_validation()
         raw_count = sum(row["rows"] for row in raw_rows)
-        expected_end = datetime.now(UTC)
+        expected_end = datetime(self.end_date.year, self.end_date.month, self.end_date.day, 23, 59, 59, tzinfo=UTC)
         validation = {
             "schema_version": "fmp_intraday_archive_compression_v1_validation",
             "generator_version": VERSION,
@@ -493,16 +529,17 @@ class IntradayArchiveRunner(ArchiveRunner):
             "tier3b_intraday": {
                 "symbols_selected": len(self.manifest),
                 "symbols_completed": sum(1 for row in self.manifest if self.progress.get("per_symbol", {}).get(row["symbol"], {}).get("status") == "COMPLETE"),
-                "resolution": INTRADAY_TIMEFRAME,
-                "endpoint": INTRADAY_ENDPOINT,
+                "resolution": self.timeframe,
+                "endpoint": self.endpoint,
                 "lookback_calendar_days": self.lookback_days,
                 "window_calendar_days": self.window_days,
                 "rows_archived": raw_count,
                 "rows_inserted_this_run": safe_int(self.progress.get("rows_inserted")),
                 "earliest_timestamp_utc": datetime.fromtimestamp(min(all_ts), UTC).isoformat().replace("+00:00", "Z") if all_ts else None,
                 "latest_timestamp_utc": datetime.fromtimestamp(max(all_ts), UTC).isoformat().replace("+00:00", "Z") if all_ts else None,
-                "one_minute_coverage_count": len(raw_rows),
-                "five_minute_fallback": {"rows": 0, "symbols": 0, "status": "NOT_USED"},
+                "timeframe_coverage_count": len(raw_rows),
+                "one_minute_coverage_count": len(raw_rows) if self.timeframe == DEFAULT_TIMEFRAME else 0,
+                "resolution_fallback": {"rows": 0, "symbols": 0, "status": "NOT_USED"},
                 "invalid_rows": safe_int(self.progress.get("invalid_rows")),
                 "chronology_failures": safe_int(self.progress.get("chronology_failures")),
                 "duplicate_rows_skipped": safe_int(self.progress.get("duplicate_rows")),
@@ -587,32 +624,44 @@ class IntradayArchiveRunner(ArchiveRunner):
             },
             "runtime_protection": {"before": before, "after": after, "archive_process_is_not_worker_owner": True, "broker_actions_caused": 0, "positions_mutated": False, "crypto_route_unchanged": True, "live_provider_routing_changed": False},
             "truth_safety": {"historical_replay_only": True, "broker_truth_untouched": True, "lifecycle_completion_eligible": False, "natural_truth_eligible": False, "learning_ack_eligible": False, "fabricated_evidence": False},
-            "archive_date_contract": {"requested_end_utc": expected_end.isoformat().replace("+00:00", "Z"), "requested_start_date": (date.today() - timedelta(days=self.lookback_days - 1)).isoformat()},
+            "archive_date_contract": {"requested_end_utc": expected_end.isoformat().replace("+00:00", "Z"), "requested_start_date": (self.end_date - timedelta(days=self.lookback_days - 1)).isoformat()},
         }
         atomic_json_write(self.validation_path, validation)
         return validation
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Archive-only FMP 1-minute history and build indexed session summaries")
+    parser = argparse.ArgumentParser(description="Archive-only FMP intraday history and build indexed session summaries")
     parser.add_argument("--state-dir", default=str(DEFAULT_STATE_DIR))
     parser.add_argument("--symbols", type=int, default=TARGET_SYMBOLS)
-    parser.add_argument("--lookback-days", type=int, default=DEFAULT_LOOKBACK_DAYS)
-    parser.add_argument("--window-days", type=int, default=DEFAULT_WINDOW_DAYS)
+    parser.add_argument("--lookback-days", type=int, default=None)
+    parser.add_argument("--window-days", type=int, default=None)
     parser.add_argument("--calls-per-minute", type=int, default=TARGET_CALLS_PER_MINUTE)
+    parser.add_argument("--timeframe", default=DEFAULT_TIMEFRAME)
+    parser.add_argument("--end-date", default="", help="inclusive UTC archive end date (YYYY-MM-DD)")
     args = parser.parse_args()
     state_dir = Path(args.state_dir).expanduser().resolve()
-    manifest = build_intraday_manifest_300(state_dir)
+    timeframe = normalize_intraday_timeframe(args.timeframe)
+    end_date = date.fromisoformat(args.end_date) if args.end_date else None
+    manifest = build_intraday_manifest_300(state_dir, timeframe=timeframe)
     if len(manifest) != min(TARGET_SYMBOLS, max(1, int(args.symbols))):
         raise SystemExit(f"intraday_manifest_size_mismatch:{len(manifest)}")
     before = make_before_after_snapshot(state_dir, label="BEFORE")
-    runner = IntradayArchiveRunner(state_dir=state_dir, manifest=manifest, lookback_days=args.lookback_days, window_days=args.window_days, calls_per_minute=args.calls_per_minute)
+    runner = IntradayArchiveRunner(
+        state_dir=state_dir,
+        manifest=manifest,
+        lookback_days=args.lookback_days or (DEFAULT_15MIN_LOOKBACK_DAYS if timeframe == "15Min" else DEFAULT_LOOKBACK_DAYS),
+        window_days=args.window_days or (DEFAULT_15MIN_WINDOW_DAYS if timeframe == "15Min" else DEFAULT_WINDOW_DAYS),
+        calls_per_minute=args.calls_per_minute,
+        timeframe=timeframe,
+        end_date=end_date,
+    )
     runner.progress["before_snapshot"] = before
     runner._save_progress()
     runner.run()
     after = make_before_after_snapshot(state_dir, label="AFTER")
     validation = runner.validation(before=before, after=after)
-    print(json.dumps({"status": validation.get("status"), "symbols_selected": len(manifest), "symbols_with_rows": validation.get("tier3b_intraday", {}).get("one_minute_coverage_count"), "rows": validation.get("tier3b_intraday", {}).get("rows_archived"), "summary_records": validation.get("compression", {}).get("summary_record_count"), "api_calls": validation.get("usage", {}).get("total_api_calls"), "payload_bytes": validation.get("usage", {}).get("measured_payload_bytes"), "stop_reason": runner.stop_reason, "validation_path": str(runner.validation_path)}, sort_keys=True))
+    print(json.dumps({"status": validation.get("status"), "timeframe": timeframe, "symbols_selected": len(manifest), "symbols_with_rows": validation.get("tier3b_intraday", {}).get("timeframe_coverage_count"), "rows": validation.get("tier3b_intraday", {}).get("rows_archived"), "summary_records": validation.get("compression", {}).get("summary_record_count"), "api_calls": validation.get("usage", {}).get("total_api_calls"), "payload_bytes": validation.get("usage", {}).get("measured_payload_bytes"), "stop_reason": runner.stop_reason, "validation_path": str(runner.validation_path)}, sort_keys=True))
     return 0 if validation.get("status") == "COMPLETE" else 2
 
 

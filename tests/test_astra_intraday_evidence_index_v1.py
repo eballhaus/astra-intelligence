@@ -140,6 +140,59 @@ def test_historical_evidence_prefers_summary_index_then_bounded_raw_drilldown(tm
     assert result["evidence_items"][0]["natural_truth_eligible"] is False
 
 
+def test_15min_summary_and_retrieval_are_partitioned_from_1min(tmp_path):
+    path, start = _archive_db(tmp_path)
+    rows_by_symbol = {"AAPL": _bars("AAPL", start), "MSFT": _bars("MSFT", start + timedelta(days=1))}
+    with sqlite3.connect(path) as connection:
+        for symbol, rows in rows_by_symbol.items():
+            connection.executemany(
+                "INSERT INTO historical_market_bars VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                [(row["symbol"], "stock", "15Min", row["timestamp"], row["open"], row["high"], row["low"], row["close"], row["volume"], "FMP_HIST", "2026-09-12T00:00:00Z") for row in rows],
+            )
+            summaries = build_intraday_session_summaries(rows, symbol=symbol, metadata={"sector": "Technology"}, timeframe="15Min")
+            upsert_intraday_session_summaries(connection, summaries, generated_at="2026-09-12T00:00:00Z")
+        connection.commit()
+
+    one_minute = build_intraday_session_summaries(rows_by_symbol["AAPL"], symbol="AAPL")
+    fifteen_minute = build_intraday_session_summaries(rows_by_symbol["AAPL"], symbol="AAPL", timeframe="15Min")
+    assert one_minute[0]["timeframe"] == "1Min"
+    assert fifteen_minute[0]["timeframe"] == "15Min"
+    assert one_minute[0]["summary_id"] != fifteen_minute[0]["summary_id"]
+    assert fifteen_minute[0]["provenance"]["raw_timeframe"] == "15Min"
+    assert fifteen_minute[0]["provenance"]["raw_source_endpoint"] == "/stable/historical-chart/15min"
+
+    result = retrieve_intraday_session_matches(
+        path,
+        lane="SCALP",
+        setup={"direction": "UP"},
+        symbols=["AAPL", "MSFT"],
+        history_start_ts=int(start.timestamp()),
+        history_end_ts=int((start + timedelta(days=2)).timestamp()),
+        timeframe="15Min",
+        max_matches=5,
+    )
+    assert result["status"] == "OK"
+    assert result["matches"]
+    assert all(row["timeframe"] == "15Min" for row in result["matches"])
+    raw = fetch_intraday_raw_window(path, symbol="AAPL", start_ts=int(start.timestamp()), end_ts=int((start + timedelta(minutes=39)).timestamp()), timeframe="15Min")
+    assert raw and all(row["timeframe"] == "15Min" for row in raw)
+
+    evidence = produce_historical_evidence_v1(
+        path,
+        lane="SCALP",
+        symbol="AAPL",
+        comparison_symbols=["MSFT"],
+        history_start=start,
+        history_end=start + timedelta(days=2),
+        timeframe="15Min",
+        forward_bars=3,
+        max_matches=1,
+    )
+    assert evidence["status"] == "READY"
+    assert evidence["retrieval"]["retrieval_mode"] == "INDEXED_INTRADAY_SUMMARY_FIRST"
+    assert evidence["timeframe"] == "15Min"
+
+
 def test_300_symbol_manifest_is_deterministic_and_source_bounded(tmp_path):
     state = tmp_path / "state"
     state.mkdir()
