@@ -227,8 +227,30 @@ class AlpacaWSMonitorTests(unittest.TestCase):
             with monitor._lock:
                 monitor._shadow_quotes["GEHC"]["receive_timestamp"] = time.time() - 21.0
             stale = monitor.get_observation("GEHC", max_age_seconds=20)
+            monitor._record_message({"T": "q", "S": "GEHC", "bp": 64.42, "ap": 64.48, "t": _iso()}, shadow=True)
+            with monitor._lock:
+                monitor._shadow_quotes["GEHC"]["provider_native_timestamp"] = "2000-01-01T00:00:00Z"
+                monitor._shadow_quotes["GEHC"]["receive_timestamp"] = time.time()
+            native_stale = monitor.get_observation("GEHC", max_age_seconds=20)
         self.assertEqual(missing["provider_used"], "ALPACA_WS_IEX")
         self.assertEqual(stale["provider_used"], "ALPACA_WS_IEX")
+        self.assertEqual(native_stale["provider_used"], "ALPACA_WS_IEX")
+        evidence = build_position_evidence_completeness_v1(
+            {"GEHC": {"symbol": "GEHC"}},
+            {"positions": [{"symbol": "GEHC"}]},
+            market_evidence={"legacy-gehc": {
+                "LATEST_QUOTE": {
+                    "symbol": "GEHC", "response_state": "SUCCESS", "freshness_state": "CURRENT",
+                    "quote_timestamp": "2999-01-01T00:00:00Z", "bid": 64.3, "ask": 64.4,
+                    "provider_used": "ALPACA_WS_IEX",
+                },
+            }},
+            canonical_quote_evidence={"GEHC": {
+                "symbol": "GEHC", "provider_used": "ALPACA_WS_SIP_CANARY",
+                "provider_native_timestamp": "2000-01-01T00:00:00Z", "receive_timestamp": time.time(),
+            }},
+        )
+        self.assertEqual(evidence["positions"][0]["quote_source"], "ALPACA_WS_IEX")
 
     def test_sip_canary_bar_reaches_evidence_completeness_with_provenance(self):
         monitor = AlpacaWSMonitor()

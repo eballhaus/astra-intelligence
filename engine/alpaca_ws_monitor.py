@@ -243,7 +243,8 @@ class AlpacaWSMonitor:
         if native is None or received is None:
             return None
         now = time.time()
-        if now - received > max(0.0, float(max_age_seconds)) or native > now + 5.0:
+        max_age = max(0.0, float(max_age_seconds))
+        if now - received > max_age or now - native > max_age or native > now + 5.0:
             return None
         quote.update({
             "symbol": sym,

@@ -176,6 +176,16 @@ def build_position_evidence_completeness_v1(
         canonical_quote_present = False
         if canonical_quote:
             canonical_quote, canonical_status, canonical_age, canonical_quote_present = _canonical_quote_status(canonical_quote)
+            if (
+                canonical_quote_present
+                and canonical_status != "FRESH"
+                and _text(canonical_quote.get("provider_used") or canonical_quote.get("provider"))
+                == "ALPACA_WS_SIP_CANARY"
+            ):
+                # A canary row can age between monitor selection and this
+                # evidence boundary. Discard it so the existing IEX/FMP
+                # fallback is still eligible rather than surfacing stale SIP.
+                canonical_quote_present = False
             if canonical_quote_present:
                 # The worker handoff is the same current evidence consumed by
                 # management. A legacy projection cannot replace it, even when
