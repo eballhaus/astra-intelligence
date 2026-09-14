@@ -51,6 +51,10 @@ def _float_or_none(value: Any) -> float | None:
     return parsed if parsed > 0 else None
 
 
+SIP_CANARY_ENV = "ASTRA_ALPACA_SIP_CANARY_SYMBOLS"
+MAX_SIP_CANARY_SYMBOLS = 4
+
+
 class AlpacaWSMonitor:
     """Worker-owned market-data streams for equity and crypto observations.
 
@@ -201,6 +205,117 @@ class AlpacaWSMonitor:
         primary, _ = AlpacaWSMonitor._equity_feed()
         shadow, reason = AlpacaWSMonitor._equity_feed(shadow=True)
         return bool(primary and shadow and not reason and primary != shadow)
+
+    @staticmethod
+    def _sip_canary_symbols() -> tuple[str, ...]:
+        """Return the explicit, bounded equity-only SIP canary set."""
+        raw = str(os.getenv(SIP_CANARY_ENV, "") or "")
+        symbols = {
+            value.upper().strip()
+            for value in raw.split(",")
+            if value.strip() and "/" not in value.strip()
+        }
+        if len(symbols) > MAX_SIP_CANARY_SYMBOLS:
+            return ()
+        return tuple(sorted(symbols))
+
+    @staticmethod
+    def _sip_canary_config_error() -> str:
+        raw = str(os.getenv(SIP_CANARY_ENV, "") or "")
+        symbols = {
+            value.upper().strip()
+            for value in raw.split(",")
+            if value.strip() and "/" not in value.strip()
+        }
+        return "sip_canary_symbol_limit_exceeded" if len(symbols) > MAX_SIP_CANARY_SYMBOLS else ""
+
+    def _sip_canary_quote(self, symbol: str, *, max_age_seconds: float = 20.0) -> dict[str, Any] | None:
+        """Promote only a current SIP shadow quote into the canary view."""
+        sym = str(symbol or "").upper().strip()
+        if sym not in self._sip_canary_symbols() or not self._shadow_stream_enabled():
+            return None
+        with self._lock:
+            quote = dict(self._shadow_quotes.get(sym) or {})
+        if str(quote.get("symbol") or sym).upper().strip() != sym:
+            return None
+        native = _utc_epoch(quote.get("provider_native_timestamp"))
+        received = _receive_epoch(quote.get("receive_timestamp"))
+        if native is None or received is None:
+            return None
+        now = time.time()
+        if now - received > max(0.0, float(max_age_seconds)) or native > now + 5.0:
+            return None
+        quote.update({
+            "symbol": sym,
+            "provider_used": "ALPACA_WS_SIP_CANARY",
+            "provider": "ALPACA_WS_SIP_CANARY",
+            "provider_provenance": "SIP_CANARY_OBSERVATION",
+            "shadow_provider_used": quote.get("provider_used") or "ALPACA_WS_SIP_SHADOW",
+            "shadow_only": False,
+            "canary_only": True,
+            "observation_authority": True,
+            "market_observation_only": True,
+            "quote_age_seconds": round(max(0.0, now - received), 3),
+        })
+        return quote
+
+    def _sip_canary_bar_evidence(
+        self,
+        symbol: str,
+        *,
+        max_age_seconds: float = 6 * 60 * 60,
+    ) -> dict[str, Any] | None:
+        """Expose one current shadow bar as canonical evidence for the canary."""
+        sym = str(symbol or "").upper().strip()
+        if sym not in self._sip_canary_symbols() or not self._shadow_stream_enabled():
+            return None
+        with self._lock:
+            bar = dict(self._shadow_bars.get(sym) or {})
+        if str(bar.get("symbol") or sym).upper().strip() != sym:
+            return None
+        native_text = str(bar.get("provider_native_timestamp") or "").strip()
+        native = _utc_epoch(native_text)
+        received = _receive_epoch(bar.get("receive_timestamp"))
+        if native is None or received is None:
+            return None
+        now = time.time()
+        if now - received > max(0.0, float(max_age_seconds)) or native > now + 5.0:
+            return None
+        values = {key: _float_or_none(bar.get(key)) for key in ("open", "high", "low", "close")}
+        if any(value is None for value in values.values()):
+            return None
+        volume = _float_or_none(bar.get("volume"))
+        canary_bar = {
+            "symbol": sym,
+            **values,
+            "volume": volume,
+            "timestamp": native_text,
+            "provider_native_timestamp": native_text,
+            "receive_timestamp": received,
+            "provider": "ALPACA_WS_SIP_CANARY",
+            "provider_used": "ALPACA_WS_SIP_CANARY",
+            "provider_provenance": "SIP_CANARY_OBSERVATION",
+            "shadow_only": False,
+            "canary_only": True,
+            "observation_authority": True,
+            "market_observation_only": True,
+        }
+        return {
+            "symbol": sym,
+            "response_state": "SUCCESS",
+            "freshness_state": "CURRENT",
+            "last_bar_at": native_text,
+            "received_at": datetime.fromtimestamp(received, UTC).isoformat().replace("+00:00", "Z"),
+            "provider_native_timestamp": native_text,
+            "provider": "ALPACA_WS_SIP_CANARY",
+            "provider_used": "ALPACA_WS_SIP_CANARY",
+            "provider_provenance": "SIP_CANARY_OBSERVATION",
+            "shadow_only": False,
+            "canary_only": True,
+            "observation_authority": True,
+            "market_observation_only": True,
+            "bars": [canary_bar],
+        }
 
     @staticmethod
     def _shared_state_path() -> Path:
@@ -1011,6 +1126,13 @@ class AlpacaWSMonitor:
         quote["quote_age_seconds"] = round(age, 3)
         return quote
 
+    def get_observation(self, symbol: str, max_age_seconds: float = 20, **_: Any) -> dict[str, Any] | None:
+        """Return the bounded active-observation view without changing feed authority."""
+        canary = self._sip_canary_quote(symbol, max_age_seconds=max_age_seconds)
+        if canary is not None:
+            return canary
+        return self.get_quote(symbol, max_age_seconds=max_age_seconds)
+
     def compare_shadow(self, symbols: list[str] | None = None) -> dict[str, Any]:
         """Return bounded IEX/SIP diagnostics without changing quote authority."""
         requested = self._equity_symbol_set(symbols) if symbols is not None else None
@@ -1103,6 +1225,17 @@ class AlpacaWSMonitor:
                 if (selected := self._selected_crypto_quote(symbol, max_age_seconds=20.0)) is not None
             }
             observations.update(selected_crypto_observations)
+        canary_symbols = self._sip_canary_symbols()
+        canary_observations = {
+            symbol: observation
+            for symbol in canary_symbols
+            if (observation := self._sip_canary_quote(symbol)) is not None
+        }
+        canary_bars = {
+            symbol: bar
+            for symbol in canary_symbols
+            if (bar := self._sip_canary_bar_evidence(symbol)) is not None
+        }
         now = time.time()
         configured_feed, feed_error = self._equity_feed()
         shadow_feed, shadow_feed_error = self._equity_feed(shadow=True)
@@ -1249,6 +1382,11 @@ class AlpacaWSMonitor:
             "shadow_connected_age_seconds": round(shadow_connected_age, 3) if shadow_connected_age is not None else None,
             "shadow_last_message_age_seconds": round(shadow_message_age, 3) if shadow_message_age is not None else None,
             "shadow_stale_stream": shadow_stale_stream,
+            "sip_canary_symbols": list(canary_symbols),
+            "sip_canary_enabled": bool(canary_symbols and self._shadow_stream_enabled()),
+            "sip_canary_config_error": self._sip_canary_config_error(),
+            "sip_canary_observations": canary_observations,
+            "sip_canary_bars": canary_bars,
             "crypto_stats": crypto_stats,
             "crypto_connected_age_seconds": round(crypto_connected_age, 3) if crypto_connected_age is not None else None,
             "crypto_last_message_age_seconds": round(crypto_message_age, 3) if crypto_message_age is not None else None,

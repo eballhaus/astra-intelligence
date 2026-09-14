@@ -13349,6 +13349,7 @@ class PaperAutopilotEngine:
         ws_observations = dict(
             dict(self._runtime_state.get("alpaca_ws_active_position_monitor_v1") or {}).get("observations") or {}
         )
+        canary_bar_evidence: dict[str, dict[str, Any]] = {}
         # The worker refreshes the persisted status after its management pass.
         # Read the same canonical owner before that persistence boundary so a
         # healthy live observation is not forced through the next-cycle cache.
@@ -13363,8 +13364,26 @@ class PaperAutopilotEngine:
                 live_observations = dict(live_status.get("observations") or {})
                 if live_observations:
                     ws_observations.update(live_observations)
+                canary_symbols = {
+                    str(symbol or "").upper().strip()
+                    for symbol in (live_status.get("sip_canary_symbols") or [])
+                    if str(symbol or "").strip()
+                }
+                canary_observations = dict(live_status.get("sip_canary_observations") or {})
+                for raw_symbol, observation in canary_observations.items():
+                    symbol = str(raw_symbol or "").upper().strip()
+                    if symbol in canary_symbols and isinstance(observation, Mapping):
+                        # The monitor has already validated freshness and
+                        # provenance. Keep this view bounded to the explicit
+                        # canary set; all other symbols retain IEX/FMP logic.
+                        ws_observations[symbol] = dict(observation)
+                for raw_symbol, bar in dict(live_status.get("sip_canary_bars") or {}).items():
+                    symbol = str(raw_symbol or "").upper().strip()
+                    if symbol in canary_symbols and isinstance(bar, Mapping):
+                        canary_bar_evidence[symbol] = dict(bar)
             except Exception:
                 pass
+        self._runtime_state["canonical_active_position_bar_evidence_v1"] = canary_bar_evidence
         # The websocket producer keeps crypto pairs in Alpaca's canonical
         # slash form, while broker/recovery rows may use compact symbols.
         # Retain all bounded observations per alias so a stale persisted row
@@ -14085,12 +14104,39 @@ class PaperAutopilotEngine:
         previous_exit_readiness = load_position_exit_readiness_v1(
             os.path.dirname(self.position_exit_readiness_state_path) or "state"
         )
+        canonical_quote_evidence = dict(canonical_quote_evidence or {})
+        canonical_bar_evidence = dict(
+            self._runtime_state.get("canonical_active_position_bar_evidence_v1") or {}
+        )
+        # The canary is an observation-only view owned by the same worker
+        # monitor. Merge only its already freshness-validated rows so a stale
+        # intermediate quote projection cannot mask current SIP evidence.
+        if str(os.getenv("ASTRA_PROCESS_ROLE", "api") or "api").strip().lower() == "worker":
+            try:
+                from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
+
+                live_status = dict(ALPACA_WS_MONITOR.status() or {})
+                canary_quotes = dict(live_status.get("sip_canary_observations") or {})
+                canary_bars = dict(live_status.get("sip_canary_bars") or {})
+                canonical_quote_evidence.update({
+                    str(symbol or "").upper().strip(): dict(row)
+                    for symbol, row in canary_quotes.items()
+                    if isinstance(row, Mapping) and str(symbol or "").strip()
+                })
+                canonical_bar_evidence.update({
+                    str(symbol or "").upper().strip(): dict(row)
+                    for symbol, row in canary_bars.items()
+                    if isinstance(row, Mapping) and str(symbol or "").strip()
+                })
+            except Exception:
+                pass
         evidence = build_position_evidence_completeness_v1(
             broker_position_by_symbol,
             recovery,
             market_evidence=dict(self._runtime_state.get("legacy_swing_market_evidence") or {}),
             fmp_evidence=dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {}),
             canonical_quote_evidence=canonical_quote_evidence,
+            canonical_bar_evidence=canonical_bar_evidence,
         )
         save_position_evidence_completeness_v1(evidence, os.path.dirname(self.position_evidence_completeness_state_path) or "state")
         self._runtime_state["position_evidence_completeness_v1"] = evidence

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 import unittest
 from datetime import UTC, datetime
 from unittest.mock import patch
 
 from engine.alpaca_ws_monitor import AlpacaWSMonitor
+from engine.astra_position_evidence_completeness_v1 import build_position_evidence_completeness_v1
 from engine.paper_autopilot import PaperAutopilotEngine
 import server_extend
 
@@ -168,6 +170,153 @@ class AlpacaWSMonitorTests(unittest.TestCase):
         self.assertEqual(comparison["production_authority"], "primary_equity_observations")
         self.assertEqual(comparison["broker_actions"], 0)
         self.assertEqual(comparison["comparisons"][0]["status"], "COMPARABLE")
+
+    def test_bounded_sip_canary_prefers_fresh_sip_only_for_explicit_symbols(self):
+        monitor = AlpacaWSMonitor()
+        with patch.dict(
+            os.environ,
+            {
+                "ASTRA_PROCESS_ROLE": "worker",
+                "ASTRA_ALPACA_WS_FEED": "iex",
+                "ASTRA_ALPACA_WS_SHADOW_ENABLED": "1",
+                "ASTRA_ALPACA_WS_SHADOW_FEED": "sip",
+                "ASTRA_ALPACA_SIP_ENTITLEMENT_VERIFIED": "1",
+                "ASTRA_ALPACA_SIP_CANARY_SYMBOLS": "UAL,GEHC,LYFT,RIOT",
+            },
+            clear=False,
+        ):
+            monitor._desired_symbols = {"GEHC", "AAPL"}
+            monitor._record_message({"T": "q", "S": "GEHC", "bp": 64.4, "ap": 64.5, "t": _iso()}, shadow=False)
+            monitor._record_message({"T": "q", "S": "GEHC", "bp": 64.41, "ap": 64.47, "t": _iso()}, shadow=True)
+            monitor._record_message({
+                "T": "b", "S": "GEHC", "o": 64.0, "h": 64.6, "l": 63.9,
+                "c": 64.4, "v": 1237, "t": _iso(),
+            }, shadow=True)
+            monitor._record_message({"T": "q", "S": "AAPL", "bp": 200.0, "ap": 200.1, "t": _iso()}, shadow=False)
+            monitor._record_message({"T": "q", "S": "AAPL", "bp": 200.2, "ap": 200.3, "t": _iso()}, shadow=True)
+            status = monitor.status()
+            canary_quote = monitor.get_observation("GEHC", max_age_seconds=20)
+            non_canary_quote = monitor.get_observation("AAPL", max_age_seconds=20)
+        self.assertEqual(status["sip_canary_symbols"], ["GEHC", "LYFT", "RIOT", "UAL"])
+        self.assertTrue(status["sip_canary_enabled"])
+        self.assertEqual(status["sip_canary_observations"]["GEHC"]["provider_used"], "ALPACA_WS_SIP_CANARY")
+        self.assertFalse(status["sip_canary_observations"]["GEHC"]["shadow_only"])
+        self.assertNotIn("AAPL", status["sip_canary_observations"])
+        self.assertEqual(canary_quote["provider_used"], "ALPACA_WS_SIP_CANARY")
+        self.assertEqual(non_canary_quote["provider_used"], "ALPACA_WS_IEX")
+        self.assertEqual(status["shadow_stats"]["errors"], 0)
+
+    def test_sip_canary_falls_back_for_missing_or_stale_shadow_quote(self):
+        monitor = AlpacaWSMonitor()
+        with patch.dict(
+            os.environ,
+            {
+                "ASTRA_PROCESS_ROLE": "worker",
+                "ASTRA_ALPACA_WS_FEED": "iex",
+                "ASTRA_ALPACA_WS_SHADOW_ENABLED": "1",
+                "ASTRA_ALPACA_WS_SHADOW_FEED": "sip",
+                "ASTRA_ALPACA_SIP_ENTITLEMENT_VERIFIED": "1",
+                "ASTRA_ALPACA_SIP_CANARY_SYMBOLS": "GEHC,LYFT,RIOT,UAL",
+            },
+            clear=False,
+        ):
+            monitor._desired_symbols = {"GEHC"}
+            monitor._record_message({"T": "q", "S": "GEHC", "bp": 64.4, "ap": 64.5, "t": _iso()}, shadow=False)
+            missing = monitor.get_observation("GEHC", max_age_seconds=20)
+            monitor._record_message({"T": "q", "S": "GEHC", "bp": 64.41, "ap": 64.47, "t": _iso()}, shadow=True)
+            with monitor._lock:
+                monitor._shadow_quotes["GEHC"]["receive_timestamp"] = time.time() - 21.0
+            stale = monitor.get_observation("GEHC", max_age_seconds=20)
+        self.assertEqual(missing["provider_used"], "ALPACA_WS_IEX")
+        self.assertEqual(stale["provider_used"], "ALPACA_WS_IEX")
+
+    def test_sip_canary_bar_reaches_evidence_completeness_with_provenance(self):
+        monitor = AlpacaWSMonitor()
+        with patch.dict(
+            os.environ,
+            {
+                "ASTRA_PROCESS_ROLE": "worker",
+                "ASTRA_ALPACA_WS_FEED": "iex",
+                "ASTRA_ALPACA_WS_SHADOW_ENABLED": "1",
+                "ASTRA_ALPACA_WS_SHADOW_FEED": "sip",
+                "ASTRA_ALPACA_SIP_ENTITLEMENT_VERIFIED": "1",
+                "ASTRA_ALPACA_SIP_CANARY_SYMBOLS": "GEHC,LYFT,RIOT,UAL",
+            },
+            clear=False,
+        ):
+            monitor._desired_symbols = {"GEHC"}
+            monitor._record_message({"T": "q", "S": "GEHC", "bp": 64.4, "ap": 64.5, "t": _iso()}, shadow=True)
+            monitor._record_message({
+                "T": "b", "S": "GEHC", "o": 64.0, "h": 64.6, "l": 63.9,
+                "c": 64.4, "v": 1237, "t": _iso(),
+            }, shadow=True)
+            status = monitor.status()
+        evidence = build_position_evidence_completeness_v1(
+            {"GEHC": {"symbol": "GEHC"}},
+            {"positions": [{"symbol": "GEHC", "metadata_generation": "V1_MANDATORY"}]},
+            canonical_quote_evidence=status["sip_canary_observations"],
+            canonical_bar_evidence=status["sip_canary_bars"],
+        )
+        row = evidence["positions"][0]
+        self.assertEqual(row["quote_source"], "ALPACA_WS_SIP_CANARY")
+        self.assertEqual(row["completed_bar_status"], "FRESH")
+        self.assertEqual(row["completed_bar_source"], "ALPACA_WS_SIP_CANARY")
+        self.assertEqual(row["volume_status"], "FRESH")
+        self.assertEqual(row["momentum_status"], "MISSING")
+        self.assertEqual(evidence["broker_actions_used"], 0)
+
+    def test_sip_canary_active_position_handoff_is_bounded_and_observation_only(self):
+        engine = PaperAutopilotEngine(
+            db_path=os.path.join(tempfile.mkdtemp(prefix="astra_sip_canary_engine_"), "paper.db"),
+            state_path=os.path.join(tempfile.mkdtemp(prefix="astra_sip_canary_engine_state_"), "state.json"),
+            enabled=False,
+        )
+        monitor = AlpacaWSMonitor()
+        monitor._desired_symbols = {"GEHC", "AAPL"}
+        with patch.dict(
+            os.environ,
+            {
+                "ASTRA_PROCESS_ROLE": "worker",
+                "ASTRA_ALPACA_WS_FEED": "iex",
+                "ASTRA_ALPACA_WS_SHADOW_ENABLED": "1",
+                "ASTRA_ALPACA_WS_SHADOW_FEED": "sip",
+                "ASTRA_ALPACA_SIP_ENTITLEMENT_VERIFIED": "1",
+                "ASTRA_ALPACA_SIP_CANARY_SYMBOLS": "GEHC,LYFT,RIOT,UAL",
+            },
+            clear=False,
+        ), patch("engine.alpaca_ws_monitor.ALPACA_WS_MONITOR", monitor):
+            monitor._record_message({"T": "q", "S": "GEHC", "bp": 64.4, "ap": 64.5, "t": _iso()}, shadow=False)
+            monitor._record_message({"T": "q", "S": "GEHC", "bp": 64.41, "ap": 64.47, "t": _iso()}, shadow=True)
+            monitor._record_message({
+                "T": "b", "S": "GEHC", "o": 64.0, "h": 64.6, "l": 63.9,
+                "c": 64.4, "v": 1237, "t": _iso(),
+            }, shadow=True)
+            selected = engine._canonical_active_position_observations_v1({
+                "GEHC": {
+                    "symbol": "GEHC", "canonical_position_id": "position-gehc",
+                    "lifecycle_id": "lifecycle-gehc", "lane_id": "SCALP",
+                },
+                "AAPL": {
+                    "symbol": "AAPL", "canonical_position_id": "position-aapl",
+                    "lifecycle_id": "lifecycle-aapl", "lane_id": "DAY",
+                },
+            })
+        self.assertEqual(selected["GEHC"]["provider_used"], "ALPACA_WS_SIP_CANARY")
+        self.assertEqual(selected["GEHC"]["canonical_position_id"], "position-gehc")
+        self.assertNotIn("AAPL", selected)
+        self.assertEqual(
+            engine._runtime_state["canonical_active_position_bar_evidence_v1"]["GEHC"]["provider"],
+            "ALPACA_WS_SIP_CANARY",
+        )
+
+    def test_sip_canary_configuration_is_deterministic_and_bounded(self):
+        monitor = AlpacaWSMonitor()
+        with patch.dict(os.environ, {"ASTRA_ALPACA_SIP_CANARY_SYMBOLS": "UAL,GEHC,LYFT,RIOT,GEHC"}, clear=False):
+            self.assertEqual(monitor._sip_canary_symbols(), ("GEHC", "LYFT", "RIOT", "UAL"))
+            self.assertEqual(monitor._sip_canary_config_error(), "")
+        with patch.dict(os.environ, {"ASTRA_ALPACA_SIP_CANARY_SYMBOLS": "AAPL,GEHC,LYFT,RIOT,UAL"}, clear=False):
+            self.assertEqual(monitor._sip_canary_symbols(), ())
+            self.assertEqual(monitor._sip_canary_config_error(), "sip_canary_symbol_limit_exceeded")
 
     def test_shadow_subscription_does_not_duplicate_existing_symbols(self):
         monitor = AlpacaWSMonitor()

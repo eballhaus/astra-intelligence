@@ -84,6 +84,18 @@ def _canonical_quotes_by_symbol(records: Mapping[str, Any]) -> dict[str, dict[st
     return result
 
 
+def _canonical_bars_by_symbol(records: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Index current worker bar evidence without refreshing or rewriting it."""
+    result: dict[str, dict[str, Any]] = {}
+    for key, raw in (records or {}).items():
+        if not isinstance(raw, Mapping):
+            continue
+        symbol = _text(raw.get("symbol") or key).upper()
+        if symbol:
+            result[symbol] = dict(raw)
+    return result
+
+
 def _canonical_quote_status(record: Mapping[str, Any]) -> tuple[dict[str, Any], str, float | None, bool]:
     """Normalize a worker quote while preserving its native timestamp contract."""
     quote = dict(record or {})
@@ -126,6 +138,7 @@ def build_position_evidence_completeness_v1(
     market_evidence: Mapping[str, Any] | None = None,
     fmp_evidence: Mapping[str, Any] | None = None,
     canonical_quote_evidence: Mapping[str, Any] | None = None,
+    canonical_bar_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return exactly one evidence availability row for every broker-open symbol."""
     recovery_by_symbol = {_text(row.get("symbol")).upper(): dict(row) for row in recovery.get("positions") or [] if isinstance(row, Mapping)}
@@ -136,6 +149,7 @@ def build_position_evidence_completeness_v1(
         if isinstance(row, Mapping) and _text(row.get("symbol"))
     }
     canonical_quotes = _canonical_quotes_by_symbol(canonical_quote_evidence or {})
+    canonical_bars = _canonical_bars_by_symbol(canonical_bar_evidence or {})
     rows: list[dict[str, Any]] = []
     for symbol, raw_position in sorted((broker_positions or {}).items()):
         position = dict(raw_position or {})
@@ -143,6 +157,19 @@ def build_position_evidence_completeness_v1(
         bundle = market_by_symbol.get(symbol, {})
         quote = dict(bundle.get("LATEST_QUOTE") or {})
         bars = dict(bundle.get("HISTORICAL_BARS") or bundle.get("HISTORICAL_BARS_ALPACA") or {})
+        canonical_bar = canonical_bars.get(symbol)
+        if canonical_bar:
+            canonical_bar_status, _canonical_bar_age = _status(
+                canonical_bar,
+                timestamp="last_bar_at",
+                fresh_seconds=6 * 60 * 60,
+                aging_seconds=2 * 24 * 60 * 60,
+            )
+            # A current canary bar may replace only the legacy bar projection
+            # for that same symbol. Stale or malformed canary evidence falls
+            # through to the existing IEX/FMP path.
+            if canonical_bar_status in {"FRESH", "AGING"}:
+                bars = canonical_bar
         fmp = dict(fmp_by_symbol.get(symbol) or {})
         auxiliary = dict(fmp.get("auxiliary_context") or {})
         canonical_quote = canonical_quotes.get(symbol)
