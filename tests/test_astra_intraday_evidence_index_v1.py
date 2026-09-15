@@ -179,6 +179,15 @@ def test_15min_summary_and_retrieval_are_partitioned_from_1min(tmp_path):
     assert result["status"] == "OK"
     assert result["matches"]
     assert all(row["timeframe"] == "15Min" for row in result["matches"])
+    before_window = retrieve_intraday_session_matches(
+        path,
+        lane="SCALP",
+        symbols=["MSFT"],
+        timeframe="15Min",
+        as_of_ts=int((start + timedelta(days=1, minutes=20)).timestamp()),
+    )
+    assert before_window["status"] == "NO_MATCHES"
+    assert before_window["self_match_exclusions"] == 1
     raw = fetch_intraday_raw_window(path, symbol="AAPL", start_ts=int(start.timestamp()), end_ts=int((start + timedelta(minutes=39)).timestamp()), timeframe="15Min")
     assert raw and all(row["timeframe"] == "15Min" for row in raw)
 
@@ -196,6 +205,9 @@ def test_15min_summary_and_retrieval_are_partitioned_from_1min(tmp_path):
     assert evidence["status"] == "READY"
     assert evidence["retrieval"]["retrieval_mode"] == "INDEXED_INTRADAY_SUMMARY_FIRST"
     assert evidence["timeframe"] == "15Min"
+    assert evidence["natural_truth_eligible"] is False
+    assert evidence["lifecycle_completion_eligible"] is False
+    assert evidence["learning_ack_eligible"] is False
 
 
 def test_300_symbol_manifest_is_deterministic_and_source_bounded(tmp_path):
