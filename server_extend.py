@@ -22189,19 +22189,41 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
         for bar in bars:
             raw_time = str(bar.get("t") or bar.get("timestamp") or bar.get("bar_timestamp") or "").strip()
             parsed_epoch = _parse_iso_or_epoch(raw_time) if raw_time else 0.0
-            if parsed_epoch <= 0.0 or parsed_epoch > now_epoch:
+            # Alpaca timestamps identify the start of a bar. Do not pass the
+            # still-forming 15-minute interval into a completed-bar forecast.
+            if parsed_epoch <= 0.0 or parsed_epoch + 900.0 > now_epoch:
                 continue
-            high, low, close = _to_float(bar.get("h"), 0.0), _to_float(bar.get("l"), 0.0), _to_float(bar.get("c"), 0.0)
-            if close > 0 and high >= low:
+            open_price = _to_float(bar.get("o"), -1.0)
+            high = _to_float(bar.get("h"), -1.0)
+            low = _to_float(bar.get("l"), -1.0)
+            close = _to_float(bar.get("c"), -1.0)
+            volume_value = _to_float(bar.get("v"), -1.0)
+            if min(open_price, high, low, close) > 0.0 and high >= max(open_price, close, low) and low <= min(open_price, close):
                 ranges.append(((high - low) / close) * 100.0)
-                completed_bars.append((bar, raw_time, close))
+                completed_bars.append((bar, raw_time, close, {
+                    "provider_native_timestamp": raw_time,
+                    "open": open_price, "high": high, "low": low, "close": close,
+                    "volume": volume_value if volume_value >= 0.0 else None,
+                    "is_complete": True,
+                }))
         if len(ranges) < 2:
             failures.append({"symbol": symbol, "blocker": str(bars_payload.get("response_state") or "FRESH_BARS_UNAVAILABLE")})
             continue
-        latest_bar, latest_bar_time, latest_bar_close = completed_bars[-1]
+        completed_bars.sort(key=lambda item: _parse_iso_or_epoch(item[1]))
+        latest_bar, latest_bar_time, latest_bar_close, _latest_normalized_bar = completed_bars[-1]
         if closed_session:
             price = latest_bar_close
         quote_time = str(quote.get("t") or latest_bar_time)
+        regular_session_bars = []
+        for _bar, raw_bar_time, _close, normalized_bar in completed_bars:
+            bar_epoch = _parse_iso_or_epoch(raw_bar_time)
+            if bar_epoch <= 0:
+                continue
+            local_bar_time = datetime.fromtimestamp(bar_epoch, tz=UTC).astimezone(_ET_TZ)
+            local_minute = local_bar_time.hour * 60 + local_bar_time.minute
+            if local_bar_time.date() == now_et.date() and 570 <= local_minute < 960:
+                regular_session_bars.append(normalized_bar)
+        forecast_bars = regular_session_bars[-8:]
         observations.append({
             "symbol": symbol, "candidate_id": candidate.get("candidate_id") or candidate.get("ledger_id"),
             "asset_class": "equity", "current_price": round(price, 6), "price": round(price, 6),
@@ -22214,7 +22236,17 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
             "order_session_eligible": not closed_session,
             "risk_evidence_generated_at": _now_utc_iso(),
             "risk_evidence_valid_until": (now_utc + timedelta(seconds=refresh_seconds)).isoformat().replace("+00:00", "Z"),
-            "bar_evidence": {"source": "AlpacaPaperBroker.historical_bars", "resolution": "15Min", "count": len(completed_bars), "provider_native_timestamp": latest_bar_time},
+            "bar_evidence": {
+                "source": "AlpacaPaperBroker.historical_bars",
+                "provider": str(bars_payload.get("provider") or "ALPACA_PAPER_BROKER"),
+                "evidence_class": "CURRENT_PROVIDER_BAR",
+                "resolution": "15Min",
+                "count": len(completed_bars),
+                "provider_native_timestamp": latest_bar_time,
+                "bar_window_start": forecast_bars[0]["provider_native_timestamp"] if forecast_bars else None,
+                "bar_window_end": forecast_bars[-1]["provider_native_timestamp"] if forecast_bars else None,
+                "completed_bars": forecast_bars,
+            },
             "risk_evidence_source": "AlpacaPaperBroker.historical_bars" if closed_session else "AlpacaPaperBroker.latest_quote+historical_bars",
             "freshness_state": "HISTORICAL_CURRENT" if closed_session else "CURRENT",
         })

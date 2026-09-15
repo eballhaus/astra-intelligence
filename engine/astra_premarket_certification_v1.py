@@ -13,6 +13,7 @@ import hashlib
 import importlib.util
 import inspect
 import json
+import math
 import os
 import subprocess
 import sys
@@ -20,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
+from zoneinfo import ZoneInfo
 
 from engine.astra_trading_readiness_v1 import readiness_artifact_freshness_v1
 
@@ -925,6 +927,236 @@ def _freshness(timestamp: str, now: datetime | None) -> str:
     return "CURRENT" if age <= 300 else "STALE"
 
 
+def _forecast_datetime(value: Any) -> datetime | None:
+    raw = _text(value)
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return None
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        number = _number(raw)
+        if number is None or not math.isfinite(number):
+            return None
+        if abs(number) >= 100_000_000_000:
+            number /= 1000.0
+        try:
+            return datetime.fromtimestamp(number, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+
+
+def derive_equity_pretrade_forecast_v1(
+    candidate: Mapping[str, Any] | None,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Derive a bounded DAY forecast only from fresh provider quote/bar evidence.
+
+    V1 deliberately supports the existing DAY/15Min contract only. SCALP and
+    SWING keep their canonical horizons and fail closed until their matching
+    resolution evidence is present; no ranking, model, replay, or broker truth
+    is used as a return estimate.
+    """
+    row = dict(candidate or {})
+    current = _now(now)
+    if current.tzinfo is None:
+        return {
+            "schema_version": "1.0.0",
+            "forecast_state": "CONFLICTING_FORECAST_EVIDENCE",
+            "calculation_method": "equity_completed_15min_trend_range_v1",
+            "missing_inputs": ["TIMEZONE_AWARE_DECISION_TIMESTAMP_REQUIRED"],
+        }
+    current = current.astimezone(timezone.utc)
+    lane = _lane(_first(row, "lane_id", "lane"))
+    horizon, horizon_field = _pretrade_execution_horizon(row)
+    symbol = _candidate_symbol(row)
+    bar_evidence = row.get("bar_evidence") if isinstance(row.get("bar_evidence"), Mapping) else {}
+    provider = _text(bar_evidence.get("provider")) or "UNAVAILABLE"
+    base = {
+        "schema_version": "1.0.0",
+        "calculation_method": "equity_completed_15min_trend_range_v1",
+        "lane": lane,
+        "horizon": horizon,
+        "symbol": symbol,
+    }
+
+    def result(state: str, missing: list[str], *, inputs: Mapping[str, Any] | None = None,
+               provenance: Mapping[str, Any] | None = None, **values: Any) -> dict[str, Any]:
+        return {
+            **base,
+            "forecast_state": state,
+            "missing_inputs": list(dict.fromkeys(missing)),
+            "source_inputs": dict(inputs or {}),
+            "source_provenance": dict(provenance or {}),
+            **values,
+        }
+
+    if lane != "DAY" or horizon != "day_trade":
+        return result("INSUFFICIENT_FORECAST_EVIDENCE", ["DAY_TRADE_HORIZON_REQUIRED"], inputs={"lane": lane, "horizon": horizon, "horizon_source_field": horizon_field})
+    if _text(_first(row, "asset_class", "asset_type", "instrument_type")).lower() in {"crypto", "cryptocurrency"}:
+        return result("INSUFFICIENT_FORECAST_EVIDENCE", ["EQUITY_ASSET_REQUIRED"])
+    if str(bar_evidence.get("source") or "") != "AlpacaPaperBroker.historical_bars":
+        return result("INSUFFICIENT_FORECAST_EVIDENCE", ["CURRENT_PROVIDER_BAR_SOURCE_REQUIRED"])
+    if str(bar_evidence.get("evidence_class") or "") != "CURRENT_PROVIDER_BAR":
+        return result("INSUFFICIENT_FORECAST_EVIDENCE", ["CURRENT_PROVIDER_BAR_PROVENANCE_REQUIRED"])
+    resolution = str(bar_evidence.get("resolution") or "")
+    if resolution != "15Min":
+        return result("INSUFFICIENT_FORECAST_EVIDENCE", ["DAY_15MIN_BAR_RESOLUTION_REQUIRED"], inputs={"resolution": resolution or None})
+
+    quote_timestamp = _text(_first(row, "provider_quote_timestamp", "provider_native_timestamp", "quote_timestamp"))
+    quote_time = _forecast_datetime(quote_timestamp)
+    price = _number(_first(row, "price", "current_price", "last_price"))
+    inputs: dict[str, Any] = {
+        "symbol": symbol,
+        "lane": lane,
+        "horizon": horizon,
+        "horizon_source_field": horizon_field,
+        "resolution": resolution,
+        "provider": provider,
+        "quote_timestamp": quote_timestamp or None,
+        "decision_timestamp": current.isoformat().replace("+00:00", "Z"),
+        "current_price": price,
+        "source_bar_count": min(24, len(bar_evidence.get("completed_bars") or [])) if isinstance(bar_evidence.get("completed_bars"), list) else 0,
+    }
+    provenance = {
+        "source_system": "engine.astra_premarket_certification_v1.derive_equity_pretrade_forecast_v1",
+        "source_provider": provider,
+        "source_fields": ["provider_quote_timestamp", "bar_evidence.completed_bars"],
+        "source": str(bar_evidence.get("source") or ""),
+        "evidence_class": "CURRENT_PROVIDER_BAR",
+        "resolution": resolution,
+        "quote_timestamp": quote_timestamp or None,
+        "bar_window_start": bar_evidence.get("bar_window_start"),
+        "bar_window_end": bar_evidence.get("bar_window_end"),
+        "future_data_used": False,
+    }
+    if quote_time is None or price is None or price <= 0.0:
+        return result("INSUFFICIENT_FORECAST_EVIDENCE", ["FRESH_PROVIDER_QUOTE_REQUIRED"], inputs=inputs, provenance=provenance)
+    if quote_time > current:
+        return result("CONFLICTING_FORECAST_EVIDENCE", ["FUTURE_PROVIDER_QUOTE_TIMESTAMP"], inputs=inputs, provenance=provenance)
+    if (current - quote_time).total_seconds() > 300.0:
+        return result("STALE_FORECAST_EVIDENCE", ["PROVIDER_QUOTE_STALE"], inputs=inputs, provenance=provenance)
+    if str(row.get("freshness_state") or "CURRENT").upper() != "CURRENT":
+        return result("STALE_FORECAST_EVIDENCE", ["EQUITY_RISK_EVIDENCE_NOT_CURRENT"], inputs=inputs, provenance=provenance)
+    evidence_until = _forecast_datetime(row.get("risk_evidence_valid_until"))
+    if evidence_until is None or evidence_until <= current:
+        return result("STALE_FORECAST_EVIDENCE", ["EQUITY_RISK_EVIDENCE_EXPIRED"], inputs=inputs, provenance=provenance)
+    join = dict(row.get("equity_risk_evidence_join_v1") or {})
+    if join.get("status") != "CURRENT_SYMBOL_MATCHED" or str(join.get("symbol") or "").upper() != symbol:
+        return result("INSUFFICIENT_FORECAST_EVIDENCE", ["SYMBOL_MATCHED_WORKER_RISK_EVIDENCE_REQUIRED"], inputs=inputs, provenance=provenance)
+    if not quote_timestamp or not (row.get("provider_quote_timestamp") or row.get("provider_native_timestamp") or row.get("quote_timestamp_origin") == "provider"):
+        return result("INSUFFICIENT_FORECAST_EVIDENCE", ["PROVIDER_NATIVE_QUOTE_TIMESTAMP_REQUIRED"], inputs=inputs, provenance=provenance)
+
+    source_bars = bar_evidence.get("completed_bars")
+    if not isinstance(source_bars, list):
+        return result("INSUFFICIENT_FORECAST_EVIDENCE", ["COMPLETED_BAR_WINDOW_MISSING"], inputs=inputs, provenance=provenance)
+    et = ZoneInfo("America/New_York")
+    quote_local = quote_time.astimezone(et)
+    decision_local = current.astimezone(et)
+    quote_minute = quote_local.hour * 60 + quote_local.minute
+    decision_minute = decision_local.hour * 60 + decision_local.minute
+    if quote_local.date() != decision_local.date() or not (570 <= quote_minute < 960 and 570 <= decision_minute < 960):
+        return result("STALE_FORECAST_EVIDENCE", ["REGULAR_SESSION_QUOTE_REQUIRED"], inputs=inputs, provenance=provenance)
+
+    parsed_bars: list[dict[str, Any]] = []
+    seen_timestamps: set[str] = set()
+    for raw_bar in source_bars[-24:]:
+        if not isinstance(raw_bar, Mapping):
+            return result("CONFLICTING_FORECAST_EVIDENCE", ["MALFORMED_BAR_ROW"], inputs=inputs, provenance=provenance)
+        timestamp = _text(_first(raw_bar, "provider_native_timestamp", "timestamp", "t", "bar_timestamp"))
+        bar_time = _forecast_datetime(timestamp)
+        if bar_time is None:
+            return result("CONFLICTING_FORECAST_EVIDENCE", ["INVALID_BAR_TIMESTAMP"], inputs=inputs, provenance=provenance)
+        if bar_time > current:
+            return result("CONFLICTING_FORECAST_EVIDENCE", ["FUTURE_BAR_TIMESTAMP"], inputs=inputs, provenance=provenance)
+        if timestamp in seen_timestamps:
+            return result("CONFLICTING_FORECAST_EVIDENCE", ["DUPLICATE_BAR_TIMESTAMP"], inputs=inputs, provenance=provenance)
+        seen_timestamps.add(timestamp)
+        completion = _first(raw_bar, "is_complete", "completed", "bar_complete")
+        if completion is False or str(completion or "").strip().lower() in {"false", "0", "no", "incomplete"}:
+            return result("INSUFFICIENT_FORECAST_EVIDENCE", ["INCOMPLETE_BAR_REJECTED"], inputs=inputs, provenance=provenance)
+        bar_end = bar_time + timedelta(minutes=15)
+        if bar_end > current:
+            return result("INSUFFICIENT_FORECAST_EVIDENCE", ["UNFINISHED_BAR_REJECTED"], inputs=inputs, provenance=provenance)
+        local_bar = bar_time.astimezone(et)
+        bar_minute = local_bar.hour * 60 + local_bar.minute
+        if local_bar.date() != quote_local.date() or not (570 <= bar_minute < 960) or bar_end.astimezone(et).date() != quote_local.date():
+            continue
+        o = _number(_first(raw_bar, "open", "o"))
+        h = _number(_first(raw_bar, "high", "h"))
+        low = _number(_first(raw_bar, "low", "l"))
+        close = _number(_first(raw_bar, "close", "c"))
+        volume = _number(_first(raw_bar, "volume", "v"))
+        if any(value is None or not math.isfinite(value) for value in (o, h, low, close)) or min(o, h, low, close) <= 0 or h < max(o, close, low) or low > min(o, close):
+            return result("CONFLICTING_FORECAST_EVIDENCE", ["INVALID_BAR_OHLC"], inputs=inputs, provenance=provenance)
+        if volume is not None and (not math.isfinite(volume) or volume < 0):
+            return result("CONFLICTING_FORECAST_EVIDENCE", ["INVALID_BAR_VOLUME"], inputs=inputs, provenance=provenance)
+        parsed_bars.append({"timestamp": timestamp, "time": bar_time, "open": o, "high": h, "low": low, "close": close, "volume": volume})
+
+    parsed_bars.sort(key=lambda item: item["time"])
+    if len(parsed_bars) < 8:
+        inputs["completed_regular_session_bars"] = len(parsed_bars)
+        return result("INSUFFICIENT_FORECAST_EVIDENCE", ["EIGHT_COMPLETED_SAME_SESSION_BARS_REQUIRED"], inputs=inputs, provenance=provenance)
+    bars = parsed_bars[-8:]
+    if any((right["time"] - left["time"]).total_seconds() > 1800.0 for left, right in zip(bars, bars[1:])):
+        return result("INSUFFICIENT_FORECAST_EVIDENCE", ["GAPPED_COMPLETED_BAR_WINDOW"], inputs=inputs, provenance=provenance)
+    latest_bar_end = bars[-1]["time"] + timedelta(minutes=15)
+    bar_age = (current - latest_bar_end).total_seconds()
+    if bar_age < 0:
+        return result("CONFLICTING_FORECAST_EVIDENCE", ["FUTURE_COMPLETED_BAR_END"], inputs=inputs, provenance=provenance)
+    if bar_age > 900.0:
+        return result("STALE_FORECAST_EVIDENCE", ["COMPLETED_BAR_WINDOW_STALE"], inputs=inputs, provenance=provenance)
+
+    closes = [float(bar["close"]) for bar in bars]
+    returns = [((right - left) / left) * 100.0 for left, right in zip(closes, closes[1:])]
+    trend_pct = ((closes[-1] / closes[0]) - 1.0) * 100.0
+    recent_three_pct = ((closes[-1] / closes[-4]) - 1.0) * 100.0
+    latest_return_pct = returns[-1]
+    mean_range_pct = sum(((bar["high"] - bar["low"]) / bar["close"]) * 100.0 for bar in bars) / len(bars)
+    if trend_pct <= 0.0 or recent_three_pct <= 0.0 or latest_return_pct <= 0.0 or mean_range_pct <= 0.0:
+        inputs.update({"trend_pct": round(trend_pct, 8), "recent_three_bar_return_pct": round(recent_three_pct, 8), "latest_bar_return_pct": round(latest_return_pct, 8)})
+        return result("INSUFFICIENT_FORECAST_EVIDENCE", ["POSITIVE_NONCONTRADICTORY_CONTINUATION_REQUIRED"], inputs=inputs, provenance=provenance)
+
+    close_raw = _text(_first(row, "regular_session_close_timestamp", "session_close_timestamp", "market_close_timestamp"))
+    session_close = _forecast_datetime(close_raw) if close_raw else None
+    if session_close is None:
+        session_close = datetime.combine(decision_local.date(), datetime.min.time(), tzinfo=et).replace(hour=16).astimezone(timezone.utc)
+    if session_close.date() != current.date() or session_close <= current:
+        return result("STALE_FORECAST_EVIDENCE", ["NO_REMAINING_REGULAR_SESSION_HORIZON"], inputs=inputs, provenance=provenance)
+    intervals = min(4, int((session_close - current).total_seconds() // 900))
+    if intervals < 1:
+        return result("INSUFFICIENT_FORECAST_EVIDENCE", ["LESS_THAN_ONE_15MIN_SESSION_INTERVAL_REMAINS"], inputs=inputs, provenance=provenance)
+    drift_per_bar_pct = ((closes[-1] / closes[0]) ** (1.0 / (len(closes) - 1)) - 1.0) * 100.0
+    low_pct = drift_per_bar_pct * intervals
+    high_pct = low_pct + mean_range_pct * math.sqrt(intervals)
+    if not all(math.isfinite(value) and 0.0 < value < 100.0 for value in (low_pct, high_pct)):
+        return result("CONFLICTING_FORECAST_EVIDENCE", ["BOUNDED_POSITIVE_RETURN_RANGE_UNAVAILABLE"], inputs=inputs, provenance=provenance)
+    target_low = price * (1.0 + low_pct / 100.0)
+    target_high = price * (1.0 + high_pct / 100.0)
+    bar_start = bars[0]["time"].isoformat().replace("+00:00", "Z")
+    bar_end = bars[-1]["time"].isoformat().replace("+00:00", "Z")
+    inputs.update({
+        "completed_bar_count": len(bars), "bar_window_start": bar_start, "bar_window_end": bar_end,
+        "trend_pct": round(trend_pct, 8), "recent_three_bar_return_pct": round(recent_three_pct, 8),
+        "latest_bar_return_pct": round(latest_return_pct, 8), "mean_bar_range_pct": round(mean_range_pct, 8),
+        "drift_per_bar_pct": round(drift_per_bar_pct, 8), "remaining_session_intervals": intervals,
+        "forecast_horizon_minutes": intervals * 15,
+    })
+    provenance.update({"bar_window_start": bar_start, "bar_window_end": bar_end, "completed_bar_timestamps": [bar["timestamp"] for bar in bars]})
+    valid_until = min(evidence_until, quote_time + timedelta(seconds=300))
+    return result(
+        "FORECAST_COMPLETE", [], inputs=inputs, provenance=provenance,
+        forecast_timestamp=current.isoformat().replace("+00:00", "Z"),
+        valid_until=valid_until.isoformat().replace("+00:00", "Z"),
+        expected_return_range={"low_pct": round(low_pct, 6), "high_pct": round(high_pct, 6), "evidence_label": "OBSERVED_SAME_SESSION_TREND_AND_REALIZED_RANGE"},
+        expected_return_pct=round((low_pct + high_pct) / 2.0, 6),
+        expected_target_low=round(target_low, 8), expected_target_high=round(target_high, 8),
+    )
+
+
 def _bounded_matching_rows(
     payload: Any,
     symbol: str,
@@ -1231,29 +1463,29 @@ def build_candidate_risk_envelope_v1(
     valid_until = _iso(_now(now) + timedelta(minutes=5)) if quote_freshness == "CURRENT" else ""
     expected_median = round((float(upside_range["low_pct"]) + float(upside_range["high_pct"])) / 2.0, 4) if upside_range else None
     downside_median = round((float(downside["low_pct"]) + float(downside["high_pct"])) / 2.0, 4) if downside else None
-    # The crypto worker can persist a bounded continuation forecast built from
-    # the same completed bars and provider quote that created the candidate.
-    # Preserve that producer identity instead of relabeling its fields as an
-    # opaque candidate alias.  A malformed or incomplete forecast is ignored
-    # here and the normal contract remains fail-closed.
-    forecast = dict(row.get("crypto_pretrade_forecast_v1") or {})
-    forecast_provenance = dict(forecast.get("source_provenance") or {})
-    if forecast.get("forecast_state") == "FORECAST_COMPLETE" and forecast_provenance:
+    # Preserve producer identity for complete lane-specific forecasts rather
+    # than relabeling their fields as opaque candidate aliases.
+    forecasts = (
+        ("crypto_pretrade_forecast_v1", dict(row.get("crypto_pretrade_forecast_v1") or {})),
+        ("equity_pretrade_forecast_v1", dict(row.get("equity_pretrade_forecast_v1") or {})),
+    )
+    for forecast_field, forecast in forecasts:
+        forecast_provenance = dict(forecast.get("source_provenance") or {})
+        if forecast.get("forecast_state") != "FORECAST_COMPLETE" or not forecast_provenance:
+            continue
         source_row = {
             "source_timestamp": forecast.get("forecast_timestamp") or forecast_provenance.get("observation_timestamp"),
             "confidence": _first(row, "confidence", "risk_confidence"),
         }
-        forecast_fields = {
-            "expected_upside_range": upside_range,
-            "expected_downside_range": downside,
-            "expected_drawdown": drawdown,
-        }
+        forecast_fields = {"expected_upside_range": upside_range}
+        if forecast_field == "crypto_pretrade_forecast_v1":
+            forecast_fields.update({"expected_downside_range": downside, "expected_drawdown": drawdown})
         for field, value in forecast_fields.items():
             if value not in (None, "", [], {}):
                 provenance[field] = _provenance(
                     value,
-                    source_system=str(forecast_provenance.get("source_system") or "crypto_completed_bar_continuation_v1"),
-                    source_field=f"crypto_pretrade_forecast_v1.{field}",
+                    source_system=str(forecast_provenance.get("source_system") or forecast.get("calculation_method") or forecast_field),
+                    source_field=f"{forecast_field}.{field}",
                     source_row=source_row,
                     evidence_class=str(forecast_provenance.get("evidence_class") or "CURRENT_CANDIDATE_DIRECT"),
                     confidence=_first(row, "confidence", "risk_confidence"),
@@ -1675,6 +1907,33 @@ def enrich_candidate_for_pretrade_contract(
     for field, value in plan_fields.items():
         if value not in (None, "", [], {}):
             row[field] = value
+    asset_class = _text(_first(row, "asset_class", "asset_type", "instrument_type")).lower()
+    explicit_upside = _positive_return_range(row.get("expected_return_range"), label="EXISTING_CANDIDATE_RETURN")
+    if explicit_upside is None:
+        for alias in ("expected_return_pct", "expected_return_percent", "expected_move_percent", "predicted_profit_percent", "profit_prediction_pct"):
+            explicit_upside = _positive_return_range(row.get(alias), label="EXISTING_CANDIDATE_RETURN")
+            if explicit_upside is not None:
+                break
+    existing_price = _number(_first(row, "price", "current_price", "last_price"))
+    existing_target = _number(_first(row, "expected_target_high", "target_zone_high", "target_2", "stretch_target"))
+    has_explicit_target = bool(existing_price and existing_target and existing_target > existing_price)
+    if asset_class not in {"crypto", "cryptocurrency"} and explicit_upside is None and not has_explicit_target:
+        equity_forecast = derive_equity_pretrade_forecast_v1(row, now=now)
+        row["equity_pretrade_forecast_v1"] = equity_forecast
+        if equity_forecast.get("forecast_state") == "FORECAST_COMPLETE":
+            for field in ("expected_return_range", "expected_return_pct", "expected_target_low", "expected_target_high"):
+                if row.get(field) in (None, "", [], {}) and equity_forecast.get(field) not in (None, "", [], {}):
+                    row[field] = equity_forecast[field]
+            for source_field, target_field in (
+                ("forecast_timestamp", "forecast_timestamp"),
+                ("valid_until", "forecast_valid_until"),
+                ("calculation_method", "expected_return_method"),
+                ("source_inputs", "forecast_source_inputs"),
+                ("source_provenance", "forecast_source_provenance"),
+                ("schema_version", "forecast_schema_version"),
+            ):
+                if row.get(target_field) in (None, "", [], {}) and equity_forecast.get(source_field) not in (None, "", [], {}):
+                    row[target_field] = equity_forecast[source_field]
     risk_envelope = build_candidate_risk_envelope_v1(
         row, statuses=statuses, current_candidates=current_rows, now=now,
     )
@@ -1808,7 +2067,7 @@ def build_pretrade_decision_contract(
         generated_snapshot = "candidate-enrichment:" + hashlib.sha256(
             f"{candidate_id}|{recommendation_id}".encode("utf-8")
         ).hexdigest()[:16]
-    forecast = dict(row.get("crypto_pretrade_forecast_v1") or {})
+    forecast = dict(row.get("equity_pretrade_forecast_v1") or row.get("crypto_pretrade_forecast_v1") or {})
     forecast_provenance = dict(forecast.get("source_provenance") or row.get("forecast_source_provenance") or {})
     forecast_inputs = dict(forecast.get("source_inputs") or row.get("forecast_source_inputs") or {})
     target = {

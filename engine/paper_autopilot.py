@@ -1560,7 +1560,8 @@ def _candidate_decision_evidence_v1(
 ) -> dict[str, Any]:
     """Copy compact pre-decision facts without deriving or defaulting evidence."""
     row, pretrade, gates = dict(candidate or {}), dict(contract or {}), dict(gate_meta or {})
-    forecast = dict(row.get("crypto_pretrade_forecast_v1") or {})
+    forecast = dict(row.get("equity_pretrade_forecast_v1") or row.get("crypto_pretrade_forecast_v1") or {})
+    crypto_forecast = dict(row.get("crypto_pretrade_forecast_v1") or {})
     risk = dict(pretrade.get("candidate_risk_envelope_v1") or row.get("candidate_risk_envelope_v1") or {})
     commitment = dict(gates.get("entry_commitment_trace_v1") or {})
     return {
@@ -1577,6 +1578,7 @@ def _candidate_decision_evidence_v1(
         "regime_alignment": row.get("regime_alignment_label") or row.get("regime_fit"),
         "entry_quality": row.get("entry_quality_score") if row.get("entry_quality_score") is not None else row.get("paper_entry_bridge_score"),
         "expected_return": pretrade.get("expected_return_range") or row.get("expected_return_range") or row.get("expected_return_pct"),
+        "equity_pretrade_forecast_v1": dict(row.get("equity_pretrade_forecast_v1") or {}),
         "expected_hold": pretrade.get("expected_hold") or row.get("expected_hold") or row.get("expected_max_hold"),
         "risk_contract_status": pretrade.get("contract_state") or risk.get("risk_envelope_state"),
         "freshness_status": row.get("quote_freshness_status") or row.get("candidate_snapshot_freshness"),
@@ -1588,9 +1590,9 @@ def _candidate_decision_evidence_v1(
         "session_state": row.get("session_state") or row.get("market_session_mode"),
         "price_at_decision": row.get("price") if row.get("price") is not None else row.get("current_price"),
         "crypto_gate_evidence": {
-            "completed_bar_continuation": forecast.get("LATEST_COMPLETED_BAR_CONTINUATION"),
-            "completed_bar_trend": forecast.get("BOUNDED_COMPLETED_BAR_TREND"),
-            "forecast_missing_inputs": list(forecast.get("missing_inputs") or forecast.get("missing_fields") or [])[:12],
+            "completed_bar_continuation": crypto_forecast.get("LATEST_COMPLETED_BAR_CONTINUATION"),
+            "completed_bar_trend": crypto_forecast.get("BOUNDED_COMPLETED_BAR_TREND"),
+            "forecast_missing_inputs": list(crypto_forecast.get("missing_inputs") or crypto_forecast.get("missing_fields") or [])[:12],
             "hot_refresh_attempted": bool(row.get("hot_candidate_quote_refresh_attempted", False)),
             "hot_refresh_result": row.get("hot_candidate_quote_refresh_result"),
         },
