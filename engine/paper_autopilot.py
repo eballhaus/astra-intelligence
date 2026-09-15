@@ -7722,9 +7722,12 @@ class PaperAutopilotEngine:
         try:
             payload = self.get_top_buys_fn() or {}
         except Exception:
-            return []
+            # Equity discovery is independent of rows already collected from
+            # the canonical crypto ranking source. Continue through the shared
+            # deduplication/decorator path with no equity payload.
+            payload = {}
         if not isinstance(payload, dict):
-            return []
+            payload = {}
 
         def _rows_from(path: list[str]) -> list[dict[str, Any]]:
             cur: Any = payload
