@@ -3587,6 +3587,7 @@ LAST_RANKINGS = {
     "stocks": [],
     "crypto": [],
     "updated_at": 0.0,
+    "updated_at_by_kind": {"stocks": 0.0, "crypto": 0.0},
 }
 RANKINGS_ENDPOINT_CACHE = {
     "stocks": {"ts": 0.0, "payload": []},
@@ -7959,8 +7960,35 @@ def _update_signal_performance(items):
 
 
 def _update_last_rankings(kind, items):
+    updated_at = time.time()
     LAST_RANKINGS[kind] = list(items)
-    LAST_RANKINGS["updated_at"] = time.time()
+    LAST_RANKINGS["updated_at"] = updated_at
+    updated_by_kind = LAST_RANKINGS.setdefault("updated_at_by_kind", {})
+    if isinstance(updated_by_kind, dict):
+        updated_by_kind[kind] = updated_at
+
+
+def _ranking_snapshot_updated_at(kind):
+    """Return the best existing per-kind timestamp for ranking rows."""
+    key = "crypto" if str(kind) == "crypto" else "stocks"
+    updated_by_kind = LAST_RANKINGS.get("updated_at_by_kind")
+    if isinstance(updated_by_kind, dict) and key in updated_by_kind:
+        return _to_float(updated_by_kind.get(key), 0.0)
+    cache = RANKINGS_ENDPOINT_CACHE.get(key, {}) or {}
+    cache_rows = cache.get("payload") or []
+    memory_rows = LAST_RANKINGS.get(key, []) or []
+    cache_timestamp = _to_float(cache.get("ts"), 0.0)
+    if cache_timestamp > 0.0 and cache_rows == memory_rows:
+        return cache_timestamp
+    return _to_float(LAST_RANKINGS.get("updated_at"), 0.0)
+
+
+def _ranking_snapshot_age_seconds(updated_at, now=None):
+    timestamp = _to_float(updated_at, 0.0)
+    current = time.time() if now is None else _to_float(now, 0.0)
+    if timestamp <= 0.0 or timestamp > current + 5.0:
+        return float("inf")
+    return max(0.0, current - timestamp)
 
 
 def _normalize_resolution(value):
@@ -8298,7 +8326,16 @@ def _ensure_latest_rankings():
         return
     now = time.time()
     refresh_jobs = []
-    if not (LAST_RANKINGS.get("stocks") or []):
+    stock_rows = LAST_RANKINGS.get("stocks") or []
+    stock_cache = RANKINGS_ENDPOINT_CACHE.get("stocks", {}) or {}
+    stock_cache_rows = stock_cache.get("payload") or []
+    stock_cache_age = _ranking_snapshot_age_seconds(stock_cache.get("ts"), now)
+    stock_memory_age = _ranking_snapshot_age_seconds(_ranking_snapshot_updated_at("stocks"), now)
+    has_fresh_stock_snapshot = bool(
+        (stock_rows and stock_memory_age <= _RANKINGS_STALE_TTL_SECONDS)
+        or (stock_cache_rows and stock_cache_age <= _RANKINGS_STALE_TTL_SECONDS)
+    )
+    if not has_fresh_stock_snapshot:
         last_try = float(_RANKING_REFRESH_LAST_ATTEMPT.get("stocks", 0.0))
         if (now - last_try) >= _RANKING_REFRESH_COOLDOWN_SECONDS:
             _RANKING_REFRESH_LAST_ATTEMPT["stocks"] = now
@@ -8315,12 +8352,25 @@ def _ensure_latest_rankings():
 def _rows_for_top_buys(kind):
     key = "crypto" if str(kind) == "crypto" else "stocks"
     rows = LAST_RANKINGS.get(key, []) or []
-    if rows:
-        return [dict(r) for r in rows if isinstance(r, dict)]
     cache = RANKINGS_ENDPOINT_CACHE.get(key, {}) or {}
     payload = cache.get("payload") or []
-    # Allow stale ranking cache reuse for top_buys path to avoid expensive recompute spikes.
-    if payload and (time.time() - float(cache.get("ts", 0.0))) <= max(600, RANKINGS_ENDPOINT_TTL_SECONDS * 20):
+    now = time.time()
+    rows_timestamp = _ranking_snapshot_updated_at(key)
+    cache_timestamp = _to_float(cache.get("ts"), 0.0)
+    rows_age = _ranking_snapshot_age_seconds(rows_timestamp, now)
+    cache_age = _ranking_snapshot_age_seconds(cache_timestamp, now)
+    rows_fresh = bool(rows) and rows_age <= _RANKINGS_STALE_TTL_SECONDS
+    cache_fresh = bool(payload) and cache_age <= _RANKINGS_STALE_TTL_SECONDS
+    if rows_fresh and cache_fresh and cache_timestamp > rows_timestamp:
+        return [dict(r) for r in payload if isinstance(r, dict)]
+    if rows_fresh:
+        return [dict(r) for r in rows if isinstance(r, dict)]
+    if cache_fresh:
+        return [dict(r) for r in payload if isinstance(r, dict)]
+    # Preserve the established bounded stale-cache fallback, but never serve
+    # older in-memory rows over it or beyond its existing reuse window.
+    cache_reuse_ttl = max(600, RANKINGS_ENDPOINT_TTL_SECONDS * 20)
+    if payload and cache_age <= cache_reuse_ttl and cache_timestamp > rows_timestamp:
         return [dict(r) for r in payload if isinstance(r, dict)]
     return []
 

@@ -789,5 +789,112 @@ class LossControlProductionContractTests(unittest.TestCase):
         self.assertFalse(decision["execution_authorized"])
 
 
+class RankingSnapshotFreshnessBoundaryTests(unittest.TestCase):
+    def _rankings_state(self, updated_at):
+        return {
+            "stocks": [{"symbol": "KVUE", "ranking_version": "rank-old"}],
+            "crypto": [],
+            "updated_at": updated_at,
+            "updated_at_by_kind": {"stocks": updated_at, "crypto": 0.0},
+        }
+
+    def test_nonempty_stale_rankings_trigger_api_async_refresh(self):
+        now = time.time()
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "api"}), patch.object(
+            server_extend, "LAST_RANKINGS", self._rankings_state(now - 60.0)
+        ), patch.object(
+            server_extend,
+            "RANKINGS_ENDPOINT_CACHE",
+            {"stocks": {"ts": now - 60.0, "payload": [{"symbol": "KVUE"}]}, "crypto": {}},
+        ), patch.object(
+            server_extend, "_RANKING_REFRESH_LAST_ATTEMPT", {"stocks": now - 60.0, "crypto": now}
+        ), patch.object(server_extend, "_refresh_alpaca_ws_allocation"), patch(
+            "server_extend.threading.Thread"
+        ) as thread:
+            server_extend._ensure_latest_rankings()
+
+        thread.assert_called_once()
+        self.assertIs(thread.call_args.kwargs["target"], server_extend.rankings)
+        self.assertTrue(thread.call_args.kwargs["daemon"])
+        thread.return_value.start.assert_called_once_with()
+
+    def test_fresh_last_rankings_do_not_trigger_refresh(self):
+        now = time.time()
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "api"}), patch.object(
+            server_extend, "LAST_RANKINGS", self._rankings_state(now)
+        ), patch.object(
+            server_extend, "RANKINGS_ENDPOINT_CACHE", {"stocks": {}, "crypto": {}}
+        ), patch.object(
+            server_extend, "_RANKING_REFRESH_LAST_ATTEMPT", {"stocks": 0.0, "crypto": 0.0}
+        ), patch.object(server_extend, "_refresh_alpaca_ws_allocation"), patch(
+            "server_extend.threading.Thread"
+        ) as thread:
+            server_extend._ensure_latest_rankings()
+        thread.assert_not_called()
+
+    def test_worker_never_launches_full_universe_refresh_for_stale_rankings(self):
+        now = time.time()
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}), patch.object(
+            server_extend, "LAST_RANKINGS", self._rankings_state(now - 600.0)
+        ), patch.object(
+            server_extend, "RANKINGS_ENDPOINT_CACHE", {"stocks": {}, "crypto": {}}
+        ), patch("server_extend.threading.Thread") as thread, patch.object(
+            server_extend, "rankings", side_effect=AssertionError("worker must not refresh rankings")
+        ) as rankings:
+            server_extend._ensure_latest_rankings()
+        thread.assert_not_called()
+        rankings.assert_not_called()
+
+    def test_fresher_ranking_cache_wins_without_mutating_stale_rows(self):
+        now = time.time()
+        stale_row = {
+            "symbol": "KVUE",
+            "ranking_version": "2026-09-11T20:45:45Z",
+            "generated_at": "2026-09-11T20:45:45Z",
+            "expires_at": "2026-09-11T20:50:45Z",
+        }
+        fresh_row = {
+            "symbol": "AAPL",
+            "ranking_version": "rank-current",
+            "generated_at": _iso(),
+            "expires_at": _iso(60),
+        }
+        stale_before = dict(stale_row)
+        fresh_before = dict(fresh_row)
+        with patch.object(server_extend, "LAST_RANKINGS", {
+            "stocks": [stale_row], "crypto": [], "updated_at": now - 600.0,
+            "updated_at_by_kind": {"stocks": now - 600.0, "crypto": 0.0},
+        }), patch.object(server_extend, "RANKINGS_ENDPOINT_CACHE", {
+            "stocks": {"ts": now, "payload": [fresh_row]}, "crypto": {},
+        }):
+            rows = server_extend._rows_for_top_buys("stocks")
+
+        self.assertEqual(rows, [fresh_before])
+        self.assertEqual(stale_row, stale_before)
+        self.assertEqual(fresh_row, fresh_before)
+
+    def test_current_rankings_still_support_fast_recovery_payload(self):
+        now = time.time()
+        row = {
+            "symbol": "AAPL", "action": "Buy", "price": 100.0,
+            "ranking_version": "rank-current", "generated_at": _iso(), "expires_at": _iso(60),
+        }
+        with patch.object(server_extend, "LAST_RANKINGS", {
+            "stocks": [row], "crypto": [], "updated_at": now,
+            "updated_at_by_kind": {"stocks": now, "crypto": 0.0},
+        }), patch.object(server_extend, "RANKINGS_ENDPOINT_CACHE", {"stocks": {}, "crypto": {}}), patch.dict(
+            os.environ, {"ASTRA_TOP_BUYS_FAST_RECOVERY_PAYLOAD": "1"}
+        ):
+            current = server_extend._rows_for_top_buys("stocks")
+            payload = server_extend._top_buys_minimal_recovery_payload(
+                stock_rows=current, crypto_rows=[], buy_mode="balanced"
+            )
+
+        self.assertEqual(payload["stocks"]["final"][0]["symbol"], "AAPL")
+        self.assertTrue(payload["stocks"]["final"][0]["top_buys_fast_recovery"])
+        self.assertEqual(payload["candidate_stream_quality_summary"]["candidate_recovery_reason"], "bounded_rankings_hot_path")
+        self.assertEqual(row["generated_at"], payload["stocks"]["final"][0]["generated_at"])
+
+
 if __name__ == "__main__":
     unittest.main()
