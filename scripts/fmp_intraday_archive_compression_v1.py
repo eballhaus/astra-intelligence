@@ -399,6 +399,7 @@ class IntradayArchiveRunner(ArchiveRunner):
                 canonical = [{"symbol": row[0], "timestamp": int(row[1]), "open": row[2], "high": row[3], "low": row[4], "close": row[5], "volume": row[6]} for row in rows]
                 summaries = build_intraday_session_summaries(canonical, symbol=symbol, metadata=target, timeframe=self.timeframe)
                 total += upsert_intraday_session_summaries(connection, summaries, generated_at=now_iso())
+                connection.commit()
                 completed += 1
                 summary_state["symbols_completed"] = completed
                 summary_state["records"] = total
