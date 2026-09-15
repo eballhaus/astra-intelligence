@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
+from engine.market_session_execution_timing_v1 import MarketSessionExecutionTimingV1
 from engine.astra_trading_readiness_v1 import readiness_artifact_freshness_v1
 
 
@@ -1120,11 +1121,16 @@ def derive_equity_pretrade_forecast_v1(
         inputs.update({"trend_pct": round(trend_pct, 8), "recent_three_bar_return_pct": round(recent_three_pct, 8), "latest_bar_return_pct": round(latest_return_pct, 8)})
         return result("INSUFFICIENT_FORECAST_EVIDENCE", ["POSITIVE_NONCONTRADICTORY_CONTINUATION_REQUIRED"], inputs=inputs, provenance=provenance)
 
-    close_raw = _text(_first(row, "regular_session_close_timestamp", "session_close_timestamp", "market_close_timestamp"))
+    close_raw = _text(_first(row, "regular_session_close_timestamp", "regular_session_close_et", "session_close_timestamp", "market_close_timestamp"))
     session_close = _forecast_datetime(close_raw) if close_raw else None
+    if close_raw and session_close is None:
+        return result("CONFLICTING_FORECAST_EVIDENCE", ["INVALID_REGULAR_SESSION_CLOSE_TIMESTAMP"], inputs=inputs, provenance=provenance)
     if session_close is None:
-        session_close = datetime.combine(decision_local.date(), datetime.min.time(), tzinfo=et).replace(hour=16).astimezone(timezone.utc)
-    if session_close.date() != current.date() or session_close <= current:
+        session = MarketSessionExecutionTimingV1().session_status(now_utc=current)
+        session_close = _forecast_datetime(session.get("regular_session_close_et"))
+    if session_close is None:
+        return result("INSUFFICIENT_FORECAST_EVIDENCE", ["CANONICAL_SESSION_CLOSE_UNAVAILABLE"], inputs=inputs, provenance=provenance)
+    if session_close.astimezone(et).date() != decision_local.date() or session_close <= current:
         return result("STALE_FORECAST_EVIDENCE", ["NO_REMAINING_REGULAR_SESSION_HORIZON"], inputs=inputs, provenance=provenance)
     intervals = min(4, int((session_close - current).total_seconds() // 900))
     if intervals < 1:

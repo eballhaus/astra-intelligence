@@ -135,6 +135,12 @@ class EquityPretradeForecastV1Tests(unittest.TestCase):
         stale_bars["bar_evidence"]["completed_bars"] = _bars(age_minutes=45)
         self.assertEqual(derive_equity_pretrade_forecast_v1(stale_bars, now=NOW)["forecast_state"], "STALE_FORECAST_EVIDENCE")
 
+    def test_remaining_horizon_uses_canonical_early_close(self):
+        early_close_now = datetime(2026, 11, 27, 17, 30, tzinfo=timezone.utc)
+        forecast = derive_equity_pretrade_forecast_v1(_candidate(early_close_now), now=early_close_now)
+        self.assertEqual(forecast["forecast_state"], "FORECAST_COMPLETE")
+        self.assertEqual(forecast["source_inputs"]["remaining_session_intervals"], 2)
+
     def test_future_and_unfinished_bars_are_rejected(self):
         future_bar = _candidate()
         future_bar["bar_evidence"]["completed_bars"][-1]["provider_native_timestamp"] = (NOW + timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
