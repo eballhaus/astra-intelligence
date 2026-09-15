@@ -160,6 +160,11 @@ def test_15min_summary_and_retrieval_are_partitioned_from_1min(tmp_path):
     assert one_minute[0]["summary_id"] != fifteen_minute[0]["summary_id"]
     assert fifteen_minute[0]["provenance"]["raw_timeframe"] == "15Min"
     assert fifteen_minute[0]["provenance"]["raw_source_endpoint"] == "/stable/historical-chart/15min"
+    assert fifteen_minute[0]["outcome_features"]["first_30m_return_pct"] == round((rows_by_symbol["AAPL"][1]["close"] / rows_by_symbol["AAPL"][0]["open"] - 1) * 100, 8)
+    assert fifteen_minute[0]["outcome_features"]["max_5m_return_pct"] is None
+    assert fifteen_minute[0]["outcome_features"]["max_30m_return_pct"] is not None
+    assert fifteen_minute[0]["setup_features"]["setup_window_minutes"] == 30
+    assert fifteen_minute[0]["setup_features"]["setup_max_5m_return_pct"] is None
 
     result = retrieve_intraday_session_matches(
         path,

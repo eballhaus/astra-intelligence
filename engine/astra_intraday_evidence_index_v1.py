@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sqlite3
 import time as time_module
 from datetime import UTC, datetime, time
@@ -18,7 +19,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 FEATURE_SCHEMA_VERSION = "intraday_session_features_v1"
 SUMMARY_TABLE = "historical_intraday_session_summaries"
 ARCHIVE_TABLE = "historical_market_bars"
@@ -55,6 +56,22 @@ def source_endpoint_for_timeframe(timeframe: str | None = None) -> str:
     """Return the matching FMP stable chart endpoint for an intraday timeframe."""
     value = normalize_intraday_timeframe(timeframe)
     return f"/stable/historical-chart/{value.lower()}"
+
+
+def _timeframe_minutes(timeframe: str) -> int | None:
+    match = re.fullmatch(r"(\d+)(Min|Hour)", normalize_intraday_timeframe(timeframe), re.IGNORECASE)
+    if not match:
+        return None
+    amount = int(match.group(1))
+    unit = match.group(2).lower()
+    return amount if unit == "min" else amount * 60
+
+
+def _bars_for_minutes(timeframe: str, minutes: int) -> int | None:
+    interval = _timeframe_minutes(timeframe)
+    if interval is None or interval > minutes:
+        return None
+    return max(1, math.ceil(minutes / interval))
 
 
 def _finite(value: Any, default: float | None = None) -> float | None:
@@ -173,6 +190,8 @@ def _feature_summary(
     if not rows:
         return None
     timeframe = normalize_intraday_timeframe(timeframe)
+    bars_5m = _bars_for_minutes(timeframe, 5)
+    bars_30m = _bars_for_minutes(timeframe, 30)
     rows = sorted(rows, key=lambda row: int(row["timestamp"]))
     opening = float(rows[0]["open"])
     closing = float(rows[-1]["close"])
@@ -189,17 +208,17 @@ def _feature_summary(
     peak_index = highs.index(max(highs))
     trough_index = lows.index(min(lows))
     giveback = max(0.0, mfe - session_return)
-    first_window_index = min(29, len(rows) - 1)
-    first_window_return = (closes[first_window_index] / opening - 1.0) * 100.0
-    max_5m = max(((closes[index] / closes[index - 5] - 1.0) * 100.0 for index in range(5, len(closes))), default=None)
-    min_5m = min(((closes[index] / closes[index - 5] - 1.0) * 100.0 for index in range(5, len(closes))), default=None)
-    max_30m = max(((closes[index] / closes[index - 30] - 1.0) * 100.0 for index in range(30, len(closes))), default=None)
-    min_30m = min(((closes[index] / closes[index - 30] - 1.0) * 100.0 for index in range(30, len(closes))), default=None)
+    first_window_index = min((bars_30m or 1) - 1, len(rows) - 1)
+    first_window_return = (closes[first_window_index] / opening - 1.0) * 100.0 if bars_30m else None
+    max_5m = max(((closes[index] / closes[index - bars_5m] - 1.0) * 100.0 for index in range(bars_5m or len(closes), len(closes))), default=None) if bars_5m else None
+    min_5m = min(((closes[index] / closes[index - bars_5m] - 1.0) * 100.0 for index in range(bars_5m or len(closes), len(closes))), default=None) if bars_5m else None
+    max_30m = max(((closes[index] / closes[index - bars_30m] - 1.0) * 100.0 for index in range(bars_30m or len(closes), len(closes))), default=None) if bars_30m else None
+    min_30m = min(((closes[index] / closes[index - bars_30m] - 1.0) * 100.0 for index in range(bars_30m or len(closes), len(closes))), default=None) if bars_30m else None
     sign_changes = sum(1 for left, right in zip(minute_returns, minute_returns[1:]) if _sign(left) and _sign(right) and _sign(left) != _sign(right))
     positive_returns = sum(1 for value in minute_returns if value > 0)
     negative_returns = sum(1 for value in minute_returns if value < 0)
-    opening_volume = sum(volumes[: min(30, len(volumes))]) if volumes else None
-    late_volume = sum(volumes[-min(30, len(volumes)):]) if volumes else None
+    opening_volume = sum(volumes[: min(bars_30m, len(volumes))]) if volumes and bars_30m else None
+    late_volume = sum(volumes[-min(bars_30m, len(volumes)):]) if volumes and bars_30m else None
     volume_acceleration = late_volume / opening_volume if opening_volume else None
     if session_return < -0.10 and mfe > 0.10:
         outcome_class = "REVERSAL"
@@ -225,7 +244,8 @@ def _feature_summary(
         "session_return_pct": round(session_return, 8),
         "range_pct": round(session_range, 8) if session_range is not None else None,
         "realized_volatility_pct": round(realized_volatility, 8),
-        "first_30m_return_pct": round(first_window_return, 8),
+        "first_30m_return_pct": round(first_window_return, 8) if first_window_return is not None else None,
+        "first_30m_supported": bars_30m is not None,
         "max_5m_return_pct": round(max_5m, 8) if max_5m is not None else None,
         "min_5m_return_pct": round(min_5m, 8) if min_5m is not None else None,
         "max_30m_return_pct": round(max_30m, 8) if max_30m is not None else None,
@@ -249,7 +269,7 @@ def _feature_summary(
         "midday_return_pct": section_return(time(11, 30), time(14, 0)),
         "late_session_return_pct": section_return(time(14, 0), time(16, 0)),
         "volatility_bucket": _bucket(session_range, 1.0, 3.0),
-        "momentum_bucket": _bucket(abs(max_30m or min_30m or 0.0), 1.0, 3.0),
+        "momentum_bucket": _bucket(abs(max_30m if max_30m is not None else min_30m) if max_30m is not None or min_30m is not None else None, 1.0, 3.0),
         "volume_bucket": _bucket(volume_acceleration, 1.2, 2.0),
     }
     setup_rows = rows[: first_window_index + 1]
@@ -258,12 +278,14 @@ def _feature_summary(
     setup_high = max(float(row["high"]) for row in setup_rows)
     setup_low = min(float(row["low"]) for row in setup_rows)
     setup_closes = [float(row["close"]) for row in setup_rows]
+    timeframe_minutes = _timeframe_minutes(timeframe)
+    setup_window_minutes = len(setup_rows) * timeframe_minutes if timeframe_minutes is not None else None
     setup_returns = [(setup_closes[index] / setup_closes[index - 1] - 1.0) * 100.0 for index in range(1, len(setup_closes)) if setup_closes[index - 1] > 0]
     setup_volumes = [float(row["volume"]) for row in setup_rows if _finite(row.get("volume")) is not None]
     setup_opening_volume = sum(setup_volumes[: max(1, len(setup_volumes) // 2)]) if setup_volumes else None
     setup_late_volume = sum(setup_volumes[-max(1, len(setup_volumes) // 2):]) if setup_volumes else None
     setup_volume_ratio = setup_late_volume / setup_opening_volume if setup_opening_volume else None
-    setup_max_5m = max(((setup_closes[index] / setup_closes[index - 5] - 1.0) * 100.0 for index in range(5, len(setup_closes))), default=None)
+    setup_max_5m = max(((setup_closes[index] / setup_closes[index - bars_5m] - 1.0) * 100.0 for index in range(bars_5m or len(setup_closes), len(setup_closes))), default=None) if bars_5m else None
     setup_features = {
         "setup_open": setup_open,
         "setup_high": setup_high,
@@ -273,11 +295,12 @@ def _feature_summary(
         "setup_range_pct": round((setup_high / setup_low - 1.0) * 100.0, 8) if setup_low > 0 else None,
         "setup_realized_volatility_pct": round(math.sqrt(sum(value * value for value in setup_returns)), 8) if setup_returns else 0.0,
         "setup_max_5m_return_pct": round(setup_max_5m, 8) if setup_max_5m is not None else None,
+        "setup_window_minutes": setup_window_minutes,
         "setup_volume": sum(setup_volumes) if setup_volumes else None,
         "setup_volume_acceleration_ratio": round(setup_volume_ratio, 8) if setup_volume_ratio is not None else None,
         "setup_direction": "UP" if setup_close > setup_open else "DOWN" if setup_close < setup_open else "FLAT",
         "setup_volatility_bucket": _bucket((setup_high / setup_low - 1.0) * 100.0 if setup_low > 0 else None, 1.0, 3.0),
-        "setup_momentum_bucket": _bucket(abs(setup_max_5m or 0.0), 1.0, 3.0),
+        "setup_momentum_bucket": _bucket(abs(setup_max_5m) if setup_max_5m is not None else None, 1.0, 3.0),
         "setup_volume_bucket": _bucket(setup_volume_ratio, 1.2, 2.0),
         "setup_cutoff_timestamp": int(setup_rows[-1]["timestamp"]),
     }
