@@ -630,6 +630,71 @@ class AlpacaWSMonitorTests(unittest.TestCase):
         self.assertEqual(quotes["ETHUSD"]["provider_native_timestamp"], quotes["ETHUSD"]["provider_quote_timestamp"])
         self.assertEqual(quotes["ETHUSD"]["canonical_position_id"], "position-eth")
 
+    def test_loss_containment_normalizes_slash_crypto_quote_for_compact_broker_symbols(self):
+        engine = PaperAutopilotEngine(
+            db_path=os.path.join(tempfile.mkdtemp(prefix="astra_crypto_ws_alias_loss_"), "paper.db"),
+            state_path=os.path.join(tempfile.mkdtemp(prefix="astra_crypto_ws_alias_state_"), "state.json"),
+            enabled=False,
+        )
+        fallback_calls = []
+        engine.get_latest_row_fn = lambda symbol, _asset: fallback_calls.append(symbol) or {}
+        cases = (
+            ("ETH/USD", "ETH/USD:2026-08-26T20:19:05"),
+            ("SHIB/USD", "SHIB/USD:2026-08-26T20:29:24"),
+        )
+        for pair, lifecycle_id in cases:
+            compact = pair.replace("/", "")
+            observation = {
+                "symbol": pair,
+                "canonical_market_symbol": pair,
+                "asset_type": "crypto",
+                "provider_used": "ALPACA_WS_CRYPTO",
+                "provider_native_timestamp": _iso(),
+                "provider_quote_timestamp": _iso(),
+                "quote_timestamp": _iso(),
+                "receive_timestamp_utc": _iso(),
+                "price": 1.0,
+                "bid": 0.99,
+                "ask": 1.01,
+                "canonical_position_id": lifecycle_id,
+                "lifecycle_id": lifecycle_id,
+                "canonical_position_aliases": [lifecycle_id],
+            }
+            managed = {
+                compact: {
+                    "symbol": compact,
+                    "asset_type": "crypto",
+                    "lane_id": "CRYPTO",
+                    "canonical_position_id": lifecycle_id,
+                    "lifecycle_id": lifecycle_id,
+                }
+            }
+            with patch.object(engine, "_canonical_active_position_observations_v1", return_value={pair: observation}):
+                quotes = engine._loss_containment_quote_evidence(
+                    {compact: {"symbol": compact, "asset_type": "crypto", "current_price": 1.0}},
+                    managed_rows_by_symbol=managed,
+                )
+            self.assertEqual(quotes[compact]["provider_used"], "ALPACA_WS_CRYPTO")
+            self.assertEqual(quotes[compact]["symbol"], compact)
+            self.assertEqual(quotes[compact]["canonical_market_symbol"], pair)
+            self.assertEqual(quotes[compact]["canonical_position_id"], lifecycle_id)
+            self.assertEqual(quotes[compact]["provider_native_timestamp"], observation["provider_native_timestamp"])
+            completeness = build_position_evidence_completeness_v1(
+                {compact: {"symbol": compact, "asset_type": "crypto"}},
+                {"positions": [{
+                    **managed[compact],
+                    "metadata_generation": "V1_MANDATORY",
+                    "lane_status": "RESOLVED",
+                    "horizon_status": "RESOLVED",
+                }]},
+                market_evidence={compact: {"LATEST_QUOTE": {"symbol": compact}}},
+                canonical_quote_evidence=quotes,
+            )["positions"][0]
+            self.assertEqual(completeness["quote_status"], "FRESH")
+            self.assertEqual(completeness["quote_source"], "ALPACA_WS_CRYPTO")
+            self.assertEqual(completeness["spread_status"], "FRESH")
+        self.assertEqual(fallback_calls, [])
+
     def test_iex_observation_retains_provenance_and_is_not_market_truth(self):
         monitor = AlpacaWSMonitor()
         monitor._record_message({

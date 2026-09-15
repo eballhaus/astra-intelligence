@@ -102,6 +102,50 @@ class DayLanePrecloseExitTimingTests(unittest.TestCase):
                 "scalp_lane_session_close_required",
             )
 
+    def test_due_scalp_exit_receives_current_canonical_quote_before_submission(self) -> None:
+        engine, _ = self._engine(session_allowed=True)
+        row = self._row(lane="SCALP", same_session_exit_required=True)
+        quote = {
+            "symbol": "SCALP",
+            "price": 10.0,
+            "provider_quote_timestamp": "2026-08-14T19:55:00Z",
+            "source": "ALPACA_WS_SIP_CANARY",
+        }
+        engine._fetch_open_positions = lambda: [row]
+        engine._canonical_active_position_observations_v1 = Mock(return_value={"SCALP": quote})
+        submit = Mock(return_value={"ok": True, "submitted": True})
+        engine._submit_authorized_lane_exit = submit
+
+        with self._at(datetime(2026, 8, 14, 15, 55, tzinfo=ET)):
+            result = engine._run_due_day_lane_close_stage({"SCALP": {"qty_available": 1}})
+
+        self.assertEqual(result["submitted"], 1)
+        engine._canonical_active_position_observations_v1.assert_called_once_with({"SCALP": row})
+        submit.assert_called_once_with(
+            row,
+            {"qty_available": 1},
+            "scalp_lane_session_close_required",
+            latest_quote=quote,
+        )
+
+    def test_due_scalp_exit_after_hours_never_requests_quote_or_submits(self) -> None:
+        engine, session = self._engine(session_allowed=False)
+        row = self._row(lane="SCALP", same_session_exit_required=True)
+        engine._fetch_open_positions = lambda: [row]
+        engine._canonical_active_position_observations_v1 = Mock(side_effect=self.fail)
+        submit = Mock(side_effect=self.fail)
+        engine._submit_authorized_lane_exit = submit
+
+        with self._at(datetime(2026, 8, 14, 16, 1, tzinfo=ET)):
+            result = engine._run_due_day_lane_close_stage({"SCALP": {"qty_available": 1}})
+
+        self.assertEqual(session.calls, 1)
+        self.assertEqual(result["blocked"], 1)
+        engine._canonical_active_position_observations_v1.assert_not_called()
+        submit.assert_not_called()
+        state = engine._runtime_state["native_lane_exit_lifecycle_v1"]["life-scalp"]
+        self.assertIn("REGULAR_SESSION_REQUIRED", state["exact_blocker"])
+
     def test_non_contract_lanes_do_not_receive_same_session_preclose_reason(self) -> None:
         engine, _ = self._engine()
         with self._at(datetime(2026, 8, 14, 15, 55, tzinfo=ET)):

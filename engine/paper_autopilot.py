@@ -6798,9 +6798,27 @@ class PaperAutopilotEngine:
                     next_reevaluation="next_regular_session", session_status=session,
                 )
                 continue
-            result = self._submit_authorized_lane_exit(
-                row, dict(broker_position_by_symbol.get(symbol) or {}), reason,
-            )
+            broker_position = dict(broker_position_by_symbol.get(symbol) or {})
+            if str(row.get("lane_id") or "").upper().strip() == "SCALP":
+                # This deadline pass runs before the later position-evidence
+                # phase, and partial cycles may return before that phase can
+                # reach the exit writer. Reuse only the worker-owned,
+                # identity-bound fresh observation here; the authorized
+                # writer still enforces executable quote freshness.
+                try:
+                    quote_by_symbol = self._canonical_active_position_observations_v1(
+                        {symbol: row}
+                    )
+                except Exception:
+                    quote_by_symbol = {}
+                result = self._submit_authorized_lane_exit(
+                    row,
+                    broker_position,
+                    reason,
+                    latest_quote=dict(quote_by_symbol.get(symbol) or {}),
+                )
+            else:
+                result = self._submit_authorized_lane_exit(row, broker_position, reason)
             if bool(result.get("submitted")):
                 submitted += 1
             elif not bool(result.get("ok")):
@@ -13785,12 +13803,21 @@ class PaperAutopilotEngine:
             if quote:
                 quoted_symbol = str(quote.get("symbol") or symbol).upper().strip()
                 if quoted_symbol != symbol:
-                    diagnostics[symbol] = {
-                        "status": "QUOTE_SYMBOL_MISMATCH",
-                        "first_causal_blocker": "LOSS_CONTAINMENT_QUOTE_SYMBOL_MISMATCH",
-                        "evaluated_at": _now_iso(),
-                    }
-                    quote = {}
+                    managed_lane = str(managed_row.get("lane_id") or managed_row.get("lane") or "").upper()
+                    crypto_position = asset_type == "crypto" or managed_lane == "CRYPTO"
+                    quote_aliases = _broker_position_symbol_aliases_v1(quoted_symbol)
+                    position_aliases = _broker_position_symbol_aliases_v1(symbol)
+                    if crypto_position and quote_aliases.intersection(position_aliases):
+                        # Keep the broker's compact key for downstream lookup,
+                        # while retaining the provider's canonical pair field.
+                        quote["symbol"] = symbol
+                    else:
+                        diagnostics[symbol] = {
+                            "status": "QUOTE_SYMBOL_MISMATCH",
+                            "first_causal_blocker": "LOSS_CONTAINMENT_QUOTE_SYMBOL_MISMATCH",
+                            "evaluated_at": _now_iso(),
+                        }
+                        quote = {}
             if quote:
                 quote.setdefault("symbol", symbol)
                 quote.setdefault("retrieval_timestamp", _now_iso())
