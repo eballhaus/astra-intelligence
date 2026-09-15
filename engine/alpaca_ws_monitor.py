@@ -7,7 +7,7 @@ import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from engine.provider_router import (
     canonical_crypto_market_symbol_v1,
@@ -52,7 +52,7 @@ def _float_or_none(value: Any) -> float | None:
 
 
 SIP_CANARY_ENV = "ASTRA_ALPACA_SIP_CANARY_SYMBOLS"
-MAX_SIP_CANARY_SYMBOLS = 4
+MAX_SIP_CANARY_SYMBOLS = 24
 
 
 class AlpacaWSMonitor:
@@ -83,6 +83,9 @@ class AlpacaWSMonitor:
         self._crypto_connection: Any = None
         self._public_crypto_connections: dict[str, Any] = {"KRAKEN": None, "COINBASE": None}
         self._desired_symbols: set[str] = set()
+        self._desired_shadow_symbols: set[str] = set()
+        self._dynamic_sip_canary_symbols: tuple[str, ...] | None = None
+        self._sip_canary_selection: dict[str, Any] = {}
         self._desired_crypto_symbols: set[str] = set()
         self._open_symbols: set[str] = set()
         self._open_crypto_symbols: set[str] = set()
@@ -229,10 +232,50 @@ class AlpacaWSMonitor:
         }
         return "sip_canary_symbol_limit_exceeded" if len(symbols) > MAX_SIP_CANARY_SYMBOLS else ""
 
+    def _active_sip_canary_symbols(self) -> tuple[str, ...]:
+        with self._lock:
+            dynamic = self._dynamic_sip_canary_symbols
+        return dynamic if dynamic is not None else self._sip_canary_symbols()
+
+    def configure_sip_canary_symbols(
+        self,
+        symbols: list[str] | tuple[str, ...],
+        selection: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Update the SIP shadow set without changing primary IEX subscriptions."""
+        normalized = {
+            str(symbol or "").upper().strip()
+            for symbol in symbols or ()
+            if str(symbol or "").strip() and "/" not in str(symbol).strip()
+        }
+        if len(normalized) > MAX_SIP_CANARY_SYMBOLS:
+            return {"ok": False, "error": "sip_canary_symbol_limit_exceeded", "symbol_count": len(normalized)}
+        selected = tuple(sorted(normalized))
+        with self._lock:
+            changed = (
+                self._dynamic_sip_canary_symbols is None
+                or set(selected) != self._desired_shadow_symbols
+            )
+            self._dynamic_sip_canary_symbols = selected
+            self._desired_shadow_symbols = set(selected)
+            self._sip_canary_selection = dict(selection or {})
+            self._shadow_quotes = {
+                symbol: row for symbol, row in self._shadow_quotes.items()
+                if symbol in self._desired_shadow_symbols
+            }
+            self._shadow_bars = {
+                symbol: row for symbol, row in self._shadow_bars.items()
+                if symbol in self._desired_shadow_symbols
+            }
+        if changed:
+            self._ensure_thread()
+            self._wake.set()
+        return {"ok": True, "changed": changed, "symbol_count": len(selected), "symbols": list(selected)}
+
     def _sip_canary_quote(self, symbol: str, *, max_age_seconds: float = 20.0) -> dict[str, Any] | None:
         """Promote only a current SIP shadow quote into the canary view."""
         sym = str(symbol or "").upper().strip()
-        if sym not in self._sip_canary_symbols() or not self._shadow_stream_enabled():
+        if sym not in self._active_sip_canary_symbols() or not self._shadow_stream_enabled():
             return None
         with self._lock:
             quote = dict(self._shadow_quotes.get(sym) or {})
@@ -268,7 +311,7 @@ class AlpacaWSMonitor:
     ) -> dict[str, Any] | None:
         """Expose one current shadow bar as canonical evidence for the canary."""
         sym = str(symbol or "").upper().strip()
-        if sym not in self._sip_canary_symbols() or not self._shadow_stream_enabled():
+        if sym not in self._active_sip_canary_symbols() or not self._shadow_stream_enabled():
             return None
         with self._lock:
             bar = dict(self._shadow_bars.get(sym) or {})
@@ -366,6 +409,8 @@ class AlpacaWSMonitor:
             self._open_crypto_symbols = set(open_crypto_limited)
             self._near_entry_symbols = set(desired) - self._open_symbols
             self._desired_symbols = set(desired)
+            if self._dynamic_sip_canary_symbols is None:
+                self._desired_shadow_symbols = set(desired)
             self._desired_crypto_symbols = set(open_crypto_limited)
             self._quotes = {symbol: row for symbol, row in self._quotes.items() if symbol in self._desired_symbols}
             self._bars = {symbol: row for symbol, row in self._bars.items() if symbol in self._desired_symbols}
@@ -393,7 +438,11 @@ class AlpacaWSMonitor:
             # stacking duplicate subscriptions on a live socket.
             if previous_crypto_symbols != self._desired_crypto_symbols:
                 public_connections_to_close = list(self._public_crypto_connections.values())
-            if previous_symbols != self._desired_symbols and self._shadow_connection is not None:
+            if (
+                self._dynamic_sip_canary_symbols is None
+                and previous_symbols != self._desired_shadow_symbols
+                and self._shadow_connection is not None
+            ):
                 public_connections_to_close.append(self._shadow_connection)
         for connection in public_connections_to_close:
             try:
@@ -462,7 +511,7 @@ class AlpacaWSMonitor:
                 subscribed = set(self._subscribed_crypto_symbols)
                 bar_subscribed: set[str] = set()
             elif shadow:
-                desired = set(self._desired_symbols)
+                desired = set(self._desired_shadow_symbols)
                 subscribed = set(self._shadow_subscribed_symbols)
                 bar_subscribed = set(self._shadow_subscribed_bar_symbols)
             else:
@@ -573,7 +622,7 @@ class AlpacaWSMonitor:
                     else "PARTIAL"
                 )
             elif shadow:
-                self._shadow_subscribed_symbols = acknowledged & set(self._desired_symbols)
+                self._shadow_subscribed_symbols = acknowledged & set(self._desired_shadow_symbols)
                 self._shadow_stats["subscription_state"] = "SUBSCRIBED"
             else:
                 self._subscribed_symbols = acknowledged & set(self._desired_symbols)
@@ -585,7 +634,7 @@ class AlpacaWSMonitor:
             }
             if stream != "crypto":
                 if shadow:
-                    self._shadow_subscribed_bar_symbols = acknowledged_bars & set(self._desired_symbols)
+                    self._shadow_subscribed_bar_symbols = acknowledged_bars & set(self._desired_shadow_symbols)
                 else:
                     self._subscribed_bar_symbols = acknowledged_bars & set(self._desired_symbols)
 
@@ -878,7 +927,11 @@ class AlpacaWSMonitor:
 
     def _stream_desired(self, stream: str) -> set[str]:
         with self._lock:
-            return set(self._desired_crypto_symbols if stream == "crypto" else self._desired_symbols)
+            if stream == "crypto":
+                return set(self._desired_crypto_symbols)
+            if stream == "equity_shadow":
+                return set(self._desired_shadow_symbols)
+            return set(self._desired_symbols)
 
     def _run(self) -> None:
         """Supervise all provider streams inside the single worker owner."""
@@ -1201,6 +1254,7 @@ class AlpacaWSMonitor:
             shadow_connected = self._shadow_connection is not None
             crypto_connected = self._crypto_connection is not None
             desired = sorted(self._desired_symbols)
+            desired_shadow = sorted(self._desired_shadow_symbols)
             desired_crypto = sorted(self._desired_crypto_symbols)
             subscribed = sorted(self._subscribed_symbols)
             shadow_subscribed = sorted(self._shadow_subscribed_symbols)
@@ -1226,7 +1280,8 @@ class AlpacaWSMonitor:
                 if (selected := self._selected_crypto_quote(symbol, max_age_seconds=20.0)) is not None
             }
             observations.update(selected_crypto_observations)
-        canary_symbols = self._sip_canary_symbols()
+            canary_selection = dict(self._sip_canary_selection)
+        canary_symbols = self._active_sip_canary_symbols()
         canary_observations = {
             symbol: observation
             for symbol in canary_symbols
@@ -1260,12 +1315,12 @@ class AlpacaWSMonitor:
             (crypto_last_message_at is None and crypto_connected_age is not None and crypto_connected_age > 30.0)
             or (crypto_message_age is not None and crypto_message_age > 60.0)
         ))
-        shadow_stale_stream = bool(desired and shadow_connected and (
+        shadow_stale_stream = bool(desired_shadow and shadow_connected and (
             (shadow_last_message_at is None and shadow_connected_age is not None and shadow_connected_age > 30.0)
             or (shadow_message_age is not None and shadow_message_age > 60.0)
         ))
         shadow_reconnect_storm = bool(
-            desired
+            desired_shadow
             and int(shadow_stats.get("errors") or 0) >= 3
             and int(shadow_stats.get("reconnects") or 0) >= 3
             and int(shadow_stats.get("messages_received") or 0) == 0
@@ -1304,7 +1359,7 @@ class AlpacaWSMonitor:
             else:
                 crypto_health = "HEALTHY"
         shadow_health = "IDLE"
-        if _enabled("ASTRA_ALPACA_WS_SHADOW_ENABLED", False) and desired:
+        if _enabled("ASTRA_ALPACA_WS_SHADOW_ENABLED", False) and desired_shadow:
             if shadow_feed_error or shadow_reconnect_storm:
                 shadow_health = "UNHEALTHY"
             elif not shadow_connected:
@@ -1343,16 +1398,17 @@ class AlpacaWSMonitor:
             "shadow_endpoint": self._endpoint(shadow=True) if shadow_feed else "",
             "shadow_feed_selection_error": shadow_feed_error,
             "shadow_connection_count": int(bool(shadow_connected)),
+            "shadow_desired_symbols": desired_shadow,
             "shadow_subscribed_symbols": shadow_subscribed,
             "shadow_subscribed_bars": sorted(self._shadow_subscribed_bar_symbols),
             "shadow_observations": {
                 symbol: dict(self._shadow_quotes[symbol])
-                for symbol in desired
+                for symbol in desired_shadow
                 if isinstance(self._shadow_quotes.get(symbol), dict)
             },
             "shadow_bars": {
                 symbol: dict(self._shadow_bars[symbol])
-                for symbol in desired
+                for symbol in desired_shadow
                 if isinstance(self._shadow_bars.get(symbol), dict)
             },
             "shadow_stats": shadow_stats,
@@ -1385,7 +1441,10 @@ class AlpacaWSMonitor:
             "shadow_stale_stream": shadow_stale_stream,
             "sip_canary_symbols": list(canary_symbols),
             "sip_canary_enabled": bool(canary_symbols and self._shadow_stream_enabled()),
-            "sip_canary_config_error": self._sip_canary_config_error(),
+            "sip_canary_config_error": (
+                "" if self._dynamic_sip_canary_symbols is not None else self._sip_canary_config_error()
+            ),
+            "sip_dynamic_canary_selection": canary_selection,
             "sip_canary_observations": canary_observations,
             "sip_canary_bars": canary_bars,
             "crypto_stats": crypto_stats,

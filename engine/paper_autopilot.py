@@ -7819,9 +7819,51 @@ class PaperAutopilotEngine:
                 pass
         if self.portfolio_diversification_v2_suite is not None and hasattr(self.portfolio_diversification_v2_suite, "rank_for_paper_selection"):
             try:
-                return list(self.portfolio_diversification_v2_suite.rank_for_paper_selection(dedup) or dedup)
+                dedup = list(self.portfolio_diversification_v2_suite.rank_for_paper_selection(dedup) or dedup)
             except Exception:
-                return dedup
+                pass
+        # Publish only the existing, already-ranked qualified finalists for
+        # the observation canary. This compact diagnostic snapshot is not
+        # candidate authority and is never consumed by order selection.
+        canary_candidates: list[dict[str, Any]] = []
+        lane_counts = {"SCALP": 0, "DAY": 0, "SWING": 0}
+        for row in dedup:
+            lane = str(row.get("lane_ranked_entry_lane") or "").upper().strip()
+            if lane not in lane_counts or lane_counts[lane] >= 40:
+                continue
+            if not bool(row.get("lane_ranked_entry_funnel_v1")) or not bool(row.get("lane_finalist")):
+                continue
+            if not (bool(row.get("qualified")) or bool(row.get("eligible"))):
+                continue
+            if _norm_asset(row.get("asset_type") or row.get("asset_class") or "stock") != "stock":
+                continue
+            lane_counts[lane] += 1
+            canary_candidates.append({
+                key: row.get(key)
+                for key in (
+                    "symbol", "lane_ranked_entry_lane", "lane_ranked_entry_funnel_v1",
+                    "lane_finalist", "lane_finalist_rank", "lane_shortlist_rank",
+                    "qualified", "eligible", "candidate_id", "recommendation_id",
+                    "candidate_generated_at", "generated_at", "quote_timestamp",
+                    "candidate_snapshot_freshness", "candidate_freshness_status",
+                    "candidate_source", "source_provenance", "asset_type", "asset_class",
+                )
+            })
+        self._runtime_state["alpaca_sip_dynamic_canary_candidates_v1"] = {
+            "schema_version": "astra_sip_dynamic_canary_candidates_v1",
+            "observed_at": _now_iso(),
+            "source": "paper_opportunity_allocation_engine_v1_lane_finalists",
+            "provider_calls_added": 0,
+            "broker_actions_added": 0,
+            "candidates": canary_candidates,
+        }
+        if str(os.getenv("ASTRA_PROCESS_ROLE", "api") or "api").strip().lower() == "worker":
+            try:
+                from server_extend import _refresh_alpaca_ws_allocation
+
+                _refresh_alpaca_ws_allocation()
+            except Exception:
+                pass
         return dedup
 
     def _rebuild_equity_candidate_snapshot_v1(self) -> dict[str, Any]:

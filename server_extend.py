@@ -17196,6 +17196,41 @@ def _refresh_alpaca_ws_allocation(*, force_reconcile=False):
             for r in eligible_positions
             if is_crypto_position(r)
         ]
+        from engine.astra_sip_dynamic_canary_v1 import build_sip_dynamic_canary_selection_v1
+
+        runtime_state = PAPER_AUTOPILOT._runtime_state
+        prior_canary = dict(runtime_state.get("alpaca_sip_dynamic_canary_v1") or {})
+        candidate_snapshot = dict(runtime_state.get("alpaca_sip_dynamic_canary_candidates_v1") or {})
+        candidate_age = max(0.0, _snapshot_age_seconds("stocks"))
+        candidate_max_age = min(1800.0, max(60.0, _to_float(
+            os.getenv("ASTRA_ALPACA_SIP_CANARY_CANDIDATE_MAX_AGE_SECONDS"), 900.0
+        )))
+        hold_seconds = min(900.0, max(300.0, _to_float(
+            os.getenv("ASTRA_ALPACA_SIP_CANARY_HOLD_SECONDS"), 600.0
+        )))
+        try:
+            snapshot_observed_epoch = datetime.fromisoformat(
+                str(candidate_snapshot.get("observed_at") or "").replace("Z", "+00:00")
+            ).timestamp()
+        except (TypeError, ValueError, OverflowError):
+            snapshot_observed_epoch = 0.0
+        snapshot_age = max(0.0, now - snapshot_observed_epoch) if snapshot_observed_epoch else float("inf")
+        canary_selection = build_sip_dynamic_canary_selection_v1(
+            candidate_rows=list(candidate_snapshot.get("candidates") or []),
+            managed_positions=[row for row in eligible_positions if not is_crypto_position(row)],
+            previous_state=prior_canary,
+            now_epoch=now,
+            candidate_source_current=(candidate_age <= candidate_max_age and snapshot_age <= candidate_max_age),
+            candidate_max_age_seconds=candidate_max_age,
+            hold_seconds=hold_seconds,
+        )
+        runtime_state["alpaca_sip_dynamic_canary_v1"] = canary_selection
+        configure_canary = getattr(ALPACA_WS_MONITOR, "configure_sip_canary_symbols", None)
+        if callable(configure_canary):
+            configure_canary(
+                [row["symbol"] for row in canary_selection.get("symbols") or []],
+                canary_selection,
+            )
         near_symbols = _near_entry_candidates(limit=ALPACA_WS_NEAR_ENTRY_SLOTS)
         if not near_symbols:
             # Keep WS useful even with no strict near-entry candidates.
@@ -17211,7 +17246,8 @@ def _refresh_alpaca_ws_allocation(*, force_reconcile=False):
                 if len(fallback) >= ALPACA_WS_NEAR_ENTRY_SLOTS:
                     break
             near_symbols = fallback
-        signature = f"{','.join(sorted(open_symbols))}|{','.join(sorted(open_crypto_symbols))}|{','.join(sorted(near_symbols))}"
+        sip_symbols = [str(row.get("symbol") or "") for row in canary_selection.get("symbols") or []]
+        signature = f"{','.join(sorted(open_symbols))}|{','.join(sorted(open_crypto_symbols))}|{','.join(sorted(near_symbols))}|sip:{','.join(sip_symbols)}"
         if (
             not force_reconcile
             and

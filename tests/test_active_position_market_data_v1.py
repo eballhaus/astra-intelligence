@@ -155,6 +155,7 @@ class AlpacaWSMonitorTests(unittest.TestCase):
             clear=False,
         ):
             monitor._desired_symbols = {"SPY"}
+            monitor._desired_shadow_symbols = {"SPY"}
             monitor._record_message({"T": "q", "S": "SPY", "bp": 500.0, "ap": 500.1, "t": _iso(), "i": "iex-q-1"})
             monitor._record_message(
                 {"T": "q", "S": "SPY", "bp": 500.2, "ap": 500.3, "t": _iso(), "i": "sip-q-1"},
@@ -336,13 +337,15 @@ class AlpacaWSMonitorTests(unittest.TestCase):
         with patch.dict(os.environ, {"ASTRA_ALPACA_SIP_CANARY_SYMBOLS": "UAL,GEHC,LYFT,RIOT,GEHC"}, clear=False):
             self.assertEqual(monitor._sip_canary_symbols(), ("GEHC", "LYFT", "RIOT", "UAL"))
             self.assertEqual(monitor._sip_canary_config_error(), "")
-        with patch.dict(os.environ, {"ASTRA_ALPACA_SIP_CANARY_SYMBOLS": "AAPL,GEHC,LYFT,RIOT,UAL"}, clear=False):
+        over_cap = ",".join(f"SYM{index:02d}" for index in range(25))
+        with patch.dict(os.environ, {"ASTRA_ALPACA_SIP_CANARY_SYMBOLS": over_cap}, clear=False):
             self.assertEqual(monitor._sip_canary_symbols(), ())
             self.assertEqual(monitor._sip_canary_config_error(), "sip_canary_symbol_limit_exceeded")
 
     def test_shadow_subscription_does_not_duplicate_existing_symbols(self):
         monitor = AlpacaWSMonitor()
         monitor._desired_symbols = {"SPY"}
+        monitor._desired_shadow_symbols = {"SPY"}
         monitor._subscribed_symbols = {"SPY"}
         monitor._shadow_subscribed_symbols = {"SPY"}
         monitor._shadow_subscribed_bar_symbols = {"SPY"}
