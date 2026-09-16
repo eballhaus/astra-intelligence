@@ -47,6 +47,9 @@ CONTRACT_FIELDS = (
     "eligibility_timestamp",
     "selection_timestamp",
     "expected_max_hold",
+    "expected_hold_window",
+    "expected_hold_minutes",
+    "expected_hold_days",
     "same_session_exit_required",
     "overnight_allowed",
     "capital_book_id",
@@ -220,7 +223,9 @@ def apply_trade_lane_contract(
             "selection_timestamp": _timestamp(
                 _first(result, "selection_timestamp", "decision_timestamp", "timestamp"), timestamp
             ),
-            "expected_max_hold": _text(_first(result, "expected_max_hold", "expected_hold_window"))
+            # A specific bounded window is more authoritative than the
+            # generic same-session compatibility marker when both exist.
+            "expected_max_hold": _text(_first(result, "expected_hold_window", "expected_max_hold"))
             or ("same_session" if lane in {LANE_DAY, LANE_SCALP} else "multi_session"),
             "same_session_exit_required": same_session_exit_required,
             "overnight_allowed": overnight_allowed,

@@ -1351,9 +1351,15 @@ def _normalize_paper_entry_bridge(row: dict[str, Any]) -> dict[str, Any]:
         r["paper_entry_horizon_source"] = horizon_source
         r["paper_entry_horizon_inferred"] = bool(inferred)
         r["horizon_source"] = horizon_source
-        r["expected_hold_window"] = _expected_hold_window(horizon)
-        r["expected_hold_minutes"] = _expected_hold_minutes(horizon)
-        r["expected_hold_days"] = round(_expected_hold_minutes(horizon) / 1440.0, 4)
+        # Preserve an explicit producer-selected duration.  The existing
+        # lane policy supplies the bounded fallback only when it is absent.
+        explicit_hold_window = str(r.get("expected_hold_window") or "").strip()
+        explicit_max_hold = str(r.get("expected_max_hold") or "").strip()
+        explicit_hold_minutes = _to_float(r.get("expected_hold_minutes"), 0.0)
+        explicit_hold_days = _to_float(r.get("expected_hold_days"), 0.0)
+        r["expected_hold_window"] = explicit_hold_window or explicit_max_hold or _expected_hold_window(horizon)
+        r["expected_hold_minutes"] = explicit_hold_minutes if explicit_hold_minutes > 0.0 else _expected_hold_minutes(horizon)
+        r["expected_hold_days"] = explicit_hold_days if explicit_hold_days > 0.0 else round(r["expected_hold_minutes"] / 1440.0, 4)
         r["horizon_persistence_bundle_v1"] = True
     action = str(r.get("action") or r.get("prediction") or "").strip().lower()
     readiness = " ".join(
@@ -2557,6 +2563,7 @@ class PaperAutopilotEngine:
         immutable_fields = (
             "same_session_exit_required", "overnight_allowed", "paper_entry_horizon_style",
             "trade_horizon_style", "intended_horizon", "expected_max_hold",
+            "expected_hold_window", "expected_hold_minutes", "expected_hold_days",
             "horizon", "horizon_source", "horizon_source_id", "horizon_source_timestamp",
             "horizon_evidence_status", "horizon_evidence_missing", "horizon_provenance",
             "horizon_assignment_version", "horizon_confidence", "horizon_evidence",
@@ -13077,6 +13084,7 @@ class PaperAutopilotEngine:
             "source_client_order_id", "candidate_id", "lane_id", "lane",
             "paper_entry_horizon_style", "trade_horizon_style", "intended_horizon",
             "horizon", "horizon_source", "expected_max_hold",
+            "expected_hold_window", "expected_hold_minutes", "expected_hold_days",
             "same_session_exit_required", "overnight_allowed", "position_owner",
             "exit_policy_owner",
         )

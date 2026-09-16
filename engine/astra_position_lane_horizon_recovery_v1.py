@@ -83,6 +83,14 @@ def _bool_or_none(value: Any) -> bool | None:
     return None
 
 
+def _positive_number_or_none(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0.0 else None
+
+
 def _timestamp(value: Any) -> datetime | None:
     raw = _text(value)
     if not raw or raw.upper() in {"UNKNOWN", "UNAVAILABLE"}:
@@ -150,7 +158,17 @@ def _source_claim(
         except (TypeError, ValueError):
             row_metadata = {}
     row_metadata = dict(row_metadata) if isinstance(row_metadata, Mapping) else {}
-    expected_max_hold = _text(_contract_value("expected_max_hold", metadata, row, row_metadata))
+    # Prefer a specific bounded duration over the generic same-session marker.
+    # Both values remain explicit persisted contract evidence; no duration is
+    # inferred in recovery.
+    expected_hold_window = _text(_contract_value("expected_hold_window", metadata, row, row_metadata))
+    expected_hold_minutes = _positive_number_or_none(
+        _contract_value("expected_hold_minutes", metadata, row, row_metadata)
+    )
+    expected_hold_days = _positive_number_or_none(
+        _contract_value("expected_hold_days", metadata, row, row_metadata)
+    )
+    expected_max_hold = expected_hold_window or _text(_contract_value("expected_max_hold", metadata, row, row_metadata))
     same_session_exit_required = _bool_or_none(
         _contract_value("same_session_exit_required", metadata, row, row_metadata)
     )
@@ -170,6 +188,9 @@ def _source_claim(
             or row.get("intended_horizon")
         ),
         "expected_max_hold": expected_max_hold,
+        "expected_hold_window": expected_hold_window,
+        "expected_hold_minutes": expected_hold_minutes,
+        "expected_hold_days": expected_hold_days,
         "same_session_exit_required": same_session_exit_required,
         "overnight_allowed": overnight_allowed,
         # These fields are Astra-owned identity/ownership metadata.  They are
@@ -345,6 +366,9 @@ def build_position_lane_horizon_recovery_v1(
             "exit_owner": identity_claim.get("exit_owner") if identity_status == STATUS_RESOLVED else "",
             "canonical_identity_status": identity_status,
             "expected_max_hold": contract_claim.get("expected_max_hold") if contract_complete else None,
+            "expected_hold_window": contract_claim.get("expected_hold_window") if contract_complete else None,
+            "expected_hold_minutes": contract_claim.get("expected_hold_minutes") if contract_complete else None,
+            "expected_hold_days": contract_claim.get("expected_hold_days") if contract_complete else None,
             "same_session_exit_required": contract_claim.get("same_session_exit_required") if contract_complete else None,
             "overnight_allowed": contract_claim.get("overnight_allowed") if contract_complete else None,
             "horizon_contract_status": STATUS_RESOLVED if contract_complete else STATUS_UNAVAILABLE,
@@ -421,6 +445,9 @@ def enrich_canonical_position_snapshot_v1(snapshot: Mapping[str, Any], recovery:
                     "management_owner": row.get("management_owner"),
                     "exit_policy_owner": row.get("exit_owner"),
                     "expected_max_hold": row.get("expected_max_hold"),
+                    "expected_hold_window": row.get("expected_hold_window"),
+                    "expected_hold_minutes": row.get("expected_hold_minutes"),
+                    "expected_hold_days": row.get("expected_hold_days"),
                     "same_session_exit_required": row.get("same_session_exit_required"),
                     "overnight_allowed": row.get("overnight_allowed"),
                 })

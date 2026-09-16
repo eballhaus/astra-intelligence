@@ -120,6 +120,7 @@ def build_entry_lane_horizon_contract_v1(row: Mapping[str, Any] | None) -> dict[
     # bounded evidence envelope. Missing evidence remains absent and the
     # contract stays fail-closed; no horizon is inferred here.
     for key in (
+        "expected_max_hold", "expected_hold_window", "expected_hold_minutes", "expected_hold_days",
         "horizon_evidence_status", "horizon_evidence_missing", "horizon_provenance",
         "horizon_source", "horizon_source_id", "horizon_source_timestamp",
         "horizon_assignment_version", "horizon_confidence", "horizon_evidence",
