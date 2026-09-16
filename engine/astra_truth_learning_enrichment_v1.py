@@ -136,6 +136,7 @@ def build_pretrade_truth_context_v1(
         # Passive provenance copied from existing certification context only.
         "contract_id", "decision_id", "asset_class", "symbol", "lane", "strategy_archetype",
         "trade_style", "expected_hold_window", "ranking_score", "ranking_factors",
+        "crypto_horizon", "crypto_horizon_status", "crypto_horizon_source", "crypto_horizon_provenance",
         "thesis_supporting_conditions", "regime_fit", "sector_fit", "catalyst_state",
         "fundamental_state", "momentum_state", "liquidity_state", "risk_envelope",
         "candidate_risk_envelope_v1", "expected_outcome_envelope_v1", "field_provenance_v1",

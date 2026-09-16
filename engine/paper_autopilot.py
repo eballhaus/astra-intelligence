@@ -2564,6 +2564,7 @@ class PaperAutopilotEngine:
             "same_session_exit_required", "overnight_allowed", "paper_entry_horizon_style",
             "trade_horizon_style", "intended_horizon", "expected_max_hold",
             "expected_hold_window", "expected_hold_minutes", "expected_hold_days",
+            "crypto_horizon", "crypto_horizon_status", "crypto_horizon_source", "crypto_horizon_provenance",
             "horizon", "horizon_source", "horizon_source_id", "horizon_source_timestamp",
             "horizon_evidence_status", "horizon_evidence_missing", "horizon_provenance",
             "horizon_assignment_version", "horizon_confidence", "horizon_evidence",
@@ -13085,6 +13086,7 @@ class PaperAutopilotEngine:
             "paper_entry_horizon_style", "trade_horizon_style", "intended_horizon",
             "horizon", "horizon_source", "expected_max_hold",
             "expected_hold_window", "expected_hold_minutes", "expected_hold_days",
+            "crypto_horizon", "crypto_horizon_status", "crypto_horizon_source", "crypto_horizon_provenance",
             "same_session_exit_required", "overnight_allowed", "position_owner",
             "exit_policy_owner",
         )

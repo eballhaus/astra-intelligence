@@ -14,6 +14,9 @@ from typing import Any, Mapping
 CRYPTO_ASSET_CLASSES = {"crypto", "cryptocurrency"}
 SUPPORTED_QUOTES = {"USD", "USDC", "USDT"}
 VALID_HORIZONS = {"scalp", "day_trade", "swing_trade"}
+CRYPTO_FAST = "CRYPTO_FAST"
+CRYPTO_SWING = "CRYPTO_SWING"
+UNRESOLVED_CRYPTO_HORIZON = "UNRESOLVED_CRYPTO_HORIZON"
 
 
 def _text(value: Any) -> str:
@@ -52,6 +55,91 @@ def _timestamp_age_seconds(value: Any) -> float | None:
         return None
 
 
+def _crypto_horizon_label(value: Any) -> str:
+    token = _text(value).lower().replace("-", "_").replace("/", "_").replace(" ", "_")
+    if token in {
+        "crypto_fast", "crypto_short", "short_duration", "scalp", "intraday",
+        "day_trade", "daytrading", "same_session", "multi_hour", "fast", "short",
+        "15m", "30m", "45m", "60m", "1h", "2h", "4h",
+    }:
+        return CRYPTO_FAST
+    if token in {
+        "crypto_swing", "multi_day", "multi_session", "overnight", "weekend",
+        "swing", "swing_trade", "position", "position_trade", "long_duration",
+        "1d", "2d", "5d", "10d", "thesis_persistence", "persistent_trend",
+        "trend_persistence", "multi_session_continuation",
+    }:
+        return CRYPTO_SWING
+    if ("eod" in token or "intraday" in token) and any(unit in token for unit in ("m", "h")):
+        return CRYPTO_FAST
+    if token.startswith(("15m_", "30m_", "45m_", "60m_", "1h_", "2h_", "4h_")):
+        return CRYPTO_FAST
+    if token.startswith(("1d_", "2d_", "5d_", "10d_")):
+        return CRYPTO_SWING
+    if any(marker in token for marker in ("rapid", "momentum", "breakout", "reversal")):
+        return CRYPTO_FAST
+    if any(marker in token for marker in ("persistent", "multi_day", "multi_session", "catalyst_persistence")):
+        return CRYPTO_SWING
+    return ""
+
+
+def _crypto_horizon_from_explicit_metadata(row: Mapping[str, Any]) -> tuple[str, str, str]:
+    """Resolve attribution from explicit intent without creating execution policy."""
+    observations: list[tuple[str, str]] = []
+    direct = _text(row.get("crypto_horizon"))
+    if direct:
+        label = _crypto_horizon_label(direct)
+        observations.append(("crypto_horizon", label))
+        if not label:
+            return UNRESOLVED_CRYPTO_HORIZON, "crypto_horizon", "UNRESOLVED"
+
+    for key in ("expected_hold_window", "expected_max_hold", "expected_hold_minutes", "expected_hold_days"):
+        value = row.get(key)
+        if value in (None, ""):
+            continue
+        if key in {"expected_hold_minutes", "expected_hold_days"}:
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                return UNRESOLVED_CRYPTO_HORIZON, key, "UNRESOLVED"
+            if numeric <= 0:
+                return UNRESOLVED_CRYPTO_HORIZON, key, "UNRESOLVED"
+            if key == "expected_hold_days":
+                label = CRYPTO_FAST if numeric <= (4.0 / 24.0) else CRYPTO_SWING if numeric >= 1.0 else ""
+            else:
+                label = CRYPTO_FAST if numeric <= 240.0 else CRYPTO_SWING if numeric >= 1440.0 else ""
+        else:
+            label = _crypto_horizon_label(value)
+        observations.append((key, label))
+
+    for key in ("paper_entry_horizon_style", "trade_horizon_style", "best_horizon_style", "intended_horizon", "horizon"):
+        value = row.get(key)
+        if value in (None, ""):
+            continue
+        label = _crypto_horizon_label(value)
+        if not label and _text(value).lower() not in {"crypto", "crypto_multi_horizon"}:
+            return UNRESOLVED_CRYPTO_HORIZON, key, "UNRESOLVED"
+        if label:
+            observations.append((key, label))
+
+    for key in (
+        "strategy_archetype", "trade_archetype", "setup_type", "momentum_state",
+        "volatility_regime", "regime_context", "thesis_context",
+    ):
+        value = row.get(key)
+        if value in (None, ""):
+            continue
+        label = _crypto_horizon_label(value)
+        if label:
+            observations.append((key, label))
+
+    labels = {label for _, label in observations if label}
+    if len(labels) > 1:
+        return UNRESOLVED_CRYPTO_HORIZON, "|".join(key for key, _ in observations), "CONFLICTING"
+    if labels:
+        source = next(key for key, label in observations if label)
+        return next(iter(labels)), source, "RESOLVED"
+    return "", "", "UNRESOLVED"
 def derive_crypto_horizon_evidence_v1(candidate: Mapping[str, Any] | None) -> dict[str, Any]:
     """Build a deterministic, persisted crypto-horizon evidence envelope.
 
@@ -70,6 +158,14 @@ def derive_crypto_horizon_evidence_v1(candidate: Mapping[str, Any] | None) -> di
     if 0 < confidence <= 1:
         confidence *= 100.0
     regime = _text(row.get("market_regime") or row.get("regime") or row.get("external_environment_tier") or (row.get("ranking_feedback_profile") or {}).get("external_environment_tier"))
+    crypto_horizon, crypto_horizon_source, crypto_horizon_status = _crypto_horizon_from_explicit_metadata(row)
+    if not crypto_horizon and completed >= 8 and momentum != 0 and risk > 0:
+        # Existing 15-minute completed-bar evidence is explicitly intraday.
+        # This preserves the current canonical producer behavior while adding
+        # a separate attribution label beneath CRYPTO.
+        crypto_horizon = CRYPTO_FAST
+        crypto_horizon_source = "crypto_15m_completed_bar_horizon_v1"
+        crypto_horizon_status = "RESOLVED"
     missing: list[str] = []
     if completed < 8:
         missing.append("COMPLETED_15MIN_BAR_WINDOW_INSUFFICIENT")
@@ -95,6 +191,25 @@ def derive_crypto_horizon_evidence_v1(candidate: Mapping[str, Any] | None) -> di
             "horizon_provenance": "crypto_15m_completed_bar_horizon_v1",
             "horizon_assignment_version": "1.0.0",
             "horizon_confidence": 0.0,
+            "crypto_horizon": crypto_horizon or UNRESOLVED_CRYPTO_HORIZON,
+            "crypto_horizon_status": crypto_horizon_status,
+            "crypto_horizon_source": crypto_horizon_source,
+            "crypto_horizon_provenance": crypto_horizon_source,
+        }
+    if not crypto_horizon or crypto_horizon_status != "RESOLVED":
+        return {
+            "horizon_evidence_status": "INSUFFICIENT_EVIDENCE",
+            "horizon_evidence_missing": ["CRYPTO_HORIZON_UNRESOLVED"],
+            "assigned_horizon": None,
+            "paper_entry_horizon_style": None,
+            "horizon_scores": {},
+            "horizon_provenance": "crypto_15m_completed_bar_horizon_v1",
+            "horizon_assignment_version": "1.0.0",
+            "horizon_confidence": 0.0,
+            "crypto_horizon": crypto_horizon or UNRESOLVED_CRYPTO_HORIZON,
+            "crypto_horizon_status": crypto_horizon_status,
+            "crypto_horizon_source": crypto_horizon_source,
+            "crypto_horizon_provenance": crypto_horizon_source or "crypto_15m_completed_bar_horizon_v1",
         }
     # The 15-minute completed-bar source proves an intraday window only.  It
     # cannot justify a fabricated scalp or swing assignment.
@@ -114,6 +229,10 @@ def derive_crypto_horizon_evidence_v1(candidate: Mapping[str, Any] | None) -> di
         "horizon_source_timestamp": _text(row.get("bar_timestamp") or row.get("quote_timestamp")),
         "horizon_assignment_version": "1.0.0",
         "horizon_confidence": day_score,
+        "crypto_horizon": crypto_horizon,
+        "crypto_horizon_status": crypto_horizon_status,
+        "crypto_horizon_source": crypto_horizon_source,
+        "crypto_horizon_provenance": crypto_horizon_source,
         "horizon_evidence": {
             "resolution": bars.get("resolution"), "completed_bar_count": completed,
             "completed_bar_return_pct": round(momentum, 6), "rolling_completed_bar_volume": volume,

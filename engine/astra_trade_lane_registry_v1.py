@@ -50,6 +50,10 @@ CONTRACT_FIELDS = (
     "expected_hold_window",
     "expected_hold_minutes",
     "expected_hold_days",
+    "crypto_horizon",
+    "crypto_horizon_status",
+    "crypto_horizon_source",
+    "crypto_horizon_provenance",
     "same_session_exit_required",
     "overnight_allowed",
     "capital_book_id",
@@ -227,6 +231,10 @@ def apply_trade_lane_contract(
             # generic same-session compatibility marker when both exist.
             "expected_max_hold": _text(_first(result, "expected_hold_window", "expected_max_hold"))
             or ("same_session" if lane in {LANE_DAY, LANE_SCALP} else "multi_session"),
+            "crypto_horizon": _text(result.get("crypto_horizon")),
+            "crypto_horizon_status": _text(result.get("crypto_horizon_status")),
+            "crypto_horizon_source": _text(result.get("crypto_horizon_source")),
+            "crypto_horizon_provenance": _text(result.get("crypto_horizon_provenance")),
             "same_session_exit_required": same_session_exit_required,
             "overnight_allowed": overnight_allowed,
             "capital_book_id": capital_book,
