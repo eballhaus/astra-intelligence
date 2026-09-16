@@ -247,13 +247,13 @@ def _canonical_same_session_requirement(recovered: Mapping[str, Any] | None) -> 
         and _text(row.get("horizon_contract_status")).upper() == "RESOLVED"
         and row.get("same_session_exit_required") is True
         and row.get("overnight_allowed") is False
-        and _text(row.get("expected_max_hold")).lower() == "same_session"
+        and _text(row.get("expected_max_hold"))
     )
     return {
         "status": "CANONICAL_SAME_SESSION_EXIT_REQUIRED" if required else "UNAVAILABLE",
         "same_session_exit_required": True if required else None,
         "overnight_allowed": False if required else None,
-        "expected_max_hold": "same_session" if required else None,
+        "expected_max_hold": _text(row.get("expected_max_hold")) if required else None,
         "source": "astra_position_lane_horizon_recovery_v1" if required else "UNAVAILABLE",
     }
 
