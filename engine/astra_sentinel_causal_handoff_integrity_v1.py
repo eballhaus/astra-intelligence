@@ -262,6 +262,7 @@ _SAME_SESSION_DEADLINE_REASONS = {
     "day_lane_session_close_required",
     "scalp_lane_overnight_breach",
     "scalp_lane_session_close_required",
+    "scalp_lane_max_hold_expired",
 }
 _REGULAR_SESSION_WAIT_MODES = {
     "after_hours",

@@ -41,8 +41,14 @@ class DayLanePrecloseExitTimingTests(unittest.TestCase):
         return engine, session
 
     @staticmethod
-    def _row(*, lane: str = "DAY", same_session_exit_required: bool | None = None) -> dict[str, object]:
-        return {
+    def _row(
+        *,
+        lane: str = "DAY",
+        same_session_exit_required: bool | None = None,
+        expected_hold_minutes: float | None = None,
+        expected_hold_window: str | None = None,
+    ) -> dict[str, object]:
+        row: dict[str, object] = {
             "position_id": f"life-{lane.lower()}",
             "symbol": lane,
             "lane_id": lane,
@@ -50,6 +56,11 @@ class DayLanePrecloseExitTimingTests(unittest.TestCase):
             "same_session_exit_required": lane == "DAY" if same_session_exit_required is None else same_session_exit_required,
             "overnight_allowed": False,
         }
+        if expected_hold_minutes is not None:
+            row["expected_hold_minutes"] = expected_hold_minutes
+        if expected_hold_window is not None:
+            row["expected_hold_window"] = expected_hold_window
+        return row
 
     def _at(self, value: datetime):
         _FixedDatetime.current = value
@@ -101,6 +112,70 @@ class DayLanePrecloseExitTimingTests(unittest.TestCase):
                 ),
                 "scalp_lane_session_close_required",
             )
+
+    def test_scalp_max_hold_is_not_due_before_contract_deadline(self) -> None:
+        engine, _ = self._engine()
+        row = self._row(lane="SCALP", same_session_exit_required=True, expected_hold_minutes=60.0)
+        with self._at(datetime(2026, 8, 14, 10, 59, tzinfo=ET)):
+            self.assertEqual(engine._lane_forced_exit_reason(row), "")
+
+    def test_scalp_max_hold_reaches_existing_forced_exit_owner(self) -> None:
+        engine, _ = self._engine(session_allowed=True)
+        row = self._row(lane="SCALP", same_session_exit_required=True, expected_hold_minutes=60.0)
+        quote = {
+            "symbol": "SCALP",
+            "price": 10.0,
+            "provider_quote_timestamp": "2026-08-14T15:01:00Z",
+            "source": "ALPACA_WS_SIP_CANARY",
+        }
+        engine._fetch_open_positions = lambda: [row]
+        engine._canonical_active_position_observations_v1 = Mock(return_value={"SCALP": quote})
+        submit = Mock(return_value={"ok": True, "submitted": True})
+        engine._submit_authorized_lane_exit = submit
+
+        with self._at(datetime(2026, 8, 14, 11, 1, tzinfo=ET)):
+            result = engine._run_due_day_lane_close_stage({"SCALP": {"qty_available": 1}})
+
+        self.assertEqual(result["submitted"], 1)
+        submit.assert_called_once_with(
+            row,
+            {"qty_available": 1},
+            "scalp_lane_max_hold_expired",
+            latest_quote=quote,
+        )
+
+    def test_scalp_max_hold_reaches_evaluate_exit_without_weakening_quote_gate(self) -> None:
+        engine, _ = self._engine()
+        engine.exit_engine = None
+        engine.exit_learning = None
+        row = self._row(lane="SCALP", same_session_exit_required=True, expected_hold_minutes=60.0)
+        row.update({"entry_price": 10.0, "lifecycle_notes": "{}"})
+        quote = {
+            "symbol": "SCALP",
+            "price": 10.0,
+            "provider_quote_timestamp": "2026-08-14T15:01:00Z",
+        }
+
+        with patch(
+            "engine.paper_autopilot.canonical_market_timestamp_v1",
+            return_value={"executable_freshness": True},
+        ):
+            with self._at(datetime(2026, 8, 14, 10, 59, tzinfo=ET)):
+                self.assertEqual(engine._evaluate_exit(row, quote), (False, "hold"))
+            with self._at(datetime(2026, 8, 14, 11, 1, tzinfo=ET)):
+                self.assertEqual(engine._evaluate_exit(row, quote), (True, "scalp_lane_max_hold_expired"))
+
+    def test_scalp_max_hold_uses_specific_window_when_numeric_minutes_are_missing(self) -> None:
+        engine, _ = self._engine()
+        row = self._row(
+            lane="SCALP",
+            same_session_exit_required=True,
+            expected_hold_window="30m-45m",
+        )
+        with self._at(datetime(2026, 8, 14, 10, 44, tzinfo=ET)):
+            self.assertEqual(engine._lane_forced_exit_reason(row), "")
+        with self._at(datetime(2026, 8, 14, 10, 46, tzinfo=ET)):
+            self.assertEqual(engine._lane_forced_exit_reason(row), "scalp_lane_max_hold_expired")
 
     def test_due_scalp_exit_receives_current_canonical_quote_before_submission(self) -> None:
         engine, _ = self._engine(session_allowed=True)

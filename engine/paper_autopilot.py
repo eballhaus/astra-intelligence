@@ -6147,6 +6147,29 @@ class PaperAutopilotEngine:
             "market_activity": market_activity,
         }
 
+    @staticmethod
+    def _scalp_max_hold_minutes(open_row: Mapping[str, Any]) -> float:
+        """Read the bounded SCALP max hold from the immutable entry contract."""
+        for key in ("expected_hold_minutes", "maximum_hold_minutes"):
+            value = _to_float(open_row.get(key), 0.0)
+            if value > 0.0:
+                return value
+        for key in ("expected_hold_window", "expected_max_hold"):
+            raw = str(open_row.get(key) or "").strip().lower()
+            matches = re.findall(r"(\d+(?:\.\d+)?)\s*(minutes?|mins?|m|hours?|hrs?|h)\b", raw)
+            if matches:
+                values = [float(value) * (60.0 if unit.startswith(("hour", "hr", "h")) else 1.0) for value, unit in matches]
+                return max(values)
+        # The lane contract is authoritative when an older persisted row has
+        # only the explicit same-session flags and no numeric field.
+        if (
+            str(open_row.get("lane_id") or "").upper().strip() == "SCALP"
+            and bool(open_row.get("same_session_exit_required"))
+            and not bool(open_row.get("overnight_allowed"))
+        ):
+            return _expected_hold_minutes("scalp")
+        return 0.0
+
     def _lane_forced_exit_reason(self, open_row: dict[str, Any]) -> str:
         """Use only an explicit lane-owned same-session contract."""
         lane = str(open_row.get("lane_id") or "").upper().strip()
@@ -6166,6 +6189,10 @@ class PaperAutopilotEngine:
         cutoff = self._day_lane_close_cutoff_et(now_et)
         if now_et >= cutoff:
             return f"{lane.lower()}_lane_session_close_required"
+        if lane == "SCALP":
+            max_hold_minutes = self._scalp_max_hold_minutes(open_row)
+            if max_hold_minutes > 0.0 and now_et >= entry + timedelta(minutes=max_hold_minutes):
+                return "scalp_lane_max_hold_expired"
         return ""
 
     def _day_lane_close_cutoff_et(self, now_et: datetime) -> datetime:
@@ -12433,6 +12460,10 @@ class PaperAutopilotEngine:
                 if hold_minutes >= 240:
                     return True, "loss_containment_mandatory_review_time_expired"
 
+        if str(open_row.get("lane_id") or "").upper().strip() == "SCALP":
+            if self._lane_forced_exit_reason(open_row) == "scalp_lane_max_hold_expired":
+                return True, "scalp_lane_max_hold_expired"
+
         if ret <= -2.4:
             return True, "stop_loss_breach"
         if peak >= 2.2 and drawdown >= 1.7:
@@ -12606,6 +12637,7 @@ class PaperAutopilotEngine:
             "take_profit_lock",
             "time_stop_underperforming",
             "max_hold_window_negative",
+            "scalp_lane_max_hold_expired",
             "exit_engine_signal",
             "exit_learning_high_risk_if_hold",
             "exit_learning_deterioration_risk",
@@ -12615,6 +12647,7 @@ class PaperAutopilotEngine:
             "max_hold_window_negative",
             "day_lane_session_close_required",
             "scalp_lane_session_close_required",
+            "scalp_lane_max_hold_expired",
         }
         material = bool(
             should_close

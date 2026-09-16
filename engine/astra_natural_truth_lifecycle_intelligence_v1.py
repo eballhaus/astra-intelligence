@@ -369,6 +369,7 @@ _SAME_SESSION_DEADLINE_REASONS = {
     "day_lane_session_close_required",
     "scalp_lane_overnight_breach",
     "scalp_lane_session_close_required",
+    "scalp_lane_max_hold_expired",
 }
 _TERMINAL_NATIVE_EXIT_STATES = {
     "BROKER_ZERO_CONFIRMED", "CLOSED", "LEARNING_ACKNOWLEDGED",
