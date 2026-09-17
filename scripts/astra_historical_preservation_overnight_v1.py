@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 STATE_DIR = Path("/Users/Shared/AstraRuntime/state")
 SUPERVISOR_STATE = STATE_DIR / "astra_historical_preservation_overnight_v1.json"
 SUPERVISOR_LOG = STATE_DIR / "astra_historical_preservation_overnight_v1.log"
@@ -31,6 +32,10 @@ CHECKPOINT = STATE_DIR / "fmp_intraday_archive_compression_v1_1hour_progress.jso
 MANIFEST = STATE_DIR / "fmp_intraday_archive_compression_v1_1hour_manifest.json"
 VALIDATION = STATE_DIR / "fmp_intraday_archive_compression_v1_1hour_validation.json"
 SUMMARY = STATE_DIR / "fmp_intraday_archive_compression_v1_1hour_summary.json"
+FIVE_MINUTE_CHECKPOINT = STATE_DIR / "fmp_intraday_archive_compression_v1_5min_progress.json"
+FIVE_MINUTE_MANIFEST = STATE_DIR / "fmp_intraday_archive_compression_v1_5min_manifest.json"
+FIVE_MINUTE_VALIDATION = STATE_DIR / "fmp_intraday_archive_compression_v1_5min_validation.json"
+FIVE_MINUTE_SUMMARY = STATE_DIR / "fmp_intraday_archive_compression_v1_5min_summary.json"
 WORKER_STATE = STATE_DIR / "astra_worker_runtime_state_v1.json"
 PYTHON = ROOT / "venv/bin/python"
 ARCHIVE_SCRIPT = ROOT / "scripts/fmp_intraday_archive_compression_v1.py"
@@ -38,6 +43,9 @@ TARGET_SYMBOLS = 535
 TARGET_LOOKBACK_DAYS = 6095
 TARGET_WINDOW_DAYS = 90
 TARGET_CALLS_PER_MINUTE = 25
+FIVE_MINUTE_SYMBOLS = 100
+FIVE_MINUTE_LOOKBACK_DAYS = 365
+FIVE_MINUTE_WINDOW_DAYS = 45
 MAX_CALLS_PER_MINUTE = 50
 PAYLOAD_CEILING_BYTES = 10_000_000_000
 MIN_DISK_BYTES = 15 * 1024**3
@@ -95,10 +103,15 @@ def worker_health() -> dict[str, Any]:
     snapshot = read_json(WORKER_STATE, {}) or {}
     worker_rows = [(pid, command) for pid, command in ps_rows() if "paper_autopilot_worker" in command or ("start_astra_persistent.sh" in command and "worker" in command)]
     active_pid = snapshot.get("active_worker_pid") or snapshot.get("process_id")
+    snapshot_worker_count = snapshot.get("worker_count")
+    if snapshot_worker_count is None and worker_rows:
+        # Older runtime snapshots omit this field; process enumeration remains
+        # the authoritative bounded count for the archive launch guard.
+        snapshot_worker_count = len(worker_rows)
     return {
         "worker_pid": active_pid,
         "worker_count": len(worker_rows),
-        "snapshot_worker_count": snapshot.get("worker_count"),
+        "snapshot_worker_count": snapshot_worker_count,
         "cycle_count": snapshot.get("cycle_count"),
         "cycle_id": snapshot.get("cycle_id"),
         "heartbeat_at": snapshot.get("heartbeat_at"),
@@ -154,7 +167,11 @@ def healthy_for_launch(health: dict[str, Any]) -> tuple[bool, str]:
 
 
 def checkpoint_snapshot() -> dict[str, Any]:
-    progress = read_json(CHECKPOINT, {}) or {}
+    return checkpoint_snapshot_for(CHECKPOINT)
+
+
+def checkpoint_snapshot_for(path: Path) -> dict[str, Any]:
+    progress = read_json(path, {}) or {}
     per_symbol = progress.get("per_symbol") or {}
     return {
         "status": progress.get("status"),
@@ -202,6 +219,15 @@ def command_args() -> list[str]:
     ]
 
 
+def five_minute_command_args() -> list[str]:
+    return [
+        str(PYTHON), "-u", str(ARCHIVE_SCRIPT),
+        "--state-dir", str(STATE_DIR), "--symbols", str(FIVE_MINUTE_SYMBOLS),
+        "--lookback-days", str(FIVE_MINUTE_LOOKBACK_DAYS), "--window-days", str(FIVE_MINUTE_WINDOW_DAYS),
+        "--calls-per-minute", str(TARGET_CALLS_PER_MINUTE), "--timeframe", "5Min", "--end-date", "2026-09-11",
+    ]
+
+
 def stage2_inventory() -> dict[str, Any]:
     """Inventory only existing preservation artifacts; never starts a job."""
     names = {
@@ -234,21 +260,81 @@ def stage1_verified() -> tuple[bool, str]:
 
 
 def five_minute_scope() -> dict[str, Any]:
-    """Return only explicitly found scope evidence; no scope is invented."""
-    matches: list[str] = []
-    for root in (ROOT / "scripts", ROOT / "engine", ROOT / "tests"):
-        if not root.exists():
-            continue
-        for path in root.rglob("*"):
-            if path.is_file() and path.suffix in {".py", ".json", ".md", ".sh"}:
-                try:
-                    text = path.read_text(encoding="utf-8", errors="ignore")
-                except OSError:
-                    continue
-                name = path.name.lower()
-                if ("5min" in name or "5_min" in name or "5minute" in name) and path != Path(__file__):
-                    matches.append(str(path.relative_to(ROOT)))
-    return {"approved_scope_found": False, "evidence_files": sorted(set(matches))[:20]}
+    """Use the existing 100-symbol intraday core as the approved 5Min scope."""
+    try:
+        from scripts.fmp_intraday_archive_compression_v1 import build_intraday_manifest_300
+
+        manifest = build_intraday_manifest_300(STATE_DIR, timeframe="5Min", limit=FIVE_MINUTE_SYMBOLS)
+        symbols = [row["symbol"] for row in manifest]
+    except Exception as exc:
+        return {
+            "approved_scope_found": False,
+            "reason": f"existing_core_scope_unavailable:{type(exc).__name__}",
+            "evidence_files": ["scripts/fmp_archive_tier3_tier4_v1.py:INTRADAY_SYMBOLS"],
+        }
+    return {
+        "approved_scope_found": len(symbols) == FIVE_MINUTE_SYMBOLS,
+        "symbol_count": len(symbols),
+        "symbols": symbols,
+        "lookback_days": FIVE_MINUTE_LOOKBACK_DAYS,
+        "window_days": FIVE_MINUTE_WINDOW_DAYS,
+        "timeframe": "5Min",
+        "selection_source": "existing_100_symbol_intraday_core_manifest",
+        "evidence_files": [
+            "scripts/fmp_archive_tier3_tier4_v1.py:INTRADAY_SYMBOLS",
+            "scripts/fmp_intraday_archive_compression_v1.py:build_intraday_manifest_300",
+        ],
+        "reason": "current_task_approved_existing_core_scope",
+    }
+
+
+def five_minute_checkpoint_compatible(scope: dict[str, Any]) -> tuple[bool, str]:
+    progress = read_json(FIVE_MINUTE_CHECKPOINT, {}) or {}
+    symbols = scope.get("symbols") or []
+    expected = {
+        "manifest_symbols": symbols,
+        "lookback_days": FIVE_MINUTE_LOOKBACK_DAYS,
+        "window_days": FIVE_MINUTE_WINDOW_DAYS,
+        "timeframe": "5Min",
+        "end_date": "2026-09-11",
+    }
+    for key, value in expected.items():
+        if progress.get(key) != value:
+            return False, f"five_minute_checkpoint_mismatch:{key}"
+    if progress.get("status") not in {"RUNNING", "PARTIAL_STOPPED", "COMPLETE"}:
+        return False, "five_minute_checkpoint_not_started"
+    return True, "ok"
+
+
+def stage3_verified(scope: dict[str, Any]) -> tuple[bool, str]:
+    progress = checkpoint_snapshot_for(FIVE_MINUTE_CHECKPOINT)
+    if progress["status"] != "COMPLETE":
+        return False, "five_minute_checkpoint_not_complete"
+    if progress["symbols"] != int(scope.get("symbol_count") or 0):
+        return False, "five_minute_manifest_size_mismatch"
+    if progress["invalid_rows"] or progress["chronology_failures"] or progress["errors"]:
+        return False, "five_minute_quality_or_provider_failure"
+    validation = read_json(FIVE_MINUTE_VALIDATION, {}) or {}
+    if str(validation.get("status") or "").upper() != "COMPLETE":
+        return False, "five_minute_validation_not_complete"
+    if progress["summary_status"] not in {"COMPLETE", "OK"} and not FIVE_MINUTE_SUMMARY.exists():
+        return False, "five_minute_summary_not_complete"
+    return True, "ok"
+
+
+def stage4_crypto_scope() -> dict[str, Any]:
+    """Report the bounded crypto preservation gap without starting a new job."""
+    return {
+        "status": "STAGE_4_REQUIRES_SCOPE_APPROVAL",
+        "api_calls_started": False,
+        "approved_scope_found": False,
+        "reason": "no_existing_checkpointed_crypto_history_job_or_canonical_FMP_crypto_archive_contract",
+        "provider_capability_evidence": [
+            "scripts/fmp_weekend_archive_v1.py:CRYPTO_SYMBOLS excludes crypto from stock archive",
+            "engine/provider_router.py:crypto routing is live/provider context, not historical archive ownership",
+        ],
+        "required_before_automation": "explicit crypto historical source, pair universe, timeframe, and checkpoint contract",
+    }
 
 
 def initial_state() -> dict[str, Any]:
@@ -274,6 +360,7 @@ def initial_state() -> dict[str, Any]:
         "completed_at": None,
         "stage2_inventory": None,
         "stage3": None,
+        "stage4": None,
     }
 
 
@@ -314,13 +401,30 @@ def main() -> int:
         "disk_free_bytes": disk_free(),
         "five_minute_scope": five_minute_scope(),
     }
+    scope = five_minute_scope()
+    preflight["five_minute_scope"] = scope
+    preflight["five_minute_checkpoint"] = checkpoint_snapshot_for(FIVE_MINUTE_CHECKPOINT)
+    preflight["five_minute_checkpoint_compatible"] = five_minute_checkpoint_compatible(scope)[0] if scope.get("approved_scope_found") else False
     if args.preflight_only:
         print(json.dumps(preflight, sort_keys=True))
         return 0 if compatible else 2
     if not compatible:
         log(f"STOP checkpoint compatibility failed: {compatibility_reason}")
         return 2
+    existing_state = read_json(SUPERVISOR_STATE, {}) or {}
     state = initial_state()
+    if (
+        isinstance(existing_state, dict)
+        and existing_state.get("stage") == "STAGE_3_5MIN"
+        and existing_state.get("stage_status") == "STAGE_3_REQUIRES_SCOPE_APPROVAL"
+    ):
+        # Resume the supervisor's completed Stage 1/2 record; do not reset any
+        # archive checkpoint or create a second historical architecture.
+        state = existing_state
+        state["stage"] = "STAGE_3_5MIN"
+        state["stage_status"] = "APPROVED_PENDING"
+        state["stage3"] = {**scope, "api_calls_started": False, "status": "APPROVED"}
+        state["completed_at"] = None
     SUPERVISOR_PID.write_text(f"{os.getpid()}\n", encoding="utf-8")
     save(state)
     log("START supervisor; existing checkpoint will be reused")
@@ -328,10 +432,18 @@ def main() -> int:
     backoff_index = 0
     child: subprocess.Popen[str] | None = None
     adopted_pid: int | None = None
-    start_snapshot = checkpoint_snapshot()
+    start_snapshot = checkpoint_snapshot_for(FIVE_MINUTE_CHECKPOINT if state.get("stage") == "STAGE_3_5MIN" else CHECKPOINT)
     while True:
-        current = checkpoint_snapshot()
+        active_stage = str(state.get("stage") or "STAGE_1_1HOUR")
+        active_path = FIVE_MINUTE_CHECKPOINT if active_stage == "STAGE_3_5MIN" else CHECKPOINT
+        current = checkpoint_snapshot_for(active_path)
         state["checkpoint"] = current
+        state["checkpoint_path"] = str(active_path)
+        if active_stage == "STAGE_4_CRYPTO_HISTORY" and state.get("stage_status") == "STAGE_4_REQUIRES_SCOPE_APPROVAL":
+            state["completed_at"] = state.get("completed_at") or now()
+            save(state)
+            log("STOP at Stage 4 crypto scope approval boundary; no crypto calls started")
+            return 0
         state["progress_since_child_launch"] = progress_delta(current, start_snapshot)
         state["worker"] = worker_health()
         state["resource_state"] = state["worker"].get("resource_state")
@@ -350,18 +462,41 @@ def main() -> int:
                 state["child_owned_by_supervisor"] = False
                 log(f"ADOPT archive child pid={adopted_pid}; checkpoint={current['windows_completed']} windows")
             else:
-                complete, reason = stage1_verified()
+                if active_stage == "STAGE_3_5MIN":
+                    complete, reason = stage3_verified(scope)
+                    if complete:
+                        state["stage_status"] = "COMPLETE"
+                        state["stage4"] = stage4_crypto_scope()
+                        state["stage"] = "STAGE_4_CRYPTO_HISTORY"
+                        state["stage_status"] = state["stage4"]["status"]
+                        state["completed_at"] = now()
+                        save(state)
+                        log("STOP Stage 4 requires explicit crypto history scope approval; no crypto calls started")
+                        return 0
+                else:
+                    complete, reason = stage1_verified()
                 if complete:
-                    state["stage"] = "STAGE_2_VERIFY"
-                    state["stage_status"] = "COMPLETE"
-                    state["stage2_inventory"] = stage2_inventory()
-                    save(state)
-                    scope = five_minute_scope()
-                    state["stage"] = "STAGE_3_5MIN"
-                    state["stage_status"] = "STAGE_3_REQUIRES_SCOPE_APPROVAL"
-                    state["stage3"] = {**scope, "api_calls_started": False, "reason": "no_approved_focused_scope_found"}
-                    state["completed_at"] = now()
-                    save(state); log("STOP Stage 3 requires explicit focused 5-minute scope approval"); return 0
+                    if active_stage != "STAGE_3_5MIN":
+                        state["stage"] = "STAGE_2_VERIFY"
+                        state["stage_status"] = "COMPLETE"
+                        state["stage2_inventory"] = stage2_inventory()
+                        scope = five_minute_scope()
+                        if not scope.get("approved_scope_found"):
+                            state["stage"] = "STAGE_3_5MIN"
+                            state["stage_status"] = "STAGE_3_REQUIRES_SCOPE_APPROVAL"
+                            state["stage3"] = {**scope, "api_calls_started": False, "reason": "no_approved_focused_scope_found"}
+                            state["completed_at"] = now()
+                            save(state); log("STOP Stage 3 requires explicit focused 5-minute scope approval"); return 0
+                        state["stage"] = "STAGE_3_5MIN"
+                        state["stage_status"] = "APPROVED_PENDING"
+                        state["stage3"] = {**scope, "api_calls_started": False, "status": "APPROVED"}
+                        state["completed_at"] = None
+                        save(state)
+                        active_stage = "STAGE_3_5MIN"
+                        active_path = FIVE_MINUTE_CHECKPOINT
+                        current = checkpoint_snapshot_for(active_path)
+                        start_snapshot = current
+                        continue
                 ok, reason = healthy_for_launch(state["worker"])
                 if not ok:
                     state["stage_status"] = "PAUSED_RESOURCE_OR_WORKER_GUARD"
@@ -370,7 +505,8 @@ def main() -> int:
                     time.sleep(BACKOFF_SECONDS[min(backoff_index, len(BACKOFF_SECONDS) - 1)])
                     backoff_index = min(backoff_index + 1, len(BACKOFF_SECONDS) - 1)
                     continue
-                child = subprocess.Popen(command_args(), cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
+                child_command = command_args() if active_stage != "STAGE_3_5MIN" else five_minute_command_args()
+                child = subprocess.Popen(child_command, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
                 state["child_pid"] = child.pid
                 state["child_owned_by_supervisor"] = True
                 state["restart_count"] = int(state.get("restart_count") or 0) + 1
@@ -403,8 +539,17 @@ def main() -> int:
                     no_progress = 0; backoff_index = 0; start_snapshot = current
                 else:
                     no_progress += 1
-                complete, reason = stage1_verified()
+                complete, reason = stage1_verified() if active_stage != "STAGE_3_5MIN" else stage3_verified(scope)
                 if complete:
+                    if active_stage == "STAGE_3_5MIN":
+                        state["stage_status"] = "COMPLETE"
+                        state["stage4"] = stage4_crypto_scope()
+                        state["stage"] = "STAGE_4_CRYPTO_HISTORY"
+                        state["stage_status"] = state["stage4"]["status"]
+                        state["completed_at"] = now()
+                        save(state)
+                        log("STOP Stage 4 requires explicit crypto history scope approval; no crypto calls started")
+                        return 0
                     continue
                 if no_progress >= 5:
                     state.update(stage_status="STOPPED_NO_PROGRESS", last_error="five_consecutive_no_progress_exits", completed_at=now())

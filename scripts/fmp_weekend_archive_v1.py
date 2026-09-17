@@ -444,6 +444,10 @@ class ArchiveRunner:
             raise ArchiveStop("max_request_count_reached")
         self.governor.wait()
         requested_at = now_iso()
+        payload_ceiling = safe_int(getattr(self, "payload_ceiling_bytes", MAX_PAYLOAD_BYTES), MAX_PAYLOAD_BYTES)
+        remaining_payload = payload_ceiling - safe_int(self.progress.get("total_payload_bytes"), 0)
+        if remaining_payload <= 0:
+            raise ArchiveStop("payload_ceiling_reached")
         secret_params = dict(params)
         secret_params["apikey"] = self.key
         url = FMP_BASE + endpoint + "?" + urllib.parse.urlencode(secret_params)
@@ -452,6 +456,7 @@ class ArchiveRunner:
         status = 0
         body = b""
         error = ""
+        payload_ceiling_reached = False
         try:
             request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "Astra-FMP-Archive/1.0"}, method="GET")
             with urllib.request.urlopen(request, timeout=30) as response:
@@ -459,20 +464,21 @@ class ArchiveRunner:
                 chunks: list[bytes] = []
                 bytes_read = 0
                 while True:
-                    chunk = response.read(64 * 1024)
+                    chunk = response.read(min(64 * 1024, remaining_payload - bytes_read))
                     if not chunk:
                         break
                     bytes_read += len(chunk)
-                    payload_ceiling = safe_int(getattr(self, "payload_ceiling_bytes", MAX_PAYLOAD_BYTES), MAX_PAYLOAD_BYTES)
-                    if safe_int(self.progress.get("total_payload_bytes"), 0) + bytes_read > payload_ceiling:
-                        raise ArchiveStop("payload_ceiling_exceeded")
                     chunks.append(chunk)
+                    if bytes_read >= remaining_payload:
+                        payload_ceiling_reached = True
+                        break
                 body = b"".join(chunks)
         except urllib.error.HTTPError as exc:
             status = int(exc.code or 0)
             error = f"http_{status}"
             try:
-                body = exc.read(4096)
+                body = exc.read(min(4096, remaining_payload))
+                payload_ceiling_reached = len(body) >= remaining_payload
             except OSError:
                 body = b""
         except ArchiveStop:
@@ -481,6 +487,26 @@ class ArchiveRunner:
             error = type(exc).__name__
         elapsed_ms = round((time.perf_counter() - started) * 1000.0, 3)
         payload_bytes = len(body)
+        if payload_ceiling_reached:
+            self.progress["total_api_calls"] = safe_int(self.progress.get("total_api_calls"), 0) + 1
+            self.progress["total_payload_bytes"] = safe_int(self.progress.get("total_payload_bytes"), 0) + payload_bytes
+            family_counts = self.progress.setdefault("request_count_by_family", {})
+            family_counts[family] = safe_int(family_counts.get(family), 0) + 1
+            self._append_lineage({
+                "timestamp": requested_at,
+                "family": family,
+                "symbol": symbol,
+                "endpoint": endpoint,
+                "params": visible_params,
+                "status": status,
+                "response_bytes": payload_bytes,
+                "elapsed_ms": elapsed_ms,
+                "records": 0,
+                "error": "payload_ceiling_reached_before_complete_response",
+                "retry_count": retry_count,
+            })
+            self._save_progress()
+            raise ArchiveStop("payload_ceiling_reached")
         self.progress["total_api_calls"] = safe_int(self.progress.get("total_api_calls"), 0) + 1
         self.progress["total_payload_bytes"] = safe_int(self.progress.get("total_payload_bytes"), 0) + payload_bytes
         self.progress.setdefault("request_count_by_family", {})[family] = safe_int(self.progress.get("request_count_by_family", {}).get(family), 0) + 1

@@ -210,6 +210,52 @@ def test_15min_summary_and_retrieval_are_partitioned_from_1min(tmp_path):
     assert evidence["learning_ack_eligible"] is False
 
 
+def test_one_hour_summary_index_and_raw_provenance_are_timeframe_partitioned(tmp_path):
+    path, start = _archive_db(tmp_path)
+    hourly_rows = _bars("AAPL", start, count=7)
+    for index, row in enumerate(hourly_rows):
+        row["timestamp"] = int((start + timedelta(hours=index)).timestamp())
+    with sqlite3.connect(path) as connection:
+        connection.executemany(
+            "INSERT INTO historical_market_bars VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            [(row["symbol"], "stock", "1Hour", row["timestamp"], row["open"], row["high"], row["low"], row["close"], row["volume"], "FMP_HIST", "2026-09-12T00:00:00Z") for row in hourly_rows],
+        )
+        summaries = build_intraday_session_summaries(
+            hourly_rows, symbol="AAPL", metadata={"sector": "Technology"}, timeframe="1Hour"
+        )
+        upsert_intraday_session_summaries(connection, summaries, generated_at="2026-09-12T00:00:00Z")
+        connection.commit()
+
+    hourly = build_intraday_session_summaries(hourly_rows, symbol="AAPL", timeframe="1Hour")
+    minute = build_intraday_session_summaries(_bars("AAPL", start), symbol="AAPL")
+    assert hourly and hourly[0]["timeframe"] == "1Hour"
+    assert hourly[0]["summary_id"] != minute[0]["summary_id"]
+    assert hourly[0]["provenance"]["raw_timeframe"] == "1Hour"
+    assert hourly[0]["provenance"]["raw_source_endpoint"] == "/stable/historical-chart/1hour"
+
+    result = retrieve_intraday_session_matches(
+        path,
+        lane="DAY",
+        setup={"direction": "UP"},
+        symbols=["AAPL"],
+        history_start_ts=int(start.timestamp()),
+        history_end_ts=int((start + timedelta(hours=8)).timestamp()),
+        timeframe="1Hour",
+        max_matches=3,
+    )
+    assert result["status"] == "OK"
+    assert result["matches"]
+    assert all(row["timeframe"] == "1Hour" for row in result["matches"])
+    raw = fetch_intraday_raw_window(
+        path,
+        symbol="AAPL",
+        start_ts=int(start.timestamp()),
+        end_ts=int((start + timedelta(hours=8)).timestamp()),
+        timeframe="1Hour",
+    )
+    assert len(raw) == 7
+
+
 def test_300_symbol_manifest_is_deterministic_and_source_bounded(tmp_path):
     state = tmp_path / "state"
     state.mkdir()

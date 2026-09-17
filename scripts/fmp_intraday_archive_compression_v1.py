@@ -14,6 +14,7 @@ import collections
 import json
 import sqlite3
 import sys
+import time
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -68,8 +69,13 @@ TARGET_SYMBOLS = 300
 TARGET_CALLS_PER_MINUTE = 25
 MAX_CALLS_PER_MINUTE = 50
 MAX_REQUESTS = 24_000
+MAX_1HOUR_REQUESTS = 40_000
+MAX_ARCHIVE_SYMBOLS = 600
+MAX_LOOKBACK_DAYS = 8_000
 PAYLOAD_CEILING_BYTES = 10_000_000_000
 FIFTEEN_MIN_PAYLOAD_CEILING_BYTES = 5_000_000_000
+DEFAULT_1HOUR_START_DATE = date(2010, 1, 4)
+DEFAULT_1HOUR_WINDOW_DAYS = 90
 SUMMARY_FAMILY = "intraday_session_summary"
 SUMMARY_INDEX_VERSION = "intraday_summary_index_v1"
 CONTROL_SYMBOLS = ("SPY", "QQQ", "DIA", "IWM")
@@ -125,9 +131,15 @@ def _sector_row(row: dict[str, Any]) -> str:
     return aliases.get(sector, sector)
 
 
-def build_intraday_manifest_300(state_dir: Path, *, timeframe: str = DEFAULT_TIMEFRAME) -> list[dict[str, Any]]:
-    """Select 300 existing liquid/archive symbols by deterministic sector round-robin."""
+def build_intraday_manifest_300(
+    state_dir: Path,
+    *,
+    timeframe: str = DEFAULT_TIMEFRAME,
+    limit: int = TARGET_SYMBOLS,
+) -> list[dict[str, Any]]:
+    """Select a bounded existing archive universe by deterministic sector round-robin."""
     timeframe = normalize_intraday_timeframe(timeframe)
+    limit = max(1, min(MAX_ARCHIVE_SYMBOLS, int(limit or TARGET_SYMBOLS)))
     available = _source_rows(state_dir)
     selected: list[dict[str, Any]] = []
     selected_symbols: set[str] = set()
@@ -138,11 +150,14 @@ def build_intraday_manifest_300(state_dir: Path, *, timeframe: str = DEFAULT_TIM
             return
         source = dict(available.get(symbol) or {"symbol": symbol, "source_names": [], "source_flags": {}})
         source.setdefault("asset_type", "stock")
+        is_etf_context = bool((source.get("source_flags") or {}).get("etf_reference"))
         row = {
             "symbol": symbol,
             "asset_type": "stock",
+            "instrument_category": "ETF_CONTEXT" if is_etf_context else "EQUITY",
+            "verified_is_etf": is_etf_context,
             "resolution": timeframe,
-            "archive_tier": "tier3b_intraday_6_month",
+            "archive_tier": "deep_1hour_history" if timeframe == "1Hour" else "tier3b_intraday_6_month",
             "sector": source.get("sector"),
             "industry": source.get("industry"),
             "selection_group": group or INTRADAY_SYMBOL_GROUP.get(symbol) or f"sector_{_sector_row(source)}",
@@ -166,7 +181,7 @@ def build_intraday_manifest_300(state_dir: Path, *, timeframe: str = DEFAULT_TIM
         if symbol in selected_symbols or row.get("asset_type") == "crypto":
             continue
         buckets[_sector_row(row)].append(symbol)
-    target_remaining = max(0, TARGET_SYMBOLS - len(selected))
+    target_remaining = max(0, limit - len(selected))
     while target_remaining and any(buckets.values()):
         for sector in SECTOR_ORDER + tuple(sorted(set(buckets) - set(SECTOR_ORDER))):
             bucket = buckets.get(sector) or []
@@ -177,7 +192,31 @@ def build_intraday_manifest_300(state_dir: Path, *, timeframe: str = DEFAULT_TIM
             target_remaining -= 1
     if target_remaining:
         raise ArchiveStop(f"intraday_manifest_sources_have_only_{len(selected)}_eligible_symbols")
-    return selected[:TARGET_SYMBOLS]
+    return selected[:limit]
+
+
+def apply_daily_history_start_dates(state_dir: Path, manifest: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Bound hourly requests to each symbol's known local listing history."""
+    db_path = state_dir / "ai_trading_memory.db"
+    starts: dict[str, str] = {}
+    if db_path.exists():
+        try:
+            with open_current_read_only(db_path) as connection:
+                rows = connection.execute(
+                    "SELECT symbol,date(MIN(ts),'unixepoch') FROM historical_market_bars "
+                    "WHERE provider=? AND timeframe='1Day' GROUP BY symbol",
+                    (FMP_PROVIDER,),
+                ).fetchall()
+            starts = {str(row[0]).upper(): str(row[1]) for row in rows if row[0] and row[1]}
+        except sqlite3.Error as exc:
+            raise ArchiveStop(f"daily_history_start_lookup_failed:{type(exc).__name__}") from exc
+    for target in manifest:
+        known = date.fromisoformat(starts[target["symbol"]]) if target["symbol"] in starts else DEFAULT_1HOUR_START_DATE
+        target["history_start_date"] = max(DEFAULT_1HOUR_START_DATE, known).isoformat()
+        target["history_start_source"] = (
+            "canonical_FMP_HIST_1Day_min" if target["symbol"] in starts else "proven_1Hour_retention_floor"
+        )
+    return manifest
 
 
 class IntradayArchiveRunner(ArchiveRunner):
@@ -216,8 +255,8 @@ class IntradayArchiveRunner(ArchiveRunner):
         self.stop_reason = ""
         self.malformed_streak = 0
         self.payload_ceiling_bytes = int(payload_ceiling_bytes or (FIFTEEN_MIN_PAYLOAD_CEILING_BYTES if self.timeframe == "15Min" else PAYLOAD_CEILING_BYTES))
-        self.request_limit = MAX_REQUESTS
-        self.lookback_days = max(1, min(3660, int(lookback_days or DEFAULT_LOOKBACK_DAYS)))
+        self.request_limit = MAX_1HOUR_REQUESTS if self.timeframe == "1Hour" else MAX_REQUESTS
+        self.lookback_days = max(1, min(MAX_LOOKBACK_DAYS, int(lookback_days or DEFAULT_LOOKBACK_DAYS)))
         self.window_days = max(1, min(366, int(window_days or DEFAULT_WINDOW_DAYS)))
         self.end_date = end_date or date.today()
         self.progress = self._load_progress()
@@ -235,6 +274,11 @@ class IntradayArchiveRunner(ArchiveRunner):
             or safe_int(existing.get("window_days")) != self.window_days
             or existing.get("timeframe") != self.timeframe
             or existing.get("end_date") != self.end_date.isoformat()
+            or (
+                self.timeframe == "1Hour"
+                and existing.get("history_start_by_symbol")
+                != {row["symbol"]: row.get("history_start_date") for row in self.manifest}
+            )
         ):
             existing = {}
         existing.setdefault("schema_version", "fmp_intraday_archive_compression_v1_progress")
@@ -242,6 +286,11 @@ class IntradayArchiveRunner(ArchiveRunner):
         existing.setdefault("started_at", self.started_at)
         existing.setdefault("updated_at", now_iso())
         existing.setdefault("manifest_symbols", symbols)
+        if self.timeframe == "1Hour":
+            existing.setdefault(
+                "history_start_by_symbol",
+                {row["symbol"]: row.get("history_start_date") for row in self.manifest},
+            )
         existing.setdefault("lookback_days", self.lookback_days)
         existing.setdefault("window_days", self.window_days)
         existing.setdefault("timeframe", self.timeframe)
@@ -294,23 +343,33 @@ class IntradayArchiveRunner(ArchiveRunner):
     def _store_rows(self, rows: list[dict[str, Any]]) -> tuple[int, int]:
         if not self.db_path.exists():
             raise ArchiveStop("canonical_historical_database_missing")
-        inserted = duplicates = 0
-        with sqlite3.connect(str(self.db_path), timeout=30.0) as connection:
-            connection.execute("PRAGMA busy_timeout=30000")
-            table = connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='historical_market_bars'").fetchone()
-            if not table:
-                raise ArchiveStop("canonical_historical_market_bars_table_missing")
-            for row in rows:
-                cursor = connection.execute(
-                    "INSERT OR IGNORE INTO historical_market_bars(symbol,asset_type,timeframe,ts,o,h,l,c,v,provider,ingested_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                    (row["symbol"], "stock", self.timeframe, row["timestamp"], row["open"], row["high"], row["low"], row["close"], row.get("volume"), FMP_PROVIDER, now_iso()),
-                )
-                if cursor.rowcount:
-                    inserted += 1
-                else:
-                    duplicates += 1
-            connection.commit()
-        return inserted, duplicates
+        for attempt in range(3):
+            inserted = duplicates = 0
+            try:
+                with sqlite3.connect(str(self.db_path), timeout=3.0) as connection:
+                    connection.execute("PRAGMA busy_timeout=3000")
+                    table = connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='historical_market_bars'").fetchone()
+                    if not table:
+                        raise ArchiveStop("canonical_historical_market_bars_table_missing")
+                    for row in rows:
+                        cursor = connection.execute(
+                            "INSERT OR IGNORE INTO historical_market_bars(symbol,asset_type,timeframe,ts,o,h,l,c,v,provider,ingested_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                            (row["symbol"], "stock", self.timeframe, row["timestamp"], row["open"], row["high"], row["low"], row["close"], row.get("volume"), FMP_PROVIDER, now_iso()),
+                        )
+                        if cursor.rowcount:
+                            inserted += 1
+                        else:
+                            duplicates += 1
+                    connection.commit()
+                return inserted, duplicates
+            except sqlite3.OperationalError as exc:
+                message = str(exc).lower()
+                if not any(token in message for token in ("locked", "busy")):
+                    raise ArchiveStop(f"historical_store_write_failed:{str(exc)[:160]}") from exc
+                if attempt >= 2:
+                    raise ArchiveStop("canonical_historical_database_lock_contention") from exc
+                time.sleep(0.5 * (attempt + 1))
+        raise ArchiveStop("canonical_historical_database_lock_contention")
 
     def _existing_bounds(self) -> dict[str, tuple[int | None, int | None]]:
         if not self.db_path.exists():
@@ -340,38 +399,59 @@ class IntradayArchiveRunner(ArchiveRunner):
         window_end = self.end_date
         while window_end >= lower_bound:
             window_start = max(lower_bound, window_end - timedelta(days=self.window_days - 1))
-            window_key = f"{window_start.isoformat()}:{window_end.isoformat()}"
             for target in self.manifest:
                 symbol = target["symbol"]
                 state = phase.setdefault("per_symbol", {}).setdefault(symbol, {"windows_completed": [], "rows_inserted": 0, "duplicate_rows": 0, "invalid_rows": 0, "chronology_failures": 0, "status": "RUNNING"})
-                if window_key in state.get("windows_completed", []):
+                try:
+                    symbol_lower_bound = max(lower_bound, date.fromisoformat(str(target.get("history_start_date") or lower_bound.isoformat())))
+                except ValueError:
+                    symbol_lower_bound = lower_bound
+                if window_end < symbol_lower_bound:
+                    continue
+                symbol_window_start = max(symbol_lower_bound, window_end - timedelta(days=self.window_days - 1))
+                symbol_window_key = f"{symbol_window_start.isoformat()}:{window_end.isoformat()}"
+                if symbol_window_key in state.get("windows_completed", []):
                     continue
                 self._guard_runtime()
-                if self._window_already_covered(symbol, window_start, window_end, bounds):
-                    state.setdefault("windows_completed", []).append(window_key)
-                    state["status"] = "COMPLETE"
+                if self._window_already_covered(symbol, symbol_window_start, window_end, bounds):
+                    state.setdefault("windows_completed", []).append(symbol_window_key)
+                    state["status"] = "RUNNING"
                     phase["windows_skipped_existing"] = safe_int(phase.get("windows_skipped_existing")) + 1
                     phase["windows_completed"] = safe_int(phase.get("windows_completed")) + 1
                     self._save_progress()
                     continue
-                params = {"symbol": symbol, "from": window_start.isoformat(), "to": window_end.isoformat()}
+                params = {"symbol": symbol, "from": symbol_window_start.isoformat(), "to": window_end.isoformat()}
                 rows, meta = self._request(family=f"{self.timeframe}_raw", symbol=symbol, endpoint=self.endpoint, params=params)
                 clean, quality = normalize_intraday_rows(symbol, rows)
                 inserted, duplicates = self._store_rows(clean) if clean else (0, 0)
-                state.setdefault("windows_completed", []).append(window_key)
+                state.setdefault("windows_completed", []).append(symbol_window_key)
                 state["rows_inserted"] = safe_int(state.get("rows_inserted")) + inserted
                 state["duplicate_rows"] = safe_int(state.get("duplicate_rows")) + duplicates + safe_int(quality.get("duplicate_records"))
                 state["invalid_rows"] = safe_int(state.get("invalid_rows")) + safe_int(quality.get("invalid_records"))
-                state.setdefault("window_quality", {})[window_key] = {**meta, **quality, "rows_inserted": inserted, "duplicate_rows": duplicates, "requested_from": params["from"], "requested_to": params["to"]}
+                state.setdefault("window_quality", {})[symbol_window_key] = {**meta, **quality, "rows_inserted": inserted, "duplicate_rows": duplicates, "requested_from": params["from"], "requested_to": params["to"]}
                 phase["rows_inserted"] = safe_int(phase.get("rows_inserted")) + inserted
                 phase["duplicate_rows"] = safe_int(phase.get("duplicate_rows")) + duplicates + safe_int(quality.get("duplicate_records"))
                 phase["invalid_rows"] = safe_int(phase.get("invalid_rows")) + safe_int(quality.get("invalid_records"))
                 phase["windows_completed"] = safe_int(phase.get("windows_completed")) + 1
                 if not quality.get("chronologically_valid", True):
                     phase["chronology_failures"] = safe_int(phase.get("chronology_failures")) + 1
-                state["status"] = "COMPLETE"
+                state["status"] = "RUNNING"
                 self._save_progress()
             window_end = window_start - timedelta(days=1)
+        all_symbols_complete = True
+        for target in self.manifest:
+            symbol = target["symbol"]
+            state = phase.setdefault("per_symbol", {}).setdefault(symbol, {"windows_completed": []})
+            try:
+                symbol_lower_bound = max(lower_bound, date.fromisoformat(str(target.get("history_start_date") or lower_bound.isoformat())))
+            except ValueError:
+                symbol_lower_bound = lower_bound
+            expected_windows = max(1, ((self.end_date - symbol_lower_bound).days + 1 + self.window_days - 1) // self.window_days)
+            state["expected_windows"] = expected_windows
+            state["status"] = "COMPLETE" if len(set(state.get("windows_completed") or [])) >= expected_windows else "PARTIAL"
+            all_symbols_complete = all_symbols_complete and state["status"] == "COMPLETE"
+        if not all_symbols_complete:
+            raise ArchiveStop("hourly_symbol_window_checkpoint_incomplete")
         phase["status"] = "COMPLETE"
         self._save_progress()
 
@@ -391,6 +471,7 @@ class IntradayArchiveRunner(ArchiveRunner):
             total = 0
             completed = 0
             for target in self.manifest:
+                self._guard_runtime()
                 symbol = target["symbol"]
                 rows = connection.execute(
                     "SELECT symbol,ts,o,h,l,c,v FROM historical_market_bars WHERE symbol=? AND asset_type='stock' AND timeframe=? AND provider=? AND ts>=? AND ts<=? ORDER BY ts",
@@ -425,7 +506,14 @@ class IntradayArchiveRunner(ArchiveRunner):
             self.progress.setdefault("errors", []).append({"timestamp": now_iso(), "error": self.stop_reason})
         try:
             self._build_summaries()
+        except ArchiveStop as exc:
+            self.stop_reason = str(exc)
+            self.progress["status"] = "PARTIAL_STOPPED"
+            self.progress["stop_reason"] = self.stop_reason
+            self.progress.setdefault("errors", []).append({"timestamp": now_iso(), "error": self.stop_reason})
+            self.progress.setdefault("summary", {})["status"] = "STOPPED_RUNTIME_GUARD"
         except Exception as exc:
+            self.progress["status"] = "PARTIAL_STOPPED"
             self.progress.setdefault("errors", []).append({"timestamp": now_iso(), "error": f"summary_build_failed:{type(exc).__name__}:{str(exc)[:160]}"})
             self.progress.setdefault("summary", {})["status"] = "FAILED"
         if self.progress.get("status") == "RUNNING":
@@ -644,15 +732,35 @@ def main() -> int:
     state_dir = Path(args.state_dir).expanduser().resolve()
     timeframe = normalize_intraday_timeframe(args.timeframe)
     end_date = date.fromisoformat(args.end_date) if args.end_date else None
-    manifest = build_intraday_manifest_300(state_dir, timeframe=timeframe)
-    if len(manifest) != min(TARGET_SYMBOLS, max(1, int(args.symbols))):
+    requested_symbols = max(1, min(MAX_ARCHIVE_SYMBOLS, int(args.symbols or TARGET_SYMBOLS)))
+    manifest = build_intraday_manifest_300(state_dir, timeframe=timeframe, limit=requested_symbols)
+    if len(manifest) != requested_symbols:
         raise SystemExit(f"intraday_manifest_size_mismatch:{len(manifest)}")
+    if timeframe == "1Hour":
+        manifest = apply_daily_history_start_dates(state_dir, manifest)
     before = make_before_after_snapshot(state_dir, label="BEFORE")
+    archive_end = end_date or date.today()
+    if args.lookback_days:
+        lookback_days = args.lookback_days
+    elif timeframe == "15Min":
+        lookback_days = DEFAULT_15MIN_LOOKBACK_DAYS
+    elif timeframe == "1Hour":
+        lookback_days = (archive_end - DEFAULT_1HOUR_START_DATE).days + 1
+    else:
+        lookback_days = DEFAULT_LOOKBACK_DAYS
+    if args.window_days:
+        window_days = args.window_days
+    elif timeframe == "15Min":
+        window_days = DEFAULT_15MIN_WINDOW_DAYS
+    elif timeframe == "1Hour":
+        window_days = DEFAULT_1HOUR_WINDOW_DAYS
+    else:
+        window_days = DEFAULT_WINDOW_DAYS
     runner = IntradayArchiveRunner(
         state_dir=state_dir,
         manifest=manifest,
-        lookback_days=args.lookback_days or (DEFAULT_15MIN_LOOKBACK_DAYS if timeframe == "15Min" else DEFAULT_LOOKBACK_DAYS),
-        window_days=args.window_days or (DEFAULT_15MIN_WINDOW_DAYS if timeframe == "15Min" else DEFAULT_WINDOW_DAYS),
+        lookback_days=lookback_days,
+        window_days=window_days,
         calls_per_minute=args.calls_per_minute,
         timeframe=timeframe,
         end_date=end_date,
