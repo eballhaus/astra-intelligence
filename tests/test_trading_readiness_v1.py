@@ -489,6 +489,41 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(day["technical_truth_starvation_status"], "NATURAL_OPEN_POSITION")
         self.assertEqual(result["day_readiness"], "TECHNICALLY_READY")
 
+    def test_identity_bound_recovery_supersedes_identityless_capacity_projection(self):
+        rows = AstraTradingReadinessV1._position_rows({
+            "last_evidence_capacity_snapshot": {
+                "position_rows_for_read_only_consumers": [{
+                    "symbol": "GEHC",
+                    "lane_id": "SCALP",
+                    "classification": "LEGACY_UNLINKED_POSITION",
+                }],
+            },
+            "position_lane_horizon_recovery_v1": {
+                "positions": [{
+                    "symbol": "GEHC",
+                    "lane": "SCALP",
+                    "canonical_position_id": "3ac4501e-e101-4366-8dd8-4be3e67031b8",
+                    "canonical_identity_status": "RESOLVED",
+                }],
+            },
+        })
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["canonical_position_id"], "3ac4501e-e101-4366-8dd8-4be3e67031b8")
+
+    def test_distinct_identity_bound_same_symbol_rows_remain_visible(self):
+        rows = AstraTradingReadinessV1._position_rows({
+            "position_lane_horizon_recovery_v1": {
+                "positions": [
+                    {"symbol": "GEHC", "lane": "SCALP", "canonical_position_id": "lifecycle-a"},
+                    {"symbol": "GEHC", "lane": "SCALP", "canonical_position_id": "lifecycle-b"},
+                ],
+            },
+        })
+        self.assertEqual(
+            {row["canonical_position_id"] for row in rows},
+            {"lifecycle-a", "lifecycle-b"},
+        )
+
     def test_truth_without_learning_acknowledgement_is_an_explicit_fault(self):
         result = self._monitor().run_if_due(
             runtime_state={

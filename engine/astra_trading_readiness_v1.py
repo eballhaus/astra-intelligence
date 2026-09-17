@@ -474,8 +474,31 @@ class AstraTradingReadinessV1:
     def _position_rows(runtime: Mapping[str, Any]) -> list[dict[str, Any]]:
         capacity = _dict(runtime.get("last_evidence_capacity_snapshot"))
         recovery = _dict(runtime.get("position_lane_horizon_recovery_v1"))
-        rows = _rows(capacity.get("position_rows_for_read_only_consumers"))
-        rows.extend(_rows(recovery.get("positions")))
+        capacity_rows = _rows(capacity.get("position_rows_for_read_only_consumers"))
+        recovery_rows = _rows(recovery.get("positions"))
+        # The capacity snapshot is an identity-less broker projection, while
+        # recovery carries the canonical lifecycle identity.  Once the
+        # identity-bound row exists, do not count that diagnostic projection
+        # as a second lane position.  Keep distinct identity-bound rows
+        # separate so unresolved same-symbol ownership remains visible.
+        resolved_symbol_lanes = {
+            (
+                _text(row.get("symbol")).upper(),
+                AstraTradingReadinessV1._lane_from_row(row),
+            )
+            for row in recovery_rows
+            if _text(row.get("symbol"))
+            and _text(row.get("canonical_position_id") or row.get("canonical_lifecycle_id") or row.get("lifecycle_id") or row.get("position_id"))
+            and AstraTradingReadinessV1._lane_from_row(row)
+        }
+        rows = []
+        for row in capacity_rows:
+            identity = _text(row.get("canonical_position_id") or row.get("canonical_lifecycle_id") or row.get("lifecycle_id") or row.get("position_id"))
+            symbol_lane = (_text(row.get("symbol")).upper(), AstraTradingReadinessV1._lane_from_row(row))
+            if not identity and symbol_lane in resolved_symbol_lanes:
+                continue
+            rows.append(row)
+        rows.extend(recovery_rows)
         dedup: dict[str, dict[str, Any]] = {}
         for row in rows:
             symbol = _text(row.get("symbol")).upper()
