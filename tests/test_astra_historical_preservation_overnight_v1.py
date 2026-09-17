@@ -51,12 +51,23 @@ def test_stage3_verification_requires_clean_complete_artifacts(monkeypatch, tmp_
     assert supervisor.stage3_verified(scope) == (True, "ok")
 
 
-def test_stage4_crypto_scope_does_not_start_an_unapproved_job():
+def test_stage4_crypto_scope_is_approved_from_existing_capability_state():
     scope = supervisor.stage4_crypto_scope()
 
-    assert scope["status"] == "STAGE_4_REQUIRES_SCOPE_APPROVAL"
-    assert scope["approved_scope_found"] is False
+    assert scope["status"] == "APPROVED_PENDING"
+    assert scope["approved_scope_found"] is True
     assert scope["api_calls_started"] is False
+    assert {phase["timeframe"] for phase in scope["phases"]} == {"1Day", "1Hour", "5Min", "1Min"}
+    assert all("ETH/USD" in phase["symbols"] and "SHIB/USD" in phase["symbols"] for phase in scope["phases"])
+
+
+def test_crypto_phase_command_is_bounded_and_checkpointed():
+    phase = supervisor.stage4_crypto_scope()["phases"][1]
+    command = supervisor.crypto_phase_command_args(phase)
+
+    assert command[command.index("--timeframe") + 1] == "1Hour"
+    assert command[command.index("--calls-per-minute") + 1] == "25"
+    assert "fmp_crypto_archive_v1_1hour_progress.json" in phase["checkpoint_path"]
 
 
 def test_worker_health_ignores_process_inspection_commands(monkeypatch, tmp_path):

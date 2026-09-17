@@ -186,6 +186,7 @@ def _feature_summary(
     segment: str,
     metadata: Mapping[str, Any],
     timeframe: str = DEFAULT_TIMEFRAME,
+    asset_type: str = "stock",
 ) -> dict[str, Any] | None:
     if not rows:
         return None
@@ -323,6 +324,7 @@ def _feature_summary(
         "holiday_or_half_day_not_inferred": True,
         "unsupported_features": ["spread", "order_book", "news_reaction", "future_macro_effect"],
     }
+    asset_type = str(asset_type or "stock").strip().lower()
     provenance = {
         "raw_table": ARCHIVE_TABLE,
         "raw_provider": PROVIDER,
@@ -333,7 +335,7 @@ def _feature_summary(
         "raw_end_ts": int(rows[-1]["timestamp"]),
         "raw_start_timestamp": _iso(int(rows[0]["timestamp"])),
         "raw_end_timestamp": _iso(int(rows[-1]["timestamp"])),
-        "raw_key_pattern": f"{symbol}|stock|{timeframe}|<timestamp>|{PROVIDER}",
+        "raw_key_pattern": f"{symbol}|{asset_type}|{timeframe}|<timestamp>|{PROVIDER}",
         "regenerable_from_raw": True,
         "historical_replay_only": True,
         "broker_truth_eligible": False,
@@ -343,7 +345,7 @@ def _feature_summary(
     return {
         "summary_id": summary_id,
         "symbol": symbol,
-        "asset_type": "stock",
+        "asset_type": asset_type,
         "timeframe": timeframe,
         "provider": PROVIDER,
         "session_date": session_date,
@@ -356,7 +358,7 @@ def _feature_summary(
         "generator_version": VERSION,
         "sector": metadata.get("sector"),
         "industry": metadata.get("industry"),
-        "lane_relevance": ["SCALP", "DAY", "SWING_SUPPORT"] if regular else [],
+        "lane_relevance": (metadata.get("lane_relevance") or (["SCALP", "DAY", "SWING_SUPPORT"] if asset_type == "stock" else ["CRYPTO_HORIZON_UNRESOLVED"])) if regular else [],
         "features": {"setup": setup_features, "outcome": features},
         "setup_features": setup_features,
         "outcome_features": features,
@@ -372,6 +374,7 @@ def build_intraday_session_summaries(
     symbol: str,
     metadata: Mapping[str, Any] | None = None,
     timeframe: str = DEFAULT_TIMEFRAME,
+    asset_type: str = "stock",
 ) -> list[dict[str, Any]]:
     """Build deterministic summaries without copying raw bars into them."""
     metadata = dict(metadata or {})
@@ -388,7 +391,7 @@ def build_intraday_session_summaries(
         grouped.setdefault(_session_segment(timestamp), []).append(row)
     summaries = []
     for (session_date, segment), session_rows in sorted(grouped.items()):
-        summary = _feature_summary(session_rows, symbol=symbol, session_date=session_date, segment=segment, metadata=metadata, timeframe=timeframe)
+        summary = _feature_summary(session_rows, symbol=symbol, session_date=session_date, segment=segment, metadata=metadata, timeframe=timeframe, asset_type=asset_type)
         if summary:
             summaries.append(summary)
     return summaries

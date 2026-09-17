@@ -256,6 +256,21 @@ def test_one_hour_summary_index_and_raw_provenance_are_timeframe_partitioned(tmp
     assert len(raw) == 7
 
 
+def test_crypto_summary_preserves_asset_type_and_unresolved_horizon_metadata():
+    start = datetime(2026, 9, 10, 13, 30, tzinfo=UTC)
+    summaries = build_intraday_session_summaries(
+        _bars("ETH/USD", start),
+        symbol="ETH/USD",
+        metadata={"lane_relevance": ["CRYPTO_HORIZON_UNRESOLVED"]},
+        timeframe="1Hour",
+        asset_type="crypto",
+    )
+
+    assert summaries
+    assert summaries[0]["asset_type"] == "crypto"
+    assert summaries[0]["lane_relevance"] == ["CRYPTO_HORIZON_UNRESOLVED"]
+    assert "|crypto|1Hour|" in summaries[0]["provenance"]["raw_key_pattern"]
+
 def test_300_symbol_manifest_is_deterministic_and_source_bounded(tmp_path):
     state = tmp_path / "state"
     state.mkdir()

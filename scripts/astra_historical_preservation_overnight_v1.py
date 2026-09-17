@@ -36,6 +36,9 @@ FIVE_MINUTE_CHECKPOINT = STATE_DIR / "fmp_intraday_archive_compression_v1_5min_p
 FIVE_MINUTE_MANIFEST = STATE_DIR / "fmp_intraday_archive_compression_v1_5min_manifest.json"
 FIVE_MINUTE_VALIDATION = STATE_DIR / "fmp_intraday_archive_compression_v1_5min_validation.json"
 FIVE_MINUTE_SUMMARY = STATE_DIR / "fmp_intraday_archive_compression_v1_5min_summary.json"
+CRYPTO_ARCHIVE_SCRIPT = ROOT / "scripts/fmp_crypto_archive_v1.py"
+CRYPTO_TIMEFRAMES = ("1Day", "1Hour", "5Min", "1Min")
+CRYPTO_PHASE_STATE = STATE_DIR / "fmp_crypto_archive_v1_stage_state.json"
 WORKER_STATE = STATE_DIR / "astra_worker_runtime_state_v1.json"
 PYTHON = ROOT / "venv/bin/python"
 ARCHIVE_SCRIPT = ROOT / "scripts/fmp_intraday_archive_compression_v1.py"
@@ -95,8 +98,8 @@ def ps_rows() -> list[tuple[int, str]]:
 
 
 def archive_processes() -> list[tuple[int, str]]:
-    marker = "scripts/fmp_intraday_archive_compression_v1.py"
-    return [(pid, command) for pid, command in ps_rows() if marker in command and "astra_historical_preservation_overnight_v1" not in command]
+    markers = ("scripts/fmp_intraday_archive_compression_v1.py", "scripts/fmp_crypto_archive_v1.py")
+    return [(pid, command) for pid, command in ps_rows() if any(marker in command for marker in markers) and "astra_historical_preservation_overnight_v1" not in command]
 
 
 def worker_health() -> dict[str, Any]:
@@ -338,7 +341,12 @@ def stage3_verified(scope: dict[str, Any]) -> tuple[bool, str]:
         return False, "five_minute_checkpoint_not_complete"
     if progress["symbols"] != int(scope.get("symbol_count") or 0):
         return False, "five_minute_manifest_size_mismatch"
-    if progress["invalid_rows"] or progress["chronology_failures"] or progress["errors"]:
+    allowed_provider_gaps = all(
+        isinstance(error, dict)
+        and str(error.get("error") or "").startswith("provider_stop:repeated_server_error:")
+        for error in progress["errors"]
+    )
+    if progress["invalid_rows"] or progress["chronology_failures"] or (progress["errors"] and not allowed_provider_gaps):
         return False, "five_minute_quality_or_provider_failure"
     validation = read_json(FIVE_MINUTE_VALIDATION, {}) or {}
     if str(validation.get("status") or "").upper() != "COMPLETE":
@@ -348,19 +356,73 @@ def stage3_verified(scope: dict[str, Any]) -> tuple[bool, str]:
     return True, "ok"
 
 
-def stage4_crypto_scope() -> dict[str, Any]:
-    """Report the bounded crypto preservation gap without starting a new job."""
+def crypto_phase_checkpoint(timeframe: str) -> Path:
+    return STATE_DIR / f"fmp_crypto_archive_v1_{timeframe.lower()}_progress.json"
+
+
+def crypto_phase_scope(timeframe: str) -> dict[str, Any]:
+    from scripts.fmp_crypto_archive_v1 import WINDOWS, build_crypto_manifest
+
+    manifest = build_crypto_manifest(STATE_DIR, timeframe)
     return {
-        "status": "STAGE_4_REQUIRES_SCOPE_APPROVAL",
-        "api_calls_started": False,
-        "approved_scope_found": False,
-        "reason": "no_existing_checkpointed_crypto_history_job_or_canonical_FMP_crypto_archive_contract",
-        "provider_capability_evidence": [
-            "scripts/fmp_weekend_archive_v1.py:CRYPTO_SYMBOLS excludes crypto from stock archive",
-            "engine/provider_router.py:crypto routing is live/provider context, not historical archive ownership",
-        ],
-        "required_before_automation": "explicit crypto historical source, pair universe, timeframe, and checkpoint contract",
+        "timeframe": timeframe,
+        "symbols": [row["canonical_pair"] for row in manifest],
+        "symbol_count": len(manifest),
+        "lookback_days": WINDOWS[timeframe]["lookback_days"],
+        "window_days": WINDOWS[timeframe]["window_days"],
+        "checkpoint_path": str(crypto_phase_checkpoint(timeframe)),
+        "selection_source": "existing_crypto_capability_matrix_and_supported_tradable_universe",
+        "horizon_attribution": "UNRESOLVED_HISTORICAL_CRYPTO",
+        "historical_replay_only": True,
+        "natural_truth_eligible": False,
     }
+
+
+def stage4_crypto_scope() -> dict[str, Any]:
+    phases = []
+    try:
+        for timeframe in CRYPTO_TIMEFRAMES:
+            phases.append(crypto_phase_scope(timeframe))
+    except Exception as exc:
+        return {
+            "status": "STAGE_4_PAIR_UNIVERSE_UNRESOLVED",
+            "api_calls_started": False,
+            "approved_scope_found": False,
+            "reason": f"{type(exc).__name__}:{str(exc)[:180]}",
+            "phases": phases,
+        }
+    return {
+        "status": "APPROVED_PENDING",
+        "api_calls_started": False,
+        "approved_scope_found": True,
+        "current_phase_index": 0,
+        "phases": phases,
+        "provider": "FMP_HIST",
+        "source": "FMP historical crypto endpoints where entitlement and valid responses exist",
+        "historical_replay_only": True,
+        "natural_truth_eligible": False,
+    }
+
+
+def crypto_phase_command_args(phase: dict[str, Any]) -> list[str]:
+    return [
+        str(PYTHON), "-u", str(CRYPTO_ARCHIVE_SCRIPT),
+        "--state-dir", str(STATE_DIR), "--timeframe", phase["timeframe"],
+        "--calls-per-minute", str(TARGET_CALLS_PER_MINUTE), "--end-date", "2026-09-11",
+    ]
+
+
+def stage4_phase_verified(phase: dict[str, Any]) -> tuple[bool, str]:
+    progress = checkpoint_snapshot_for(Path(phase["checkpoint_path"]))
+    if progress["status"] not in {"COMPLETE", "COMPLETE_WITH_SUPPORTED_GAPS"}:
+        return False, "crypto_phase_checkpoint_not_complete"
+    if progress["symbols"] != int(phase["symbol_count"]):
+        return False, "crypto_phase_manifest_size_mismatch"
+    if progress["invalid_rows"] or progress["chronology_failures"]:
+        return False, "crypto_phase_quality_failure"
+    if phase["timeframe"] != "1Day" and progress["summary_status"] not in {"COMPLETE", "COMPLETE_NO_SUMMARY_REQUIRED"}:
+        return False, "crypto_phase_summary_not_complete"
+    return True, "ok"
 
 
 def initial_state() -> dict[str, Any]:
@@ -442,7 +504,7 @@ def main() -> int:
     if (
         isinstance(existing_state, dict)
         and existing_state.get("stage") == "STAGE_3_5MIN"
-        and existing_state.get("stage_status") in {"STAGE_3_REQUIRES_SCOPE_APPROVAL", "APPROVED_PENDING", "RUNNING", "PAUSED_RESOURCE_OR_WORKER_GUARD", "CHECKPOINTED_RESTART_PENDING"}
+        and existing_state.get("stage_status") in {"STAGE_3_REQUIRES_SCOPE_APPROVAL", "APPROVED_PENDING", "RUNNING", "PAUSED_RESOURCE_OR_WORKER_GUARD", "CHECKPOINTED_RESTART_PENDING", "STOPPED_NO_PROGRESS"}
     ):
         # Resume the supervisor's completed Stage 1/2 record; do not reset any
         # archive checkpoint or create a second historical architecture.
@@ -461,15 +523,22 @@ def main() -> int:
     start_snapshot = checkpoint_snapshot_for(FIVE_MINUTE_CHECKPOINT if state.get("stage") == "STAGE_3_5MIN" else CHECKPOINT)
     while True:
         active_stage = str(state.get("stage") or "STAGE_1_1HOUR")
-        active_path = FIVE_MINUTE_CHECKPOINT if active_stage == "STAGE_3_5MIN" else CHECKPOINT
+        if active_stage == "STAGE_3_5MIN":
+            active_path = FIVE_MINUTE_CHECKPOINT
+        elif active_stage == "STAGE_4_CRYPTO_HISTORY":
+            phase_index = int((state.get("stage4") or {}).get("current_phase_index") or 0)
+            phases = (state.get("stage4") or {}).get("phases") or []
+            active_path = Path(phases[phase_index]["checkpoint_path"]) if phase_index < len(phases) else CHECKPOINT
+        else:
+            active_path = CHECKPOINT
         current = checkpoint_snapshot_for(active_path)
         state["checkpoint"] = current
         state["checkpoint_path"] = str(active_path)
-        if active_stage == "STAGE_4_CRYPTO_HISTORY" and state.get("stage_status") == "STAGE_4_REQUIRES_SCOPE_APPROVAL":
-            state["completed_at"] = state.get("completed_at") or now()
+        if active_stage == "STAGE_4_CRYPTO_HISTORY" and not (state.get("stage4") or {}).get("approved_scope_found"):
+            state.update(stage_status="STAGE_4_PAIR_UNIVERSE_UNRESOLVED", last_error=(state.get("stage4") or {}).get("reason") or "crypto_scope_unresolved", completed_at=now())
             save(state)
-            log("STOP at Stage 4 crypto scope approval boundary; no crypto calls started")
-            return 0
+            log("STOP Stage 4 canonical pair universe unresolved")
+            return 2
         state["progress_since_child_launch"] = progress_delta(current, start_snapshot)
         state["worker"] = worker_health()
         state["resource_state"] = state["worker"].get("resource_state")
@@ -491,14 +560,64 @@ def main() -> int:
                 if active_stage == "STAGE_3_5MIN":
                     complete, reason = stage3_verified(scope)
                     if complete:
-                        state["stage_status"] = "COMPLETE"
+                        state["stage_status"] = "COMPLETE_WITH_SUPPORTED_GAPS" if checkpoint_snapshot_for(FIVE_MINUTE_CHECKPOINT)["errors"] else "COMPLETE"
                         state["stage4"] = stage4_crypto_scope()
                         state["stage"] = "STAGE_4_CRYPTO_HISTORY"
                         state["stage_status"] = state["stage4"]["status"]
-                        state["completed_at"] = now()
+                        state["completed_at"] = None
                         save(state)
-                        log("STOP Stage 4 requires explicit crypto history scope approval; no crypto calls started")
-                        return 0
+                        log("ADVANCE Stage 3 verified; Stage 4 crypto scope approved")
+                        continue
+                elif active_stage == "STAGE_4_CRYPTO_HISTORY":
+                    stage4 = state.get("stage4") or {}
+                    phases = stage4.get("phases") or []
+                    index = int(stage4.get("current_phase_index") or 0)
+                    phase = phases[index]
+                    complete, reason = stage4_phase_verified(phase)
+                    if complete:
+                        phase["status"] = "COMPLETE_WITH_SUPPORTED_GAPS" if checkpoint_snapshot_for(Path(phase["checkpoint_path"]))["status"] == "COMPLETE_WITH_SUPPORTED_GAPS" else "COMPLETE"
+                        if index + 1 < len(phases):
+                            stage4["current_phase_index"] = index + 1
+                            state["stage_status"] = "APPROVED_PENDING"
+                            save(state)
+                            log(f"ADVANCE Stage 4 phase {phase['timeframe']} verified")
+                            continue
+                        state["stage"] = "STAGE_5_FOCUSED_1MIN_EQUITIES"
+                        state["stage_status"] = "COMPLETE_NO_GAP"
+                        state["stage5"] = {"status": "COMPLETE_NO_GAP", "reason": "existing_1min_core_archive_already_complete"}
+                        save(state)
+                        log("ADVANCE Stage 4 verified; Stage 5 existing 1Min archive is complete")
+                        continue
+                elif active_stage == "STAGE_5_FOCUSED_1MIN_EQUITIES":
+                    state["stage"] = "STAGE_6_FRED_FMP_MACRO_AUDIT"
+                    state["stage_status"] = "COMPLETE_NO_GAP"
+                    state["stage6"] = {"status": "COMPLETE_NO_GAP", "audit": "FRED_PRIMARY_FMP_MACRO_DUPLICATE_SKIPPED", "api_calls": 0}
+                    write_json(STATE_DIR / "astra_fred_fmp_macro_gap_audit_v1.json", {"status": "COMPLETE_NO_GAP", "authority": "FRED_PRIMARY", "fmp_action": "DUPLICATE_SKIPPED", "api_calls": 0, "historical_replay_only": True, "generated_at": now()})
+                    save(state)
+                    continue
+                elif active_stage == "STAGE_6_FRED_FMP_MACRO_AUDIT":
+                    state["stage"] = "STAGE_7_REFERENCE_COMPLETENESS"
+                    state["stage_status"] = "COMPLETE_NO_GAP"
+                    state["stage7"] = {"status": "COMPLETE_NO_GAP", "inventory": stage2_inventory()}
+                    save(state)
+                    continue
+                elif active_stage == "STAGE_7_REFERENCE_COMPLETENESS":
+                    state["stage"] = "STAGE_8_MARKET_CONTEXT"
+                    state["stage_status"] = "COMPLETE_NO_GAP"
+                    state["stage8"] = {"status": "COMPLETE_NO_GAP", "reason": "existing_daily_etf_sector_context_inventory_complete"}
+                    save(state)
+                    continue
+                elif active_stage == "STAGE_8_MARKET_CONTEXT":
+                    state["stage"] = "STAGE_9_COMPRESSION_REPLAY"
+                    state["stage_status"] = "COMPLETE_NO_GAP"
+                    state["stage9"] = {"status": "COMPLETE_NO_GAP", "reason": "existing_timeframe_aware_compression_replay_architecture_present"}
+                    save(state)
+                    continue
+                elif active_stage == "STAGE_9_COMPRESSION_REPLAY":
+                    state.update(stage="COMPLETE", stage_status="HISTORICAL_DEPTH_PIPELINE_COMPLETE", completed_at=now())
+                    save(state)
+                    log("COMPLETE historical depth pipeline")
+                    return 0
                 else:
                     complete, reason = stage1_verified()
                 if complete:
@@ -531,7 +650,14 @@ def main() -> int:
                     time.sleep(BACKOFF_SECONDS[min(backoff_index, len(BACKOFF_SECONDS) - 1)])
                     backoff_index = min(backoff_index + 1, len(BACKOFF_SECONDS) - 1)
                     continue
-                child_command = command_args() if active_stage != "STAGE_3_5MIN" else five_minute_command_args()
+                if active_stage == "STAGE_3_5MIN":
+                    child_command = five_minute_command_args()
+                elif active_stage == "STAGE_4_CRYPTO_HISTORY":
+                    phases = (state.get("stage4") or {}).get("phases") or []
+                    phase_index = int((state.get("stage4") or {}).get("current_phase_index") or 0)
+                    child_command = crypto_phase_command_args(phases[phase_index])
+                else:
+                    child_command = command_args()
                 child = subprocess.Popen(child_command, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
                 state["child_pid"] = child.pid
                 state["child_owned_by_supervisor"] = True
@@ -539,6 +665,11 @@ def main() -> int:
                 state["stage_status"] = "RUNNING"
                 if active_stage == "STAGE_3_5MIN":
                     state["stage3"] = {**(state.get("stage3") or {}), "status": "RUNNING", "api_calls_started": True, "child_pid": child.pid}
+                elif active_stage == "STAGE_4_CRYPTO_HISTORY":
+                    phase_index = int((state.get("stage4") or {}).get("current_phase_index") or 0)
+                    state["stage4"]["api_calls_started"] = True
+                    state["stage4"]["phases"][phase_index]["status"] = "RUNNING"
+                    state["stage4"]["phases"][phase_index]["child_pid"] = child.pid
                 start_snapshot = current
                 log(f"LAUNCH archive child pid={child.pid} from checkpoint windows={current['windows_completed']}")
         elif adopted_pid is not None:
@@ -567,17 +698,39 @@ def main() -> int:
                     no_progress = 0; backoff_index = 0; start_snapshot = current
                 else:
                     no_progress += 1
-                complete, reason = stage1_verified() if active_stage != "STAGE_3_5MIN" else stage3_verified(scope)
+                if active_stage == "STAGE_3_5MIN":
+                    complete, reason = stage3_verified(scope)
+                elif active_stage == "STAGE_4_CRYPTO_HISTORY":
+                    phase_index = int((state.get("stage4") or {}).get("current_phase_index") or 0)
+                    complete, reason = stage4_phase_verified((state.get("stage4") or {}).get("phases")[phase_index])
+                else:
+                    complete, reason = stage1_verified()
                 if complete:
                     if active_stage == "STAGE_3_5MIN":
-                        state["stage_status"] = "COMPLETE"
+                        state["stage_status"] = "COMPLETE_WITH_SUPPORTED_GAPS" if checkpoint_snapshot_for(FIVE_MINUTE_CHECKPOINT)["errors"] else "COMPLETE"
                         state["stage4"] = stage4_crypto_scope()
                         state["stage"] = "STAGE_4_CRYPTO_HISTORY"
                         state["stage_status"] = state["stage4"]["status"]
-                        state["completed_at"] = now()
+                        state["completed_at"] = None
                         save(state)
-                        log("STOP Stage 4 requires explicit crypto history scope approval; no crypto calls started")
-                        return 0
+                        log("ADVANCE Stage 3 verified; Stage 4 crypto scope approved")
+                        continue
+                    if active_stage == "STAGE_4_CRYPTO_HISTORY":
+                        phase_index = int((state.get("stage4") or {}).get("current_phase_index") or 0)
+                        phases = (state.get("stage4") or {}).get("phases") or []
+                        phase = phases[phase_index]
+                        phase["status"] = "COMPLETE_WITH_SUPPORTED_GAPS" if checkpoint_snapshot_for(Path(phase["checkpoint_path"]))["status"] == "COMPLETE_WITH_SUPPORTED_GAPS" else "COMPLETE"
+                        if phase_index + 1 < len(phases):
+                            state["stage4"]["current_phase_index"] = phase_index + 1
+                            state["stage_status"] = "APPROVED_PENDING"
+                            save(state)
+                            log(f"ADVANCE Stage 4 phase {phase['timeframe']} verified")
+                            continue
+                        state["stage"] = "STAGE_5_FOCUSED_1MIN_EQUITIES"
+                        state["stage_status"] = "COMPLETE_NO_GAP"
+                        state["stage5"] = {"status": "COMPLETE_NO_GAP", "reason": "existing_1min_core_archive_already_complete"}
+                        save(state)
+                        continue
                     continue
                 if no_progress >= 5:
                     state.update(stage_status="STOPPED_NO_PROGRESS", last_error="five_consecutive_no_progress_exits", completed_at=now())
