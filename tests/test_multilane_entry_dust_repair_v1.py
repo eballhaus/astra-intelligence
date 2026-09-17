@@ -161,6 +161,127 @@ class MultiLaneEntryDustRepairTests(unittest.TestCase):
         self.assertEqual(result["provider_calls_used"], 0)
         self.assertEqual(runtime["equity_risk_envelopes_snapshot_v1"]["status"], "FAILED_FAIL_CLOSED")
 
+    def test_current_risk_snapshot_does_not_refetch_rotating_symbols_within_window(self):
+        original_cwd = os.getcwd()
+        try:
+            with tempfile.TemporaryDirectory(prefix="astra_risk_observer_incremental_") as temp_root:
+                os.chdir(temp_root)
+                os.mkdir("state")
+                sys.modules.pop("server_extend", None)
+                with patch("engine.position_tracker.PositionTracker", return_value=SimpleNamespace()):
+                    server_extend = import_module("server_extend")
+        finally:
+            os.chdir(original_cwd)
+
+        now = time.time()
+        runtime = {
+            "equity_risk_envelopes_snapshot_v1": {
+                "status": "CURRENT",
+                "generated_at_epoch": now - 10.0,
+                "valid_until_epoch": now + 290.0,
+                "rows": [{"symbol": "AAA", "candidate_id": "old", "atr_pct": 1.0}],
+            }
+        }
+        observed = {"quotes": [], "bars": []}
+
+        class Broker:
+            def latest_quote(self, symbol):
+                observed["quotes"].append(symbol)
+                return {"ok": True, "quote": {"ap": 100.0, "bp": 99.9, "t": _future()}}
+
+            def historical_bars(self, symbol, **_kwargs):
+                observed["bars"].append(symbol)
+                return {"bars": [
+                    {"t": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat().replace("+00:00", "Z"), "o": 99.0, "h": 101.0, "l": 98.0, "c": 100.0, "v": 1000},
+                    {"t": (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat().replace("+00:00", "Z"), "o": 100.0, "h": 102.0, "l": 99.0, "c": 101.0, "v": 1200},
+                ]}
+
+        autopilot = SimpleNamespace(_runtime_state=runtime, _save_state_file=lambda: None)
+        candidates = [{"symbol": "AAA", "candidate_id": "new"}, {"symbol": "BBB", "candidate_id": "new-bbb"}]
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}), patch.object(
+            server_extend, "PAPER_AUTOPILOT", autopilot
+        ), patch.object(server_extend, "ALPACA_PAPER_BROKER", Broker()), patch.object(
+            server_extend, "_bounded_current_equity_candidate_rows_v1", return_value=candidates
+        ), patch.object(server_extend, "_market_session_type_et", return_value="regular_hours"):
+            result = server_extend._refresh_equity_risk_envelopes_snapshot_v1()
+
+        self.assertEqual(result["status"], "CURRENT_CACHE_REUSED")
+        self.assertEqual(observed["quotes"], [])
+        self.assertEqual(observed["bars"], [])
+        snapshot_rows = runtime["equity_risk_envelopes_snapshot_v1"]["rows"]
+        self.assertEqual([row["symbol"] for row in snapshot_rows], ["AAA"])
+        self.assertEqual(snapshot_rows[0]["candidate_id"], "old")
+
+    def test_worker_crypto_ranking_prefers_current_websocket_quote(self):
+        original_cwd = os.getcwd()
+        try:
+            with tempfile.TemporaryDirectory(prefix="astra_crypto_quote_handoff_") as temp_root:
+                os.chdir(temp_root)
+                os.mkdir("state")
+                sys.modules.pop("server_extend", None)
+                with patch("engine.position_tracker.PositionTracker", return_value=SimpleNamespace()):
+                    server_extend = import_module("server_extend")
+        finally:
+            os.chdir(original_cwd)
+
+        websocket_quote = {
+            "symbol": "ETH/USD",
+            "price": 2500.0,
+            "bid": 2499.0,
+            "ask": 2501.0,
+            "provider_used": "KRAKEN_PUBLIC_WS",
+            "provider_native_timestamp": _future(),
+        }
+        with patch.object(server_extend.ALPACA_WS_MONITOR, "get_quote", return_value=websocket_quote), patch(
+            "engine.data_orchestrator._quote_to_rank_row",
+            return_value=({"symbol": "ETH/USD", "price": 2500.0}, {"provider_used": "KRAKEN_PUBLIC_WS"}),
+        ) as rank_row, patch.object(
+            server_extend, "ALPACA_WS_MONITOR", server_extend.ALPACA_WS_MONITOR
+        ):
+            quote, row, meta, provider_calls, error = server_extend._worker_crypto_quote_for_ranking_v1(
+                "ETH/USD", batch_id="test"
+            )
+
+        self.assertEqual(provider_calls, 0)
+        self.assertEqual(error, "")
+        self.assertEqual(quote["provider_used"], "KRAKEN_PUBLIC_WS")
+        self.assertEqual(row["symbol"], "ETH/USD")
+        self.assertEqual(meta["provider_used"], "KRAKEN_PUBLIC_WS")
+        rank_row.assert_called_once()
+
+    def test_crypto_ranking_reuses_current_completed_bar_window(self):
+        original_cwd = os.getcwd()
+        try:
+            with tempfile.TemporaryDirectory(prefix="astra_crypto_bar_cache_") as temp_root:
+                os.chdir(temp_root)
+                os.mkdir("state")
+                sys.modules.pop("server_extend", None)
+                with patch("engine.position_tracker.PositionTracker", return_value=SimpleNamespace()):
+                    server_extend = import_module("server_extend")
+        finally:
+            os.chdir(original_cwd)
+
+        now = time.time()
+        autopilot = SimpleNamespace(_runtime_state={
+            "crypto_rankings_snapshot_v1": {
+                "generated_at_epoch": now - 600.0,
+                "generated_at": _future(),
+                "rows": [{"symbol": "ETH/USD", "bar_timestamp": datetime.fromtimestamp(now - 900.0, timezone.utc).isoformat().replace("+00:00", "Z")}],
+            }
+        })
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "worker"}), patch.object(
+            server_extend, "PAPER_AUTOPILOT", autopilot
+        ), patch.object(
+            server_extend, "_paper_autopilot_crypto_open_rows_v1", return_value=[]
+        ), patch.object(
+            server_extend, "ALPACA_PAPER_BROKER"
+        ) as broker:
+            result = server_extend._refresh_crypto_rankings_snapshot_v1()
+
+        self.assertEqual(result["status"], "CURRENT_CACHE_REUSED")
+        self.assertEqual(result["provider_calls_used"], 0)
+        broker.crypto_capability_status.assert_not_called()
+
     def test_expired_failed_risk_snapshot_is_not_retried_off_session(self):
         original_cwd = os.getcwd()
         try:

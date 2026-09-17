@@ -21778,6 +21778,54 @@ def _worker_refresh_crypto_capability_v1() -> dict:
         return {"status": "FAILED_FAIL_CLOSED", "capability_last_refresh_error": str(exc)[:180], "broker_read_calls_used": 0, "broker_actions_used": 0}
 
 
+def _worker_crypto_quote_for_ranking_v1(
+    symbol: str,
+    *,
+    batch_id: str,
+) -> tuple[dict, dict | None, dict, int, str]:
+    """Use a current worker quote before the bounded router fallback."""
+    from engine import data_orchestrator as active_data_orchestrator
+
+    try:
+        ws_quote = dict(ALPACA_WS_MONITOR.get_quote(symbol, max_age_seconds=20.0) or {})
+    except Exception:
+        ws_quote = {}
+    ws_price = _to_float(ws_quote.get("price"), 0.0)
+    ws_timestamp = str(
+        ws_quote.get("provider_native_timestamp")
+        or ws_quote.get("provider_quote_timestamp")
+        or ws_quote.get("quote_timestamp")
+        or ""
+    ).strip()
+    if ws_quote and ws_price > 0.0 and ws_timestamp:
+        quote = dict(ws_quote)
+        quote.update({
+            "symbol": symbol,
+            "price": ws_price,
+            "valid_quote": True,
+            "quote_timestamp": ws_timestamp,
+            "provider_quote_timestamp": ws_timestamp,
+            "provider_native_timestamp": ws_timestamp,
+            "provider_used": quote.get("provider_used") or quote.get("provider") or "worker_websocket",
+            "provider_name": quote.get("provider_name") or quote.get("provider_used") or quote.get("provider") or "worker_websocket",
+            "attempted_providers": list(quote.get("attempted_providers") or [quote.get("provider_used") or quote.get("provider") or "worker_websocket"]),
+        })
+        row, meta = active_data_orchestrator._quote_to_rank_row(symbol, quote, "crypto", _now_utc_iso())
+        return quote, row, meta, 0, ""
+    try:
+        quote = dict(active_data_orchestrator._router.get_quote(
+            symbol,
+            asset_type="crypto",
+            batch_id=batch_id,
+            bypass_cache=True,
+            use_selective_backups=False,
+        ) or {})
+        row, meta = active_data_orchestrator._quote_to_rank_row(symbol, quote, "crypto", _now_utc_iso())
+        return quote, row, meta, 1, ""
+    except Exception as exc:
+        return {}, None, {}, 1, str(exc)[:180]
+
+
 def _refresh_crypto_rankings_snapshot_v1() -> dict:
     """Refresh a bounded rotating batch of broker-supported crypto pairs."""
     if str(os.getenv("ASTRA_PROCESS_ROLE", "api")).strip().lower() != "worker":
@@ -21806,8 +21854,30 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
         if handoff.get("provider_quote_timestamp") or handoff.get("quote_timestamp"):
             previous_handoff_symbols.add(symbol)
     missing_active_handoffs = set(active_management_symbols) - previous_handoff_symbols
-    if previous.get("rows") and previous.get("quote_provider") not in {"", "local_snapshot", None} and not missing_active_handoffs and now - float(previous.get("generated_at_epoch") or 0.0) <= max(30.0, float(RANKINGS_ENDPOINT_TTL_SECONDS)):
-        return {"status": "CURRENT_CACHE_REUSED", "generated_at": previous.get("generated_at"), "rows": len(previous.get("rows") or []), "provider_calls_used": 0, "broker_actions_used": 0}
+    completed_bar_window_current = False
+    previous_rows = [row for row in list(previous.get("rows") or []) if isinstance(row, dict)]
+    if previous_rows and not missing_active_handoffs:
+        bar_ages = []
+        for row in previous_rows:
+            bar_epoch = _parse_iso_or_epoch(row.get("bar_timestamp"))
+            if bar_epoch <= 0.0:
+                bar_ages = []
+                break
+            bar_ages.append(now - bar_epoch)
+        # A 15-minute bar is the latest completed bar until the following
+        # interval completes. Reuse the ranking snapshot inside that bounded
+        # window; executable quote freshness remains independently enforced
+        # by the existing candidate/management gates.
+        completed_bar_window_current = bool(bar_ages and all(0.0 <= age <= 1800.0 for age in bar_ages))
+    if (
+        previous_rows
+        and not missing_active_handoffs
+        and (
+            now - float(previous.get("generated_at_epoch") or 0.0) <= max(30.0, float(RANKINGS_ENDPOINT_TTL_SECONDS))
+            or completed_bar_window_current
+        )
+    ):
+        return {"status": "CURRENT_CACHE_REUSED", "generated_at": previous.get("generated_at"), "rows": len(previous_rows), "provider_calls_used": 0, "broker_actions_used": 0}
     if previous.get("status") == "FAILED_FAIL_CLOSED" and now - float(previous.get("generated_at_epoch") or 0.0) <= 120.0:
         return {"status": "RECENT_FAILURE_COOLDOWN", "exact_blocker": previous.get("exact_blocker"), "provider_calls_used": 0, "broker_actions_used": 0}
 
@@ -21874,14 +21944,11 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
     provider_calls_used = 0
     for rank, symbol in enumerate(symbols, start=1):
         quote_error = ""
-        try:
-            from engine import data_orchestrator as active_data_orchestrator
-            provider_calls_used += 1
-            quote = dict(active_data_orchestrator._router.get_quote(symbol, asset_type="crypto", batch_id=f"crypto-worker:{int(now)}:{rank}", bypass_cache=True, use_selective_backups=False) or {})
-            quote_row, quote_meta = active_data_orchestrator._quote_to_rank_row(symbol, quote, "crypto", _now_utc_iso())
-        except Exception as exc:
-            quote_row, quote_meta, quote = None, {}, {}
-            quote_error = str(exc)[:180]
+        quote, quote_row, quote_meta, quote_calls, quote_error = _worker_crypto_quote_for_ranking_v1(
+            symbol,
+            batch_id=f"crypto-worker:{int(now)}:{rank}",
+        )
+        provider_calls_used += quote_calls
         quote_provider = str((quote_meta or {}).get("provider_used") or quote.get("provider_used") or "").lower()
         if not quote_row or quote_provider in {"", "none", "local_snapshot"}:
             failures.append({"symbol": symbol, "blocker": "FRESH_QUOTE_UNAVAILABLE"})
@@ -22138,22 +22205,36 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
             "order_session_eligible": not closed_session,
         }
     candidates = _bounded_current_equity_candidate_rows_v1()
-    required_symbols = {
-        str(row.get("symbol") or row.get("ticker") or "").upper().strip()
-        for row in candidates
-        if isinstance(row, dict) and str(row.get("symbol") or row.get("ticker") or "").strip()
-    }
-    cached_symbols = {
-        str(row.get("symbol") or "").upper().strip()
-        for row in list(previous.get("rows") or [])
-        if isinstance(row, dict) and str(row.get("symbol") or "").strip()
-    }
-    if (
+    cache_current = bool(
         previous.get("status") in {"CURRENT", "OFF_HOURS_HISTORICAL_CURRENT"}
         and previous.get("rows")
-        and required_symbols.issubset(cached_symbols)
         and now_epoch - float(previous.get("generated_at_epoch") or 0.0) < refresh_seconds
-    ):
+    )
+    reusable_rows: list[dict] = []
+    refresh_candidates = list(candidates)
+    if cache_current:
+        cached_rows_by_symbol = {
+            str(row.get("symbol") or "").upper().strip(): dict(row)
+            for row in list(previous.get("rows") or [])
+            if isinstance(row, dict) and str(row.get("symbol") or "").strip()
+        }
+        # Candidate rotation must not turn the observer's existing bounded
+        # refresh cadence into a full sequential provider batch each cycle.
+        # Newly seen symbols remain without risk evidence and fail closed at
+        # the existing pretrade join until the refresh window expires.
+        refresh_candidates = []
+        for candidate in candidates:
+            symbol = str(candidate.get("symbol") or candidate.get("ticker") or "").upper().strip()
+            cached = dict(cached_rows_by_symbol.get(symbol) or {})
+            if not cached:
+                continue
+            # Risk evidence is market-data keyed by symbol. Keep the current
+            # candidate identity attached while reusing only the still-valid
+            # provider observation; never extend its validity window here.
+            if candidate.get("candidate_id") is not None:
+                cached["candidate_id"] = candidate.get("candidate_id")
+            reusable_rows.append(cached)
+    if cache_current and not refresh_candidates:
         return {"status": "CURRENT_CACHE_REUSED", "rows": len(previous.get("rows") or []), "provider_calls_used": 0, "broker_actions_used": 0}
     if not candidates:
         snapshot = {
@@ -22165,11 +22246,11 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
         PAPER_AUTOPILOT._save_state_file()
         return {"status": "READY_BUT_NO_CURRENT_CANDIDATE", "rows": 0, "provider_calls_used": 0, "broker_actions_used": 0}
 
-    observations: list[dict] = []
+    observations: list[dict] = list(reusable_rows)
     failures: list[dict] = []
     end = now_utc
     start = end - timedelta(hours=6)
-    for candidate in candidates:
+    for candidate in refresh_candidates:
         symbol = str(candidate.get("symbol") or candidate.get("ticker") or "").upper().strip()
         quote_payload, quote, price = {}, {}, 0.0
         if not closed_session:
@@ -22258,7 +22339,7 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
     }
     PAPER_AUTOPILOT._runtime_state["equity_risk_envelopes_snapshot_v1"] = snapshot
     PAPER_AUTOPILOT._save_state_file()
-    return {"status": snapshot["status"], "rows": len(observations), "failed_symbols": len(failures), "provider_calls_used": len(candidates) * (1 if closed_session else 2), "broker_actions_used": 0, "order_session_eligible": not closed_session}
+    return {"status": snapshot["status"], "rows": len(observations), "failed_symbols": len(failures), "provider_calls_used": len(refresh_candidates) * (1 if closed_session else 2), "broker_actions_used": 0, "order_session_eligible": not closed_session}
 
 
 def _provider_role_policy_v1(provider_name):
