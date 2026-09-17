@@ -21895,7 +21895,10 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
     })[:30]
     if not discovered:
         discovered = list(_ASTRA_CRYPTO_APPROVED_CORE_UNIVERSE_V1)
-    batch_size = max(1, min(3, int(os.getenv("ASTRA_CRYPTO_REFRESH_PAIRS_PER_CYCLE", "3") or 3)))
+    # Keep the default worker refresh bounded to one sequential quote/bar pair.
+    # Operators may raise it through the existing env contract, but the
+    # worker's cycle boundary must not depend on three serialized REST reads.
+    batch_size = max(1, min(3, int(os.getenv("ASTRA_CRYPTO_REFRESH_PAIRS_PER_CYCLE", "1") or 1)))
     cursor = int(previous.get("discovery_cursor") or 0) % len(discovered)
     from engine.astra_crypto_executable_pair_quality_v1 import (
         apply_crypto_executable_quality_tiebreak_v1,
