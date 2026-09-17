@@ -3218,6 +3218,9 @@ except Exception:
         def get_quote(self, *args, **kwargs):
             return None
 
+        def publish_broad_discovery_observations(self, *args, **kwargs):
+            return {"ok": False, "fallback": True}
+
         def status(self):
             return {"enabled": False, "fallback": True, "connected": False, "symbols": []}
 
@@ -3385,6 +3388,9 @@ EDGE_DEVELOPMENT_SUITE = EdgeDevelopmentSuiteV1(state_dir=STATE)
 TRADE_MANAGEMENT_PORTFOLIO_INTELLIGENCE_SUITE = TradeManagementPortfolioIntelligenceV1(state_dir=STATE)
 MARKET_CALENDAR_KNOWLEDGE_INTELLIGENCE = MarketCalendarKnowledgeIntelligenceV1(state_dir=STATE)
 BROAD_UNIVERSE_INTAKE_PROMOTION = BroadUniverseIntakePromotionV1(state_dir=STATE)
+_set_broad_observation_publisher = getattr(BROAD_UNIVERSE_INTAKE_PROMOTION, "set_observation_publisher", None)
+if callable(_set_broad_observation_publisher):
+    _set_broad_observation_publisher(getattr(ALPACA_WS_MONITOR, "publish_broad_discovery_observations", None))
 TRADE_LIFECYCLE_EXCURSION = TradeLifecycleExcursionV1(state_dir=STATE)
 TRADE_LIFECYCLE_EXCURSION_V2 = TradeLifecycleExcursionV2(state_dir=STATE)
 ADAPTIVE_PROFIT_CAPTURE_INTELLIGENCE = AdaptiveProfitCaptureIntelligenceV1(state_dir=STATE)
@@ -17215,6 +17221,20 @@ def _refresh_alpaca_ws_allocation(*, force_reconcile=False):
                 PAPER_AUTOPILOT._runtime_state["alpaca_ws_active_position_monitor_v1"] = dict(status_reader() or {})
             return
         now = time.time()
+        # Broad discovery uses the same worker-owned observation publisher as
+        # active-position monitoring, but remains asynchronous and
+        # non-executable.  It must yield before any trading-critical work.
+        broad_scheduler = getattr(BROAD_UNIVERSE_INTAKE_PROMOTION, "schedule_broad_observation_refresh", None)
+        if callable(broad_scheduler):
+            try:
+                inventory_reader = getattr(BROAD_UNIVERSE_INTAKE_PROMOTION, "cached_inventory_symbols", None)
+                broad_scheduler(
+                    inventory_reader() if callable(inventory_reader) else [],
+                    resource_state=str(PAPER_AUTOPILOT._runtime_state.get("resource_state") or "RESOURCE_NORMAL"),
+                    cycle_elapsed_seconds=PAPER_AUTOPILOT._runtime_state.get("cycle_elapsed_seconds"),
+                )
+            except Exception:
+                pass
         # Only broker-linked, canonical PaperAutopilot positions may subscribe.
         # PositionTracker includes legacy rows and broker dust, which belong to
         # reconciliation rather than live position monitoring.  Equity and
@@ -21555,6 +21575,16 @@ def rankings():
                 market_rows = [dict(row) for row in (market_discovery.get("rows") or []) if isinstance(row, dict)]
             except Exception:
                 market_discovery = {"error": "market_discovery_refresh_failed"}
+        broad_observations = getattr(BROAD_UNIVERSE_INTAKE_PROMOTION, "current_broad_observation_rows", None)
+        if callable(broad_observations):
+            try:
+                market_rows.extend(
+                    {**dict(row), "discovery_source": "alpaca_sip_broad_snapshot"}
+                    for row in (broad_observations() or [])
+                    if isinstance(row, dict)
+                )
+            except Exception:
+                pass
         selector = getattr(BROAD_UNIVERSE_INTAKE_PROMOTION, "select_rotation", None)
         if callable(selector):
             discovery = selector(

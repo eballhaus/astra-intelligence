@@ -53,6 +53,7 @@ def _float_or_none(value: Any) -> float | None:
 
 SIP_CANARY_ENV = "ASTRA_ALPACA_SIP_CANARY_SYMBOLS"
 MAX_SIP_CANARY_SYMBOLS = 24
+MAX_BROAD_DISCOVERY_OBSERVATIONS = 3_000
 
 
 class AlpacaWSMonitor:
@@ -99,6 +100,7 @@ class AlpacaWSMonitor:
         self._bars: dict[str, dict[str, Any]] = {}
         self._shadow_quotes: dict[str, dict[str, Any]] = {}
         self._shadow_bars: dict[str, dict[str, Any]] = {}
+        self._broad_discovery_observations: dict[str, dict[str, Any]] = {}
         self._crypto_quotes: dict[str, dict[str, Any]] = {}
         self._public_crypto_quotes: dict[str, dict[str, dict[str, Any]]] = {"KRAKEN": {}, "COINBASE": {}}
         self._stats: dict[str, Any] = {
@@ -459,6 +461,51 @@ class AlpacaWSMonitor:
             "symbol_cap": cap,
             "crypto_symbol_cap": crypto_cap,
         }
+
+    def publish_broad_discovery_observations(
+        self,
+        rows: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    ) -> dict[str, Any]:
+        """Publish bounded Alpaca snapshot rows for discovery-only consumers.
+
+        These rows share the worker-owned observation publisher but are never
+        added to primary position subscriptions or executable evidence.  The
+        caller supplies already-normalized provider timestamps.
+        """
+        accepted: dict[str, dict[str, Any]] = {}
+        for raw in rows or ():
+            if not isinstance(raw, dict):
+                continue
+            symbol = str(raw.get("symbol") or "").upper().strip()
+            if not symbol or "/" in symbol:
+                continue
+            record = dict(raw)
+            record.update({
+                "symbol": symbol,
+                "provider": str(record.get("provider") or "ALPACA_SIP_BROAD_SNAPSHOT"),
+                "provider_used": str(record.get("provider_used") or "ALPACA_SIP_BROAD_SNAPSHOT"),
+                "observation_role": "BROAD_DISCOVERY_TIER0",
+                "observation_authority": False,
+                "discovery_only": True,
+                "executable_evidence": False,
+                "broker_actions_added": 0,
+            })
+            accepted[symbol] = record
+        if len(accepted) > MAX_BROAD_DISCOVERY_OBSERVATIONS:
+            accepted = dict(list(sorted(accepted.items()))[:MAX_BROAD_DISCOVERY_OBSERVATIONS])
+        with self._lock:
+            self._broad_discovery_observations = accepted
+        return {
+            "ok": True,
+            "observation_count": len(accepted),
+            "observation_role": "BROAD_DISCOVERY_TIER0",
+            "observation_authority": False,
+            "executable_evidence": False,
+        }
+
+    def broad_discovery_observations(self) -> dict[str, dict[str, Any]]:
+        with self._lock:
+            return {symbol: dict(row) for symbol, row in self._broad_discovery_observations.items()}
 
     def _ensure_thread(self) -> None:
         if not self._is_canonical_owner() or not (
@@ -1281,6 +1328,10 @@ class AlpacaWSMonitor:
             }
             observations.update(selected_crypto_observations)
             canary_selection = dict(self._sip_canary_selection)
+            broad_discovery_observations = {
+                symbol: dict(row)
+                for symbol, row in self._broad_discovery_observations.items()
+            }
         canary_symbols = self._active_sip_canary_symbols()
         canary_observations = {
             symbol: observation
@@ -1421,6 +1472,8 @@ class AlpacaWSMonitor:
             "owner_process_role": "worker" if self._is_canonical_owner() else "api",
             "shared_state_consumed": False,
             "observations": observations,
+            "broad_discovery_observations": broad_discovery_observations,
+            "broad_discovery_observation_count": len(broad_discovery_observations),
             "crypto_public_fallback_enabled": self._public_crypto_stream_enabled(),
             "crypto_public_fallback_stats": public_crypto_stats,
             "crypto_public_fallback_connections": public_connections,

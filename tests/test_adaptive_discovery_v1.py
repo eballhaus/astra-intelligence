@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from datetime import UTC, datetime, timedelta
 
 from engine.broad_universe_intake_promotion_v1 import BroadUniverseIntakePromotionV1
 from engine.paper_autopilot import _paper_selection_priority
+from engine.provider_router import ProviderRouter
 
 
 class _FakeDiscoveryRouter:
@@ -29,6 +31,49 @@ class _FakeDiscoveryRouter:
         else:
             rows = [{"symbol": "MSFT", "changesPercentage": 1.0, "volume": 9_000_000}]
         return {"ok": True, "rows": rows, "status": 200, "response_bytes": 128, "provider": "FMP"}
+
+
+class _FakeBroadRouter(_FakeDiscoveryRouter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.snapshot_batches: list[list[str]] = []
+
+    def fetch_alpaca_tradable_equity_assets(self) -> dict:
+        return {
+            "ok": True,
+            "rows": [
+                {"symbol": "AAPL", "status": "active", "tradable": True},
+                {"symbol": "MSFT", "status": "active", "tradable": True},
+                {"symbol": "OLD", "status": "inactive", "tradable": False},
+            ],
+        }
+
+    def fetch_alpaca_stock_snapshots(self, symbols, *, feed="sip", batch_size=100) -> dict:
+        names = list(symbols)
+        self.snapshot_batches.extend(names[index:index + batch_size] for index in range(0, len(names), batch_size))
+        rows = []
+        now = datetime.now(UTC).replace(microsecond=0)
+        quote_time = now.isoformat().replace("+00:00", "Z")
+        trade_time = (now - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+        bar_time = (now - timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
+        for symbol in names:
+            rows.append({
+                "symbol": symbol,
+                "snapshot": {
+                    "latestQuote": {"t": quote_time, "bp": 99.9, "ap": 100.1},
+                    "latestTrade": {"t": trade_time, "p": 100.0, "s": 10},
+                    "minuteBar": {"t": bar_time, "o": 99.0, "h": 101.0, "l": 98.5, "c": 100.0, "v": 5000},
+                    "prevDailyBar": {"c": 98.0},
+                },
+            })
+        return {
+            "ok": True,
+            "rows": rows,
+            "provider_calls": len(self.snapshot_batches),
+            "batches": len(self.snapshot_batches),
+            "response_bytes": len(rows) * 100,
+            "errors": [],
+        }
 
 
 def test_inventory_does_not_inject_synthetic_candidates() -> None:
@@ -91,6 +136,87 @@ def test_authoritative_fmp_universe_keeps_only_liquid_common_stocks() -> None:
         owner._provider_router = router
         assert owner.inventory_symbols() == ["AAPL"]
         assert router.calls == ["company_screener"]
+
+
+def test_alpaca_inventory_extends_cached_universe_without_inactive_symbols() -> None:
+    with TemporaryDirectory() as directory:
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        router = _FakeBroadRouter()
+        owner._provider_router = router
+        symbols = owner.inventory_symbols()
+        assert "AAPL" in symbols and "MSFT" in symbols
+        assert "OLD" not in symbols
+
+
+def test_broad_snapshots_are_batched_normalized_and_published_as_observation_only() -> None:
+    with TemporaryDirectory() as directory:
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        router = _FakeBroadRouter()
+        owner._provider_router = router
+        published: list[dict] = []
+        owner.set_observation_publisher(lambda rows: published.extend(rows))
+        def symbol_for(index: int) -> str:
+            value = index
+            chars = []
+            while value:
+                chars.append(chr(65 + (value % 26)))
+                value //= 26
+            return "A" + "".join(reversed(chars or ["A"]))
+
+        symbols = [symbol_for(i) for i in range(251)]
+        owner._refresh_broad_observations(symbols)
+        assert len(router.snapshot_batches) == 3
+        assert [len(batch) for batch in router.snapshot_batches] == [100, 100, 51]
+        rows = owner.current_broad_observation_rows()
+        assert len(rows) == 251
+        assert len(published) == 251
+        assert rows[0]["provider"] == "ALPACA_SIP_BROAD_SNAPSHOT"
+        assert rows[0]["observation_role"] == "BROAD_DISCOVERY_TIER0"
+        assert rows[0]["observation_authority"] is False
+        assert rows[0]["executable_evidence"] is False
+        assert rows[0]["bid"] == 99.9
+        assert rows[0]["volume"] == 5000.0
+
+
+def test_broad_observation_refresh_is_worker_only_and_asynchronous(monkeypatch) -> None:
+    with TemporaryDirectory() as directory:
+        monkeypatch.setenv("ASTRA_PROCESS_ROLE", "worker")
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        owner._provider_router = _FakeBroadRouter()
+        result = owner.schedule_broad_observation_refresh(["AAPL", "MSFT"])
+        assert result["scheduled"] is True
+        thread = owner._observation_thread
+        assert thread is not None
+        thread.join(timeout=2.0)
+        assert not thread.is_alive()
+        assert owner._observation_status["status"] == "CURRENT"
+        assert owner.schedule_broad_observation_refresh(["AAPL"]) ["status"] in {"COOLDOWN", "RUNNING"}
+
+
+def test_broad_observation_scheduler_does_not_run_in_api_process(monkeypatch) -> None:
+    with TemporaryDirectory() as directory:
+        monkeypatch.setenv("ASTRA_PROCESS_ROLE", "api")
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        result = owner.schedule_broad_observation_refresh(["AAPL"])
+        assert result == {"status": "NOT_WORKER", "scheduled": False}
+
+
+def test_provider_router_uses_multi_symbol_alpaca_snapshot_batches(monkeypatch) -> None:
+    router = ProviderRouter()
+    calls: list[dict] = []
+    monkeypatch.setattr(router, "_key_for", lambda _provider, _asset_type: "key")
+
+    def request(provider, url, *, params=None, headers=None):
+        calls.append({"provider": provider, "url": url, "params": dict(params or {})})
+        return ({symbol: {"latestTrade": {"p": 100.0}} for symbol in str(params["symbols"]).split(",")}, 200, "", 1.0)
+
+    monkeypatch.setattr(router, "_request", request)
+    monkeypatch.setattr(router, "_request_bytes", lambda *args, **kwargs: 0)
+    symbols = [f"B{chr(65 + (i // 26))}{chr(65 + (i % 26))}" for i in range(205)]
+    result = router.fetch_alpaca_stock_snapshots(symbols, batch_size=100)
+    assert result["batches"] == 3
+    assert result["provider_calls"] == 3
+    assert [len(call["params"]["symbols"].split(",")) for call in calls] == [100, 100, 5]
 
 
 def test_market_indexes_prioritize_real_mover_without_creating_candidate_evidence(monkeypatch) -> None:

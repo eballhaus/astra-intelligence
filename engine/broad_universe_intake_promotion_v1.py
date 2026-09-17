@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from collections import Counter
 from datetime import datetime, timezone
@@ -33,6 +34,10 @@ AUTHORITATIVE_UNIVERSE_TTL_SECONDS = 86_400
 MARKET_DISCOVERY_TTL_SECONDS = 300
 AUTHORITATIVE_UNIVERSE_LIMIT = 650
 MARKET_DISCOVERY_LIMIT = 250
+ALPACA_UNIVERSE_TTL_SECONDS = 86_400
+DEFAULT_BROAD_OBSERVATION_REFRESH_SECONDS = 60
+DEFAULT_BROAD_OBSERVATION_BATCH_SIZE = 100
+MAX_BROAD_OBSERVATION_SYMBOLS = 3_000
 
 LANE_DISCOVERY_LANES = ("SCALP", "DAY", "SWING")
 LANE_HOT_LIST_LIMITS = {"SCALP": 150, "DAY": 150, "SWING": 300}
@@ -169,8 +174,190 @@ class BroadUniverseIntakePromotionV1:
         self.quality_cohort_path = self.state_dir / "candidate_quality_selection_v1.json"
         self.market_snapshot_path = self.state_dir / "fmp_market_discovery_snapshot_v1.json"
         self.lane_hot_list_path = self.state_dir / "lane_aware_discovery_v1.json"
+        self.broad_observation_path = self.state_dir / "broad_live_observations_v1.json"
         self._last_status: dict[str, Any] = {}
         self._provider_router = ProviderRouter() if ProviderRouter is not None else None
+        self._observation_lock = threading.RLock()
+        self._observation_thread: threading.Thread | None = None
+        self._observation_rows: list[dict[str, Any]] = []
+        self._observation_status: dict[str, Any] = {
+            "status": "NOT_STARTED",
+            "observation_role": "BROAD_DISCOVERY_TIER0",
+            "observation_authority": False,
+            "executable_evidence": False,
+        }
+        self._observation_publisher: Any = None
+
+    def set_observation_publisher(self, publisher: Any) -> None:
+        """Attach the existing worker-owned observation publisher only."""
+        self._observation_publisher = publisher if callable(publisher) else None
+
+    @staticmethod
+    def _provider_timestamp_epoch(value: Any) -> float | None:
+        try:
+            text = str(value or "").strip()
+            if not text:
+                return None
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            parsed = datetime.fromisoformat(text)
+            if parsed.tzinfo is None:
+                return None
+            return parsed.astimezone(timezone.utc).timestamp()
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    @classmethod
+    def _normalize_snapshot_row(cls, raw: dict[str, Any], *, received_at: float) -> dict[str, Any] | None:
+        symbol = _norm_symbol(raw.get("symbol"))
+        snapshot = raw.get("snapshot") if isinstance(raw.get("snapshot"), dict) else {}
+        quote = snapshot.get("latestQuote") if isinstance(snapshot.get("latestQuote"), dict) else {}
+        trade = snapshot.get("latestTrade") if isinstance(snapshot.get("latestTrade"), dict) else {}
+        minute = snapshot.get("minuteBar") if isinstance(snapshot.get("minuteBar"), dict) else {}
+        timestamps = [
+            (quote.get("t"), "quote"),
+            (trade.get("t"), "trade"),
+            (minute.get("t"), "bar"),
+        ]
+        timestamps = [(value, kind, cls._provider_timestamp_epoch(value)) for value, kind in timestamps]
+        timestamps = [(value, kind, epoch) for value, kind, epoch in timestamps if epoch is not None]
+        if not symbol or not timestamps:
+            return None
+        native_value, native_kind, native_epoch = max(timestamps, key=lambda item: item[2])
+        bid = _to_float(quote.get("bp"), 0.0)
+        ask = _to_float(quote.get("ap"), 0.0)
+        trade_price = _to_float(trade.get("p"), 0.0)
+        price = trade_price or ((bid + ask) / 2.0 if bid > 0.0 and ask > 0.0 else _to_float(minute.get("c"), 0.0))
+        if price <= 0.0:
+            return None
+        bar_close = _to_float(minute.get("c"), 0.0)
+        previous_close = _to_float((snapshot.get("prevDailyBar") or {}).get("c"), 0.0)
+        age = max(0.0, received_at - native_epoch)
+        return {
+            "symbol": symbol,
+            "price": price,
+            "bid": bid or None,
+            "ask": ask or None,
+            "spread": round(ask - bid, 8) if bid > 0.0 and ask >= bid else None,
+            "trade_price": trade_price or None,
+            "trade_size": _to_float(trade.get("s"), 0.0) or None,
+            "open": _to_float(minute.get("o"), 0.0) or None,
+            "high": _to_float(minute.get("h"), 0.0) or None,
+            "low": _to_float(minute.get("l"), 0.0) or None,
+            "close": bar_close or None,
+            "volume": _to_float(minute.get("v"), 0.0) or None,
+            "change_percent": round(((bar_close - previous_close) / previous_close) * 100.0, 6) if bar_close > 0.0 and previous_close > 0.0 else None,
+            "provider_native_timestamp": str(native_value),
+            "provider_native_timestamp_kind": native_kind,
+            "receive_timestamp": received_at,
+            "quote_age_seconds": round(age, 3),
+            "freshness_state": "CURRENT" if age <= 120.0 else "STALE",
+            "provider": "ALPACA_SIP_BROAD_SNAPSHOT",
+            "provider_used": "ALPACA_SIP_BROAD_SNAPSHOT",
+            "provider_provenance": "ALPACA_SIP_BATCH_SNAPSHOT",
+            "observation_role": "BROAD_DISCOVERY_TIER0",
+            "observation_authority": False,
+            "discovery_only": True,
+            "executable_evidence": False,
+            "candidate_evidence_fabricated": False,
+        }
+
+    def current_broad_observation_rows(self) -> list[dict[str, Any]]:
+        with self._observation_lock:
+            if self._observation_rows:
+                rows = [dict(row) for row in self._observation_rows]
+            else:
+                rows = []
+        if not rows:
+            payload = _safe_read_json(self.broad_observation_path, {})
+            rows = [dict(row) for row in (payload.get("rows") or []) if isinstance(row, dict)] if isinstance(payload, dict) else []
+        return [
+            row for row in rows
+            if str(row.get("freshness_state") or "").upper() == "CURRENT"
+            and _to_float(row.get("quote_age_seconds"), 10_000.0) <= 120.0
+        ]
+
+    def _write_observation_state(self, *, rows: list[dict[str, Any]], status: dict[str, Any]) -> None:
+        payload = {
+            "schema_version": "astra_broad_live_observations_v1",
+            "generated_at": _now_iso(),
+            "rows": rows[:MAX_BROAD_OBSERVATION_SYMBOLS],
+            "status": dict(status),
+            "observation_authority": False,
+            "executable_evidence": False,
+            "broker_actions_added": 0,
+        }
+        _safe_write_json(self.broad_observation_path, payload)
+
+    def _refresh_broad_observations(self, symbols: list[str]) -> None:
+        started = time.perf_counter()
+        received_at = time.time()
+        fetcher = getattr(self._provider_router, "fetch_alpaca_stock_snapshots", None)
+        result = fetcher(
+            symbols[:MAX_BROAD_OBSERVATION_SYMBOLS],
+            feed="sip",
+            batch_size=max(1, min(100, _to_int(os.getenv("ASTRA_BROAD_OBSERVATION_BATCH_SIZE"), DEFAULT_BROAD_OBSERVATION_BATCH_SIZE))),
+        ) if callable(fetcher) else {"ok": False, "error": "provider_snapshot_method_unavailable", "rows": []}
+        normalized = []
+        for raw in result.get("rows") or []:
+            row = self._normalize_snapshot_row(raw, received_at=received_at)
+            if row is not None:
+                normalized.append(row)
+        status = {
+            "status": "CURRENT" if normalized else "FAILED_NO_OBSERVATIONS",
+            "last_refresh_at": _now_iso(),
+            "symbols_requested": len(symbols[:MAX_BROAD_OBSERVATION_SYMBOLS]),
+            "symbols_observed": len(normalized),
+            "symbols_deferred": max(0, len(symbols) - len(symbols[:MAX_BROAD_OBSERVATION_SYMBOLS])),
+            "provider_calls": _to_int(result.get("provider_calls"), 0),
+            "batches": _to_int(result.get("batches"), 0),
+            "response_bytes": _to_int(result.get("response_bytes"), 0),
+            "errors": list(result.get("errors") or [])[:16],
+            "refresh_elapsed_ms": round((time.perf_counter() - started) * 1000.0, 3),
+            "observation_role": "BROAD_DISCOVERY_TIER0",
+            "observation_authority": False,
+            "executable_evidence": False,
+            "broker_actions_added": 0,
+        }
+        with self._observation_lock:
+            self._observation_rows = normalized
+            self._observation_status = status
+        if self._observation_publisher is not None:
+            try:
+                self._observation_publisher(normalized)
+            except Exception:
+                status["publisher_error"] = "canonical_observation_publisher_failed"
+        self._write_observation_state(rows=normalized, status=status)
+
+    def schedule_broad_observation_refresh(
+        self,
+        symbols: Iterable[str],
+        *,
+        resource_state: str = "",
+        cycle_elapsed_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        """Schedule one background batch refresh; never block the worker cycle."""
+        if str(os.getenv("ASTRA_PROCESS_ROLE", "api") or "api").strip().lower() != "worker":
+            return {"status": "NOT_WORKER", "scheduled": False}
+        state = str(resource_state or "").upper()
+        elapsed = _to_float(cycle_elapsed_seconds, 0.0)
+        if state in {"RESOURCE_CRITICAL", "CRITICAL", "RESOURCE_STOPPED"} or elapsed >= 18.0:
+            return {"status": "THROTTLED_RESOURCE", "scheduled": False, "resource_state": state, "cycle_elapsed_seconds": elapsed}
+        normalized = sorted({_norm_symbol(symbol) for symbol in symbols if _norm_symbol(symbol)})
+        if not normalized:
+            return {"status": "NO_SYMBOLS", "scheduled": False}
+        now = time.time()
+        refresh_seconds = max(30.0, min(900.0, _to_float(os.getenv("ASTRA_BROAD_OBSERVATION_REFRESH_SECONDS"), DEFAULT_BROAD_OBSERVATION_REFRESH_SECONDS)))
+        with self._observation_lock:
+            running = self._observation_thread is not None and self._observation_thread.is_alive()
+            last_refresh = self._provider_timestamp_epoch(self._observation_status.get("last_refresh_at")) or 0.0
+            if running or (last_refresh and now - last_refresh < refresh_seconds):
+                return {"status": "RUNNING" if running else "COOLDOWN", "scheduled": False, "symbols": len(normalized)}
+            self._observation_status = {**self._observation_status, "status": "SCHEDULED", "scheduled_at": _now_iso(), "symbols_requested": min(len(normalized), MAX_BROAD_OBSERVATION_SYMBOLS)}
+            thread = threading.Thread(target=self._refresh_broad_observations, args=(normalized,), name="astra-broad-observation", daemon=True)
+            self._observation_thread = thread
+            thread.start()
+        return {"status": "SCHEDULED", "scheduled": True, "symbols": len(normalized)}
 
     def _existing_symbol_sources(self) -> tuple[list[str], list[str]]:
         symbols: list[str] = []
@@ -305,12 +492,53 @@ class BroadUniverseIntakePromotionV1:
             "eligible_rows": len(symbols),
             "response_bytes": _to_int(result.get("response_bytes"), 0),
         }
+        for key in (
+            "alpaca_symbols",
+            "alpaca_universe_attempted_ts",
+            "alpaca_universe_last_updated",
+            "alpaca_universe_error",
+            "alpaca_universe_provider_rows",
+        ):
+            if key in cached:
+                payload[key] = cached[key]
         _safe_write_json(self.cache_path, payload)
         return payload
+
+    def _refresh_alpaca_universe(self, cached: dict[str, Any], now: float) -> dict[str, Any]:
+        """Add active Alpaca inventory without replacing the FMP contract."""
+        existing = dict(cached or {})
+        attempted = _to_float(existing.get("alpaca_universe_attempted_ts"), 0.0)
+        if attempted and now - attempted < ALPACA_UNIVERSE_TTL_SECONDS:
+            return existing
+        fetcher = getattr(self._provider_router, "fetch_alpaca_tradable_equity_assets", None)
+        if not callable(fetcher):
+            return existing
+        result = fetcher()
+        symbols = sorted({
+            _norm_symbol(row.get("symbol"))
+            for row in result.get("rows") or []
+            if isinstance(row, dict)
+            and bool(row.get("tradable", True))
+            and str(row.get("status") or "active").lower() == "active"
+            and _is_equity_inventory_symbol(_norm_symbol(row.get("symbol")))
+        })
+        existing.update({
+            "alpaca_symbols": symbols[:MAX_BROAD_OBSERVATION_SYMBOLS],
+            "alpaca_universe_attempted_ts": now,
+            "alpaca_universe_last_updated": _now_iso() if symbols else str(existing.get("alpaca_universe_last_updated") or ""),
+            "alpaca_universe_error": str(result.get("error") or "")[:160],
+            "alpaca_universe_provider_rows": len(result.get("rows") or []),
+        })
+        _safe_write_json(self.cache_path, existing)
+        return existing
 
     def _build_universe(self, *, allow_provider_refresh: bool = False) -> dict[str, Any]:
         cached = _safe_read_json(self.cache_path, {})
         now = time.time()
+        if not isinstance(cached, dict):
+            cached = {}
+        if allow_provider_refresh:
+            cached = self._refresh_alpaca_universe(cached, now)
         cache_ts = _to_float(cached.get("updated_ts"), 0.0) if isinstance(cached, dict) else 0.0
         is_authoritative = str(cached.get("universe_source") or "").startswith("fmp_company_screener") if isinstance(cached, dict) else False
         if allow_provider_refresh and (not is_authoritative or (now - cache_ts) >= AUTHORITATIVE_UNIVERSE_TTL_SECONDS):
@@ -321,10 +549,12 @@ class BroadUniverseIntakePromotionV1:
                 is_authoritative = True
         if isinstance(cached, dict) and cached.get("symbols") and (now - cache_ts) < AUTHORITATIVE_UNIVERSE_TTL_SECONDS:
             symbols = [_norm_symbol(s) for s in cached.get("symbols") or []]
+            symbols.extend(_norm_symbol(s) for s in cached.get("alpaca_symbols") or [])
+            symbols = sorted({s for s in symbols if s})
             symbols = [s for s in symbols if s]
             return {
                 "symbols": symbols,
-                "source": str(cached.get("universe_source") or "local_cache"),
+                "source": "+".join(filter(None, (str(cached.get("universe_source") or "local_cache"), "alpaca_active_tradable" if cached.get("alpaca_symbols") else ""))),
                 "cache_hit": True,
                 "cache_age_seconds": round(max(0.0, now - cache_ts), 2),
                 "stale": False,
@@ -345,11 +575,15 @@ class BroadUniverseIntakePromotionV1:
             symbols.append(sym)
         symbols = sorted(symbols)
         source = "+".join(dict.fromkeys(sources)) or "builtin_us_equity_seed"
+        alpaca_symbols = [_norm_symbol(s) for s in cached.get("alpaca_symbols") or []] if isinstance(cached, dict) else []
+        symbols = sorted(set(symbols).union(s for s in alpaca_symbols if s))
         payload = {
             "symbols": symbols,
             "universe_source": source,
             "universe_last_updated": _now_iso(),
             "updated_ts": now,
+            "alpaca_symbols": alpaca_symbols,
+            "alpaca_universe_attempted_ts": _to_float(cached.get("alpaca_universe_attempted_ts"), 0.0) if isinstance(cached, dict) else 0.0,
         }
         _safe_write_json(self.cache_path, payload)
         return {
@@ -768,6 +1002,14 @@ class BroadUniverseIntakePromotionV1:
             if _is_equity_inventory_symbol(symbol)
         ]
 
+    def cached_inventory_symbols(self) -> list[str]:
+        """Return inventory without doing provider I/O from the cycle path."""
+        return [
+            symbol
+            for symbol in (self._build_universe(allow_provider_refresh=False).get("symbols") or [])
+            if _is_equity_inventory_symbol(symbol)
+        ]
+
     def select_rotation(
         self,
         *,
@@ -871,7 +1113,8 @@ class BroadUniverseIntakePromotionV1:
         }
 
     def _pipeline(self, rows: Iterable[dict[str, Any]] | None = None) -> dict[str, Any]:
-        rotation = self.select_rotation(known_rows=rows)
+        broad_rows = self.current_broad_observation_rows()
+        rotation = self.select_rotation(known_rows=rows, market_rows=broad_rows)
         status = dict(rotation["status"])
         actual_rows = [dict(row) for row in (rows or []) if isinstance(row, dict)]
         lane_discovery = self.build_lane_aware_discovery_v1(
@@ -879,6 +1122,12 @@ class BroadUniverseIntakePromotionV1:
             master_universe_size=_to_int(status.get("broad_universe_size"), 0),
             rotation_size=_to_int(status.get("rotation_size"), 0),
         )
+        lane_discovery["symbols_scanned_this_cycle"] = len(broad_rows)
+        lane_discovery["tier0_scan_method"] = (
+            "alpaca_sip_batch_snapshots_worker_owned"
+            if broad_rows else "alpaca_sip_batch_snapshots_pending"
+        )
+        lane_discovery["observation_status"] = dict(self._observation_status)
         lane_counts = dict(lane_discovery.get("eligible_count") or {})
         hot_list_counts = dict(lane_discovery.get("per_lane_count") or {})
         status.update({
@@ -891,7 +1140,10 @@ class BroadUniverseIntakePromotionV1:
             "api_calls_used": 0,
             "tier0_scan_method": lane_discovery.get("tier0_scan_method"),
             "tier0_symbols_scheduled": lane_discovery.get("symbols_scheduled_for_tier0", 0),
-            "tier0_symbols_observed": lane_discovery.get("symbols_scanned_this_cycle", 0),
+            "tier0_symbols_observed": len(broad_rows),
+            "tier0_symbols_deferred": max(0, _to_int(status.get("broad_universe_size"), 0) - len(broad_rows)),
+            "tier0_observation_method": "alpaca_sip_batch_snapshots_worker_owned" if broad_rows else "alpaca_sip_batch_snapshots_pending",
+            "tier0_observation_status": dict(self._observation_status),
             "lane_eligible_counts": lane_counts,
             "lane_hot_list_sizes": hot_list_counts,
             "lane_hot_list_churn_count": lane_discovery.get("hot_list_churn_count", 0),

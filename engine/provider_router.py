@@ -624,6 +624,97 @@ class ProviderRouter:
             s = self._provider_stats.setdefault(p, {})
             s["last_error"] = str(error_text or "")[:200]
 
+    def fetch_alpaca_tradable_equity_assets(self) -> dict[str, Any]:
+        """Return active Alpaca US equities for bounded discovery inventory.
+
+        This is metadata only.  It is deliberately separate from the quote
+        router so inventory expansion cannot become candidate or execution
+        evidence.
+        """
+        key = self._key_for("ALPACA", "stock")
+        if not key:
+            return {"ok": False, "error": "missing_api_key", "rows": [], "provider_calls": 0}
+        data, status, error, latency = self._request(
+            "ALPACA",
+            "https://paper-api.alpaca.markets/v2/assets",
+            params={"status": "active", "asset_class": "us_equity"},
+            headers={"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": _alpaca_secret_key()},
+        )
+        values = data.get("_list") if isinstance(data, dict) else None
+        rows = [dict(row) for row in values if isinstance(row, dict)] if isinstance(values, list) else []
+        return {
+            "ok": not bool(error) and status is not None and status < 400,
+            "rows": rows,
+            "provider": "ALPACA",
+            "status": status,
+            "error": error,
+            "latency_ms": round(float(latency or 0.0), 3),
+            "provider_calls": 1 if status is not None else 0,
+        }
+
+    def fetch_alpaca_stock_snapshots(
+        self,
+        symbols: list[str] | tuple[str, ...],
+        *,
+        feed: str = "sip",
+        batch_size: int = 100,
+    ) -> dict[str, Any]:
+        """Fetch bounded multi-symbol snapshots for discovery-only use.
+
+        Alpaca returns one mapping containing quote/trade/minute-bar fields
+        for each requested symbol.  Chunking is intentional: broad discovery
+        must never degrade into one REST call per symbol.
+        """
+        key = self._key_for("ALPACA", "stock")
+        normalized = sorted({
+            _safe_symbol(symbol) for symbol in (symbols or ())
+            if _safe_symbol(symbol) and "/" not in _safe_symbol(symbol)
+        })
+        if not normalized:
+            return {"ok": True, "rows": [], "provider_calls": 0, "batches": 0, "symbols_requested": 0}
+        if not key:
+            return {"ok": False, "error": "missing_api_key", "rows": [], "provider_calls": 0, "batches": 0, "symbols_requested": len(normalized)}
+        size = max(1, min(100, int(batch_size or 100)))
+        rows: list[dict[str, Any]] = []
+        errors: list[str] = []
+        calls = 0
+        response_bytes = 0
+        for start in range(0, len(normalized), size):
+            batch = normalized[start:start + size]
+            data, status, error, latency = self._request(
+                "ALPACA",
+                "https://data.alpaca.markets/v2/stocks/snapshots",
+                params={"symbols": ",".join(batch), "feed": str(feed or "sip").lower()},
+                headers={"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": _alpaca_secret_key()},
+            )
+            calls += 1 if status is not None else 0
+            response_bytes += self._request_bytes(
+                "ALPACA",
+                "https://data.alpaca.markets/v2/stocks/snapshots",
+                {"symbols": ",".join(batch), "feed": str(feed or "sip").lower()},
+            )
+            if error or status is None or status >= 400:
+                errors.append(f"{','.join(batch[:3])}:{error or f'http_{status}'}")
+                continue
+            if not isinstance(data, dict):
+                errors.append(f"{','.join(batch[:3])}:malformed_payload")
+                continue
+            for symbol, snapshot in data.items():
+                if isinstance(snapshot, dict):
+                    rows.append({"symbol": _safe_symbol(symbol), "snapshot": dict(snapshot), "latency_ms": round(float(latency or 0.0), 3)})
+        return {
+            "ok": bool(not errors or rows),
+            "rows": rows,
+            "provider": "ALPACA_SIP",
+            "feed": str(feed or "sip").lower(),
+            "provider_calls": calls,
+            "batches": (len(normalized) + size - 1) // size,
+            "symbols_requested": len(normalized),
+            "symbols_returned": len({row.get("symbol") for row in rows}),
+            "response_bytes": response_bytes,
+            "errors": errors[:16],
+        }
+
     @staticmethod
     def _is_rate_limited(status_code: int | None, error_text: str) -> bool:
         if int(status_code or 0) == 429:
