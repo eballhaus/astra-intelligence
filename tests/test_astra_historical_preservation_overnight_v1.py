@@ -57,3 +57,19 @@ def test_stage4_crypto_scope_does_not_start_an_unapproved_job():
     assert scope["status"] == "STAGE_4_REQUIRES_SCOPE_APPROVAL"
     assert scope["approved_scope_found"] is False
     assert scope["api_calls_started"] is False
+
+
+def test_worker_health_ignores_process_inspection_commands(monkeypatch, tmp_path):
+    state = tmp_path / "worker.json"
+    _write(state, {"active_worker_pid": 42, "cycle_count": 7, "resource_state": "RESOURCE_NORMAL"})
+    monkeypatch.setattr(supervisor, "WORKER_STATE", state)
+    monkeypatch.setattr(supervisor, "ps_rows", lambda: [
+        (42, "python -B -m engine.paper_autopilot_worker"),
+        (99, "zsh -lc ps -axo pid=,command= | rg paper_autopilot_worker"),
+    ])
+    monkeypatch.setattr(supervisor, "backend_status", lambda: 200)
+
+    health = supervisor.worker_health()
+
+    assert health["worker_count"] == 1
+    assert health["snapshot_worker_count"] == 1

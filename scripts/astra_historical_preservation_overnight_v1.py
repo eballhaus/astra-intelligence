@@ -101,7 +101,12 @@ def archive_processes() -> list[tuple[int, str]]:
 
 def worker_health() -> dict[str, Any]:
     snapshot = read_json(WORKER_STATE, {}) or {}
-    worker_rows = [(pid, command) for pid, command in ps_rows() if "paper_autopilot_worker" in command or ("start_astra_persistent.sh" in command and "worker" in command)]
+    worker_rows = [
+        (pid, command)
+        for pid, command in ps_rows()
+        if ("paper_autopilot_worker" in command or ("start_astra_persistent.sh" in command and "worker" in command))
+        and not any(marker in command for marker in (" rg ", " grep ", "ps -axo"))
+    ]
     active_pid = snapshot.get("active_worker_pid") or snapshot.get("process_id")
     snapshot_worker_count = snapshot.get("worker_count")
     if snapshot_worker_count is None and worker_rows:
