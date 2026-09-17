@@ -292,9 +292,17 @@ class BroadUniverseIntakePromotionV1:
     def _refresh_broad_observations(self, symbols: list[str]) -> None:
         started = time.perf_counter()
         received_at = time.time()
+        inventory = self._refresh_alpaca_universe(
+            _safe_read_json(self.cache_path, {}), received_at
+        )
+        provider_symbols = [
+            _norm_symbol(symbol) for symbol in inventory.get("alpaca_symbols") or []
+            if _norm_symbol(symbol)
+        ]
+        target_symbols = provider_symbols or symbols
         fetcher = getattr(self._provider_router, "fetch_alpaca_stock_snapshots", None)
         result = fetcher(
-            symbols[:MAX_BROAD_OBSERVATION_SYMBOLS],
+            target_symbols[:MAX_BROAD_OBSERVATION_SYMBOLS],
             feed="sip",
             batch_size=max(1, min(100, _to_int(os.getenv("ASTRA_BROAD_OBSERVATION_BATCH_SIZE"), DEFAULT_BROAD_OBSERVATION_BATCH_SIZE))),
         ) if callable(fetcher) else {"ok": False, "error": "provider_snapshot_method_unavailable", "rows": []}
@@ -306,9 +314,11 @@ class BroadUniverseIntakePromotionV1:
         status = {
             "status": "CURRENT" if normalized else "FAILED_NO_OBSERVATIONS",
             "last_refresh_at": _now_iso(),
-            "symbols_requested": len(symbols[:MAX_BROAD_OBSERVATION_SYMBOLS]),
+            "symbols_requested": len(target_symbols[:MAX_BROAD_OBSERVATION_SYMBOLS]),
             "symbols_observed": len(normalized),
-            "symbols_deferred": max(0, len(symbols) - len(symbols[:MAX_BROAD_OBSERVATION_SYMBOLS])),
+            "symbols_deferred": max(0, len(target_symbols) - len(target_symbols[:MAX_BROAD_OBSERVATION_SYMBOLS])),
+            "master_universe_size": len(target_symbols),
+            "inventory_source": "alpaca_active_tradable" if provider_symbols else "existing_cached_inventory",
             "provider_calls": _to_int(result.get("provider_calls"), 0),
             "batches": _to_int(result.get("batches"), 0),
             "response_bytes": _to_int(result.get("response_bytes"), 0),
@@ -508,7 +518,8 @@ class BroadUniverseIntakePromotionV1:
         """Add active Alpaca inventory without replacing the FMP contract."""
         existing = dict(cached or {})
         attempted = _to_float(existing.get("alpaca_universe_attempted_ts"), 0.0)
-        if attempted and now - attempted < ALPACA_UNIVERSE_TTL_SECONDS:
+        retry_ttl = ALPACA_UNIVERSE_TTL_SECONDS if existing.get("alpaca_symbols") else 300.0
+        if attempted and now - attempted < retry_ttl:
             return existing
         fetcher = getattr(self._provider_router, "fetch_alpaca_tradable_equity_assets", None)
         if not callable(fetcher):

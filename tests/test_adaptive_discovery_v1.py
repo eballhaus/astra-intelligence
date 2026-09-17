@@ -153,6 +153,7 @@ def test_broad_snapshots_are_batched_normalized_and_published_as_observation_onl
         owner = BroadUniverseIntakePromotionV1(state_dir=directory)
         router = _FakeBroadRouter()
         owner._provider_router = router
+        owner._refresh_alpaca_universe = lambda cached, now: {}
         published: list[dict] = []
         owner.set_observation_publisher(lambda rows: published.extend(rows))
         def symbol_for(index: int) -> str:
