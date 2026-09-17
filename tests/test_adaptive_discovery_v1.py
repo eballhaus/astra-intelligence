@@ -202,6 +202,80 @@ def test_broad_observation_scheduler_does_not_run_in_api_process(monkeypatch) ->
         assert result == {"status": "NOT_WORKER", "scheduled": False}
 
 
+def test_priority_tiers_are_bounded_discovery_only_and_deterministic() -> None:
+    with TemporaryDirectory() as directory:
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        rows = [
+            {
+                "symbol": f"T{chr(65 + index)}",
+                "change_percent": float(index),
+                "volume": 1_000_000 + index,
+                "bid": 99.9,
+                "ask": 100.1,
+                "quote_age_seconds": 5.0,
+                "provider_native_timestamp": "2026-09-17T14:30:00Z",
+                "freshness_state": "CURRENT",
+                "provider_provenance": "ALPACA_SIP_BATCH_SNAPSHOT",
+            }
+            for index in range(20)
+        ]
+        first = owner.build_priority_tiers_v2(rows, now_timestamp=1_800_000_000.0)
+        second = owner.build_priority_tiers_v2(rows, now_timestamp=1_800_000_000.0)
+        assert first["tier_counts"] == {"NEAR_ENTRY": 0, "HOT": 1, "WARM": 3, "COLD": 16}
+        assert second["tier_counts"] == first["tier_counts"]
+        saved = (Path(directory) / "lane_aware_discovery_v1.json").read_text(encoding="utf-8")
+        assert '"priority_tier_discovery_only": true' in saved
+        assert '"observation_authority": false' in saved
+        assert first["broker_actions_added"] == 0
+
+
+def test_priority_refresh_plan_adapts_capacity_and_prioritizes_existing_tiers() -> None:
+    with TemporaryDirectory() as directory:
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        owner.build_priority_tiers_v2(
+            [
+                {
+                    "symbol": "HOT",
+                    "change_percent": 10.0,
+                    "volume": 10_000_000,
+                    "bid": 99.9,
+                    "ask": 100.1,
+                    "quote_age_seconds": 5.0,
+                    "provider_native_timestamp": "2026-09-17T14:30:00Z",
+                    "freshness_state": "CURRENT",
+                },
+                {
+                    "symbol": "COLD",
+                    "change_percent": 0.1,
+                    "volume": 100_000,
+                    "bid": 99.0,
+                    "ask": 101.0,
+                    "quote_age_seconds": 5.0,
+                    "provider_native_timestamp": "2026-09-17T14:30:00Z",
+                    "freshness_state": "CURRENT",
+                },
+            ],
+            now_timestamp=1_800_000_000.0,
+        )
+        def alpha_symbol(index: int) -> str:
+            chars = []
+            value = index
+            while True:
+                chars.append(chr(65 + (value % 26)))
+                value = value // 26 - 1
+                if value < 0:
+                    break
+            return "S" + "".join(reversed(chars))
+
+        symbols = ["COLD", "HOT"] + [alpha_symbol(index) for index in range(1_001)]
+        normal = owner._priority_refresh_plan(symbols, resource_state="RESOURCE_NORMAL")
+        elevated = owner._priority_refresh_plan(symbols, resource_state="RESOURCE_ELEVATED")
+        assert normal["symbols"][0] == "HOT"
+        assert normal["priority_refresh_capacity"] == 1_200
+        assert elevated["priority_refresh_capacity"] == 600
+        assert elevated["symbols_deferred"] > 0
+
+
 def test_provider_router_uses_multi_symbol_alpaca_snapshot_batches(monkeypatch) -> None:
     router = ProviderRouter()
     calls: list[dict] = []

@@ -43,6 +43,11 @@ LANE_DISCOVERY_LANES = ("SCALP", "DAY", "SWING")
 LANE_HOT_LIST_LIMITS = {"SCALP": 150, "DAY": 150, "SWING": 300}
 LANE_DEEP_ANALYSIS_LIMITS = {"SCALP": 20, "DAY": 25, "SWING": 25}
 HOT_LIST_HOLD_SECONDS = 600
+DISCOVERY_TIER_ORDER = ("NEAR_ENTRY", "HOT", "WARM", "COLD")
+DISCOVERY_TIER_RANK = {tier: index for index, tier in enumerate(DISCOVERY_TIER_ORDER)}
+DEFAULT_PRIORITY_REFRESH_SYMBOLS = 1_200
+ELEVATED_PRIORITY_REFRESH_SYMBOLS = 600
+MIN_PRIORITY_REFRESH_SYMBOLS = 300
 
 # A compact built-in seed keeps the engine useful offline. Larger local or
 # provider-backed universes replace this automatically when available.
@@ -277,6 +282,169 @@ class BroadUniverseIntakePromotionV1:
             and _to_float(row.get("quote_age_seconds"), 10_000.0) <= 120.0
         ]
 
+    @staticmethod
+    def _snapshot_discovery_score(row: dict[str, Any]) -> float:
+        """Rank observed rows for refresh priority only, never qualification."""
+        change = abs(_to_float(row.get("change_percent"), 0.0))
+        volume = _to_float(row.get("volume"), 0.0)
+        bid = _to_float(row.get("bid"), 0.0)
+        ask = _to_float(row.get("ask"), 0.0)
+        midpoint = (bid + ask) / 2.0 if bid > 0.0 and ask > 0.0 else 0.0
+        spread_pct = ((ask - bid) / midpoint) * 100.0 if midpoint > 0.0 and ask >= bid else 100.0
+        freshness = _to_float(row.get("quote_age_seconds"), 10_000.0)
+        return round(
+            min(change, 20.0) * 5.0
+            + min(volume / 1_000_000.0, 20.0)
+            + max(0.0, 5.0 - min(spread_pct, 5.0))
+            + (3.0 if freshness <= 30.0 else 1.0 if freshness <= 120.0 else 0.0),
+            4,
+        )
+
+    @classmethod
+    def _priority_tier_for_rank(cls, rank: int, total: int, *, near_entry: bool = False) -> str:
+        if near_entry:
+            return "NEAR_ENTRY"
+        if total <= 0:
+            return "COLD"
+        percentile = float(rank) / float(total)
+        if percentile <= 0.05:
+            return "HOT"
+        if percentile <= 0.20:
+            return "WARM"
+        return "COLD"
+
+    def _priority_refresh_plan(
+        self,
+        symbols: Iterable[str],
+        *,
+        resource_state: str = "",
+        cycle_elapsed_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        """Order one bounded refresh from persisted discovery-only evidence."""
+        normalized = sorted({_norm_symbol(symbol) for symbol in symbols if _norm_symbol(symbol)})
+        state = str(resource_state or "").upper()
+        elapsed = _to_float(cycle_elapsed_seconds, 0.0)
+        capacity = MIN_PRIORITY_REFRESH_SYMBOLS
+        if state not in {"RESOURCE_CRITICAL", "CRITICAL", "RESOURCE_STOPPED"}:
+            capacity = ELEVATED_PRIORITY_REFRESH_SYMBOLS if state in {"RESOURCE_ELEVATED", "ELEVATED", "RESOURCE_DEGRADED"} or elapsed >= 16.0 else DEFAULT_PRIORITY_REFRESH_SYMBOLS
+        previous = _safe_read_json(self.lane_hot_list_path, {})
+        records = previous.get("priority_tiers") if isinstance(previous, dict) else []
+        prior_by_symbol: dict[str, dict[str, Any]] = {}
+        for record in records or ():
+            if not isinstance(record, dict):
+                continue
+            symbol = _norm_symbol(record.get("symbol"))
+            if not symbol:
+                continue
+            current = prior_by_symbol.get(symbol)
+            if current is None or DISCOVERY_TIER_RANK.get(str(record.get("tier") or "COLD"), 99) < DISCOVERY_TIER_RANK.get(str(current.get("tier") or "COLD"), 99):
+                prior_by_symbol[symbol] = record
+
+        def order_key(symbol: str) -> tuple[int, float, float, str]:
+            prior = prior_by_symbol.get(symbol) or {}
+            tier = str(prior.get("tier") or "COLD").upper()
+            if tier not in DISCOVERY_TIER_RANK:
+                tier = "COLD"
+            last_observed = self._provider_timestamp_epoch(prior.get("last_observed_at")) or 0.0
+            score = _to_float(prior.get("discovery_score"), 0.0)
+            return DISCOVERY_TIER_RANK[tier], -score, last_observed, symbol
+
+        ordered = sorted(normalized, key=order_key)
+        selected = ordered[: min(len(ordered), capacity)]
+        return {
+            "symbols": selected,
+            "master_universe_size": len(normalized),
+            "symbols_deferred": max(0, len(normalized) - len(selected)),
+            "priority_refresh_capacity": capacity,
+            "resource_state": state or "UNKNOWN",
+            "cycle_elapsed_seconds": round(elapsed, 3),
+            "tiered_refresh": True,
+        }
+
+    def build_priority_tiers_v2(
+        self,
+        observation_rows: Iterable[dict[str, Any]] | None = None,
+        *,
+        known_rows: Iterable[dict[str, Any]] | None = None,
+        now_timestamp: float | None = None,
+    ) -> dict[str, Any]:
+        """Persist relative refresh tiers beside the existing lane hot lists."""
+        now = float(now_timestamp if now_timestamp is not None else time.time())
+        now_iso = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
+        previous = _safe_read_json(self.lane_hot_list_path, {})
+        previous_records = previous.get("priority_tiers") if isinstance(previous, dict) else []
+        prior_by_key = {
+            f"{_norm_symbol(record.get('symbol'))}:{str(record.get('lane') or 'DISCOVERY').upper()}": record
+            for record in (previous_records or [])
+            if isinstance(record, dict) and _norm_symbol(record.get("symbol"))
+        }
+        rows = [dict(row) for row in (observation_rows or ()) if isinstance(row, dict) and _norm_symbol(row.get("symbol"))]
+        rows.sort(key=lambda row: (-self._snapshot_discovery_score(row), _norm_symbol(row.get("symbol"))))
+        total = len(rows)
+        near_entry_symbols: set[str] = set()
+        for row in known_rows or ():
+            if not isinstance(row, dict):
+                continue
+            if bool(row.get("lane_finalist") or row.get("order_ready") or row.get("entry_commitment")) and self._row_is_current_lane_evidence(row):
+                near_entry_symbols.add(_norm_symbol(row.get("symbol")))
+
+        tiers: list[dict[str, Any]] = []
+        for index, row in enumerate(rows, start=1):
+            symbol = _norm_symbol(row.get("symbol"))
+            score = self._snapshot_discovery_score(row)
+            lane = self._lane_from_existing_row(row) or "DISCOVERY"
+            key = f"{symbol}:{lane}"
+            prior = dict(prior_by_key.get(key) or {})
+            tier = self._priority_tier_for_rank(index, total, near_entry=symbol in near_entry_symbols)
+            prior_tier = str(prior.get("tier") or "").upper()
+            prior_seen = self._provider_timestamp_epoch(prior.get("last_seen")) or 0.0
+            # Retain a recent HOT/WARM placement when it remains in the next
+            # adjacent band, preventing cycle-by-cycle churn.
+            if prior_tier in {"HOT", "WARM"} and now - prior_seen <= HOT_LIST_HOLD_SECONDS:
+                if tier == "COLD" and index <= max(1, int(total * 0.25)):
+                    tier = prior_tier
+            tiers.append({
+                "symbol": symbol,
+                "lane": lane,
+                "tier": tier,
+                "discovery_score": score,
+                "rank": index,
+                "reason": "relative_snapshot_movement_volume_spread_freshness",
+                "first_seen": str(prior.get("first_seen") or now_iso),
+                "last_seen": now_iso,
+                "last_observed_at": str(row.get("provider_native_timestamp") or now_iso),
+                "freshness": str(row.get("freshness_state") or "UNKNOWN"),
+                "promotion_at": str(prior.get("promotion_at") or (now_iso if tier != prior_tier else "")),
+                "demotion_at": now_iso if prior_tier and tier != prior_tier else str(prior.get("demotion_at") or ""),
+                "expires_at": datetime.fromtimestamp(now + HOT_LIST_HOLD_SECONDS, timezone.utc).isoformat().replace("+00:00", "Z"),
+                "source_provenance": str(row.get("provider_provenance") or "ALPACA_SIP_BATCH_SNAPSHOT"),
+                "discovery_only": True,
+                "observation_authority": False,
+                "executable_evidence": False,
+            })
+        counts = Counter(str(record.get("tier") or "COLD") for record in tiers)
+        lane_counts = Counter(f"{record.get('lane')}:{record.get('tier')}" for record in tiers)
+        merged = dict(previous) if isinstance(previous, dict) else {}
+        merged.update({
+            "priority_tiers": tiers[:MAX_BROAD_OBSERVATION_SYMBOLS],
+            "priority_tier_counts": {tier: int(counts.get(tier, 0)) for tier in DISCOVERY_TIER_ORDER},
+            "priority_tier_lane_counts": {key: int(value) for key, value in sorted(lane_counts.items())},
+            "priority_tier_generated_at": now_iso,
+            "priority_tier_discovery_only": True,
+            "broker_actions_added": 0,
+            "candidate_evidence_fabricated": False,
+        })
+        _safe_write_json(self.lane_hot_list_path, merged)
+        return {
+            "tier_counts": {tier: int(counts.get(tier, 0)) for tier in DISCOVERY_TIER_ORDER},
+            "lane_counts": {key: int(value) for key, value in sorted(lane_counts.items())},
+            "symbols_observed": len(tiers),
+            "symbols_promoted": sum(1 for record in tiers if record.get("promotion_at") == now_iso),
+            "symbols_demoted": sum(1 for record in tiers if record.get("demotion_at") == now_iso),
+            "discovery_only": True,
+            "broker_actions_added": 0,
+        }
+
     def _write_observation_state(self, *, rows: list[dict[str, Any]], status: dict[str, Any]) -> None:
         payload = {
             "schema_version": "astra_broad_live_observations_v1",
@@ -289,22 +457,15 @@ class BroadUniverseIntakePromotionV1:
         }
         _safe_write_json(self.broad_observation_path, payload)
 
-    def _refresh_broad_observations(self, symbols: list[str]) -> None:
+    def _refresh_broad_observations(self, symbols: list[str], *, batch_size: int | None = None) -> None:
         started = time.perf_counter()
         received_at = time.time()
-        inventory = self._refresh_alpaca_universe(
-            _safe_read_json(self.cache_path, {}), received_at
-        )
-        provider_symbols = [
-            _norm_symbol(symbol) for symbol in inventory.get("alpaca_symbols") or []
-            if _norm_symbol(symbol)
-        ]
-        target_symbols = provider_symbols or symbols
+        target_symbols = [_norm_symbol(symbol) for symbol in symbols if _norm_symbol(symbol)][:MAX_BROAD_OBSERVATION_SYMBOLS]
         fetcher = getattr(self._provider_router, "fetch_alpaca_stock_snapshots", None)
         result = fetcher(
-            target_symbols[:MAX_BROAD_OBSERVATION_SYMBOLS],
+            target_symbols,
             feed="sip",
-            batch_size=max(1, min(100, _to_int(os.getenv("ASTRA_BROAD_OBSERVATION_BATCH_SIZE"), DEFAULT_BROAD_OBSERVATION_BATCH_SIZE))),
+            batch_size=max(1, min(100, _to_int(batch_size, _to_int(os.getenv("ASTRA_BROAD_OBSERVATION_BATCH_SIZE"), DEFAULT_BROAD_OBSERVATION_BATCH_SIZE)))),
         ) if callable(fetcher) else {"ok": False, "error": "provider_snapshot_method_unavailable", "rows": []}
         normalized = []
         for raw in result.get("rows") or []:
@@ -317,8 +478,8 @@ class BroadUniverseIntakePromotionV1:
             "symbols_requested": len(target_symbols[:MAX_BROAD_OBSERVATION_SYMBOLS]),
             "symbols_observed": len(normalized),
             "symbols_deferred": max(0, len(target_symbols) - len(target_symbols[:MAX_BROAD_OBSERVATION_SYMBOLS])),
-            "master_universe_size": len(target_symbols),
-            "inventory_source": "alpaca_active_tradable" if provider_symbols else "existing_cached_inventory",
+            "master_universe_size": max(len(target_symbols), len(self.cached_inventory_symbols())),
+            "inventory_source": "alpaca_active_tradable" if self.cached_inventory_symbols() else "existing_cached_inventory",
             "provider_calls": _to_int(result.get("provider_calls"), 0),
             "batches": _to_int(result.get("batches"), 0),
             "response_bytes": _to_int(result.get("response_bytes"), 0),
@@ -337,6 +498,16 @@ class BroadUniverseIntakePromotionV1:
                 self._observation_publisher(normalized)
             except Exception:
                 status["publisher_error"] = "canonical_observation_publisher_failed"
+        priority = self.build_priority_tiers_v2(normalized)
+        status.update({
+            "priority_tier_counts": priority.get("tier_counts", {}),
+            "priority_tier_lane_counts": priority.get("lane_counts", {}),
+            "priority_promotions": priority.get("symbols_promoted", 0),
+            "priority_demotions": priority.get("symbols_demoted", 0),
+            "priority_tiered": True,
+        })
+        with self._observation_lock:
+            self._observation_status = status
         self._write_observation_state(rows=normalized, status=status)
 
     def schedule_broad_observation_refresh(
@@ -356,18 +527,45 @@ class BroadUniverseIntakePromotionV1:
         normalized = sorted({_norm_symbol(symbol) for symbol in symbols if _norm_symbol(symbol)})
         if not normalized:
             return {"status": "NO_SYMBOLS", "scheduled": False}
+        plan = self._priority_refresh_plan(
+            normalized,
+            resource_state=state,
+            cycle_elapsed_seconds=elapsed,
+        )
+        selected = list(plan.get("symbols") or [])
+        if not selected:
+            return {"status": "THROTTLED_RESOURCE", "scheduled": False, **plan}
         now = time.time()
-        refresh_seconds = max(30.0, min(900.0, _to_float(os.getenv("ASTRA_BROAD_OBSERVATION_REFRESH_SECONDS"), DEFAULT_BROAD_OBSERVATION_REFRESH_SECONDS)))
+        prior = _safe_read_json(self.lane_hot_list_path, {})
+        tier_counts = dict(prior.get("priority_tier_counts") or {}) if isinstance(prior, dict) else {}
+        configured_refresh = _to_float(os.getenv("ASTRA_BROAD_OBSERVATION_REFRESH_SECONDS"), DEFAULT_BROAD_OBSERVATION_REFRESH_SECONDS)
+        refresh_seconds = max(30.0, min(900.0, configured_refresh))
+        if int(tier_counts.get("HOT", 0) or 0) > 0 or int(tier_counts.get("NEAR_ENTRY", 0) or 0) > 0:
+            refresh_seconds = min(refresh_seconds, 30.0)
+        elif int(tier_counts.get("WARM", 0) or 0) > 0:
+            refresh_seconds = min(refresh_seconds, 60.0)
+        elif not tier_counts:
+            refresh_seconds = max(refresh_seconds, 180.0)
         with self._observation_lock:
             running = self._observation_thread is not None and self._observation_thread.is_alive()
             last_refresh = self._provider_timestamp_epoch(self._observation_status.get("last_refresh_at")) or 0.0
             if running or (last_refresh and now - last_refresh < refresh_seconds):
-                return {"status": "RUNNING" if running else "COOLDOWN", "scheduled": False, "symbols": len(normalized)}
-            self._observation_status = {**self._observation_status, "status": "SCHEDULED", "scheduled_at": _now_iso(), "symbols_requested": min(len(normalized), MAX_BROAD_OBSERVATION_SYMBOLS)}
-            thread = threading.Thread(target=self._refresh_broad_observations, args=(normalized,), name="astra-broad-observation", daemon=True)
+                return {"status": "RUNNING" if running else "COOLDOWN", "scheduled": False, **plan}
+            batch_size = 50 if state in {"RESOURCE_ELEVATED", "ELEVATED", "RESOURCE_DEGRADED"} or elapsed >= 16.0 else 100
+            self._observation_status = {
+                **self._observation_status,
+                "status": "SCHEDULED",
+                "scheduled_at": _now_iso(),
+                "symbols_requested": len(selected),
+                "master_universe_size": len(normalized),
+                "symbols_deferred": len(normalized) - len(selected),
+                "refresh_seconds": refresh_seconds,
+                "priority_tiered": True,
+            }
+            thread = threading.Thread(target=self._refresh_broad_observations, args=(selected,), kwargs={"batch_size": batch_size}, name="astra-broad-observation", daemon=True)
             self._observation_thread = thread
             thread.start()
-        return {"status": "SCHEDULED", "scheduled": True, "symbols": len(normalized)}
+        return {"status": "SCHEDULED", "scheduled": True, **plan, "batch_size": batch_size, "refresh_seconds": refresh_seconds}
 
     def _existing_symbol_sources(self) -> tuple[list[str], list[str]]:
         symbols: list[str] = []
@@ -1133,6 +1331,7 @@ class BroadUniverseIntakePromotionV1:
             master_universe_size=_to_int(status.get("broad_universe_size"), 0),
             rotation_size=_to_int(status.get("rotation_size"), 0),
         )
+        priority = self.build_priority_tiers_v2(broad_rows, known_rows=actual_rows)
         lane_discovery["symbols_scanned_this_cycle"] = len(broad_rows)
         lane_discovery["tier0_scan_method"] = (
             "alpaca_sip_batch_snapshots_worker_owned"
@@ -1158,6 +1357,10 @@ class BroadUniverseIntakePromotionV1:
             "lane_eligible_counts": lane_counts,
             "lane_hot_list_sizes": hot_list_counts,
             "lane_hot_list_churn_count": lane_discovery.get("hot_list_churn_count", 0),
+            "priority_tier_counts": priority.get("tier_counts", {}),
+            "priority_tier_lane_counts": priority.get("lane_counts", {}),
+            "priority_promotions": priority.get("symbols_promoted", 0),
+            "priority_demotions": priority.get("symbols_demoted", 0),
             "deep_analysis_count": 0,
             "deep_analysis_target": lane_discovery.get("deep_analysis_target", {}),
             "finalist_count": sum(

@@ -21568,23 +21568,37 @@ def rankings():
         inventory_symbols = list(dict.fromkeys(str(symbol).upper().strip() for symbol in inventory_symbols if str(symbol).strip()))
         market_discovery = {}
         market_rows = []
-        refresher = getattr(BROAD_UNIVERSE_INTAKE_PROMOTION, "refresh_market_discovery", None)
-        if callable(refresher):
-            try:
-                market_discovery = dict(refresher() or {})
-                market_rows = [dict(row) for row in (market_discovery.get("rows") or []) if isinstance(row, dict)]
-            except Exception:
-                market_discovery = {"error": "market_discovery_refresh_failed"}
         broad_observations = getattr(BROAD_UNIVERSE_INTAKE_PROMOTION, "current_broad_observation_rows", None)
+        broad_rows = []
         if callable(broad_observations):
             try:
-                market_rows.extend(
+                broad_rows = [
                     {**dict(row), "discovery_source": "alpaca_sip_broad_snapshot"}
                     for row in (broad_observations() or [])
                     if isinstance(row, dict)
-                )
+                ]
             except Exception:
-                pass
+                broad_rows = []
+        if broad_rows:
+            # Fresh Alpaca/SIP snapshots are the primary live discovery feed.
+            # FMP mover calls remain a bounded fallback for a genuinely cold
+            # or unavailable Alpaca broad-observation cache.
+            market_rows.extend(broad_rows)
+            market_discovery = {
+                "rows": broad_rows,
+                "provider": "ALPACA_SIP_BROAD_SNAPSHOT",
+                "fmp_live_fallback_used": False,
+                "discovery_evidence_only": True,
+            }
+        else:
+            refresher = getattr(BROAD_UNIVERSE_INTAKE_PROMOTION, "refresh_market_discovery", None)
+            if callable(refresher):
+                try:
+                    market_discovery = dict(refresher() or {})
+                    market_discovery["fmp_live_fallback_used"] = True
+                    market_rows = [dict(row) for row in (market_discovery.get("rows") or []) if isinstance(row, dict)]
+                except Exception:
+                    market_discovery = {"error": "market_discovery_refresh_failed", "fmp_live_fallback_used": True}
         selector = getattr(BROAD_UNIVERSE_INTAKE_PROMOTION, "select_rotation", None)
         if callable(selector):
             discovery = selector(
