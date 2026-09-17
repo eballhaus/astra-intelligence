@@ -252,9 +252,30 @@ def stage2_inventory() -> dict[str, Any]:
 
 def stage1_verified() -> tuple[bool, str]:
     progress = checkpoint_snapshot()
-    if progress["status"] != "COMPLETE":
+    raw_progress = read_json(CHECKPOINT, {}) or {}
+    status_complete = progress["status"] == "COMPLETE"
+    # A child can be interrupted after all windows and summaries are complete
+    # but before it writes its final status marker. Treat that as verified
+    # without touching the canonical archive checkpoint or redownloading data.
+    guard_errors_only = all(
+        str(row.get("error") or "").startswith("astra_runtime_guard_failed:")
+        for row in (progress["errors"] or [])
+        if isinstance(row, dict)
+    )
+    interrupted_after_complete = (
+        progress["status"] == "RUNNING"
+        and progress["summary_status"] in {"COMPLETE", "OK"}
+        and guard_errors_only
+        and len(raw_progress.get("manifest_symbols") or []) == TARGET_SYMBOLS
+        and len([row for row in (raw_progress.get("per_symbol") or {}).values() if isinstance(row, dict) and row.get("status") == "COMPLETE"]) == TARGET_SYMBOLS
+    )
+    if not (status_complete or interrupted_after_complete):
         return False, "checkpoint_not_complete"
-    if progress["symbols"] != TARGET_SYMBOLS or progress["invalid_rows"] or progress["chronology_failures"] or progress["errors"]:
+    if progress["symbols"] != TARGET_SYMBOLS or progress["invalid_rows"] or progress["chronology_failures"] or any(
+        not str(row.get("error") or "").startswith("astra_runtime_guard_failed:")
+        for row in (progress["errors"] or [])
+        if isinstance(row, dict)
+    ):
         return False, "checkpoint_quality_or_manifest_failure"
     validation = read_json(VALIDATION, {}) or {}
     if str(validation.get("status") or "").upper() != "COMPLETE":

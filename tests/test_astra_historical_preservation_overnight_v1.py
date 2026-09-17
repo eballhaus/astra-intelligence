@@ -73,3 +73,24 @@ def test_worker_health_ignores_process_inspection_commands(monkeypatch, tmp_path
 
     assert health["worker_count"] == 1
     assert health["snapshot_worker_count"] == 1
+
+
+def test_stage1_accepts_interrupted_final_marker_without_redownload(monkeypatch, tmp_path):
+    checkpoint = tmp_path / "1hour_progress.json"
+    validation = tmp_path / "1hour_validation.json"
+    summary = tmp_path / "1hour_summary.json"
+    monkeypatch.setattr(supervisor, "CHECKPOINT", checkpoint)
+    monkeypatch.setattr(supervisor, "VALIDATION", validation)
+    monkeypatch.setattr(supervisor, "SUMMARY", summary)
+    symbols = [f"EQ{index:03d}" for index in range(supervisor.TARGET_SYMBOLS)]
+    _write(checkpoint, {
+        "status": "RUNNING",
+        "manifest_symbols": symbols,
+        "per_symbol": {symbol: {"status": "COMPLETE"} for symbol in symbols},
+        "windows_completed": 1,
+        "summary": {"status": "COMPLETE"},
+        "errors": [{"error": "astra_runtime_guard_failed:worker_transition"}],
+    })
+    _write(validation, {"status": "COMPLETE"})
+
+    assert supervisor.stage1_verified() == (True, "ok")
