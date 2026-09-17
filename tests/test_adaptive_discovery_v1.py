@@ -148,6 +148,7 @@ def test_lane_hot_lists_use_existing_current_evidence_and_preserve_multi_lane_id
         assert [row["symbol"] for row in result["hot_lists"]["DAY"]] == ["AAPL"]
         assert [row["symbol"] for row in result["hot_lists"]["SWING"]] == ["MSFT"]
         assert result["total_count"] == 3
+        assert result["eligible_count"] == {"SCALP": 1, "DAY": 1, "SWING": 1}
         assert result["multiple_lane_symbol_count"] == 1
         assert result["symbols_scheduled_for_tier0"] == 24
         assert result["symbols_scanned_this_cycle"] == 0
@@ -183,6 +184,7 @@ def test_lane_hot_lists_are_bounded_and_resource_aware() -> None:
             cycle_elapsed_seconds=19.0,
         )
         assert len(result["hot_lists"]["SCALP"]) == 37  # elevated mode reduces the 150-symbol cap to 37
+        assert result["eligible_count"]["SCALP"] == 200
         assert result["deep_analysis_target"]["SCALP"] == 20
         assert result["resource_capacity"]["discovery_capacity_factor"] == 0.25
         assert all(row["execution_authority"] is False for row in result["hot_lists"]["SCALP"])

@@ -705,6 +705,7 @@ class BroadUniverseIntakePromotionV1:
             "active_symbols": sorted({record["symbol"] for values in hot_lists.values() for record in values}),
             "total_count": sum(len(values) for values in hot_lists.values()),
             "per_lane_count": {lane: len(hot_lists[lane]) for lane in LANE_DISCOVERY_LANES},
+            "eligible_count": {lane: len(candidates[lane]) for lane in LANE_DISCOVERY_LANES},
             "hot_list_churn_count": len(
                 {
                     f"{record.get('lane')}:{record.get('symbol')}"
@@ -878,7 +879,8 @@ class BroadUniverseIntakePromotionV1:
             master_universe_size=_to_int(status.get("broad_universe_size"), 0),
             rotation_size=_to_int(status.get("rotation_size"), 0),
         )
-        lane_counts = dict(lane_discovery.get("per_lane_count") or {})
+        lane_counts = dict(lane_discovery.get("eligible_count") or {})
+        hot_list_counts = dict(lane_discovery.get("per_lane_count") or {})
         status.update({
             "symbols_scanned_this_cycle": 0,
             "lightweight_scored_count": 0,
@@ -891,7 +893,7 @@ class BroadUniverseIntakePromotionV1:
             "tier0_symbols_scheduled": lane_discovery.get("symbols_scheduled_for_tier0", 0),
             "tier0_symbols_observed": lane_discovery.get("symbols_scanned_this_cycle", 0),
             "lane_eligible_counts": lane_counts,
-            "lane_hot_list_sizes": lane_counts,
+            "lane_hot_list_sizes": hot_list_counts,
             "lane_hot_list_churn_count": lane_discovery.get("hot_list_churn_count", 0),
             "deep_analysis_count": 0,
             "deep_analysis_target": lane_discovery.get("deep_analysis_target", {}),
