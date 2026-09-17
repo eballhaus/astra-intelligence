@@ -442,7 +442,7 @@ def main() -> int:
     if (
         isinstance(existing_state, dict)
         and existing_state.get("stage") == "STAGE_3_5MIN"
-        and existing_state.get("stage_status") == "STAGE_3_REQUIRES_SCOPE_APPROVAL"
+        and existing_state.get("stage_status") in {"STAGE_3_REQUIRES_SCOPE_APPROVAL", "APPROVED_PENDING", "RUNNING", "PAUSED_RESOURCE_OR_WORKER_GUARD", "CHECKPOINTED_RESTART_PENDING"}
     ):
         # Resume the supervisor's completed Stage 1/2 record; do not reset any
         # archive checkpoint or create a second historical architecture.
@@ -537,6 +537,8 @@ def main() -> int:
                 state["child_owned_by_supervisor"] = True
                 state["restart_count"] = int(state.get("restart_count") or 0) + 1
                 state["stage_status"] = "RUNNING"
+                if active_stage == "STAGE_3_5MIN":
+                    state["stage3"] = {**(state.get("stage3") or {}), "status": "RUNNING", "api_calls_started": True, "child_pid": child.pid}
                 start_snapshot = current
                 log(f"LAUNCH archive child pid={child.pid} from checkpoint windows={current['windows_completed']}")
         elif adopted_pid is not None:
