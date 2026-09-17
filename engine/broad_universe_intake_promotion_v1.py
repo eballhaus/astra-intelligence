@@ -472,13 +472,14 @@ class BroadUniverseIntakePromotionV1:
             row = self._normalize_snapshot_row(raw, received_at=received_at)
             if row is not None:
                 normalized.append(row)
+        master_universe_size = max(len(target_symbols), len(self.cached_inventory_symbols()))
         status = {
             "status": "CURRENT" if normalized else "FAILED_NO_OBSERVATIONS",
             "last_refresh_at": _now_iso(),
             "symbols_requested": len(target_symbols[:MAX_BROAD_OBSERVATION_SYMBOLS]),
             "symbols_observed": len(normalized),
-            "symbols_deferred": max(0, len(target_symbols) - len(target_symbols[:MAX_BROAD_OBSERVATION_SYMBOLS])),
-            "master_universe_size": max(len(target_symbols), len(self.cached_inventory_symbols())),
+            "symbols_deferred": max(0, master_universe_size - len(normalized)),
+            "master_universe_size": master_universe_size,
             "inventory_source": "alpaca_active_tradable" if self.cached_inventory_symbols() else "existing_cached_inventory",
             "provider_calls": _to_int(result.get("provider_calls"), 0),
             "batches": _to_int(result.get("batches"), 0),
