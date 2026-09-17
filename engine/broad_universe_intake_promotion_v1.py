@@ -34,6 +34,11 @@ MARKET_DISCOVERY_TTL_SECONDS = 300
 AUTHORITATIVE_UNIVERSE_LIMIT = 650
 MARKET_DISCOVERY_LIMIT = 250
 
+LANE_DISCOVERY_LANES = ("SCALP", "DAY", "SWING")
+LANE_HOT_LIST_LIMITS = {"SCALP": 150, "DAY": 150, "SWING": 300}
+LANE_DEEP_ANALYSIS_LIMITS = {"SCALP": 20, "DAY": 25, "SWING": 25}
+HOT_LIST_HOLD_SECONDS = 600
+
 # A compact built-in seed keeps the engine useful offline. Larger local or
 # provider-backed universes replace this automatically when available.
 BUILTIN_US_EQUITY_SEED = """
@@ -163,6 +168,7 @@ class BroadUniverseIntakePromotionV1:
         self.cohort_path = self.state_dir / "adaptive_discovery_v1.json"
         self.quality_cohort_path = self.state_dir / "candidate_quality_selection_v1.json"
         self.market_snapshot_path = self.state_dir / "fmp_market_discovery_snapshot_v1.json"
+        self.lane_hot_list_path = self.state_dir / "lane_aware_discovery_v1.json"
         self._last_status: dict[str, Any] = {}
         self._provider_router = ProviderRouter() if ProviderRouter is not None else None
 
@@ -515,6 +521,216 @@ class BroadUniverseIntakePromotionV1:
         age = _to_float(row.get("quote_age_seconds"), -1.0)
         return round((sum(values) / len(values)) + (4.0 if 0.0 <= age <= 120.0 else 0.0), 4)
 
+    @staticmethod
+    def _lane_from_existing_row(row: dict[str, Any]) -> str:
+        lane = str(
+            row.get("lane_ranked_entry_lane")
+            or row.get("lane_id")
+            or row.get("lane")
+            or ""
+        ).upper().strip()
+        if lane in LANE_DISCOVERY_LANES:
+            return lane
+        horizon = str(row.get("best_horizon_style") or row.get("trade_horizon_style") or "").lower().strip()
+        return {"scalp": "SCALP", "day_trade": "DAY", "swing_trade": "SWING"}.get(horizon, "")
+
+    @staticmethod
+    def _row_is_current_lane_evidence(row: dict[str, Any]) -> bool:
+        if not bool(row.get("lane_ranked_entry_funnel_v1")):
+            return False
+        if not bool(row.get("qualified") or row.get("eligible")):
+            return False
+        freshness = str(
+            row.get("candidate_snapshot_freshness")
+            or row.get("candidate_freshness_status")
+            or row.get("freshness_state")
+            or ""
+        ).upper()
+        return not any(token in freshness for token in ("STALE", "EXPIRED", "MISSING", "INVALID", "REJECTED"))
+
+    @staticmethod
+    def _lane_rank(row: dict[str, Any]) -> int | None:
+        for key in ("lane_finalist_rank", "lane_shortlist_rank"):
+            value = _to_int(row.get(key), 0)
+            if value > 0:
+                return value
+        return None
+
+    def _discovery_capacity(self, *, resource_state: str = "", cycle_elapsed_seconds: float | None = None) -> dict[str, Any]:
+        """Keep discovery bounded without changing trading-critical limits."""
+        state = str(resource_state or "").upper().strip()
+        elapsed = _to_float(cycle_elapsed_seconds, 0.0) if cycle_elapsed_seconds is not None else 0.0
+        if state in {"RESOURCE_CRITICAL", "CRITICAL", "RESOURCE_STOPPED"}:
+            factor = 0.0
+        elif state in {"RESOURCE_ELEVATED", "ELEVATED", "RESOURCE_DEGRADED"} or elapsed >= 18.0:
+            factor = 0.25
+        elif elapsed >= 16.0:
+            factor = 0.5
+        else:
+            factor = 1.0
+        hot_limits = {
+            lane: int(LANE_HOT_LIST_LIMITS[lane] * factor) for lane in LANE_DISCOVERY_LANES
+        }
+        deep_limits = {
+            lane: min(LANE_DEEP_ANALYSIS_LIMITS[lane], hot_limits[lane])
+            for lane in LANE_DISCOVERY_LANES
+        }
+        return {
+            "resource_state": state or "UNKNOWN",
+            "cycle_elapsed_seconds": round(elapsed, 3) if cycle_elapsed_seconds is not None else None,
+            "discovery_capacity_factor": factor,
+            "hot_list_limits": hot_limits,
+            "deep_analysis_limits": deep_limits,
+        }
+
+    def build_lane_aware_discovery_v1(
+        self,
+        rows: Iterable[dict[str, Any]] | None = None,
+        *,
+        master_universe_size: int = 0,
+        rotation_size: int = 0,
+        resource_state: str = "",
+        cycle_elapsed_seconds: float | None = None,
+        now_timestamp: float | None = None,
+    ) -> dict[str, Any]:
+        """Index current canonical lane evidence without creating candidates.
+
+        Inventory and mover rows only schedule/describe discovery. A symbol
+        enters a lane hot list here only when the existing allocator has
+        already attached a lane, ranking, qualification, and current evidence.
+        This keeps the broad funnel observational until a canonical observation
+        publisher is available for the rotated inventory slice.
+        """
+        now = float(now_timestamp if now_timestamp is not None else time.time())
+        now_iso = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
+        capacity = self._discovery_capacity(
+            resource_state=resource_state,
+            cycle_elapsed_seconds=cycle_elapsed_seconds,
+        )
+        previous = _safe_read_json(self.lane_hot_list_path, {})
+        previous_by_key: dict[str, dict[str, Any]] = {}
+        for lane_rows in (previous.get("hot_lists") or {}).values() if isinstance(previous, dict) else ():
+            for record in lane_rows or ():
+                if not isinstance(record, dict):
+                    continue
+                key = f"{str(record.get('lane') or '').upper()}:{_norm_symbol(record.get('symbol'))}"
+                if key.split(":", 1)[0] in LANE_DISCOVERY_LANES and key.split(":", 1)[1]:
+                    previous_by_key[key] = record
+
+        candidates: dict[str, dict[str, dict[str, Any]]] = {lane: {} for lane in LANE_DISCOVERY_LANES}
+        rejected = Counter()
+        for raw in rows or ():
+            if not isinstance(raw, dict):
+                continue
+            symbol = _norm_symbol(raw.get("symbol"))
+            lane = self._lane_from_existing_row(raw)
+            if not symbol or not lane:
+                rejected["missing_symbol_or_lane"] += 1
+                continue
+            if not self._row_is_current_lane_evidence(raw):
+                rejected["not_current_qualified_lane_evidence"] += 1
+                continue
+            score_value = raw.get("lane_ranked_entry_score")
+            if score_value in (None, ""):
+                rejected["missing_existing_lane_score"] += 1
+                continue
+            score = _to_float(score_value, 0.0)
+            rank = self._lane_rank(raw)
+            key = f"{lane}:{symbol}"
+            prior = dict(previous_by_key.get(key) or {})
+            prior_score = prior.get("eligibility_score")
+            material_score_change = round(score - _to_float(prior_score, score), 3) if prior_score not in (None, "") else None
+            selected_at_epoch = _discovery_timestamp_epoch(prior.get("selected_at")) or now
+            expires_epoch = _discovery_timestamp_epoch(prior.get("expires_at"))
+            if expires_epoch is None or expires_epoch <= now:
+                expires_epoch = now + HOT_LIST_HOLD_SECONDS
+                selected_at_epoch = now
+            record = {
+                "symbol": symbol,
+                "lane": lane,
+                "source_lane": lane,
+                "eligibility_score": round(score, 3),
+                "rank": rank,
+                "reason": str(
+                    raw.get("candidate_discovery_reason")
+                    or raw.get("candidate_opportunity_type")
+                    or raw.get("candidate_source")
+                    or "EXISTING_CANONICAL_LANE_RANKING"
+                ),
+                "first_seen": str(prior.get("first_seen") or now_iso),
+                "last_seen": now_iso,
+                "latest_refresh": now_iso,
+                "selected_at": datetime.fromtimestamp(selected_at_epoch, timezone.utc).isoformat().replace("+00:00", "Z"),
+                "expires_at": datetime.fromtimestamp(expires_epoch, timezone.utc).isoformat().replace("+00:00", "Z"),
+                "freshness": str(
+                    raw.get("candidate_snapshot_freshness")
+                    or raw.get("candidate_freshness_status")
+                    or raw.get("freshness_state")
+                    or "CURRENT"
+                ),
+                "source_provenance": raw.get("source_provenance") or raw.get("candidate_source") or "paper_opportunity_allocation_engine_v1",
+                "candidate_id": str(raw.get("candidate_id") or raw.get("recommendation_id") or ""),
+                "managed_position": bool(raw.get("managed_position")),
+                "material_score_change": material_score_change,
+                "discovery_only": True,
+                "executable_evidence": False,
+                "execution_authority": False,
+                "candidate_evidence_fabricated": False,
+            }
+            prior_record = candidates[lane].get(symbol)
+            if prior_record is None or _to_float(record.get("eligibility_score"), 0.0) > _to_float(prior_record.get("eligibility_score"), 0.0):
+                candidates[lane][symbol] = record
+
+        hot_lists: dict[str, list[dict[str, Any]]] = {}
+        for lane in LANE_DISCOVERY_LANES:
+            ordered = sorted(
+                candidates[lane].values(),
+                key=lambda record: (
+                    _to_float(record.get("eligibility_score"), 0.0),
+                    -(record.get("rank") or 9999),
+                    str(record.get("symbol") or ""),
+                ),
+                reverse=True,
+            )
+            bounded = ordered[: capacity["hot_list_limits"][lane]]
+            for index, record in enumerate(bounded, start=1):
+                record["current_rank"] = index
+            hot_lists[lane] = bounded
+
+        payload = {
+            "schema_version": "astra_lane_aware_discovery_v1",
+            "version": VERSION,
+            "generated_at": now_iso,
+            "hot_lists": hot_lists,
+            "active_symbols": sorted({record["symbol"] for values in hot_lists.values() for record in values}),
+            "total_count": sum(len(values) for values in hot_lists.values()),
+            "per_lane_count": {lane: len(hot_lists[lane]) for lane in LANE_DISCOVERY_LANES},
+            "hot_list_churn_count": len(
+                {
+                    f"{record.get('lane')}:{record.get('symbol')}"
+                    for values in hot_lists.values() for record in values
+                }.symmetric_difference(set(previous_by_key))
+            ),
+            "master_universe_size": max(0, int(master_universe_size)),
+            "symbols_scheduled_for_tier0": max(0, int(rotation_size)),
+            "symbols_scanned_this_cycle": 0,
+            "tier0_scan_method": "cached_canonical_observations_and_deterministic_rotation_only",
+            "deep_analysis_target": capacity["deep_analysis_limits"],
+            "resource_capacity": capacity,
+            "rejected_rows": dict(rejected),
+            "multiple_lane_symbol_count": sum(
+                1 for symbol in {record["symbol"] for values in hot_lists.values() for record in values}
+                if sum(1 for values in hot_lists.values() if any(row["symbol"] == symbol for row in values)) > 1
+            ),
+            "bounded": True,
+            "discovery_only": True,
+            "candidate_evidence_fabricated": False,
+            "broker_actions_added": 0,
+            "trading_policy_changed": False,
+        }
+        _safe_write_json(self.lane_hot_list_path, payload)
+        return payload
+
     def _record_cohort_marker(self) -> dict[str, Any]:
         existing = _safe_read_json(self.cohort_path, {})
         if isinstance(existing, dict) and existing.get("change_id") == "ADAPTIVE_DISCOVERY_V1":
@@ -657,6 +873,12 @@ class BroadUniverseIntakePromotionV1:
         rotation = self.select_rotation(known_rows=rows)
         status = dict(rotation["status"])
         actual_rows = [dict(row) for row in (rows or []) if isinstance(row, dict)]
+        lane_discovery = self.build_lane_aware_discovery_v1(
+            actual_rows,
+            master_universe_size=_to_int(status.get("broad_universe_size"), 0),
+            rotation_size=_to_int(status.get("rotation_size"), 0),
+        )
+        lane_counts = dict(lane_discovery.get("per_lane_count") or {})
         status.update({
             "symbols_scanned_this_cycle": 0,
             "lightweight_scored_count": 0,
@@ -665,9 +887,23 @@ class BroadUniverseIntakePromotionV1:
             "actual_candidate_rows_observed": len(actual_rows),
             "promoted_symbols": [],
             "api_calls_used": 0,
+            "tier0_scan_method": lane_discovery.get("tier0_scan_method"),
+            "tier0_symbols_scheduled": lane_discovery.get("symbols_scheduled_for_tier0", 0),
+            "tier0_symbols_observed": lane_discovery.get("symbols_scanned_this_cycle", 0),
+            "lane_eligible_counts": lane_counts,
+            "lane_hot_list_sizes": lane_counts,
+            "lane_hot_list_churn_count": lane_discovery.get("hot_list_churn_count", 0),
+            "deep_analysis_count": 0,
+            "deep_analysis_target": lane_discovery.get("deep_analysis_target", {}),
+            "finalist_count": sum(
+                1 for row in actual_rows
+                if bool(row.get("lane_finalist")) and bool(row.get("lane_ranked_entry_funnel_v1"))
+            ),
+            "multiple_lane_symbol_count": lane_discovery.get("multiple_lane_symbol_count", 0),
             "live_trading_changed": False,
             "alpaca_paper_only_preserved": True,
             "natural_exit_preserved": True,
+            "lane_aware_discovery_v1": lane_discovery,
         })
         self._last_status = dict(status)
         return {"status": status, "promoted": [], "scored": []}

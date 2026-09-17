@@ -114,3 +114,102 @@ def test_existing_allocation_score_prefers_stronger_candidate_independent_of_sou
     weaker = {"symbol": "AAA", "paper_allocation_priority": 61.0, "risk_adjusted_profit_score": 65.0}
     stronger = {"symbol": "ZZZ", "paper_allocation_priority": 82.0, "risk_adjusted_profit_score": 78.0}
     assert sorted([weaker, stronger], key=_paper_selection_priority, reverse=True)[0]["symbol"] == "ZZZ"
+
+
+def _lane_evidence(symbol: str, lane: str, score: float, rank: int) -> dict:
+    return {
+        "symbol": symbol,
+        "lane_ranked_entry_lane": lane,
+        "lane_ranked_entry_funnel_v1": True,
+        "lane_shortlist_rank": rank,
+        "lane_ranked_entry_score": score,
+        "qualified": True,
+        "candidate_freshness_status": "FRESH",
+        "candidate_source": "paper_opportunity_allocation_engine_v1",
+    }
+
+
+def test_lane_hot_lists_use_existing_current_evidence_and_preserve_multi_lane_identity() -> None:
+    with TemporaryDirectory() as directory:
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        result = owner.build_lane_aware_discovery_v1(
+            [
+                _lane_evidence("AAPL", "SCALP", 88.0, 1),
+                _lane_evidence("AAPL", "SCALP", 87.0, 3),
+                _lane_evidence("AAPL", "DAY", 82.0, 2),
+                _lane_evidence("MSFT", "SWING", 79.0, 1),
+                {"symbol": "NVDA", "lane": "DAY", "qualified": True, "lane_ranked_entry_score": 99.0},
+            ],
+            master_universe_size=474,
+            rotation_size=24,
+            now_timestamp=1_800_000_000.0,
+        )
+        assert [row["symbol"] for row in result["hot_lists"]["SCALP"]] == ["AAPL"]
+        assert [row["symbol"] for row in result["hot_lists"]["DAY"]] == ["AAPL"]
+        assert [row["symbol"] for row in result["hot_lists"]["SWING"]] == ["MSFT"]
+        assert result["total_count"] == 3
+        assert result["multiple_lane_symbol_count"] == 1
+        assert result["symbols_scheduled_for_tier0"] == 24
+        assert result["symbols_scanned_this_cycle"] == 0
+        assert result["candidate_evidence_fabricated"] is False
+
+
+def test_lane_hot_lists_reject_stale_or_unresolved_rows_without_inventory_promotion() -> None:
+    with TemporaryDirectory() as directory:
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        result = owner.build_lane_aware_discovery_v1(
+            [
+                {**_lane_evidence("STALE", "SCALP", 99.0, 1), "candidate_freshness_status": "STALE"},
+                {"symbol": "AAPL", "lane": "DAY", "qualified": True, "lane_ranked_entry_score": 90.0},
+            ],
+            master_universe_size=474,
+            rotation_size=24,
+        )
+        assert result["total_count"] == 0
+        assert result["hot_lists"] == {"SCALP": [], "DAY": [], "SWING": []}
+        assert result["rejected_rows"]["not_current_qualified_lane_evidence"] == 2
+
+
+def test_lane_hot_lists_are_bounded_and_resource_aware() -> None:
+    with TemporaryDirectory() as directory:
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        rows = [
+            _lane_evidence(f"A{chr(65 + i // 26)}{chr(65 + i % 26)}", "SCALP", 100.0 - i, i + 1)
+            for i in range(200)
+        ]
+        result = owner.build_lane_aware_discovery_v1(
+            rows,
+            resource_state="RESOURCE_ELEVATED",
+            cycle_elapsed_seconds=19.0,
+        )
+        assert len(result["hot_lists"]["SCALP"]) == 37  # elevated mode reduces the 150-symbol cap to 37
+        assert result["deep_analysis_target"]["SCALP"] == 20
+        assert result["resource_capacity"]["discovery_capacity_factor"] == 0.25
+        assert all(row["execution_authority"] is False for row in result["hot_lists"]["SCALP"])
+
+
+def test_lane_hot_list_refresh_preserves_first_seen_and_selection_window() -> None:
+    with TemporaryDirectory() as directory:
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        first = owner.build_lane_aware_discovery_v1(
+            [_lane_evidence("AAPL", "DAY", 80.0, 1)], now_timestamp=1_800_000_000.0
+        )
+        second = owner.build_lane_aware_discovery_v1(
+            [_lane_evidence("AAPL", "DAY", 85.0, 1)], now_timestamp=1_800_000_120.0
+        )
+        first_row = first["hot_lists"]["DAY"][0]
+        second_row = second["hot_lists"]["DAY"][0]
+        assert second_row["first_seen"] == first_row["first_seen"]
+        assert second_row["selected_at"] == first_row["selected_at"]
+        assert second_row["material_score_change"] == 5.0
+
+
+def test_lane_hot_list_never_creates_execution_or_broker_activity() -> None:
+    with TemporaryDirectory() as directory:
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        result = owner.build_lane_aware_discovery_v1(
+            [_lane_evidence("AAPL", "SCALP", 80.0, 1)]
+        )
+        assert result["broker_actions_added"] == 0
+        assert result["trading_policy_changed"] is False
+        assert all(row["discovery_only"] for row in result["hot_lists"]["SCALP"])
