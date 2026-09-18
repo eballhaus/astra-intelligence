@@ -169,6 +169,16 @@ def initial_stage_checkpoint(state_dir: Path, stage: int) -> dict[str, Any]:
     path = checkpoint_path(state_dir, stage)
     existing = read_json(path, {})
     if isinstance(existing, dict) and existing.get("stage") == stage:
+        if stage in {4, 5, 6, 8} and existing.get("status") == "COMPLETE" and not existing.get("provider_required"):
+            existing["status"] = "COMPLETE_WITH_SUPPORTED_GAPS"
+            existing["provider_required"] = {
+                4: ["historical implied-volatility, skew, term-structure and options open-interest provider"],
+                5: ["historical true quote/trade microstructure provider; OHLCV proxy only"],
+                6: ["historical quote-level transaction-cost observations; modelled replay-only proxy used"],
+                8: ["additional point-in-time cross-asset event context beyond existing local archive"],
+            }[stage]
+            existing["updated_at"] = now_iso()
+            atomic_json(path, existing)
         return existing
     payload = {
         "schema_version": "astra_historical_context_phase2_stage_v1",
