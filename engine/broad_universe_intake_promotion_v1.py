@@ -428,6 +428,35 @@ class BroadUniverseIntakePromotionV1:
             "tiered_refresh": True,
         }
 
+    def record_cycle_timing_v1(self, cycle_elapsed_seconds: float) -> dict[str, Any]:
+        """Feed real worker cycle history back into the discovery controller."""
+        previous = _safe_read_json(self.lane_hot_list_path, {})
+        controller = dict(previous.get("priority_controller_v1") or {}) if isinstance(previous, dict) else {}
+        history = [
+            _to_float(value, 0.0)
+            for value in list(controller.get("cycle_history_seconds") or [])
+            if _to_float(value, 0.0) > 0.0
+        ]
+        history.append(max(0.0, _to_float(cycle_elapsed_seconds, 0.0)))
+        history = history[-CONTROLLER_HISTORY_LIMIT:]
+        age_stats = dict(previous.get("priority_tier_age_stats_seconds") or {}) if isinstance(previous, dict) else {}
+        cold_stats = dict(age_stats.get("COLD") or {})
+        payload = {
+            **controller,
+            "schema_version": "astra_discovery_throughput_controller_v1",
+            "cycle_history_seconds": history,
+            "cycle_pressure_count_last_5": sum(value >= 15.0 for value in history[-5:]),
+            "hard_pressure_count_last_5": sum(value >= 18.0 for value in history[-5:]),
+            "cold_p95_age_seconds": round(_to_float(cold_stats.get("p95"), 0.0), 3),
+            "cold_max_age_seconds": round(_to_float(cold_stats.get("max"), 0.0), 3),
+            "updated_at": _now_iso(),
+            "bounded": True,
+        }
+        merged = dict(previous) if isinstance(previous, dict) else {}
+        merged["priority_controller_v1"] = payload
+        _safe_write_json(self.lane_hot_list_path, merged)
+        return payload
+
     def build_priority_tiers_v2(
         self,
         observation_rows: Iterable[dict[str, Any]] | None = None,

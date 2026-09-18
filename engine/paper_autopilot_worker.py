@@ -234,6 +234,9 @@ class PaperAutopilotWorker:
         def review_sum(*names: str) -> float:
             return round(sum(float(review_durations.get(name) or 0.0) for name in names), 3)
 
+        broad_suite = getattr(self.autopilot, "broad_universe_intake_promotion_suite", None)
+        broad_status = dict(getattr(broad_suite, "_observation_status", {}) or {}) if broad_suite is not None else {}
+        broad_discovery_seconds = round(float(broad_status.get("refresh_elapsed_ms") or 0.0) / 1000.0, 3)
         stages = {
             "active_position_management": review_sum(
                 "quote", "snapshot", "learned_exit", "exit_evaluation",
@@ -246,7 +249,7 @@ class PaperAutopilotWorker:
             "candidate_finalist_management": phase_sum("candidate", "finalist", "safety_preflight"),
             "hot_near_entry_refresh": phase_sum("hot", "near_entry"),
             "warm_refresh": phase_sum("warm"),
-            "cold_discovery": phase_sum("cold", "discovery", "broad_observation"),
+            "cold_discovery": max(phase_sum("cold", "discovery", "broad_observation"), broad_discovery_seconds),
             "state_writes": round(sum(self._cycle_state_write_samples), 3),
             "provider_broker_wait": phase_sum(
                 "provider", "broker", "market_data", "quote", "fmp", "crypto_ranking",
@@ -1278,6 +1281,10 @@ class PaperAutopilotWorker:
             governance_elapsed = time.monotonic() - governance_started
             cycle_total_elapsed = time.monotonic() - started
             cycle_timing = self._record_cycle_timing_v1(cycle_total_elapsed, governance_elapsed)
+            if broad_suite is not None:
+                recorder = getattr(broad_suite, "record_cycle_timing_v1", None)
+                if callable(recorder):
+                    recorder(cycle_total_elapsed)
             self._publish(
                 resource=before,
                 resource_policy=policy,
