@@ -455,6 +455,21 @@ def feature_store_stage(state_dir: Path, checkpoint: dict[str, Any]) -> dict[str
     return checkpoint
 
 
+def rearm_stage(state_dir: Path, stage: int) -> dict[str, Any]:
+    """Re-arm only an explicitly requested provider-gap stage."""
+    if stage != 1:
+        raise ValueError("only SEC Stage 1 may be explicitly re-armed")
+    if not (os.getenv("ASTRA_SEC_USER_AGENT") or os.getenv("SEC_USER_AGENT")):
+        raise ValueError("ASTRA_SEC_USER_AGENT is required before Stage 1 can be re-armed")
+    checkpoint = initial_stage_checkpoint(state_dir, stage)
+    checkpoint["status"] = "PENDING"
+    checkpoint["provider_required"] = []
+    checkpoint["errors"] = []
+    checkpoint["updated_at"] = now_iso()
+    atomic_json(checkpoint_path(state_dir, stage), checkpoint)
+    return checkpoint
+
+
 def provider_gap_stage(state_dir: Path, stage: int, checkpoint: dict[str, Any]) -> dict[str, Any]:
     gaps = {
         2: "authorized historical news/catalyst provider contract is not present; current Finnhub adapter is bounded live context",
@@ -527,6 +542,20 @@ def supervisor(args: argparse.Namespace) -> int:
         for number, _name, _output in STAGES:
             normalized = initial_stage_checkpoint(state_dir, number)
             state["stage_statuses"][str(number)] = normalized.get("status") or "PENDING"
+        if args.resume_stage is not None:
+            try:
+                rearm_stage(state_dir, args.resume_stage)
+            except ValueError as exc:
+                state["status"] = "PROVIDER_REQUIRED"
+                state["last_error"] = str(exc)
+                update_state(state_dir, state)
+                log_event(state_dir, "RESUME_REFUSED", stage=args.resume_stage, reason=str(exc))
+                return 3
+            state["stage_statuses"][str(args.resume_stage)] = "PENDING"
+            state["current_stage"] = args.resume_stage
+            state["current_stage_name"] = stage_name(args.resume_stage)
+            state["status"] = "RUNNING"
+            log_event(state_dir, "STAGE_REARMED", stage=args.resume_stage)
         update_state(state_dir, state)
         stopped = False
 
@@ -604,6 +633,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state-dir", default=str(DEFAULT_STATE_DIR))
     parser.add_argument("--child", action="store_true")
     parser.add_argument("--stage", type=int, choices=range(1, 15))
+    parser.add_argument("--resume-stage", type=int, choices=(1,), default=None)
     args = parser.parse_args(argv)
     if args.child:
         if args.stage is None:

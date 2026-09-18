@@ -10,6 +10,7 @@ from scripts.astra_historical_context_phase2_v1 import (
     initial_stage_checkpoint,
     safety_fields,
     stage_name,
+    rearm_stage,
 )
 
 
@@ -51,3 +52,22 @@ def test_existing_checkpoint_is_reused(tmp_path: Path):
     second = initial_stage_checkpoint(tmp_path, 10)
     assert second["next_index"] == 50
     assert second["status"] == "RUNNING"
+
+
+def test_stage_one_rearm_requires_user_agent_and_preserves_progress(tmp_path: Path, monkeypatch):
+    checkpoint = initial_stage_checkpoint(tmp_path, 1)
+    checkpoint["status"] = "PROVIDER_REQUIRED"
+    checkpoint["next_index"] = 7
+    (tmp_path / "astra_historical_context_phase2_v1_stage_01_progress.json").write_text(json.dumps(checkpoint))
+    monkeypatch.delenv("ASTRA_SEC_USER_AGENT", raising=False)
+    monkeypatch.delenv("SEC_USER_AGENT", raising=False)
+    try:
+        rearm_stage(tmp_path, 1)
+    except ValueError as exc:
+        assert "ASTRA_SEC_USER_AGENT" in str(exc)
+    else:
+        raise AssertionError("missing SEC identity must refuse re-arm")
+    monkeypatch.setenv("ASTRA_SEC_USER_AGENT", "Astra operator contact@example.com")
+    rearmed = rearm_stage(tmp_path, 1)
+    assert rearmed["status"] == "PENDING"
+    assert rearmed["next_index"] == 7
