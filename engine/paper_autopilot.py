@@ -2240,6 +2240,8 @@ class PaperAutopilotEngine:
                     self._runtime_state["system_integrity_scanner_v1"] = dict(payload.get("system_integrity_scanner_v1") or {})
                 if isinstance(payload.get("astra_natural_truth_lifecycle_intelligence_v1"), dict):
                     self._runtime_state["astra_natural_truth_lifecycle_intelligence_v1"] = dict(payload.get("astra_natural_truth_lifecycle_intelligence_v1") or {})
+                if isinstance(payload.get("broad_observation_multilane_handoff_v1"), dict):
+                    self._runtime_state["broad_observation_multilane_handoff_v1"] = dict(payload.get("broad_observation_multilane_handoff_v1") or {})
                 if payload.get("last_cycle_utc"):
                     self._runtime_state["last_cycle_utc"] = str(payload.get("last_cycle_utc") or "")
                 for key in (
@@ -2328,6 +2330,7 @@ class PaperAutopilotEngine:
             "truth_arbitration_v1": dict(self._runtime_state.get("truth_arbitration_v1") or {}),
             "system_integrity_scanner_v1": dict(self._runtime_state.get("system_integrity_scanner_v1") or {}),
             "astra_natural_truth_lifecycle_intelligence_v1": dict(self._runtime_state.get("astra_natural_truth_lifecycle_intelligence_v1") or {}),
+            "broad_observation_multilane_handoff_v1": dict(self._runtime_state.get("broad_observation_multilane_handoff_v1") or {}),
             "astra_trading_readiness_v1": dict(self._runtime_state.get("astra_trading_readiness_v1") or {}),
             "trading_readiness_last_error_v1": dict(self._runtime_state.get("trading_readiness_last_error_v1") or {}),
             "last_execution_trace": {
