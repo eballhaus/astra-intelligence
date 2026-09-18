@@ -7945,8 +7945,14 @@ class PaperAutopilotEngine:
         # so the worker records stale/unsupported/disabled candidate stages
         # instead of presenting an empty lane.  Submission remains guarded by
         # the canonical crypto activation contract below.
-        rows.extend(_rows_from(["crypto", "final"]))
-        rows.extend(_rows_from(["crypto", "qualified"]))
+        rows.extend(
+            [{**dict(row), "asset_class": "crypto", "lane_id": "CRYPTO", "asset_type": "crypto"}
+             for row in _rows_from(["crypto", "final"])]
+        )
+        rows.extend(
+            [{**dict(row), "asset_class": "crypto", "lane_id": "CRYPTO", "asset_type": "crypto"}
+             for row in _rows_from(["crypto", "qualified"])]
+        )
         if callable(self.get_crypto_candidate_rows_fn):
             try:
                 rows.extend(
@@ -7956,20 +7962,86 @@ class PaperAutopilotEngine:
             except Exception:
                 pass
 
+        # Feed a bounded set of current broad observations through the
+        # existing allocator as independent lane-evaluation copies.  The
+        # observation owner remains non-executable; only rows that already
+        # carry real lane qualification can be promoted downstream.
+        broad_handoff: dict[str, Any] = {}
+        broad_owner = self.broad_universe_intake_promotion_suite
+        allocator = self.paper_opportunity_allocator
+        if (
+            broad_owner is not None
+            and allocator is not None
+            and hasattr(broad_owner, "bounded_lane_evaluation_inputs_v1")
+            and hasattr(allocator, "evaluate_broad_observations_v1")
+        ):
+            try:
+                broad_inputs = broad_owner.bounded_lane_evaluation_inputs_v1()
+                broad_handoff = dict(allocator.evaluate_broad_observations_v1(broad_inputs) or {})
+                rows.extend([dict(row) for row in (broad_handoff.get("promoted_rows") or []) if isinstance(row, dict)])
+                self._runtime_state["broad_observation_multilane_handoff_v1"] = {
+                    key: value for key, value in broad_handoff.items() if key != "promoted_rows"
+                }
+            except Exception as exc:
+                self._runtime_state["broad_observation_multilane_handoff_v1"] = {
+                    "schema_version": "astra_broad_observation_multilane_handoff_v1",
+                    "status": "FAILED_SAFE",
+                    "error": str(exc)[:180],
+                    "evaluation_only": True,
+                    "observation_authority": False,
+                    "executable_evidence": False,
+                }
+
         dedup: list[dict[str, Any]] = []
-        seen: set[str] = set()
+        seen: dict[str, int] = {}
+
+        def _identity_key(row: dict[str, Any]) -> str:
+            symbol = str(row.get("symbol") or row.get("ticker") or "").upper().strip()
+            lane = str(row.get("lane_id") or row.get("lane") or "").upper().strip()
+            explicit_horizon = str(
+                row.get("paper_entry_horizon_style")
+                or row.get("assigned_horizon")
+                or row.get("trade_horizon_style")
+                or row.get("best_horizon_style")
+                or ""
+            ).lower().strip()
+            if explicit_horizon:
+                horizon = explicit_horizon
+            elif lane == "SCALP":
+                horizon = "scalp"
+            elif lane == "DAY":
+                horizon = "day_trade"
+            elif lane == "SWING":
+                horizon = "swing_trade"
+            else:
+                # Legacy CRYPTO rows frequently carry no explicit horizon;
+                # do not manufacture a distinction from normalization-only
+                # metadata when deduplicating those rows.
+                horizon = ""
+            return "|".join((symbol, lane, horizon))
+
+        def _source_rank(row: dict[str, Any]) -> int:
+            return 0 if str(row.get("lane_evaluation_source") or "") == "broad_live_observation_v1" else 1
+
         for row in rows:
-            sym = str(row.get("symbol") or "").upper().strip()
-            if not sym or sym in seen:
+            if not isinstance(row, dict):
                 continue
-            seen.add(sym)
             row = _normalize_paper_entry_bridge(row)
+            sym = str(row.get("symbol") or "").upper().strip()
+            identity_key = _identity_key(row)
+            if not sym or not identity_key:
+                continue
             row.setdefault("symbol", sym)
             # Preserve crypto asset class so the downstream execution path
             # (asset == "crypto") can correctly identify lane-specific gates.
             is_crypto = str(row.get("asset_class") or row.get("asset_type") or "").strip().lower() in {"crypto", "cryptocurrency"}
             row.setdefault("asset_type", "crypto" if is_crypto else "stock")
-            dedup.append(row)
+            prior_index = seen.get(identity_key)
+            if prior_index is None:
+                seen[identity_key] = len(dedup)
+                dedup.append(row)
+            elif _source_rank(row) > _source_rank(dedup[prior_index]):
+                dedup[prior_index] = row
         if self.edge_development_suite is not None and hasattr(self.edge_development_suite, "decorate_candidates"):
             try:
                 dedup = list(self.edge_development_suite.decorate_candidates(dedup) or dedup)

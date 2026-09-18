@@ -40,6 +40,28 @@ LANE_SHORTLIST_LIMIT = 40
 LANE_FINALIST_LIMIT = 10
 LANE_HISTORY_LIMITS = {"SCALP": 3, "DAY": 5, "SWING": 8}
 MAX_RANK_STATE_SYMBOLS_PER_LANE = 80
+BROAD_LANE_EVALUATION_LANES = ("SCALP", "DAY", "SWING")
+
+# These are existing feature names consumed by _lane_soft_evidence/_features.
+# They are presence checks only; no values or thresholds are synthesized.
+BROAD_LANE_EVIDENCE_FIELDS = {
+    "SCALP": (
+        "scalp_fit_score", "short_horizon_fit_score", "intraday_acceleration_score",
+        "momentum_expansion_score", "momentum_score", "relative_volume_score",
+        "rvol_score", "spread_quality_score", "freshness_quality_score",
+        "volatility_expansion_score", "volatility_score",
+    ),
+    "DAY": (
+        "day_trade_fit_score", "intraday_fit_score", "trend_quality_score",
+        "momentum_expansion_score", "momentum_score", "relative_volume_score",
+        "rvol_score", "freshness_quality_score",
+    ),
+    "SWING": (
+        "swing_trade_fit_score", "swing_fit_score", "multi_day_fit_score",
+        "trend_persistence_score", "trend_quality_score", "momentum_score",
+        "market_regime", "regime", "sector",
+    ),
+}
 
 MEGA_CAP_SYMBOL_FALLBACK = {
     "AAPL", "MSFT", "NVDA", "AMZN", "GOOG", "GOOGL", "META", "TSLA", "AVGO", "BRK.B",
@@ -556,6 +578,109 @@ class PaperOpportunityAllocationEngineV1:
         for idx, row in enumerate(decorated, start=1):
             row["risk_adjusted_opportunity_rank"] = idx
         return decorated
+
+    @staticmethod
+    def _broad_lane_evidence_fields(row: dict[str, Any], lane: str) -> list[str]:
+        return [
+            key for key in BROAD_LANE_EVIDENCE_FIELDS.get(str(lane).upper(), ())
+            if row.get(key) not in (None, "", {}, [])
+        ]
+
+    def _evaluate_broad_observation_for_lane_v1(self, row: dict[str, Any], lane: str) -> dict[str, Any]:
+        """Evaluate one observation copy without granting execution authority."""
+        lane = str(lane or "").upper().strip()
+        if lane not in BROAD_LANE_EVALUATION_LANES:
+            return {"lane_evaluation_status": "UNAVAILABLE", "lane_evaluation_missing": ["unsupported_lane"]}
+        candidate = dict(row or {})
+        candidate["lane_id"] = lane
+        candidate["lane_evaluation_only"] = True
+        candidate["observation_authority"] = False
+        candidate["executable_evidence"] = False
+        candidate["discovery_only"] = True
+        candidate = apply_trade_lane_contract(candidate, legacy=False)
+        scored = self.score_row(candidate)
+        relative = self._relative_strength_evidence(candidate, market_return_pct=None, sector_return_pct=None)
+        soft = self._lane_soft_evidence(candidate, lane, relative)
+        evidence_fields = self._broad_lane_evidence_fields(candidate, lane)
+        freshness = str(candidate.get("execution_freshness_state") or candidate.get("freshness_state") or "").upper()
+        missing: list[str] = []
+        if not evidence_fields:
+            missing.append("lane_specific_features")
+        if freshness not in {"CURRENT", "FRESH"}:
+            missing.append("current_market_evidence")
+        if not bool(candidate.get("qualified") or candidate.get("eligible")):
+            missing.append("existing_lane_qualification")
+        status = "ELIGIBLE" if not missing else "UNAVAILABLE"
+        return {
+            **candidate,
+            **scored,
+            **relative,
+            **soft,
+            "lane_ranked_entry_funnel_v1": True,
+            "lane_ranked_entry_lane": lane,
+            "lane_evaluation_status": status,
+            "lane_evaluation_missing": missing,
+            "lane_evaluation_evidence_fields": evidence_fields,
+            "lane_evaluation_source": "broad_live_observation_v1",
+            "candidate_evidence_fabricated": False,
+            "execution_authority": False,
+        }
+
+    def evaluate_broad_observations_v1(
+        self,
+        rows: list[dict[str, Any]] | None,
+        *,
+        max_observations: int = 300,
+    ) -> dict[str, Any]:
+        """Fan out bounded observation copies to existing lane scoring only."""
+        source_rows = [dict(row) for row in (rows or []) if isinstance(row, dict)][: max(0, int(max_observations))]
+        evaluations: list[dict[str, Any]] = []
+        missing_by_lane: dict[str, Counter[str]] = {lane: Counter() for lane in BROAD_LANE_EVALUATION_LANES}
+        attempted_by_lane = {lane: 0 for lane in BROAD_LANE_EVALUATION_LANES}
+        for row in source_rows:
+            for lane in BROAD_LANE_EVALUATION_LANES:
+                attempted_by_lane[lane] += 1
+                evaluated = self._evaluate_broad_observation_for_lane_v1(row, lane)
+                evaluations.append(evaluated)
+                for reason in evaluated.get("lane_evaluation_missing") or ():
+                    missing_by_lane[lane][reason] += 1
+
+        eligible_inputs = [
+            row for row in evaluations
+            if str(row.get("lane_evaluation_status") or "") == "ELIGIBLE"
+        ]
+        promoted_rows: list[dict[str, Any]] = []
+        if eligible_inputs:
+            decorated = self.decorate_candidates(eligible_inputs)
+            promoted_rows = [
+                row for row in decorated
+                if bool(row.get("lane_finalist"))
+                and bool(row.get("lane_ranked_entry_funnel_v1"))
+                and bool(row.get("qualified") or row.get("eligible"))
+            ]
+        eligible_by_lane = {
+            lane: sum(1 for row in eligible_inputs if str(row.get("lane_id") or "").upper() == lane)
+            for lane in BROAD_LANE_EVALUATION_LANES
+        }
+        promoted_by_lane = {
+            lane: sum(1 for row in promoted_rows if str(row.get("lane_id") or "").upper() == lane)
+            for lane in BROAD_LANE_EVALUATION_LANES
+        }
+        return {
+            "schema_version": "astra_broad_observation_multilane_handoff_v1",
+            "observations_considered": len(source_rows),
+            "evaluations_attempted": attempted_by_lane,
+            "eligible": eligible_by_lane,
+            "promoted": promoted_by_lane,
+            "missing_evidence": {lane: dict(counts) for lane, counts in missing_by_lane.items()},
+            "promoted_rows": promoted_rows,
+            "evaluation_only": True,
+            "observation_authority": False,
+            "executable_evidence": False,
+            "candidate_evidence_fabricated": False,
+            "api_calls_used": 0,
+            "broker_actions_added": 0,
+        }
 
     def day_lane_governance(
         self,

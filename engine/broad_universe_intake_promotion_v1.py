@@ -38,6 +38,7 @@ ALPACA_UNIVERSE_TTL_SECONDS = 86_400
 DEFAULT_BROAD_OBSERVATION_REFRESH_SECONDS = 60
 DEFAULT_BROAD_OBSERVATION_BATCH_SIZE = 100
 MAX_BROAD_OBSERVATION_SYMBOLS = 3_000
+MAX_LANE_EVALUATION_INPUTS = 300
 
 LANE_DISCOVERY_LANES = ("SCALP", "DAY", "SWING")
 LANE_HOT_LIST_LIMITS = {"SCALP": 150, "DAY": 150, "SWING": 300}
@@ -337,6 +338,48 @@ class BroadUniverseIntakePromotionV1:
             if str(row.get("freshness_state") or "").upper() == "CURRENT"
             and _to_float(row.get("quote_age_seconds"), 10_000.0) <= 120.0
         ]
+
+    def bounded_lane_evaluation_inputs_v1(self, max_observations: int = MAX_LANE_EVALUATION_INPUTS) -> list[dict[str, Any]]:
+        """Return bounded current observations for evaluation-only lane fanout.
+
+        This deliberately does not assign a trading lane.  The priority tier
+        is discovery metadata only; the allocator creates independent copies
+        for each lane and keeps execution authority disabled.
+        """
+        rows = self.current_broad_observation_rows()
+        priority = _safe_read_json(self.lane_hot_list_path, {})
+        tier_by_symbol: dict[str, dict[str, Any]] = {}
+        for record in priority.get("priority_tiers") or [] if isinstance(priority, dict) else ():
+            if not isinstance(record, dict):
+                continue
+            symbol = _norm_symbol(record.get("symbol"))
+            if symbol:
+                tier_by_symbol[symbol] = record
+        tier_rank = {tier: index for index, tier in enumerate(DISCOVERY_TIER_ORDER)}
+        enriched: list[dict[str, Any]] = []
+        for row in rows:
+            symbol = _norm_symbol(row.get("symbol"))
+            if not symbol:
+                continue
+            tier = dict(tier_by_symbol.get(symbol) or {})
+            enriched.append({
+                **dict(row),
+                "discovery_priority_tier": str(tier.get("tier") or "COLD").upper(),
+                "discovery_priority_rank": _to_int(tier.get("rank"), 999999),
+                "discovery_score": _to_float(tier.get("discovery_score"), self._snapshot_discovery_score(row)),
+                "lane_evaluation_input": True,
+                "observation_authority": False,
+                "executable_evidence": False,
+                "discovery_only": True,
+            })
+        enriched.sort(
+            key=lambda row: (
+                tier_rank.get(str(row.get("discovery_priority_tier") or "COLD").upper(), len(tier_rank)),
+                -_to_float(row.get("discovery_score"), 0.0),
+                str(row.get("symbol") or ""),
+            )
+        )
+        return enriched[: max(0, int(max_observations))]
 
     @staticmethod
     def _snapshot_discovery_score(row: dict[str, Any]) -> float:
