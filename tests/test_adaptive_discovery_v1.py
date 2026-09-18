@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from datetime import UTC, datetime, timedelta
 
 from engine.broad_universe_intake_promotion_v1 import BroadUniverseIntakePromotionV1
-from engine.paper_autopilot import _paper_selection_priority
+from engine.paper_autopilot import PaperAutopilotEngine, _paper_selection_priority
 from engine.provider_router import ProviderRouter
 from engine.paper_autopilot_worker import PaperAutopilotWorker
 
@@ -179,6 +180,99 @@ def test_broad_snapshots_are_batched_normalized_and_published_as_observation_onl
         assert rows[0]["executable_evidence"] is False
         assert rows[0]["bid"] == 99.9
         assert rows[0]["volume"] == 5000.0
+
+
+def test_freshly_checked_quiet_snapshot_separates_coverage_from_execution_freshness() -> None:
+    received_at = datetime(2026, 9, 17, 14, 30, tzinfo=UTC).timestamp()
+    old_event = datetime(2026, 9, 17, 14, 29, 0, tzinfo=UTC).isoformat().replace("+00:00", "Z")
+    raw = {
+        "symbol": "QUIET",
+        "snapshot": {
+            "latestQuote": {"t": old_event, "bp": 99.9, "ap": 100.1},
+            "latestTrade": {"t": old_event, "p": 100.0, "s": 10},
+            "minuteBar": {"t": old_event, "c": 100.0, "v": 5000},
+            "prevDailyBar": {"c": 98.0},
+        },
+    }
+    row = BroadUniverseIntakePromotionV1._normalize_snapshot_row(raw, received_at=received_at)
+    assert row is not None
+    assert row["last_checked_at"] == "2026-09-17T14:30:00Z"
+    assert row["market_event_at"] == old_event
+    assert row["discovery_observation_state"] == "MARKET_QUIET_CURRENT_SNAPSHOT"
+    assert row["execution_freshness_state"] == "CURRENT"
+    with TemporaryDirectory() as directory:
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        result = owner.build_priority_tiers_v2([row], now_timestamp=received_at + 1.0)
+        assert result["timestamp_classification_counts"]["current_observed"] == 1
+        assert result["age_stats_seconds"]["COLD"]["max"] == 1.0
+        assert result["discovery_observation_state_counts"]["MARKET_QUIET_CURRENT_SNAPSHOT"] == 1
+
+
+def test_stale_provider_event_remains_non_executable_after_fresh_check() -> None:
+    received_at = datetime(2026, 9, 17, 14, 30, tzinfo=UTC).timestamp()
+    old_event = datetime(2026, 9, 17, 14, 20, tzinfo=UTC).isoformat().replace("+00:00", "Z")
+    row = BroadUniverseIntakePromotionV1._normalize_snapshot_row(
+        {
+            "symbol": "STALE",
+            "snapshot": {
+                "latestQuote": {"t": old_event, "bp": 99.9, "ap": 100.1},
+                "latestTrade": {"t": old_event, "p": 100.0, "s": 10},
+                "minuteBar": {"t": old_event, "c": 100.0, "v": 5000},
+                "prevDailyBar": {"c": 98.0},
+            },
+        },
+        received_at=received_at,
+    )
+    assert row is not None
+    assert row["last_checked_at"] == "2026-09-17T14:30:00Z"
+    assert row["execution_freshness_state"] == "STALE"
+    assert row["discovery_observation_state"] == "DATA_STALE"
+    assert row["executable_evidence"] is False
+
+
+def test_missing_provider_event_timestamp_is_unknown_not_current() -> None:
+    received_at = datetime(2026, 9, 17, 14, 30, tzinfo=UTC).timestamp()
+    row = BroadUniverseIntakePromotionV1._normalize_snapshot_row(
+        {
+            "symbol": "UNKNOWN",
+            "snapshot": {
+                "latestQuote": {"bp": 99.9, "ap": 100.1},
+                "latestTrade": {"p": 100.0, "s": 10},
+                "minuteBar": {"c": 100.0, "v": 5000},
+                "prevDailyBar": {"c": 98.0},
+            },
+        },
+        received_at=received_at,
+    )
+    assert row is not None
+    assert row["execution_freshness_state"] == "UNKNOWN"
+    assert row["discovery_observation_state"] == "UNKNOWN"
+    assert row["quote_age_seconds"] is None
+
+
+def test_active_management_timing_keeps_bounded_identity_bound_position_breakdown() -> None:
+    engine = PaperAutopilotEngine.__new__(PaperAutopilotEngine)
+    engine._runtime_state = {
+        "provider_wait_trace_v1": {
+            "calls": [
+                {"symbol": "GEHC", "latency_seconds": 0.25, "cache_hit": False},
+                {"symbol": "OTHER", "latency_seconds": 0.50, "cache_hit": True},
+            ]
+        }
+    }
+    engine._reset_worker_open_review_timing_v1()
+    started = time.monotonic() - 0.01
+    engine._record_worker_open_review_position_timing_v1(
+        {"position_id": "lifecycle-gehc", "symbol": "GEHC", "lane_id": "SCALP"},
+        "quote",
+        started,
+    )
+    record = engine._runtime_state["worker_open_review_timing_v1"]["positions"]["lifecycle-gehc"]
+    assert record["symbol"] == "GEHC"
+    assert record["lifecycle_id"] == "lifecycle-gehc"
+    assert record["lane"] == "SCALP"
+    assert record["provider_wait_seconds"] == 0.25
+    assert record["provider_call_count"] == 1
 
 
 def test_broad_observation_refresh_is_worker_only_and_asynchronous(monkeypatch) -> None:

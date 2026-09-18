@@ -258,9 +258,11 @@ class BroadUniverseIntakePromotionV1:
         ]
         timestamps = [(value, kind, cls._provider_timestamp_epoch(value)) for value, kind in timestamps]
         timestamps = [(value, kind, epoch) for value, kind, epoch in timestamps if epoch is not None]
-        if not symbol or not timestamps:
+        if not symbol:
             return None
-        native_value, native_kind, native_epoch = max(timestamps, key=lambda item: item[2])
+        native_value, native_kind, native_epoch = ("", "", None)
+        if timestamps:
+            native_value, native_kind, native_epoch = max(timestamps, key=lambda item: item[2])
         bid = _to_float(quote.get("bp"), 0.0)
         ask = _to_float(quote.get("ap"), 0.0)
         trade_price = _to_float(trade.get("p"), 0.0)
@@ -269,7 +271,24 @@ class BroadUniverseIntakePromotionV1:
             return None
         bar_close = _to_float(minute.get("c"), 0.0)
         previous_close = _to_float((snapshot.get("prevDailyBar") or {}).get("c"), 0.0)
-        age = max(0.0, received_at - native_epoch)
+        age = max(0.0, received_at - native_epoch) if native_epoch is not None else None
+        if age is None:
+            execution_freshness_state = "UNKNOWN"
+            discovery_observation_state = "UNKNOWN"
+        elif age > 120.0:
+            execution_freshness_state = "STALE"
+            discovery_observation_state = "DATA_STALE"
+        elif age <= 30.0:
+            execution_freshness_state = "CURRENT"
+            discovery_observation_state = "CURRENT_ACTIVE"
+        else:
+            # A snapshot can be freshly retrieved while its last underlying
+            # market event is older because the symbol is quiet.  This is
+            # diagnostic coverage state only; execution still uses the
+            # provider-event freshness contract above.
+            execution_freshness_state = "CURRENT"
+            discovery_observation_state = "MARKET_QUIET_CURRENT_SNAPSHOT"
+        received_iso = datetime.fromtimestamp(received_at, timezone.utc).isoformat().replace("+00:00", "Z")
         return {
             "symbol": symbol,
             "price": price,
@@ -287,8 +306,13 @@ class BroadUniverseIntakePromotionV1:
             "provider_native_timestamp": str(native_value),
             "provider_native_timestamp_kind": native_kind,
             "receive_timestamp": received_at,
-            "quote_age_seconds": round(age, 3),
-            "freshness_state": "CURRENT" if age <= 120.0 else "STALE",
+            "last_checked_at": received_iso,
+            "market_event_at": str(native_value),
+            "market_event_age_seconds": round(age, 3) if age is not None else None,
+            "quote_age_seconds": round(age, 3) if age is not None else None,
+            "freshness_state": execution_freshness_state,
+            "execution_freshness_state": execution_freshness_state,
+            "discovery_observation_state": discovery_observation_state,
             "provider": "ALPACA_SIP_BROAD_SNAPSHOT",
             "provider_used": "ALPACA_SIP_BROAD_SNAPSHOT",
             "provider_provenance": "ALPACA_SIP_BATCH_SNAPSHOT",
@@ -424,11 +448,12 @@ class BroadUniverseIntakePromotionV1:
             tier = str(prior.get("tier") or "COLD").upper()
             if tier not in DISCOVERY_TIER_RANK:
                 tier = "COLD"
+            coverage_timestamp = prior.get("last_checked_at") or prior.get("last_observed_at")
             timestamp_class, classified_age = self._classify_discovery_timestamp(
-                prior.get("last_observed_at"),
+                coverage_timestamp,
                 now_timestamp=time.time(),
             )
-            last_observed = self._provider_timestamp_epoch(prior.get("last_observed_at")) or 0.0
+            last_observed = self._provider_timestamp_epoch(coverage_timestamp) or 0.0
             score = _to_float(prior.get("discovery_score"), 0.0)
             age = classified_age if classified_age is not None else float("inf")
             catch_up = 0 if tier == "COLD" and timestamp_class == "stale_current" and age >= COLD_STARVATION_AGE_SECONDS else 1
@@ -548,12 +573,23 @@ class BroadUniverseIntakePromotionV1:
             if prior_tier in {"HOT", "WARM"} and now - prior_seen <= HOT_LIST_HOLD_SECONDS:
                 if tier == "COLD" and index <= max(1, int(total * 0.25)):
                     tier = prior_tier
-            observation_timestamp = str(
-                row.get("provider_native_timestamp")
+            last_checked_at = str(
+                row.get("last_checked_at")
+                or row.get("receive_timestamp_iso")
+                or row.get("last_observed_at")
+                or row.get("provider_native_timestamp")
+                or ""
+            ).strip()
+            market_event_at = str(
+                row.get("market_event_at")
+                or row.get("provider_native_timestamp")
                 or row.get("provider_quote_timestamp")
                 or row.get("observation_timestamp")
                 or ""
             ).strip()
+            # Coverage age answers when Astra successfully inspected the
+            # symbol.  It must not inherit the older provider event time.
+            coverage_timestamp = last_checked_at or ""
             tiers.append({
                 "symbol": symbol,
                 "lane": lane,
@@ -563,9 +599,11 @@ class BroadUniverseIntakePromotionV1:
                 "reason": "relative_snapshot_movement_volume_spread_freshness",
                 "first_seen": str(prior.get("first_seen") or now_iso),
                 "last_seen": now_iso,
-                # Missing provider time remains unknown; processing time must
-                # not manufacture a fresh coverage observation.
-                "last_observed_at": observation_timestamp,
+                "last_checked_at": coverage_timestamp,
+                "last_observed_at": coverage_timestamp,
+                "market_event_at": market_event_at,
+                "market_event_age_seconds": row.get("market_event_age_seconds"),
+                "discovery_observation_state": str(row.get("discovery_observation_state") or "UNKNOWN"),
                 "freshness": str(row.get("freshness_state") or "UNKNOWN"),
                 "promotion_at": str(prior.get("promotion_at") or (now_iso if tier != prior_tier else "")),
                 "demotion_at": now_iso if prior_tier and tier != prior_tier else str(prior.get("demotion_at") or ""),
@@ -583,7 +621,7 @@ class BroadUniverseIntakePromotionV1:
         for record in tiers:
             tier = str(record.get("tier") or "COLD")
             timestamp_class, age = self._classify_discovery_timestamp(
-                record.get("last_observed_at"),
+                record.get("last_checked_at") or record.get("last_observed_at"),
                 now_timestamp=now,
             )
             timestamp_classes[timestamp_class] += 1
@@ -629,6 +667,10 @@ class BroadUniverseIntakePromotionV1:
                     "invalid_timestamp", "stale_current",
                 )
             },
+            "discovery_observation_state_counts": dict(Counter(
+                str(record.get("discovery_observation_state") or "UNKNOWN")
+                for record in tiers
+            )),
             "cold_catch_up_queue": sorted(set(catch_up_queue))[:MAX_BROAD_OBSERVATION_SYMBOLS],
             "cold_catch_up_queue_size": len(set(catch_up_queue)),
             "priority_tier_discovery_only": True,
@@ -650,6 +692,10 @@ class BroadUniverseIntakePromotionV1:
                     "invalid_timestamp", "stale_current",
                 )
             },
+            "discovery_observation_state_counts": dict(Counter(
+                str(record.get("discovery_observation_state") or "UNKNOWN")
+                for record in tiers
+            )),
             "cold_catch_up_queue_size": len(set(catch_up_queue)),
             "discovery_only": True,
             "broker_actions_added": 0,

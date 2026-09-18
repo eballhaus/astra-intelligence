@@ -2428,6 +2428,7 @@ class PaperAutopilotEngine:
             "schema_version": "astra_worker_open_review_timing_v1",
             "durations_seconds": {},
             "counts": {},
+            "positions": {},
             "bounded": True,
         }
 
@@ -2504,6 +2505,64 @@ class PaperAutopilotEngine:
             "schema_version": "astra_worker_open_review_timing_v1",
             "durations_seconds": durations,
             "counts": counts,
+            "positions": dict(timing.get("positions") or {}),
+            "bounded": True,
+        }
+
+    def _record_worker_open_review_position_timing_v1(
+        self,
+        row: Mapping[str, Any] | None,
+        stage: str,
+        started_monotonic: float,
+    ) -> None:
+        """Keep bounded per-position timing for active-management outliers."""
+        try:
+            elapsed = max(0.0, time.monotonic() - float(started_monotonic))
+        except (TypeError, ValueError):
+            elapsed = 0.0
+        position = dict(row or {})
+        key = str(
+            position.get("position_id")
+            or position.get("canonical_position_id")
+            or position.get("lifecycle_id")
+            or position.get("symbol")
+            or "unknown"
+        ).strip()[:96]
+        timing = dict(self._runtime_state.get("worker_open_review_timing_v1") or {})
+        positions = dict(timing.get("positions") or {})
+        if key not in positions and len(positions) >= 64:
+            return
+        record = dict(positions.get(key) or {})
+        durations = dict(record.get("durations_seconds") or {})
+        stage_key = str(stage or "unknown")[:64]
+        durations[stage_key] = round(float(durations.get(stage_key) or 0.0) + elapsed, 4)
+        record.update({
+            "symbol": str(position.get("symbol") or "").upper()[:32],
+            "lifecycle_id": str(
+                position.get("canonical_position_id")
+                or position.get("lifecycle_id")
+                or position.get("position_id")
+                or ""
+            )[:96],
+            "lane": str(position.get("lane_id") or position.get("lane") or "").upper()[:16],
+            "durations_seconds": durations,
+            "total_seconds": round(sum(float(value or 0.0) for value in durations.values()), 4),
+        })
+        provider_calls = [
+            call for call in list(dict(self._runtime_state.get("provider_wait_trace_v1") or {}).get("calls") or [])
+            if str(call.get("symbol") or "").upper() == record["symbol"]
+        ]
+        record["provider_wait_seconds"] = round(
+            sum(float(call.get("latency_seconds") or 0.0) for call in provider_calls), 4
+        )
+        record["provider_cache_hits"] = sum(1 for call in provider_calls if call.get("cache_hit") is True)
+        record["provider_call_count"] = len(provider_calls)
+        positions[key] = record
+        self._runtime_state["worker_open_review_timing_v1"] = {
+            "schema_version": "astra_worker_open_review_timing_v1",
+            "durations_seconds": dict(timing.get("durations_seconds") or {}),
+            "counts": dict(timing.get("counts") or {}),
+            "positions": positions,
             "bounded": True,
         }
 
@@ -13036,6 +13095,7 @@ class PaperAutopilotEngine:
                 conn.commit()
         finally:
             self._record_worker_open_review_timing_v1("snapshot_db", snapshot_db_started)
+            self._record_worker_open_review_position_timing_v1(open_row, "snapshot_db", snapshot_db_started)
         if self._position_tracker is not None:
             snapshot_tracker_started = time.monotonic()
             try:
@@ -13055,6 +13115,7 @@ class PaperAutopilotEngine:
                 pass
             finally:
                 self._record_worker_open_review_timing_v1("snapshot_tracker", snapshot_tracker_started)
+                self._record_worker_open_review_position_timing_v1(open_row, "snapshot_tracker", snapshot_tracker_started)
         if callable(update_lifecycle_progress):
             snapshot_lifecycle_started = time.monotonic()
             try:
@@ -13085,6 +13146,7 @@ class PaperAutopilotEngine:
                 pass
             finally:
                 self._record_worker_open_review_timing_v1("snapshot_lifecycle", snapshot_lifecycle_started)
+                self._record_worker_open_review_position_timing_v1(open_row, "snapshot_lifecycle", snapshot_lifecycle_started)
         if self.trade_lifecycle_excursion_suite is not None and hasattr(self.trade_lifecycle_excursion_suite, "record_open_position"):
             snapshot_excursion_started = time.monotonic()
             try:
@@ -13110,6 +13172,7 @@ class PaperAutopilotEngine:
                 pass
             finally:
                 self._record_worker_open_review_timing_v1("snapshot_excursion", snapshot_excursion_started)
+                self._record_worker_open_review_position_timing_v1(open_row, "snapshot_excursion", snapshot_excursion_started)
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -16217,12 +16280,14 @@ class PaperAutopilotEngine:
                     latest_price_by_symbol,
                 )
                 self._record_worker_open_review_timing_v1("quote", substage_started)
+                self._record_worker_open_review_position_timing_v1(row, "quote", substage_started)
                 if not latest:
                     skipped += 1
                     continue
                 substage_started = time.monotonic()
                 self._update_open_row_snapshot(row, latest)
                 self._record_worker_open_review_timing_v1("snapshot", substage_started)
+                self._record_worker_open_review_position_timing_v1(row, "snapshot", substage_started)
 
                 entry_ts = str(row.get("entry_timestamp") or "")
                 hold_seconds = 0.0
@@ -16240,6 +16305,7 @@ class PaperAutopilotEngine:
                     substage_started = time.monotonic()
                     learned_sell = self._submit_guarded_learned_exit_sell(row, latest, broker_pos)
                     self._record_worker_open_review_timing_v1("learned_exit", substage_started)
+                    self._record_worker_open_review_position_timing_v1(row, "learned_exit", substage_started)
                     if bool(learned_sell.get("submitted")):
                         skipped += 1
                         continue
@@ -16247,6 +16313,7 @@ class PaperAutopilotEngine:
                 substage_started = time.monotonic()
                 should_close, reason = self._evaluate_exit(row, latest)
                 self._record_worker_open_review_timing_v1("exit_evaluation", substage_started)
+                self._record_worker_open_review_position_timing_v1(row, "exit_evaluation", substage_started)
                 forced_lane_reason = self._lane_forced_exit_reason(row)
                 if forced_lane_reason:
                     should_close, reason = True, forced_lane_reason
@@ -16258,6 +16325,7 @@ class PaperAutopilotEngine:
                     reason=reason,
                 )
                 self._record_worker_open_review_timing_v1("decision_evidence", substage_started)
+                self._record_worker_open_review_position_timing_v1(row, "decision_evidence", substage_started)
                 substage_started = time.monotonic()
                 self._record_executable_exit_quote_evaluation(
                     row,
@@ -16267,6 +16335,7 @@ class PaperAutopilotEngine:
                     decision_evidence=decision_evidence,
                 )
                 self._record_worker_open_review_timing_v1("quote_telemetry", substage_started)
+                self._record_worker_open_review_position_timing_v1(row, "quote_telemetry", substage_started)
                 if should_close and hold_seconds >= float(min_hold):
                     lane = str(row.get("lane_id") or "").upper().strip()
                     if lane in {"DAY", "SCALP", "SWING", "CRYPTO"}:
@@ -16278,10 +16347,12 @@ class PaperAutopilotEngine:
                             latest_quote=latest,
                         )
                         self._record_worker_open_review_timing_v1("exit_submission", substage_started)
+                        self._record_worker_open_review_position_timing_v1(row, "exit_submission", substage_started)
                     else:
                         substage_started = time.monotonic()
                         result = self._close_position(row, latest, reason)
                         self._record_worker_open_review_timing_v1("exit_submission", substage_started)
+                        self._record_worker_open_review_position_timing_v1(row, "exit_submission", substage_started)
                     if result.get("ok"):
                         closed += 1 if lane not in {"DAY", "SCALP", "SWING", "CRYPTO"} else 0
                         state = self._learned_exit_daily_state()
