@@ -27,6 +27,7 @@ from engine.astra_evidence_accumulation_capacity_v1 import (
 from engine.astra_canonical_market_timestamp_v1 import (
     SOURCE_QUOTE,
     canonical_market_timestamp_v1,
+    provider_future_timestamp_tolerance_seconds_v1,
 )
 from engine.astra_trading_reset_boundary_v1 import (
     build_canonical_lane_capacity_v1,
@@ -17528,6 +17529,11 @@ def _paper_latest_symbol_snapshot(symbol, asset_type, *, bypass_cache=False):
                 out,
                 source_type=SOURCE_QUOTE,
                 max_age_seconds=20.0,
+                future_tolerance_seconds=provider_future_timestamp_tolerance_seconds_v1(
+                    out,
+                    source_type=SOURCE_QUOTE,
+                    asset_type=kind,
+                ),
             )
             if bool(evidence.get("executable_freshness")):
                 return out

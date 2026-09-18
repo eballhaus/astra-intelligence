@@ -46,6 +46,35 @@ class MarketObservationTimestampHandoffTests(unittest.TestCase):
         self.assertEqual(stale["freshness_status"], "STALE")
         self.assertFalse(stale["executable_freshness"])
 
+    def test_equity_candidate_handoff_accepts_measured_alpaca_clock_jitter(self):
+        engine = self._engine()
+        engine.get_latest_row_fn = lambda *_args: {
+            "symbol": "NVDA",
+            "asset_type": "stock",
+            "price": 220.0,
+            "provider_used": "alpaca",
+            "quote_source": "ALPACA_MARKET_DATA",
+            "quote_timestamp": (datetime.now(UTC) + timedelta(milliseconds=100)).isoformat().replace("+00:00", "Z"),
+        }
+        assigned = engine._assign_trusted_quote_to_candidate({"symbol": "NVDA", "asset_type": "stock", "lane_id": "DAY"})
+        self.assertTrue(assigned["valid_quote"])
+        self.assertTrue(assigned["trusted_quote_for_buys"])
+        self.assertEqual(assigned["quote_freshness_status"], "FRESH")
+
+    def test_equity_candidate_handoff_rejects_future_timestamp_beyond_jitter(self):
+        engine = self._engine()
+        engine.get_latest_row_fn = lambda *_args: {
+            "symbol": "NVDA",
+            "asset_type": "stock",
+            "price": 220.0,
+            "provider_used": "alpaca",
+            "quote_source": "ALPACA_MARKET_DATA",
+            "quote_timestamp": (datetime.now(UTC) + timedelta(milliseconds=400)).isoformat().replace("+00:00", "Z"),
+        }
+        assigned = engine._assign_trusted_quote_to_candidate({"symbol": "NVDA", "asset_type": "stock", "lane_id": "DAY"})
+        self.assertFalse(assigned["valid_quote"])
+        self.assertEqual(assigned["quote_assignment_blocker"], "FUTURE_PROVIDER_NATIVE_TIMESTAMP")
+
     def test_management_reuses_only_exact_position_matched_observation(self):
         engine = self._engine()
         engine.get_latest_row_fn = lambda *_args: self.fail("cached observation should avoid a new quote request")

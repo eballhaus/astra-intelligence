@@ -81,6 +81,7 @@ from engine.astra_canonical_position_snapshot_v1 import (
 from engine.astra_canonical_market_timestamp_v1 import (
     SOURCE_QUOTE,
     canonical_market_timestamp_v1,
+    provider_future_timestamp_tolerance_seconds_v1,
 )
 from engine.astra_canonical_ownership_contract_v1 import (
     broker_residual_lookup,
@@ -8236,6 +8237,11 @@ class PaperAutopilotEngine:
             candidate,
             source_type=SOURCE_QUOTE,
             max_age_seconds=20.0,
+            future_tolerance_seconds=provider_future_timestamp_tolerance_seconds_v1(
+                candidate,
+                source_type=SOURCE_QUOTE,
+                asset_type=asset_type,
+            ),
         )
         crypto_refresh_needed = bool(
             asset_type == "crypto"
@@ -8298,6 +8304,11 @@ class PaperAutopilotEngine:
             latest,
             source_type=SOURCE_QUOTE,
             max_age_seconds=20.0,
+            future_tolerance_seconds=provider_future_timestamp_tolerance_seconds_v1(
+                latest,
+                source_type=SOURCE_QUOTE,
+                asset_type=asset_type,
+            ),
         )
         price = _to_float(latest.get("price"), _to_float(latest.get("current_price"), 0.0))
         if price <= 0.0:
