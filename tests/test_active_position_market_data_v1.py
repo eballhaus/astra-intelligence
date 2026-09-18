@@ -866,6 +866,10 @@ class ActiveEquityFMPSupplementTests(unittest.TestCase):
         self.assertEqual(trace["calls"][0]["symbol"], "AAPL")
         self.assertEqual(trace["calls"][0]["freshness_requirement"], "provider_native_quote<=20s")
         self.assertEqual(trace["totals_by_owner"]["test_owner"], 0.125)
+        engine._save_state_file()
+        with open(engine.state_path, "r", encoding="utf-8") as handle:
+            persisted = __import__("json").load(handle)
+        self.assertEqual(persisted["provider_wait_trace_v1"]["schema_version"], "astra_provider_wait_trace_v1")
 
     def test_observational_monitor_state_survives_canonical_persistence(self):
         engine = self._engine()

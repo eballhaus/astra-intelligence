@@ -2229,6 +2229,8 @@ class PaperAutopilotEngine:
                     self._runtime_state["last_evidence_capacity_snapshot"] = dict(payload.get("last_evidence_capacity_snapshot") or {})
                 if isinstance(payload.get("crypto_rankings_snapshot_v1"), dict):
                     self._runtime_state["crypto_rankings_snapshot_v1"] = dict(payload.get("crypto_rankings_snapshot_v1") or {})
+                if isinstance(payload.get("provider_wait_trace_v1"), dict):
+                    self._runtime_state["provider_wait_trace_v1"] = dict(payload.get("provider_wait_trace_v1") or {})
                 if isinstance(payload.get("equity_risk_envelopes_snapshot_v1"), dict):
                     self._runtime_state["equity_risk_envelopes_snapshot_v1"] = dict(payload.get("equity_risk_envelopes_snapshot_v1") or {})
                 if isinstance(payload.get("truth_arbitration_v1"), dict):
@@ -2271,6 +2273,7 @@ class PaperAutopilotEngine:
             "worker_cycle_count": _to_int(self._runtime_state.get("worker_cycle_count"), 0),
             "worker_cycle_error": str(self._runtime_state.get("worker_cycle_error") or ""),
             "worker_phase_timing_v1": dict(self._runtime_state.get("worker_phase_timing_v1") or {}),
+            "provider_wait_trace_v1": dict(self._runtime_state.get("provider_wait_trace_v1") or {}),
             "last_close_by_symbol": dict(self._runtime_state.get("last_close_by_symbol") or {}),
             "learned_exit_pending_sells": dict(self._runtime_state.get("learned_exit_pending_sells") or {}),
             "learned_exit_daily": dict(self._runtime_state.get("learned_exit_daily") or {}),
