@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from statistics import mean
@@ -717,12 +718,18 @@ class PaperOpportunityAllocationEngineV1:
             if row.get(key) not in (None, "", {}, [])
         ]
 
-    def _evaluate_broad_observation_for_lane_v1(self, row: dict[str, Any], lane: str) -> dict[str, Any]:
+    def _evaluate_broad_observation_for_lane_v1(
+        self,
+        row: dict[str, Any],
+        lane: str,
+        *,
+        enriched_row: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Evaluate one observation copy without granting execution authority."""
         lane = str(lane or "").upper().strip()
         if lane not in BROAD_LANE_EVALUATION_LANES:
             return {"lane_evaluation_status": "UNAVAILABLE", "lane_evaluation_missing": ["unsupported_lane"]}
-        candidate = self.enrich_broad_observation_features_v1(dict(row or {}))
+        candidate = dict(enriched_row or self.enrich_broad_observation_features_v1(dict(row or {})))
         candidate["lane_id"] = lane
         candidate["lane_evaluation_only"] = True
         candidate["observation_authority"] = False
@@ -776,10 +783,14 @@ class PaperOpportunityAllocationEngineV1:
         feature_partial_by_lane = {lane: 0 for lane in BROAD_LANE_EVALUATION_LANES}
         feature_missing_by_lane: dict[str, Counter[str]] = {lane: Counter() for lane in BROAD_LANE_EVALUATION_LANES}
         attempted_by_lane = {lane: 0 for lane in BROAD_LANE_EVALUATION_LANES}
+        enrichment_started = time.perf_counter()
+        enrichment_rows = 0
         for row in source_rows:
+            enriched = self.enrich_broad_observation_features_v1(row)
+            enrichment_rows += 1
             for lane in BROAD_LANE_EVALUATION_LANES:
                 attempted_by_lane[lane] += 1
-                evaluated = self._evaluate_broad_observation_for_lane_v1(row, lane)
+                evaluated = self._evaluate_broad_observation_for_lane_v1(row, lane, enriched_row=enriched)
                 evaluations.append(evaluated)
                 if bool(evaluated.get("feature_payload_complete")):
                     feature_complete_by_lane[lane] += 1
@@ -821,6 +832,8 @@ class PaperOpportunityAllocationEngineV1:
             "feature_payload_complete": feature_complete_by_lane,
             "feature_payload_partial": feature_partial_by_lane,
             "feature_payload_missing": {lane: dict(counts) for lane, counts in feature_missing_by_lane.items()},
+            "feature_enrichment_rows": enrichment_rows,
+            "feature_enrichment_elapsed_seconds": round(time.perf_counter() - enrichment_started, 6),
             "promoted_rows": promoted_rows,
             "evaluation_only": True,
             "observation_authority": False,
