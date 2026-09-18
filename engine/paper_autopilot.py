@@ -8272,20 +8272,39 @@ class PaperAutopilotEngine:
                 rows.append(row)
                 selected_symbols.add(symbol)
                 break
+        # Keep one bounded provider slice per refresh, but rotate the remainder
+        # so a stable top-of-book candidate cannot permanently starve other
+        # strong DAY rows from current bar-risk evidence.
+        remaining_rows = []
         for row in equity_rows:
             symbol = str(row.get("symbol") or row.get("ticker") or "").upper().strip()
             if not symbol or symbol in selected_symbols:
                 continue
-            rows.append(row)
-            selected_symbols.add(symbol)
-            if len(rows) >= 12:
-                break
+            remaining_rows.append(row)
+        if remaining_rows and len(rows) < 12:
+            try:
+                cursor = int(self._runtime_state.get("equity_risk_candidate_handoff_cursor_v1", 0))
+            except (TypeError, ValueError):
+                cursor = 0
+            start = cursor % len(remaining_rows)
+            rotated = remaining_rows[start:] + remaining_rows[:start]
+            take = min(12 - len(rows), len(rotated))
+            rows.extend(rotated[:take])
+            selected_symbols.update(
+                str(row.get("symbol") or row.get("ticker") or "").upper().strip()
+                for row in rotated[:take]
+            )
+            self._runtime_state["equity_risk_candidate_handoff_cursor_v1"] = (start + take) % len(remaining_rows)
+        elif not remaining_rows:
+            self._runtime_state["equity_risk_candidate_handoff_cursor_v1"] = 0
         rows = rows[:12]
         self._runtime_state["equity_risk_candidate_handoff_v1"] = {
             "rows": rows,
             "generated_at": _now_iso(),
             "owner": "PaperAutopilot._collect_candidate_rows",
             "bounded": True,
+            "rotation_cursor": int(self._runtime_state.get("equity_risk_candidate_handoff_cursor_v1", 0)),
+            "rotating_coverage": bool(remaining_rows),
             "provider_calls_used": 0,
         }
         return rows
@@ -11011,6 +11030,19 @@ class PaperAutopilotEngine:
                 "crypto_pretrade_forecast_missing_fields": (
                     _bounded_texts(forecast.get("missing_inputs") or forecast.get("missing_fields"))
                     if asset == "crypto"
+                    else []
+                ),
+                "equity_pretrade_forecast_state": (
+                    str(r.get("equity_pretrade_forecast_v1", {}).get("forecast_state") or "UNAVAILABLE")
+                    if isinstance(r.get("equity_pretrade_forecast_v1"), Mapping)
+                    else "UNAVAILABLE"
+                ),
+                "equity_pretrade_forecast_missing_fields": (
+                    _bounded_texts(
+                        (r.get("equity_pretrade_forecast_v1") or {}).get("missing_inputs")
+                        or (r.get("equity_pretrade_forecast_v1") or {}).get("missing_fields")
+                    )
+                    if isinstance(r.get("equity_pretrade_forecast_v1"), Mapping)
                     else []
                 ),
                 "known_field_sources": known_field_sources,

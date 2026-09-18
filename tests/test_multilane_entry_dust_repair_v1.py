@@ -398,6 +398,21 @@ class MultiLaneEntryDustRepairTests(unittest.TestCase):
         self.assertIn("SCALP1", [row["symbol"] for row in handoff])
         self.assertIn("SWING1", [row["symbol"] for row in handoff])
 
+    def test_risk_handoff_rotates_bounded_remainder_without_increasing_budget(self):
+        current = [{**_candidate("DAY"), "symbol": f"DAY{index}"} for index in range(24)]
+        first = self.engine._publish_equity_risk_candidate_handoff_v1(current)
+        second = self.engine._publish_equity_risk_candidate_handoff_v1(current)
+
+        self.assertEqual(len(first), 12)
+        self.assertEqual(len(second), 12)
+        self.assertEqual(first[0]["symbol"], "DAY0")
+        self.assertEqual(second[0]["symbol"], "DAY0")
+        self.assertNotEqual(
+            {row["symbol"] for row in first[1:]},
+            {row["symbol"] for row in second[1:]},
+        )
+        self.assertEqual(self.engine._runtime_state["equity_risk_candidate_handoff_v1"]["provider_calls_used"], 0)
+
     def test_canonical_dust_is_not_normal_managed_position(self):
         position = {"symbol": "DUST", "qty": 0.0005, "market_value": 0.001, "lane_id": "DAY"}
         dust = classify_dust_position_v1(position)
