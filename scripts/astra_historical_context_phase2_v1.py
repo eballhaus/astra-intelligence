@@ -522,6 +522,11 @@ def supervisor(args: argparse.Namespace) -> int:
         state["supervisor_pid"] = os.getpid()
         state["log_path"] = str(log_path(state_dir))
         state["pid_path"] = str(pid_path(state_dir))
+        # Normalize older terminal checkpoints before selecting the next stage;
+        # this changes only status metadata, never historical records.
+        for number, _name, _output in STAGES:
+            normalized = initial_stage_checkpoint(state_dir, number)
+            state["stage_statuses"][str(number)] = normalized.get("status") or "PENDING"
         update_state(state_dir, state)
         stopped = False
 
