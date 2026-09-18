@@ -1281,6 +1281,7 @@ class PaperAutopilotWorker:
             governance_elapsed = time.monotonic() - governance_started
             cycle_total_elapsed = time.monotonic() - started
             cycle_timing = self._record_cycle_timing_v1(cycle_total_elapsed, governance_elapsed)
+            broad_suite = getattr(self.autopilot, "broad_universe_intake_promotion_suite", None)
             if broad_suite is not None:
                 recorder = getattr(broad_suite, "record_cycle_timing_v1", None)
                 if callable(recorder):
