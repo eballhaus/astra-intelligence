@@ -63,6 +63,7 @@ def _qualified_observation(symbol: str, lane: str) -> dict:
                 "swing_fit_score": 85,
                 "trend_persistence_score": 85,
                 "trend_quality_score": 85,
+                "volatility_score": 61,
                 "sector": "technology",
                 "market_regime": "risk_on",
             }
@@ -132,6 +133,7 @@ def test_broad_observation_joins_existing_swing_fit_only_with_real_inputs(tmp_pa
         "market_regime": "risk_on",
         "trend_persistence_score": 77,
         "trend_quality_score": 75,
+        "volatility_score": 61,
     }
 
     enriched = allocator.enrich_broad_observation_features_v1(row)
@@ -210,7 +212,7 @@ def test_missing_canonical_trend_and_quality_evidence_remains_unavailable(tmp_pa
 
     assert "trend_persistence_score" not in enriched
     assert "trend_quality_score" not in enriched
-    assert "spread_quality_score" not in enriched
+    assert enriched["spread_quality_score"] == 100.0
     assert "freshness_quality_score" not in enriched
     assert "scalp_fit_score" not in enriched
     assert "swing_fit_score" not in enriched

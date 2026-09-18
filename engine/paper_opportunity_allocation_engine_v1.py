@@ -40,6 +40,11 @@ try:
 except Exception:  # pragma: no cover - additive feature join
     MultiHorizonPaperTradingLearningSuiteV1 = None  # type: ignore[assignment]
 
+try:
+    from engine.astra_canonical_lane_evidence_v1 import build_lane_evidence_v1
+except Exception:  # pragma: no cover - fail closed when the evidence producer is unavailable
+    build_lane_evidence_v1 = None  # type: ignore[assignment]
+
 VERSION = "1.0.0"
 MAX_TAIL_BYTES = 2_000_000
 MAX_ROWS = 1_000
@@ -577,6 +582,15 @@ class PaperOpportunityAllocationEngineV1:
                     "completed_bar_timestamp": current.get("completed_bar_timestamp"),
                     "completed_bar_count": bar_evidence.get("count"),
                 }
+                if candidate.get("completed_bars") in (None, "", {}, []) and isinstance(bar_evidence.get("completed_bars"), list):
+                    candidate["completed_bars"] = list(bar_evidence["completed_bars"])
+                    provenance["completed_bars"] = "worker_equity_risk_observer"
+                if candidate.get("bar_timeframe") in (None, "", {}, []) and bar_evidence.get("resolution"):
+                    candidate["bar_timeframe"] = bar_evidence["resolution"]
+                    provenance["bar_timeframe"] = "worker_equity_risk_observer"
+                if candidate.get("completed_bar_source_timestamp") in (None, "", {}, []) and bar_evidence.get("provider_native_timestamp"):
+                    candidate["completed_bar_source_timestamp"] = bar_evidence["provider_native_timestamp"]
+                    provenance["completed_bar_source_timestamp"] = "worker_equity_risk_observer"
                 producers.append("worker_equity_risk_observer")
 
         for feature, record in ((evidence.get("historical") or {}).get(symbol) or {}).items():
@@ -589,6 +603,9 @@ class PaperOpportunityAllocationEngineV1:
             elif feature == "realized_volatility_20d_pct" and candidate.get("volatility_pct") in (None, "", {}, []):
                 candidate["volatility_pct"] = value
                 provenance["volatility_pct"] = "historical_context_phase2.volatility_context_v1"
+                if record.get("source_timestamp") not in (None, ""):
+                    candidate["volatility_source_timestamp"] = record.get("source_timestamp")
+                    provenance["volatility_source_timestamp"] = "historical_context_phase2.volatility_context_v1"
             elif feature == "range_behavior_20d_pct" and candidate.get("range_behavior_20d_pct") in (None, "", {}, []):
                 candidate["range_behavior_20d_pct"] = value
                 provenance["range_behavior_20d_pct"] = "historical_context_phase2.historical_feature_store_v1"
@@ -615,6 +632,22 @@ class PaperOpportunityAllocationEngineV1:
                 discovery_features = {}
 
         self._join_bounded_lane_evidence_v1(candidate, provenance, producers)
+
+        if callable(build_lane_evidence_v1):
+            try:
+                lane_evidence = dict(build_lane_evidence_v1(candidate) or {})
+            except Exception:
+                lane_evidence = {}
+            derived = dict(lane_evidence.get("derived_evidence") or {})
+            evidence_provenance = dict(lane_evidence.get("provenance") or {})
+            for key, value in derived.items():
+                if candidate.get(key) in (None, "", {}, []) and value not in (None, "", {}, []):
+                    candidate[key] = value
+                    provenance[key] = f"astra_canonical_lane_evidence_v1:{key}"
+            if lane_evidence:
+                candidate["astra_lane_evidence_v1"] = lane_evidence
+                candidate["astra_lane_evidence_provenance_v1"] = evidence_provenance
+                producers.append("astra_canonical_lane_evidence_v1")
 
         # Profile/cache fields are joined only when the existing local source
         # actually contains them. They are context, not qualification.
@@ -845,7 +878,7 @@ class PaperOpportunityAllocationEngineV1:
         feature_payload_state, feature_payload_missing = self._lane_feature_payload_state(candidate, lane)
         freshness = str(candidate.get("execution_freshness_state") or candidate.get("freshness_state") or "").upper()
         missing: list[str] = []
-        if not evidence_fields:
+        if feature_payload_state != "COMPLETE":
             missing.append("lane_specific_features")
         if freshness not in {"CURRENT", "FRESH"}:
             missing.append("current_market_evidence")
