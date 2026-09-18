@@ -144,7 +144,7 @@ def _build_record(trace: dict[str, Any], context: dict[str, Any]) -> dict[str, A
     candidate_id = _text(trace.get("candidate_id") or trace.get("source_candidate_id"))
     if not candidate_id:
         candidate_id = "paper_candidate:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
-    missing_fields = [
+    audit_missing_fields = [
         name for name, value in (
             ("symbol", symbol),
             ("assigned_horizon", horizon if horizon != "unknown" else ""),
@@ -153,6 +153,18 @@ def _build_record(trace: dict[str, Any], context: dict[str, Any]) -> dict[str, A
         )
         if value in (None, "")
     ]
+    contract_trace = dict(trace.get("pretrade_contract_missing_fields_trace_v1") or {})
+    contract_missing_fields = [
+        str(value) for value in (
+            contract_trace.get("missing_required_fields")
+            or trace.get("pretrade_decision_contract_missing_fields")
+            or []
+        ) if str(value).strip()
+    ]
+    # The execution audit's former list described audit-row identity fields,
+    # not the validator's contract fields. Keep that diagnostic separately and
+    # expose the canonical missing fields under the established name.
+    missing_fields = contract_missing_fields if reason == "PRETRADE_DECISION_CONTRACT_MISSING_FIELDS" else audit_missing_fields
     return {
         "enabled": True,
         "version": VERSION,
@@ -193,6 +205,7 @@ def _build_record(trace: dict[str, Any], context: dict[str, Any]) -> dict[str, A
         "terminal_status": terminal_status,
         "terminal_reason": reason,
         "missing_fields": missing_fields,
+        "audit_record_missing_fields": audit_missing_fields,
         "upstream_trace_id": _text(trace.get("upstream_trace_id") or candidate_id),
         "downstream_trace_id": _text(trace.get("downstream_trace_id") or trace.get("client_order_id")),
         "expectancy": round(_to_float(trace.get("expected_value_score") or trace.get("risk_adjusted_profit_score"), 0.0), 4),
