@@ -459,6 +459,15 @@ class BroadUniverseIntakePromotionV1:
             "updated_at": _now_iso(),
             "bounded": True,
         }
+        largest = str(largest_stage or "").lower()
+        discovery_stage = any(token in largest for token in ("discovery", "refresh", "near_entry", "hot", "warm", "cold"))
+        if largest and not discovery_stage and payload.get("resource_state") not in {"RESOURCE_CRITICAL", "CRITICAL", "RESOURCE_STOPPED"}:
+            if sum(value >= 15.0 for value in history[-5:]) >= 2:
+                payload["throughput_target"] = max(
+                    DEFAULT_PRIORITY_REFRESH_SYMBOLS,
+                    _to_int(payload.get("throughput_target"), DEFAULT_PRIORITY_REFRESH_SYMBOLS),
+                )
+                payload["reason"] = "non_discovery_pressure_hold"
         merged = dict(previous) if isinstance(previous, dict) else {}
         merged["priority_controller_v1"] = payload
         _safe_write_json(self.lane_hot_list_path, merged)
