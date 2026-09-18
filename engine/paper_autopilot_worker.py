@@ -1285,7 +1285,10 @@ class PaperAutopilotWorker:
             if broad_suite is not None:
                 recorder = getattr(broad_suite, "record_cycle_timing_v1", None)
                 if callable(recorder):
-                    recorder(cycle_total_elapsed)
+                    recorder(
+                        cycle_total_elapsed,
+                        largest_stage=str(dict(cycle_timing.get("latest") or {}).get("largest_stage") or ""),
+                    )
             self._publish(
                 resource=before,
                 resource_policy=policy,

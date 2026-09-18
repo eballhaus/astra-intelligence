@@ -335,6 +335,27 @@ def test_worker_cycle_timing_rollup_is_bounded_and_reports_slow_stage() -> None:
     assert metrics["largest_stage_on_slow_cycles"] == "active_position_management"
 
 
+def test_non_discovery_pressure_does_not_throttle_discovery() -> None:
+    with TemporaryDirectory() as directory:
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        path = Path(directory) / "lane_aware_discovery_v1.json"
+        path.write_text(json.dumps({
+            "priority_controller_v1": {
+                "throughput_target": 1_100,
+                "cycle_history_seconds": [16.0, 17.0, 18.0],
+                "last_largest_stage": "active_position_management",
+            },
+            "priority_tier_age_stats_seconds": {"COLD": {"p95": 1_000.0, "max": 2_000.0}},
+        }), encoding="utf-8")
+        result = owner._priority_refresh_plan(
+            [f"S{chr(65 + (index // 26))}{chr(65 + (index % 26))}" for index in range(1_300)],
+            resource_state="RESOURCE_NORMAL",
+            cycle_elapsed_seconds=16.0,
+        )
+        assert result["priority_refresh_capacity"] == 1_200
+        assert result["controller_reason"] == "non_discovery_pressure_hold"
+
+
 def test_provider_router_uses_multi_symbol_alpaca_snapshot_batches(monkeypatch) -> None:
     router = ProviderRouter()
     calls: list[dict] = []

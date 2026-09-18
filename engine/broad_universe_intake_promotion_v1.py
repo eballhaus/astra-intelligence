@@ -336,7 +336,7 @@ class BroadUniverseIntakePromotionV1:
             _to_float(value, 0.0)
             for value in list(controller.get("cycle_history_seconds") or [])[-CONTROLLER_HISTORY_LIMIT:]
         ]
-        if cycle_elapsed_seconds is not None:
+        if cycle_elapsed_seconds is not None and elapsed > 0.0:
             cycle_history.append(max(0.0, elapsed))
         cycle_history = cycle_history[-CONTROLLER_HISTORY_LIMIT:]
         age_stats = dict(previous.get("priority_tier_age_stats_seconds") or {}) if isinstance(previous, dict) else {}
@@ -345,6 +345,9 @@ class BroadUniverseIntakePromotionV1:
         cold_max = _to_float(cold_stats.get("max"), 0.0)
         cycle_pressure_count = sum(value >= 15.0 for value in cycle_history[-5:])
         hard_pressure_count = sum(value >= 18.0 for value in cycle_history[-5:])
+        last_largest_stage = str(controller.get("last_largest_stage") or "").lower()
+        discovery_pressure = any(token in last_largest_stage for token in ("discovery", "refresh", "near_entry", "hot", "warm", "cold"))
+        non_discovery_pressure = bool(last_largest_stage) and not discovery_pressure and cycle_pressure_count >= 2
         prior_capacity = _to_int(controller.get("throughput_target"), DEFAULT_PRIORITY_REFRESH_SYMBOLS)
         if prior_capacity not in {
             MIN_PRIORITY_REFRESH_SYMBOLS,
@@ -354,9 +357,12 @@ class BroadUniverseIntakePromotionV1:
         }:
             prior_capacity = DEFAULT_PRIORITY_REFRESH_SYMBOLS
         coverage_pressure = cold_p95 >= COLD_STARVATION_AGE_SECONDS or cold_max >= COLD_STARVATION_AGE_SECONDS * 2
-        if state in {"RESOURCE_CRITICAL", "CRITICAL", "RESOURCE_STOPPED"} or hard_pressure_count >= 2:
+        if state in {"RESOURCE_CRITICAL", "CRITICAL", "RESOURCE_STOPPED"} or hard_pressure_count >= 2 and discovery_pressure:
             capacity = MIN_PRIORITY_REFRESH_SYMBOLS
             reason = "hard_cycle_or_resource_pressure"
+        elif non_discovery_pressure:
+            capacity = max(prior_capacity, DEFAULT_PRIORITY_REFRESH_SYMBOLS)
+            reason = "non_discovery_pressure_hold"
         elif cycle_pressure_count >= 3 or state in {"RESOURCE_ELEVATED", "ELEVATED", "RESOURCE_DEGRADED"}:
             capacity = max(MIN_PRIORITY_REFRESH_SYMBOLS, prior_capacity - 100)
             reason = "sustained_cycle_pressure"
@@ -428,7 +434,7 @@ class BroadUniverseIntakePromotionV1:
             "tiered_refresh": True,
         }
 
-    def record_cycle_timing_v1(self, cycle_elapsed_seconds: float) -> dict[str, Any]:
+    def record_cycle_timing_v1(self, cycle_elapsed_seconds: float, *, largest_stage: str = "") -> dict[str, Any]:
         """Feed real worker cycle history back into the discovery controller."""
         previous = _safe_read_json(self.lane_hot_list_path, {})
         controller = dict(previous.get("priority_controller_v1") or {}) if isinstance(previous, dict) else {}
@@ -445,6 +451,7 @@ class BroadUniverseIntakePromotionV1:
             **controller,
             "schema_version": "astra_discovery_throughput_controller_v1",
             "cycle_history_seconds": history,
+            "last_largest_stage": str(largest_stage or "")[:64],
             "cycle_pressure_count_last_5": sum(value >= 15.0 for value in history[-5:]),
             "hard_pressure_count_last_5": sum(value >= 18.0 for value in history[-5:]),
             "cold_p95_age_seconds": round(_to_float(cold_stats.get("p95"), 0.0), 3),
