@@ -589,6 +589,7 @@ def supervisor(args: argparse.Namespace) -> int:
                 update_state(state_dir, state)
                 log_event(state_dir, "CHILD_FAILED", stage=stage, exit_code=child.returncode)
                 break
+            state["last_error"] = ""
             log_event(state_dir, "CHILD_CHECKPOINTED", stage=stage, status=stage_status, records_written=cp.get("records_written", 0))
             update_state(state_dir, state)
             if not stopped:
