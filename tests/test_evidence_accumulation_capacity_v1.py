@@ -12,7 +12,7 @@ from engine.astra_evidence_accumulation_capacity_v1 import (
 )
 from engine.astra_portfolio_capacity_release_review_v1 import build_portfolio_release_review, classify_position
 from engine.lane_execution_trace_ledger_v1 import LaneExecutionTraceLedgerV1
-from engine.paper_autopilot import PaperAutopilotEngine
+from engine.paper_autopilot import PaperAutopilotEngine, _capacity_trace_reason_v1
 from engine.paper_autopilot import _execution_trace_event
 
 
@@ -354,6 +354,23 @@ class EvidenceAccumulationCapacityContractTests(unittest.TestCase):
         result = snapshot()
         self.assertFalse(result["lanes"]["day"]["duplicate_exposure_allowed"])
         self.assertFalse(result["lanes"]["crypto"]["duplicate_exposure_allowed"])
+
+    def test_reserve_exhaustion_is_not_mislabeled_as_cycle_throttle(self):
+        decision = {
+            "allowed": False,
+            "capacity_decision": "LANE_RESERVE_EXHAUSTED",
+            "exact_blockers": ["LANE_POSITION_LIMIT_REACHED"],
+        }
+        self.assertEqual(
+            _capacity_trace_reason_v1(decision, "max_new_positions_per_cycle_reached"),
+            "lane_reserve_exhausted",
+        )
+
+    def test_cycle_throttle_remains_the_reason_when_capacity_is_available(self):
+        self.assertEqual(
+            _capacity_trace_reason_v1({"allowed": True, "capacity_decision": "AVAILABLE"}, "max_new_positions_per_cycle_reached"),
+            "max_new_positions_per_cycle_reached",
+        )
 
     def test_worker_capacity_snapshot_persists_secret_free_position_projection(self):
         class _Broker:

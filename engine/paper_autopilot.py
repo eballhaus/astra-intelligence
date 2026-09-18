@@ -1454,6 +1454,33 @@ _ELIGIBILITY_GATE_MAP_V1 = {
 }
 
 
+def _capacity_trace_reason_v1(
+    capacity_decision: Mapping[str, Any] | None,
+    fallback: str,
+) -> str:
+    """Return the first capacity blocker without hiding reserve exhaustion.
+
+    The per-cycle entry throttle is checked before candidate processing, but a
+    candidate can also be evaluated after the lane reserve is already full.
+    Prefer the canonical capacity result in that case so observability does
+    not mislabel a reserve rejection as a cycle-throttle rejection.
+    """
+    decision = dict(capacity_decision or {})
+    if bool(decision.get("allowed")):
+        return fallback
+    normalized = str(decision.get("capacity_decision") or "").strip().upper()
+    reason_by_decision = {
+        "LANE_RESERVE_EXHAUSTED": "lane_reserve_exhausted",
+        "CAPITAL_NOT_CONFIGURED": "capital_not_configured",
+        "BROKER_STATE_STALE": "broker_state_stale",
+        "BUYING_POWER_INSUFFICIENT": "buying_power_insufficient",
+        "GLOBAL_CAPACITY_EXHAUSTED": "max_concurrent_positions_reached",
+        "GLOBAL_RISK_BLOCKED": "global_risk_blocked",
+        "DUPLICATE_EXPOSURE_BLOCKED": "duplicate_active_position",
+    }
+    return reason_by_decision.get(normalized, fallback)
+
+
 def _eligibility_gate_code_v1(reason: Any) -> tuple[str, str, str]:
     """Classify existing gate results without changing their evaluation order."""
     raw = str(reason or "").strip().lower()
@@ -10893,6 +10920,11 @@ class PaperAutopilotEngine:
             reason = "cooldown_active"
         elif total_capacity <= 0 and not reserve_capacity_allowed:
             reason = "max_concurrent_positions_reached"
+        elif str((capacity_decision or {}).get("capacity_decision") or "").strip().upper() == "LANE_RESERVE_EXHAUSTED":
+            reason = _capacity_trace_reason_v1(
+                capacity_decision,
+                "capacity_unavailable",
+            )
         elif selected_so_far >= max_new_limit:
             reason = "max_new_positions_per_cycle_reached"
         elif asset == "stock" and stock_capacity <= 0 and not reserve_capacity_allowed:
@@ -12085,6 +12117,7 @@ class PaperAutopilotEngine:
                 UPDATE paper_positions
                 SET lane_id=?, capital_book_id=?, position_owner=?, exit_policy_owner=?,
                     entry_order_id=?, entry_fill_id=?, entry_filled_at=?,
+                    source_candidate_id=?, source_lifecycle_id=?,
                     provisional_entry_price=?, broker_filled_avg_price=?,
                     entry_price_source=?, entry_price_evidence_class=?,
                     entry_price_verified=?, entry_price_provisional=?,
@@ -12099,6 +12132,8 @@ class PaperAutopilotEngine:
                     source_broker_order_id,
                     entry_fill_id,
                     entry_filled_at or None,
+                    str(entry_context.get("candidate_id") or entry_row.get("candidate_id") or ""),
+                    pid,
                     entry_price_lineage.get("provisional_entry_price"),
                     entry_price_lineage.get("broker_filled_avg_price"),
                     entry_price_lineage.get("entry_price_source"),
@@ -12137,6 +12172,17 @@ class PaperAutopilotEngine:
                 create_lifecycle_record(
                     {
                         "lifecycle_id": pid,
+                        "candidate_id": str(entry_context.get("candidate_id") or entry_row.get("candidate_id") or ""),
+                        "recommendation_id": str(entry_context.get("recommendation_id") or entry_row.get("recommendation_id") or ""),
+                        "selection_id": str(
+                            entry_context.get("selection_id")
+                            or entry_context.get("decision_id")
+                            or entry_row.get("selection_id")
+                            or entry_row.get("decision_id")
+                            or ""
+                        ),
+                        "commitment_id": str(entry_context.get("commitment_id") or entry_row.get("commitment_id") or ""),
+                        "order_intent_id": str(entry_context.get("order_intent_id") or entry_row.get("order_intent_id") or ""),
                         "symbol": symbol,
                         "asset_type": asset_type,
                         "signal_timestamp": str(row.get("timestamp") or now_iso),
@@ -16677,14 +16723,26 @@ class PaperAutopilotEngine:
                         symbol=early_symbol,
                         open_symbols=open_syms,
                     )
-                    final_blocker_reason = final_blocker_reason or "max_new_positions_per_cycle_reached"
+                    early_reason = _capacity_trace_reason_v1(
+                        early_capacity,
+                        "max_new_positions_per_cycle_reached",
+                    )
+                    early_capacity_blocker = str(
+                        (early_capacity.get("exact_blockers") or [early_reason])[0]
+                        or early_reason
+                    )
+                    final_blocker_reason = final_blocker_reason or early_reason
                     skipped += 1
                     decision_trace.append(_execution_trace_event(
                         row, eligible=False, selected=False,
-                        decision_reason="max_new_positions_per_cycle_reached",
+                        decision_reason=early_reason,
                         candidate_prequalification_rank=row.get("candidate_prequalification_rank"),
                         candidate_selection_owner=row.get("candidate_selection_owner"),
-                        selection_reason="cycle_limit_after_higher_ranked_candidates",
+                        selection_reason=(
+                            "capacity_unavailable_before_cycle_limit"
+                            if early_reason != "max_new_positions_per_cycle_reached"
+                            else "cycle_limit_after_higher_ranked_candidates"
+                        ),
                         capacity_decision=early_capacity.get("capacity_decision"),
                         capacity_source=early_capacity.get("capacity_source"),
                         capacity_snapshot_id=early_capacity.get("snapshot_id"),
@@ -16701,7 +16759,7 @@ class PaperAutopilotEngine:
                         lane_open_position_count=early_capacity.get("open_position_count", 0),
                         lane_pending_order_count=early_capacity.get("pending_order_count", 0),
                         lane_active_commitment_count=early_capacity.get("active_commitment_count", 0),
-                        capacity_blocker="max_new_positions_per_cycle_reached",
+                        capacity_blocker=early_capacity_blocker,
                     ))
                     continue
                 symbol = str(row.get("symbol") or "").upper().strip()
