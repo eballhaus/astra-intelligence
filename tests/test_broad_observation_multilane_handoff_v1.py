@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import time
 from pathlib import Path
 
 from engine.broad_universe_intake_promotion_v1 import BroadUniverseIntakePromotionV1
@@ -154,6 +156,64 @@ def test_missing_baseline_stays_missing_and_does_not_use_default_feature_values(
     assert "swing_fit_score" not in enriched
     assert "qualified" not in enriched
     assert "eligible" not in enriched
+
+
+def test_broad_observation_joins_current_completed_bars_and_local_regime_volatility(tmp_path: Path):
+    phase_dir = tmp_path / "historical_context_phase2_v1"
+    phase_dir.mkdir()
+    local_records = [
+        {"symbol": "LOCAL", "feature": "deterministic_regime_label", "value": "TRENDING", "source_timestamp": 100},
+        {"symbol": "LOCAL", "feature": "realized_volatility_20d_pct", "value": 3.2, "source_timestamp": 100},
+    ]
+    (phase_dir / "historical_feature_store_v1.jsonl").write_text(
+        "\n".join(json.dumps(record) for record in local_records) + "\n"
+    )
+    (phase_dir / "regime_features_v1.jsonl").write_text(json.dumps(local_records[0]) + "\n")
+    (phase_dir / "volatility_context_v1.jsonl").write_text(json.dumps(local_records[1]) + "\n")
+    runtime = {
+        "equity_risk_envelopes_snapshot_v1": {
+            "valid_until_epoch": time.time() + 60,
+            "rows": [{
+                "symbol": "BARS",
+                "quote_execution_eligible": True,
+                "atr_pct": 1.25,
+                "completed_bar_timestamp": "2026-09-18T18:15:00Z",
+                "bar_evidence": {
+                    "source": "AlpacaPaperBroker.historical_bars",
+                    "provider": "ALPACA_PAPER_BROKER",
+                    "evidence_class": "CURRENT_PROVIDER_BAR",
+                    "resolution": "15Min",
+                    "count": 8,
+                },
+            }],
+        }
+    }
+    (tmp_path / "paper_autopilot_state.json").write_text(json.dumps(runtime))
+
+    allocator = PaperOpportunityAllocationEngineV1(state_dir=str(tmp_path))
+    local = allocator.enrich_broad_observation_features_v1(_observation("LOCAL"))
+    bars = allocator.enrich_broad_observation_features_v1(_observation("BARS"))
+
+    assert local["market_regime"] == "TRENDING"
+    assert local["volatility_pct"] == 3.2
+    assert local["lane_feature_provenance_v1"]["market_regime"].startswith("historical_context_phase2")
+    assert bars["atr_pct"] == 1.25
+    assert bars["completed_bar_count"] == 8
+    assert bars["completed_intraday_structure_provenance_v1"]["resolution"] == "15Min"
+    assert bars["observation_authority"] is False
+    assert bars["executable_evidence"] is False
+
+
+def test_missing_canonical_trend_and_quality_evidence_remains_unavailable(tmp_path: Path):
+    allocator = PaperOpportunityAllocationEngineV1(state_dir=str(tmp_path))
+    enriched = allocator.enrich_broad_observation_features_v1(_observation("NO_TREND"))
+
+    assert "trend_persistence_score" not in enriched
+    assert "trend_quality_score" not in enriched
+    assert "spread_quality_score" not in enriched
+    assert "freshness_quality_score" not in enriched
+    assert "scalp_fit_score" not in enriched
+    assert "swing_fit_score" not in enriched
 
 
 def test_qualified_scalp_and_swing_evidence_can_be_promoted_independently(tmp_path: Path):

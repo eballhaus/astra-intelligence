@@ -221,6 +221,7 @@ class PaperOpportunityAllocationEngineV1:
             MultiHorizonPaperTradingLearningSuiteV1(state_dir=self.state_dir)
             if MultiHorizonPaperTradingLearningSuiteV1 is not None else None
         )
+        self._bounded_lane_evidence_cache: dict[str, Any] | None = None
 
     @staticmethod
     def _real_percent(row: dict[str, Any], *keys: str) -> float | None:
@@ -496,6 +497,105 @@ class PaperOpportunityAllocationEngineV1:
     def _has_value(row: dict[str, Any], *keys: str) -> bool:
         return any(row.get(key) not in (None, "", {}, []) for key in keys)
 
+    def _load_bounded_lane_evidence_v1(self) -> dict[str, Any]:
+        """Read existing local/current evidence once per allocator instance."""
+        if self._bounded_lane_evidence_cache is not None:
+            return self._bounded_lane_evidence_cache
+        historical: dict[str, dict[str, Any]] = {}
+        phase_dir = os.path.join(self.state_dir, "historical_context_phase2_v1")
+        for filename in (
+            "historical_feature_store_v1.jsonl",
+            "regime_features_v1.jsonl",
+            "volatility_context_v1.jsonl",
+        ):
+            path = os.path.join(phase_dir, filename)
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    for line in handle:
+                        try:
+                            record = json.loads(line)
+                        except (TypeError, ValueError):
+                            continue
+                        if not isinstance(record, dict):
+                            continue
+                        symbol = _safe_text(record.get("symbol")).upper()
+                        feature = _safe_text(record.get("feature"))
+                        if not symbol or not feature:
+                            continue
+                        timestamp = _to_float(record.get("source_timestamp") or record.get("timestamp"), 0.0)
+                        prior = historical.setdefault(symbol, {}).get(feature)
+                        if prior is None or timestamp >= _to_float(prior.get("source_timestamp"), 0.0):
+                            historical[symbol][feature] = record
+            except (OSError, UnicodeError):
+                continue
+
+        current_risk: dict[str, dict[str, Any]] = {}
+        try:
+            with open(os.path.join(self.state_dir, "paper_autopilot_state.json"), "r", encoding="utf-8") as handle:
+                runtime = json.load(handle)
+            snapshot = runtime.get("equity_risk_envelopes_snapshot_v1") if isinstance(runtime, dict) else {}
+            valid_until = _to_float(snapshot.get("valid_until_epoch"), 0.0) if isinstance(snapshot, dict) else 0.0
+            if isinstance(snapshot, dict) and valid_until > time.time():
+                for record in snapshot.get("rows") or ():
+                    if not isinstance(record, dict):
+                        continue
+                    symbol = _safe_text(record.get("symbol")).upper()
+                    if symbol and record.get("quote_execution_eligible") is True:
+                        current_risk[symbol] = record
+        except (OSError, TypeError, ValueError, UnicodeError):
+            pass
+        self._bounded_lane_evidence_cache = {"historical": historical, "current_risk": current_risk}
+        return self._bounded_lane_evidence_cache
+
+    def _join_bounded_lane_evidence_v1(
+        self,
+        candidate: dict[str, Any],
+        provenance: dict[str, str],
+        producers: list[str],
+    ) -> None:
+        """Join only symbol-matched, provenance-backed evidence already stored locally."""
+        symbol = _safe_text(candidate.get("symbol") or candidate.get("ticker")).upper()
+        if not symbol:
+            return
+        evidence = self._load_bounded_lane_evidence_v1()
+        current = dict((evidence.get("current_risk") or {}).get(symbol) or {})
+        if current:
+            bar_evidence = dict(current.get("bar_evidence") or {})
+            for key in ("atr_pct", "volatility_pct", "completed_bar_timestamp", "bar_evidence"):
+                if candidate.get(key) in (None, "", {}, []) and current.get(key) not in (None, "", {}, []):
+                    candidate[key] = current[key]
+                    provenance[key] = "worker_equity_risk_observer"
+            if candidate.get("completed_bar_count") in (None, "", {}, []) and bar_evidence.get("count"):
+                candidate["completed_bar_count"] = bar_evidence["count"]
+                provenance["completed_bar_count"] = "worker_equity_risk_observer"
+            if bar_evidence:
+                candidate["completed_intraday_structure_provenance_v1"] = {
+                    "source": bar_evidence.get("source"),
+                    "provider": bar_evidence.get("provider"),
+                    "evidence_class": bar_evidence.get("evidence_class"),
+                    "resolution": bar_evidence.get("resolution"),
+                    "completed_bar_timestamp": current.get("completed_bar_timestamp"),
+                    "completed_bar_count": bar_evidence.get("count"),
+                }
+                producers.append("worker_equity_risk_observer")
+
+        for feature, record in ((evidence.get("historical") or {}).get(symbol) or {}).items():
+            value = record.get("value") if isinstance(record, dict) else None
+            if value in (None, "", {}, []):
+                continue
+            if feature == "deterministic_regime_label" and candidate.get("market_regime") in (None, "", {}, []):
+                candidate["market_regime"] = value
+                provenance["market_regime"] = "historical_context_phase2.regime_features_v1"
+            elif feature == "realized_volatility_20d_pct" and candidate.get("volatility_pct") in (None, "", {}, []):
+                candidate["volatility_pct"] = value
+                provenance["volatility_pct"] = "historical_context_phase2.volatility_context_v1"
+            elif feature == "range_behavior_20d_pct" and candidate.get("range_behavior_20d_pct") in (None, "", {}, []):
+                candidate["range_behavior_20d_pct"] = value
+                provenance["range_behavior_20d_pct"] = "historical_context_phase2.historical_feature_store_v1"
+            else:
+                continue
+            producers.append(f"historical_context_phase2:{feature}")
+
     def enrich_broad_observation_features_v1(self, row: dict[str, Any]) -> dict[str, Any]:
         """Join only provenance-backed existing feature outputs onto an observation."""
         candidate = dict(row or {})
@@ -513,6 +613,8 @@ class PaperOpportunityAllocationEngineV1:
                 producers.append("OpportunityDiscoveryExpansionV1._features")
             except Exception:
                 discovery_features = {}
+
+        self._join_bounded_lane_evidence_v1(candidate, provenance, producers)
 
         # Profile/cache fields are joined only when the existing local source
         # actually contains them. They are context, not qualification.
