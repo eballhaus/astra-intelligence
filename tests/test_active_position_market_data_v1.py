@@ -829,6 +829,44 @@ class ActiveEquityFMPSupplementTests(unittest.TestCase):
         self.assertEqual(state["observations"], {})
         self.assertEqual(state["errors"][0]["reason"], "STALE_PROVIDER_NATIVE_TIMESTAMP")
 
+    def test_failed_fmp_supplement_uses_bounded_symbol_cooldown(self):
+        engine = self._engine()
+        calls: list[str] = []
+
+        class Router:
+            def get_quote(self, symbol, **kwargs):
+                calls.append(symbol)
+                return {"provider_used": "FMP", "price": 0.0, "data_unavailable_reason": "provider_unavailable"}
+
+        engine._legacy_swing_fmp_router = Router()
+        engine._fetch_open_positions = lambda asset_type=None: [{
+            "symbol": "AAPL", "asset_type": "stock", "status": "OPEN", "quantity": 1,
+            "lane_id": "DAY", "lifecycle_id": "life-a", "entry_fill_id": "fill-a",
+        }]
+        first = engine._refresh_active_equity_fmp_observations_v1()
+        self.assertEqual(calls, ["AAPL"])
+        self.assertEqual(first["failed_observation_count"], 1)
+        prior = dict(engine._runtime_state["active_equity_fmp_observations_v1"])
+        prior["last_refresh_epoch"] = time.time() - 61.0
+        engine._runtime_state["active_equity_fmp_observations_v1"] = prior
+
+        second = engine._refresh_active_equity_fmp_observations_v1()
+        self.assertEqual(calls, ["AAPL"])
+        self.assertEqual(second["errors"][0]["reason"], "fmp_quote_failure_cooldown")
+
+    def test_provider_wait_trace_is_bounded_and_keeps_freshness_contract(self):
+        engine = self._engine()
+        engine._record_provider_wait_trace_v1(
+            owner="test_owner", function="test_read", symbol="AAPL", provider="FMP",
+            latency_seconds=0.125, cache_hit=False,
+            freshness_requirement="provider_native_quote<=20s", result_state="FAILED",
+        )
+        trace = engine._runtime_state["provider_wait_trace_v1"]
+        self.assertTrue(trace["bounded"])
+        self.assertEqual(trace["calls"][0]["symbol"], "AAPL")
+        self.assertEqual(trace["calls"][0]["freshness_requirement"], "provider_native_quote<=20s")
+        self.assertEqual(trace["totals_by_owner"]["test_owner"], 0.125)
+
     def test_observational_monitor_state_survives_canonical_persistence(self):
         engine = self._engine()
         engine._runtime_state["active_equity_fmp_observations_v1"] = {"refresh_state": "REFRESHED"}

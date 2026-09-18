@@ -2428,6 +2428,59 @@ class PaperAutopilotEngine:
             "bounded": True,
         }
 
+    def _reset_provider_wait_trace_v1(self) -> None:
+        """Reset the bounded current-cycle external-read trace."""
+        self._runtime_state["provider_wait_trace_v1"] = {
+            "schema_version": "astra_provider_wait_trace_v1",
+            "calls": [],
+            "totals_by_owner": {},
+            "totals_by_provider": {},
+            "total_wait_seconds": 0.0,
+            "bounded": True,
+        }
+
+    def _record_provider_wait_trace_v1(
+        self,
+        *,
+        owner: str,
+        function: str,
+        latency_seconds: float,
+        symbol: str = "",
+        provider: str = "",
+        cache_hit: bool | None = None,
+        freshness_requirement: str = "",
+        result_state: str = "",
+    ) -> None:
+        """Persist compact external-read timing without retaining payloads."""
+        trace = dict(self._runtime_state.get("provider_wait_trace_v1") or {})
+        calls = list(trace.get("calls") or [])[-63:]
+        latency = round(max(0.0, float(latency_seconds or 0.0)), 4)
+        row = {
+            "owner": str(owner or "unknown")[:80],
+            "function": str(function or "unknown")[:120],
+            "symbol": str(symbol or "").upper()[:32],
+            "provider": str(provider or "").upper()[:40],
+            "latency_seconds": latency,
+            "cache_hit": cache_hit,
+            "freshness_requirement": str(freshness_requirement or "")[:64],
+            "result_state": str(result_state or "")[:80],
+        }
+        calls.append(row)
+        owners = dict(trace.get("totals_by_owner") or {})
+        providers = dict(trace.get("totals_by_provider") or {})
+        owner_key = row["owner"]
+        provider_key = row["provider"] or "UNKNOWN"
+        owners[owner_key] = round(float(owners.get(owner_key) or 0.0) + latency, 4)
+        providers[provider_key] = round(float(providers.get(provider_key) or 0.0) + latency, 4)
+        self._runtime_state["provider_wait_trace_v1"] = {
+            "schema_version": "astra_provider_wait_trace_v1",
+            "calls": calls,
+            "totals_by_owner": owners,
+            "totals_by_provider": providers,
+            "total_wait_seconds": round(sum(float(item.get("latency_seconds") or 0.0) for item in calls), 4),
+            "bounded": True,
+        }
+
     def _record_worker_open_review_timing_v1(self, stage: str, started_monotonic: float) -> None:
         """Record bounded substage timing without changing worker behavior."""
         try:
@@ -5242,6 +5295,7 @@ class PaperAutopilotEngine:
             "calls_today_delta": 0,
             "observations": dict(prior.get("observations") or {}),
             "errors": [],
+            "retry_after_epoch_by_symbol": dict(prior.get("retry_after_epoch_by_symbol") or {}),
         }
         if not symbols:
             state["refresh_state"] = "NO_CANONICAL_ACTIVE_EQUITY_POSITIONS"
@@ -5254,17 +5308,42 @@ class PaperAutopilotEngine:
 
         router = self._legacy_swing_fmp_router
         observations: dict[str, dict[str, Any]] = {}
+        retry_after_by_symbol = dict(state.get("retry_after_epoch_by_symbol") or {})
+        failure_cooldown_seconds = max(120.0, _to_float(os.getenv("ASTRA_FMP_SUPPLEMENT_FAILURE_COOLDOWN_SECONDS", "300"), 300.0))
         for symbol in symbols:
-            quote = dict(router.get_quote(
-                symbol,
-                asset_type="stock",
-                preferred_providers=["FMP"],
-                cache_max_age_seconds=0,
-                bypass_cache=True,
-            ) or {})
+            retry_after = _to_float(retry_after_by_symbol.get(symbol), 0.0)
+            if retry_after > now:
+                state["errors"].append({
+                    "symbol": symbol,
+                    "reason": "fmp_quote_failure_cooldown",
+                    "retry_after_epoch": round(retry_after, 3),
+                })
+                continue
+            quote_started = time.perf_counter()
+            try:
+                quote = dict(router.get_quote(
+                    symbol,
+                    asset_type="stock",
+                    preferred_providers=["FMP"],
+                    cache_max_age_seconds=0,
+                    bypass_cache=True,
+                ) or {})
+            except Exception as exc:
+                quote = {"error": f"router_exception:{type(exc).__name__}"}
+            self._record_provider_wait_trace_v1(
+                owner="active_equity_fmp_observation",
+                function="ProviderRouter.get_quote",
+                symbol=symbol,
+                provider="FMP",
+                latency_seconds=time.perf_counter() - quote_started,
+                cache_hit=bool(quote.get("cache_hit")),
+                freshness_requirement="provider_native_quote<=20s",
+                result_state=str(quote.get("response_state") or quote.get("data_unavailable_reason") or quote.get("error") or "RETURNED"),
+            )
             state["calls_this_refresh"] += int(bool(quote.get("attempted_providers") or quote.get("provider_used") == "FMP"))
             if str(quote.get("provider_used") or "").upper() != "FMP" or _to_float(quote.get("price"), 0.0) <= 0.0:
                 state["errors"].append({"symbol": symbol, "reason": str(quote.get("data_unavailable_reason") or "fmp_quote_unavailable")[:120]})
+                retry_after_by_symbol[symbol] = now + failure_cooldown_seconds
                 continue
             provider_native_timestamp = quote.get("provider_quote_timestamp") or quote.get("quote_timestamp")
             timestamp_evidence = canonical_market_timestamp_v1(
@@ -5279,6 +5358,7 @@ class PaperAutopilotEngine:
                     "provider_native_timestamp": provider_native_timestamp,
                     "quote_age_seconds": timestamp_evidence.get("age_seconds"),
                 })
+                retry_after_by_symbol[symbol] = now + failure_cooldown_seconds
                 continue
             observations[symbol] = {
                 "symbol": symbol,
@@ -5297,6 +5377,7 @@ class PaperAutopilotEngine:
                 "quote_quality": quote.get("quote_quality"),
                 "quote_source": quote.get("quote_source"),
             }
+            retry_after_by_symbol.pop(symbol, None)
         state.update({
             "refresh_state": "REFRESHED",
             "last_refresh_epoch": now,
@@ -5304,6 +5385,7 @@ class PaperAutopilotEngine:
             "observations": observations,
             "successful_observation_count": len(observations),
             "failed_observation_count": len(state["errors"]),
+            "retry_after_epoch_by_symbol": retry_after_by_symbol,
         })
         self._runtime_state["active_equity_fmp_observations_v1"] = state
         return state
@@ -8800,6 +8882,7 @@ class PaperAutopilotEngine:
             out["broker_positions_error_sanitized"] = "broker_positions_unavailable"
             return out
         out["broker_reconciliation_active"] = True
+        positions_started = time.perf_counter()
         try:
             payload = dict(broker.positions() or {})
             if bool(payload.get("ok")):
@@ -8820,7 +8903,17 @@ class PaperAutopilotEngine:
                 out["broker_positions_error_sanitized"] = str(payload.get("error") or "broker_positions_fetch_failed")[:180]
         except Exception as exc:
             out["broker_positions_error_sanitized"] = f"broker_positions_exception:{str(exc)[:120]}"
+        self._record_provider_wait_trace_v1(
+            owner="broker_snapshot",
+            function="AlpacaPaperBroker.positions",
+            provider="ALPACA_PAPER_BROKER",
+            latency_seconds=time.perf_counter() - positions_started,
+            cache_hit=False,
+            freshness_requirement="current broker position snapshot",
+            result_state="OK" if out.get("broker_positions_fetch_ok") else str(out.get("broker_positions_error_sanitized") or "FAILED"),
+        )
         if broker is not None and hasattr(broker, "orders"):
+            orders_started = time.perf_counter()
             try:
                 orders_payload = dict(broker.orders() or {})
                 if bool(orders_payload.get("ok")):
@@ -8835,6 +8928,15 @@ class PaperAutopilotEngine:
                 # Positions remain the broker truth source. Missing order data
                 # only prevents an in-flight order from claiming extra capacity.
                 pass
+            self._record_provider_wait_trace_v1(
+                owner="broker_snapshot",
+                function="AlpacaPaperBroker.orders",
+                provider="ALPACA_PAPER_BROKER",
+                latency_seconds=time.perf_counter() - orders_started,
+                cache_hit=False,
+                freshness_requirement="current open-order snapshot",
+                result_state="OK" if out.get("broker_orders_fetch_ok") else "FAILED_OR_UNAVAILABLE",
+            )
         return out
 
     def _duplicate_exposure_snapshot(
@@ -15348,6 +15450,7 @@ class PaperAutopilotEngine:
         # Review timings belong to this cycle. Reset before either the partial
         # or full path so a prior full-cycle sample cannot leak into telemetry.
         self._reset_worker_open_review_timing_v1()
+        self._reset_provider_wait_trace_v1()
         self._ensure_day_throughput_cohort_v1()
         # The canonical worker makes an empty forward-entry window explicit.
         self._runtime_state["entry_lane_horizon_integrity_v1"] = self.entry_lane_horizon_ledger.ensure_snapshot()

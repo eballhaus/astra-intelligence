@@ -21822,6 +21822,15 @@ def _worker_refresh_crypto_capability_v1() -> dict:
         return {"status": "FAILED_FAIL_CLOSED", "capability_last_refresh_error": str(exc)[:180], "broker_read_calls_used": 0, "broker_actions_used": 0}
 
 
+def _record_worker_provider_wait_v1(**payload: object) -> None:
+    recorder = getattr(PAPER_AUTOPILOT, "_record_provider_wait_trace_v1", None)
+    if callable(recorder):
+        try:
+            recorder(**payload)
+        except Exception:
+            pass
+
+
 def _worker_crypto_quote_for_ranking_v1(
     symbol: str,
     *,
@@ -21830,10 +21839,21 @@ def _worker_crypto_quote_for_ranking_v1(
     """Use a current worker quote before the bounded router fallback."""
     from engine import data_orchestrator as active_data_orchestrator
 
+    ws_started = time.perf_counter()
     try:
         ws_quote = dict(ALPACA_WS_MONITOR.get_quote(symbol, max_age_seconds=20.0) or {})
     except Exception:
         ws_quote = {}
+    _record_worker_provider_wait_v1(
+        owner="crypto_ranking",
+        function="AlpacaWSMonitor.get_quote",
+        symbol=symbol,
+        provider="ALPACA_SIP_WS",
+        latency_seconds=time.perf_counter() - ws_started,
+        cache_hit=True,
+        freshness_requirement="provider_native_quote<=20s",
+        result_state="CURRENT" if ws_quote else "MISS",
+    )
     ws_price = _to_float(ws_quote.get("price"), 0.0)
     ws_timestamp = str(
         ws_quote.get("provider_native_timestamp")
@@ -21856,6 +21876,7 @@ def _worker_crypto_quote_for_ranking_v1(
         })
         row, meta = active_data_orchestrator._quote_to_rank_row(symbol, quote, "crypto", _now_utc_iso())
         return quote, row, meta, 0, ""
+    router_started = time.perf_counter()
     try:
         quote = dict(active_data_orchestrator._router.get_quote(
             symbol,
@@ -21864,9 +21885,29 @@ def _worker_crypto_quote_for_ranking_v1(
             bypass_cache=True,
             use_selective_backups=False,
         ) or {})
+        _record_worker_provider_wait_v1(
+            owner="crypto_ranking",
+            function="ProviderRouter.get_quote",
+            symbol=symbol,
+            provider=str(quote.get("provider_used") or "PROVIDER_ROUTER"),
+            latency_seconds=time.perf_counter() - router_started,
+            cache_hit=bool(quote.get("cache_hit")),
+            freshness_requirement="provider_native_quote<=20s",
+            result_state=str(quote.get("response_state") or quote.get("data_unavailable_reason") or "RETURNED"),
+        )
         row, meta = active_data_orchestrator._quote_to_rank_row(symbol, quote, "crypto", _now_utc_iso())
         return quote, row, meta, 1, ""
     except Exception as exc:
+        _record_worker_provider_wait_v1(
+            owner="crypto_ranking",
+            function="ProviderRouter.get_quote",
+            symbol=symbol,
+            provider="PROVIDER_ROUTER",
+            latency_seconds=time.perf_counter() - router_started,
+            cache_hit=False,
+            freshness_requirement="provider_native_quote<=20s",
+            result_state=f"EXCEPTION:{type(exc).__name__}",
+        )
         return {}, None, {}, 1, str(exc)[:180]
 
 
@@ -22006,7 +22047,21 @@ def _refresh_crypto_rankings_snapshot_v1() -> dict:
             continue
         quote_row = _preserve_crypto_quote_microstructure_v1(dict(quote_row), dict(quote_row), quote_provider)
         provider_calls_used += 1
-        bar_payload = dict(ALPACA_PAPER_BROKER.historical_bars(symbol, asset_class="crypto", timeframe="15Min", limit=24, start=start.isoformat().replace("+00:00", "Z"), end=end.isoformat().replace("+00:00", "Z")) or {})
+        bar_started = time.perf_counter()
+        try:
+            bar_payload = dict(ALPACA_PAPER_BROKER.historical_bars(symbol, asset_class="crypto", timeframe="15Min", limit=24, start=start.isoformat().replace("+00:00", "Z"), end=end.isoformat().replace("+00:00", "Z")) or {})
+        except Exception as exc:
+            bar_payload = {"response_state": "EXCEPTION", "error": str(exc)[:160], "bars": []}
+        _record_worker_provider_wait_v1(
+            owner="crypto_ranking",
+            function="AlpacaPaperBroker.historical_bars",
+            symbol=symbol,
+            provider="ALPACA_CRYPTO_MARKET_DATA",
+            latency_seconds=time.perf_counter() - bar_started,
+            cache_hit=False,
+            freshness_requirement="completed_crypto_15min_bars",
+            result_state=str(bar_payload.get("response_state") or bar_payload.get("error") or "RETURNED"),
+        )
         bars = [dict(row) for row in (bar_payload.get("bars") or []) if isinstance(row, dict)]
         volume = _completed_crypto_bar_volume_evidence_v1(bars, end)
         bar_field_keys = sorted({str(key) for row in bars[:24] for key in row})[:20]
