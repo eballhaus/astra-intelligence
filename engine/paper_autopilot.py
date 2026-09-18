@@ -12885,49 +12885,54 @@ class PaperAutopilotEngine:
             observed_at=now_iso,
             hold_seconds=hold_seconds,
         )
-        with self._connect() as conn:
-            # A management cycle can receive an older row object while a
-            # prior handoff already appended immutable exit evidence. Merge
-            # the current database notes so snapshot maintenance never erases
-            # an in-flight decision record.
-            persisted_notes_row = conn.execute(
-                "SELECT lifecycle_notes FROM paper_positions WHERE position_id=?",
-                (pid,),
-            ).fetchone()
-            persisted_notes = _safe_json_load(persisted_notes_row[0] if persisted_notes_row else "")
-            lifecycle_notes = {
-                **_safe_json_load(open_row.get("lifecycle_notes")),
-                **persisted_notes,
-                "current_price": current,
-                "current_return_percent": ret,
-                "peak_unrealized_pnl_percent": peak,
-                "drawdown_from_peak_percent": drawdown,
-                "max_favorable_excursion": mfe,
-                "max_adverse_excursion": mae,
-                "quote_quality": latest_row.get("quote_quality"),
-                "provider_used": latest_row.get("provider_used") or latest_row.get("source"),
-                "hold_seconds": round(hold_seconds, 2),
-                "lifecycle_stage": "monitoring",
-                "review_state": review_state,
-                "continuation_flag": continuation_flag,
-                "deterioration_flag": deterioration_flag,
-                "hold_posture": hold_posture,
-            }
-            conn.execute(
-                """
-                UPDATE paper_positions
-                SET row_json=?, lifecycle_notes=?, updated_at=?
-                WHERE position_id=?
-                """,
-                (
-                    _safe_json(excursion_row_json),
-                    _safe_json(lifecycle_notes),
-                    now_iso,
-                    pid,
-                ),
-            )
-            conn.commit()
+        snapshot_db_started = time.monotonic()
+        try:
+            with self._connect() as conn:
+                # A management cycle can receive an older row object while a
+                # prior handoff already appended immutable exit evidence. Merge
+                # the current database notes so snapshot maintenance never erases
+                # an in-flight decision record.
+                persisted_notes_row = conn.execute(
+                    "SELECT lifecycle_notes FROM paper_positions WHERE position_id=?",
+                    (pid,),
+                ).fetchone()
+                persisted_notes = _safe_json_load(persisted_notes_row[0] if persisted_notes_row else "")
+                lifecycle_notes = {
+                    **_safe_json_load(open_row.get("lifecycle_notes")),
+                    **persisted_notes,
+                    "current_price": current,
+                    "current_return_percent": ret,
+                    "peak_unrealized_pnl_percent": peak,
+                    "drawdown_from_peak_percent": drawdown,
+                    "max_favorable_excursion": mfe,
+                    "max_adverse_excursion": mae,
+                    "quote_quality": latest_row.get("quote_quality"),
+                    "provider_used": latest_row.get("provider_used") or latest_row.get("source"),
+                    "hold_seconds": round(hold_seconds, 2),
+                    "lifecycle_stage": "monitoring",
+                    "review_state": review_state,
+                    "continuation_flag": continuation_flag,
+                    "deterioration_flag": deterioration_flag,
+                    "hold_posture": hold_posture,
+                }
+                conn.execute(
+                    """
+                    UPDATE paper_positions
+                    SET row_json=?, lifecycle_notes=?, updated_at=?
+                    WHERE position_id=?
+                    """,
+                    (
+                        _safe_json(excursion_row_json),
+                        _safe_json(lifecycle_notes),
+                        now_iso,
+                        pid,
+                    ),
+                )
+                conn.commit()
+        finally:
+            self._record_worker_open_review_timing_v1("snapshot_db", snapshot_db_started)
         if self._position_tracker is not None:
+            snapshot_tracker_started = time.monotonic()
             try:
                 self._position_tracker.update_position_snapshot(
                     identifier=str(open_row.get("position_id") or open_row.get("symbol") or ""),
@@ -12943,7 +12948,10 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 pass
+            finally:
+                self._record_worker_open_review_timing_v1("snapshot_tracker", snapshot_tracker_started)
         if callable(update_lifecycle_progress):
+            snapshot_lifecycle_started = time.monotonic()
             try:
                 lifecycle_contract = {
                     field: open_row.get(field)
@@ -12970,7 +12978,10 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 pass
+            finally:
+                self._record_worker_open_review_timing_v1("snapshot_lifecycle", snapshot_lifecycle_started)
         if self.trade_lifecycle_excursion_suite is not None and hasattr(self.trade_lifecycle_excursion_suite, "record_open_position"):
+            snapshot_excursion_started = time.monotonic()
             try:
                 self.trade_lifecycle_excursion_suite.record_open_position(
                     {
@@ -12992,6 +13003,8 @@ class PaperAutopilotEngine:
                 )
             except Exception:
                 pass
+            finally:
+                self._record_worker_open_review_timing_v1("snapshot_excursion", snapshot_excursion_started)
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -15332,6 +15345,9 @@ class PaperAutopilotEngine:
         return dict(cohort)
 
     def run_cycle(self):
+        # Review timings belong to this cycle. Reset before either the partial
+        # or full path so a prior full-cycle sample cannot leak into telemetry.
+        self._reset_worker_open_review_timing_v1()
         self._ensure_day_throughput_cohort_v1()
         # The canonical worker makes an empty forward-entry window explicit.
         self._runtime_state["entry_lane_horizon_integrity_v1"] = self.entry_lane_horizon_ledger.ensure_snapshot()
@@ -16075,7 +16091,6 @@ class PaperAutopilotEngine:
                 }
             }
             min_hold = self._min_hold_seconds()
-            self._reset_worker_open_review_timing_v1()
             for row in open_rows:
                 if closed >= self.max_closes_per_cycle:
                     break

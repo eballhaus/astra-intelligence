@@ -271,7 +271,8 @@ class PaperAutopilotWorker:
         exclusive_stages = {
             "active_position_management": round(
                 review_sum(
-                    "quote", "snapshot", "learned_exit", "decision_evidence",
+                    "quote", "snapshot_db", "snapshot_tracker", "snapshot_lifecycle", "snapshot_excursion",
+                    "learned_exit", "decision_evidence",
                     "quote_telemetry", "trace_persistence", "post_review_bookkeeping",
                 )
                 + phase_sum_exact(

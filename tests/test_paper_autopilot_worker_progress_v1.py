@@ -99,8 +99,14 @@ class PaperAutopilotWorkerProgressTests(unittest.TestCase):
 
     def test_worker_open_review_timing_is_bounded(self):
         engine = object.__new__(PaperAutopilotEngine)
-        engine._runtime_state = {}
+        engine._runtime_state = {
+            "worker_open_review_timing_v1": {
+                "durations_seconds": {"snapshot": 9.0},
+                "counts": {"snapshot": 1},
+            }
+        }
         engine._reset_worker_open_review_timing_v1()
+        self.assertEqual(engine._runtime_state["worker_open_review_timing_v1"]["durations_seconds"], {})
         with patch("engine.paper_autopilot.time.monotonic", side_effect=[1.25, 2.5]):
             engine._record_worker_open_review_timing_v1("quote", 1.0)
             engine._record_worker_open_review_timing_v1("quote", 2.0)
