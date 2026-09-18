@@ -70,6 +70,20 @@ def test_zero_and_false_values_are_not_treated_as_absent():
     assert "hold_conditions" not in result["missing_required_fields"]
 
 
+def test_optional_diagnostics_can_remain_empty_or_unknown():
+    contract = valid_contract()
+    contract.update({
+        "horizon_scores": {},
+        "assignment_threshold": None,
+        "breakout_probability_score": 0.0,
+        "follow_through_probability": 0.0,
+        "freshness_state": "unknown",
+    })
+    result = validate_pretrade_decision_contract(contract)
+    assert result["contract_status"] == "VALID"
+    assert result["missing_required_fields"] == []
+
+
 def test_audit_missing_fields_matches_validator_fields():
     record = _build_record(
         {
