@@ -11,6 +11,7 @@ TRADE_LIFECYCLE_PATH = os.path.join("state", "trade_lifecycle_v1.jsonl")
 _LOCK = threading.Lock()
 _LATEST_RECORD_CACHE: dict[str, dict[str, dict[str, Any]]] = {}
 _LATEST_RECORD_CACHE_SIGNATURES: dict[str, tuple[int, int, int]] = {}
+_LATEST_RECORD_CACHE_OFFSETS: dict[str, int] = {}
 
 
 def _now_iso() -> str:
@@ -134,10 +135,13 @@ def _append_record(record: dict[str, Any]) -> None:
         lifecycle_id = _to_str(record.get("lifecycle_id"))
         if lifecycle_id:
             cached[lifecycle_id] = dict(record)
-        _LATEST_RECORD_CACHE_SIGNATURES[path] = _path_signature(path) or cached_signature
+        after_signature = _path_signature(path) or cached_signature
+        _LATEST_RECORD_CACHE_SIGNATURES[path] = after_signature
+        _LATEST_RECORD_CACHE_OFFSETS[path] = int(after_signature[1])
     elif cached is not None:
         _LATEST_RECORD_CACHE.pop(path, None)
         _LATEST_RECORD_CACHE_SIGNATURES.pop(path, None)
+        _LATEST_RECORD_CACHE_OFFSETS.pop(path, None)
 
 
 def build_lifecycle_id(data: dict[str, Any]) -> str:
@@ -186,15 +190,57 @@ def _scan_latest_record_map(path: str) -> dict[str, dict[str, Any]]:
     return latest
 
 
+def _read_appended_records(path: str, start_offset: int) -> tuple[dict[str, dict[str, Any]], int]:
+    """Read only complete append-only lines after a valid cached offset."""
+    latest: dict[str, dict[str, Any]] = {}
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(max(0, int(start_offset)))
+            payload = fh.read()
+    except OSError:
+        return latest, int(start_offset)
+    consumed = 0
+    for raw in payload.splitlines(keepends=True):
+        if not raw.endswith(b"\n"):
+            break
+        consumed += len(raw)
+        try:
+            row = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(row, dict):
+            continue
+        lifecycle_id = _to_str(row.get("lifecycle_id"))
+        if lifecycle_id:
+            latest[lifecycle_id] = row
+    return latest, int(start_offset) + consumed
+
+
 def _latest_record_map() -> dict[str, dict[str, Any]]:
     path = os.path.abspath(TRADE_LIFECYCLE_PATH)
     signature = _path_signature(path)
     cached = _LATEST_RECORD_CACHE.get(path)
-    if cached is not None and signature == _LATEST_RECORD_CACHE_SIGNATURES.get(path):
+    cached_signature = _LATEST_RECORD_CACHE_SIGNATURES.get(path)
+    if cached is not None and signature == cached_signature:
+        return cached
+    if (
+        cached is not None
+        and signature is not None
+        and cached_signature is not None
+        and signature[0] == cached_signature[0]
+        and signature[1] >= cached_signature[1]
+        and _LATEST_RECORD_CACHE_OFFSETS.get(path) == cached_signature[1]
+    ):
+        appended, offset = _read_appended_records(path, cached_signature[1])
+        cached.update(appended)
+        _LATEST_RECORD_CACHE_SIGNATURES[path] = signature
+        _LATEST_RECORD_CACHE_OFFSETS[path] = offset
         return cached
     latest = _scan_latest_record_map(path)
     _LATEST_RECORD_CACHE[path] = latest
-    _LATEST_RECORD_CACHE_SIGNATURES[path] = _path_signature(path) or signature or (0, 0, 0)
+    final_signature = _path_signature(path) or signature or (0, 0, 0)
+    _LATEST_RECORD_CACHE_SIGNATURES[path] = final_signature
+    _LATEST_RECORD_CACHE_OFFSETS[path] = int(final_signature[1])
     return latest
 
 

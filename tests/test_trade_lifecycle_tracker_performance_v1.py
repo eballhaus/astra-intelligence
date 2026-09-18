@@ -14,6 +14,7 @@ class TradeLifecycleTrackerPerformanceTests(unittest.TestCase):
         self._path = tracker.TRADE_LIFECYCLE_PATH
         self._cache = tracker._LATEST_RECORD_CACHE.copy()
         self._signatures = tracker._LATEST_RECORD_CACHE_SIGNATURES.copy()
+        self._offsets = tracker._LATEST_RECORD_CACHE_OFFSETS.copy()
 
     def tearDown(self):
         tracker.TRADE_LIFECYCLE_PATH = self._path
@@ -21,6 +22,8 @@ class TradeLifecycleTrackerPerformanceTests(unittest.TestCase):
         tracker._LATEST_RECORD_CACHE.update(self._cache)
         tracker._LATEST_RECORD_CACHE_SIGNATURES.clear()
         tracker._LATEST_RECORD_CACHE_SIGNATURES.update(self._signatures)
+        tracker._LATEST_RECORD_CACHE_OFFSETS.clear()
+        tracker._LATEST_RECORD_CACHE_OFFSETS.update(self._offsets)
 
     def test_repeated_progress_updates_reuse_latest_map(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -60,7 +63,8 @@ class TradeLifecycleTrackerPerformanceTests(unittest.TestCase):
                     handle.write("{\"lifecycle_id\":\"external\",\"symbol\":\"MSFT\"}\n")
                 tracker.update_lifecycle_progress("life-1", {"current_price": 102.0})
 
-            self.assertEqual(scan.call_count, 2)
+            self.assertEqual(scan.call_count, 1)
+            self.assertEqual(tracker._LATEST_RECORD_CACHE[str(Path(directory) / "trade_lifecycle_v1.jsonl")]["external"]["symbol"], "MSFT")
 
 
 if __name__ == "__main__":
