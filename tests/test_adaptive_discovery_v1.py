@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from datetime import UTC, datetime, timedelta
@@ -9,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from engine.broad_universe_intake_promotion_v1 import BroadUniverseIntakePromotionV1
 from engine.paper_autopilot import _paper_selection_priority
 from engine.provider_router import ProviderRouter
+from engine.paper_autopilot_worker import PaperAutopilotWorker
 
 
 class _FakeDiscoveryRouter:
@@ -267,13 +269,70 @@ def test_priority_refresh_plan_adapts_capacity_and_prioritizes_existing_tiers() 
                     break
             return "S" + "".join(reversed(chars))
 
-        symbols = ["COLD", "HOT"] + [alpha_symbol(index) for index in range(1_001)]
+        symbols = ["COLD", "HOT"] + [alpha_symbol(index) for index in range(1_401)]
         normal = owner._priority_refresh_plan(symbols, resource_state="RESOURCE_NORMAL")
         elevated = owner._priority_refresh_plan(symbols, resource_state="RESOURCE_ELEVATED")
         assert normal["symbols"][0] == "HOT"
-        assert normal["priority_refresh_capacity"] == 1_200
-        assert elevated["priority_refresh_capacity"] == 600
+        assert normal["priority_refresh_capacity"] == 1_300
+        assert 300 <= elevated["priority_refresh_capacity"] < normal["priority_refresh_capacity"]
         assert elevated["symbols_deferred"] > 0
+
+
+def test_priority_controller_uses_hysteresis_and_coverage_pressure() -> None:
+    with TemporaryDirectory() as directory:
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        symbols = [f"S{chr(65 + (index // 26))}{chr(65 + (index % 26))}" for index in range(1_400)]
+        first = owner._priority_refresh_plan(symbols, resource_state="RESOURCE_NORMAL", cycle_elapsed_seconds=10.0)
+        outlier = owner._priority_refresh_plan(symbols, resource_state="RESOURCE_NORMAL", cycle_elapsed_seconds=31.0)
+        assert first["priority_refresh_capacity"] == 1_200
+        assert outlier["priority_refresh_capacity"] == 1_200
+        assert outlier["controller_reason"] == "hysteresis_hold"
+
+        path = Path(directory) / "lane_aware_discovery_v1.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["priority_controller_v1"] = {
+            "throughput_target": 1_200,
+            "cycle_history_seconds": [10.0, 10.0, 10.0, 10.0],
+        }
+        payload["priority_tier_age_stats_seconds"] = {"COLD": {"p95": 1_000.0, "max": 1_200.0}}
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        expanded = owner._priority_refresh_plan(symbols, resource_state="RESOURCE_NORMAL", cycle_elapsed_seconds=10.0)
+        assert expanded["priority_refresh_capacity"] == 1_300
+        assert expanded["controller_reason"] == "coverage_age_pressure_with_cycle_headroom"
+
+
+def test_cold_catch_up_prioritizes_age_without_promoting_tier() -> None:
+    with TemporaryDirectory() as directory:
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        now = datetime.now(UTC)
+        old = (now - timedelta(seconds=1_000)).isoformat().replace("+00:00", "Z")
+        fresh = (now - timedelta(seconds=5)).isoformat().replace("+00:00", "Z")
+        rows = [
+            {"symbol": "OLD", "change_percent": 0.1, "volume": 100, "bid": 99.0, "ask": 101.0, "quote_age_seconds": 5, "provider_native_timestamp": old, "freshness_state": "CURRENT"},
+            {"symbol": "NEW", "change_percent": 0.2, "volume": 100, "bid": 99.0, "ask": 101.0, "quote_age_seconds": 5, "provider_native_timestamp": fresh, "freshness_state": "CURRENT"},
+        ]
+        result = owner.build_priority_tiers_v2(rows)
+        records = {row["symbol"]: row for row in json.loads((Path(directory) / "lane_aware_discovery_v1.json").read_text())["priority_tiers"]}
+        assert records["OLD"]["tier"] == "COLD"
+        assert result["cold_catch_up_queue_size"] == 1
+        plan = owner._priority_refresh_plan(["NEW", "OLD"], resource_state="RESOURCE_NORMAL")
+        assert plan["symbols"][0] == "OLD"
+
+
+def test_worker_cycle_timing_rollup_is_bounded_and_reports_slow_stage() -> None:
+    worker = PaperAutopilotWorker.__new__(PaperAutopilotWorker)
+    worker.autopilot = type("Autopilot", (), {"_runtime_state": {
+        "worker_phase_timing_v1": {"durations_seconds": {"candidate_collection": 2.0, "broker_position_snapshot": 1.0}},
+        "worker_open_review_timing_v1": {"durations_seconds": {"exit_evaluation": 4.0, "exit_submission": 1.0}},
+    }})()
+    worker._cycle_timing_history = []
+    worker._cycle_state_write_samples = [0.2]
+    metrics = worker._record_cycle_timing_v1(16.0, 0.5)
+    assert metrics["rolling_median_seconds"] == 16.0
+    assert metrics["rolling_p90_seconds"] == 16.0
+    assert metrics["recent_max_seconds"] == 16.0
+    assert metrics["cycles_over_15_seconds"] == 1
+    assert metrics["largest_stage_on_slow_cycles"] == "active_position_management"
 
 
 def test_provider_router_uses_multi_symbol_alpaca_snapshot_batches(monkeypatch) -> None:

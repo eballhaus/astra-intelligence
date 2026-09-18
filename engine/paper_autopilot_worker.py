@@ -69,6 +69,7 @@ from engine.adaptive_profit_capture_intelligence_v1 import (
 # live canonical worker is never misreported as absent or stale.
 ACTIVE_CYCLE_HEARTBEAT_SECONDS = 5.0
 RESOURCE_MEMORY_SAMPLE_LIMIT = 16
+CYCLE_TIMING_HISTORY_LIMIT = 32
 
 
 class PaperAutopilotWorker:
@@ -108,6 +109,8 @@ class PaperAutopilotWorker:
         self._memory_pause_count = 0
         self._memory_recovery_count = 0
         self._last_memory_resource_state = ""
+        self._cycle_timing_history: list[dict[str, Any]] = []
+        self._cycle_state_write_samples: list[float] = []
 
     @staticmethod
     def _bounded_broker_truth_rows_v1(runtime: dict[str, Any]) -> list[dict[str, Any]]:
@@ -201,7 +204,82 @@ class PaperAutopilotWorker:
         state["autopilot_enabled"] = bool(getattr(self.autopilot, "_enabled", False))
         write_elapsed = write_snapshot(state)
         state["state_write_elapsed_seconds"] = round(write_elapsed, 4)
+        self._cycle_state_write_samples.append(round(write_elapsed, 4))
+        self._cycle_state_write_samples = self._cycle_state_write_samples[-CYCLE_TIMING_HISTORY_LIMIT:]
         return state
+
+    @staticmethod
+    def _percentile(values: list[float], fraction: float) -> float:
+        if not values:
+            return 0.0
+        ordered = sorted(values)
+        index = min(len(ordered) - 1, max(0, int((len(ordered) - 1) * fraction)))
+        return round(ordered[index], 3)
+
+    def _record_cycle_timing_v1(self, total_seconds: float, governance_seconds: float = 0.0) -> dict[str, Any]:
+        """Aggregate existing worker phase markers into bounded cycle telemetry."""
+        runtime = getattr(self.autopilot, "_runtime_state", {})
+        phase_durations = dict(dict(runtime or {}).get("worker_phase_timing_v1") or {}) if isinstance(runtime, dict) else {}
+        phase_durations = dict(phase_durations.get("durations_seconds") or {})
+        review = dict(dict(runtime or {}).get("worker_open_review_timing_v1") or {}) if isinstance(runtime, dict) else {}
+        review_durations = dict(review.get("durations_seconds") or {})
+
+        def phase_sum(*tokens: str) -> float:
+            return round(sum(
+                float(value or 0.0)
+                for name, value in phase_durations.items()
+                if any(token in str(name).lower() for token in tokens)
+            ), 3)
+
+        def review_sum(*names: str) -> float:
+            return round(sum(float(review_durations.get(name) or 0.0) for name in names), 3)
+
+        stages = {
+            "active_position_management": review_sum(
+                "quote", "snapshot", "learned_exit", "exit_evaluation",
+                "decision_evidence", "quote_telemetry", "exit_submission",
+                "trace_persistence", "post_review_bookkeeping",
+            ),
+            "exits": review_sum("exit_evaluation", "exit_submission") + phase_sum("due_day_lane_close", "exit"),
+            "reconciliation": phase_sum("reconciliation", "broker_position_snapshot", "entry_price_lineage", "broker_dust"),
+            "truth_learning_handoff": round(max(0.0, governance_seconds), 3),
+            "candidate_finalist_management": phase_sum("candidate", "finalist", "safety_preflight"),
+            "hot_near_entry_refresh": phase_sum("hot", "near_entry"),
+            "warm_refresh": phase_sum("warm"),
+            "cold_discovery": phase_sum("cold", "discovery", "broad_observation"),
+            "state_writes": round(sum(self._cycle_state_write_samples), 3),
+            "provider_broker_wait": phase_sum(
+                "provider", "broker", "market_data", "quote", "fmp", "crypto_ranking",
+            ),
+        }
+        stages = {name: max(0.0, float(value or 0.0)) for name, value in stages.items()}
+        largest_name, largest_value = max(stages.items(), key=lambda item: item[1], default=("", 0.0))
+        record = {
+            "total_seconds": round(max(0.0, total_seconds), 3),
+            "stages_seconds": stages,
+            "largest_stage": largest_name,
+            "largest_stage_seconds": round(largest_value, 3),
+        }
+        self._cycle_timing_history.append(record)
+        self._cycle_timing_history = self._cycle_timing_history[-CYCLE_TIMING_HISTORY_LIMIT:]
+        totals = [float(row.get("total_seconds") or 0.0) for row in self._cycle_timing_history]
+        slow_rows = [row for row in self._cycle_timing_history if float(row.get("total_seconds") or 0.0) >= 15.0]
+        return {
+            "schema_version": "astra_worker_cycle_timing_v1",
+            "latest": record,
+            "rolling_window_size": len(totals),
+            "rolling_median_seconds": self._percentile(totals, 0.50),
+            "rolling_p90_seconds": self._percentile(totals, 0.90),
+            "recent_max_seconds": round(max(totals), 3) if totals else 0.0,
+            "cycles_over_15_seconds": sum(value > 15.0 for value in totals),
+            "cycles_over_18_seconds": sum(value > 18.0 for value in totals),
+            "cycles_at_or_over_20_seconds": sum(value >= 20.0 for value in totals),
+            "largest_stage_on_slow_cycles": (
+                max(slow_rows, key=lambda row: float(row.get("largest_stage_seconds") or 0.0)).get("largest_stage")
+                if slow_rows else ""
+            ),
+            "bounded": True,
+        }
 
     def _sync_autopilot_progress(
         self,
@@ -1066,6 +1144,7 @@ class PaperAutopilotWorker:
 
     def _bounded_cycle(self) -> None:
         started = time.monotonic()
+        self._cycle_state_write_samples = []
         cycle_id = f"cycle-{self.cycle_count + 1}-{int(time.time())}"
         # The API process only writes the guarded enable decision.  The
         # isolated worker consumes that durable switch before each cycle so an
@@ -1194,6 +1273,11 @@ class PaperAutopilotWorker:
                 self.resource_policy = policy
             completed_at = utc_now()
             self._sync_autopilot_progress("external_cycle_completed", cycle_completed_at=completed_at, persist=True)
+            governance_started = time.monotonic()
+            self._run_continuous_governance()
+            governance_elapsed = time.monotonic() - governance_started
+            cycle_total_elapsed = time.monotonic() - started
+            cycle_timing = self._record_cycle_timing_v1(cycle_total_elapsed, governance_elapsed)
             self._publish(
                 resource=before,
                 resource_policy=policy,
@@ -1218,8 +1302,8 @@ class PaperAutopilotWorker:
                 ),
                 last_error=str(trace.get("worker_cycle_error") or "")[:240],
                 next_cycle_at=utc_now(),
+                cycle_timing_v1=cycle_timing,
             )
-            self._run_continuous_governance()
         except Exception as exc:  # Fail closed and leave the API unaffected.
             self._sync_autopilot_progress(
                 "external_cycle_failed",

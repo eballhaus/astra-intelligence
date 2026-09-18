@@ -48,6 +48,9 @@ DISCOVERY_TIER_RANK = {tier: index for index, tier in enumerate(DISCOVERY_TIER_O
 DEFAULT_PRIORITY_REFRESH_SYMBOLS = 1_200
 ELEVATED_PRIORITY_REFRESH_SYMBOLS = 600
 MIN_PRIORITY_REFRESH_SYMBOLS = 300
+EXPANDED_PRIORITY_REFRESH_SYMBOLS = 1_500
+COLD_STARVATION_AGE_SECONDS = 600.0
+CONTROLLER_HISTORY_LIMIT = 8
 
 # A compact built-in seed keeps the engine useful offline. Larger local or
 # provider-backed universes replace this automatically when available.
@@ -328,6 +331,47 @@ class BroadUniverseIntakePromotionV1:
         if state not in {"RESOURCE_CRITICAL", "CRITICAL", "RESOURCE_STOPPED"}:
             capacity = ELEVATED_PRIORITY_REFRESH_SYMBOLS if state in {"RESOURCE_ELEVATED", "ELEVATED", "RESOURCE_DEGRADED"} or elapsed >= 16.0 else DEFAULT_PRIORITY_REFRESH_SYMBOLS
         previous = _safe_read_json(self.lane_hot_list_path, {})
+        controller = dict(previous.get("priority_controller_v1") or {}) if isinstance(previous, dict) else {}
+        cycle_history = [
+            _to_float(value, 0.0)
+            for value in list(controller.get("cycle_history_seconds") or [])[-CONTROLLER_HISTORY_LIMIT:]
+        ]
+        if cycle_elapsed_seconds is not None:
+            cycle_history.append(max(0.0, elapsed))
+        cycle_history = cycle_history[-CONTROLLER_HISTORY_LIMIT:]
+        age_stats = dict(previous.get("priority_tier_age_stats_seconds") or {}) if isinstance(previous, dict) else {}
+        cold_stats = dict(age_stats.get("COLD") or {})
+        cold_p95 = _to_float(cold_stats.get("p95"), 0.0)
+        cold_max = _to_float(cold_stats.get("max"), 0.0)
+        cycle_pressure_count = sum(value >= 15.0 for value in cycle_history[-5:])
+        hard_pressure_count = sum(value >= 18.0 for value in cycle_history[-5:])
+        prior_capacity = _to_int(controller.get("throughput_target"), DEFAULT_PRIORITY_REFRESH_SYMBOLS)
+        if prior_capacity not in {
+            MIN_PRIORITY_REFRESH_SYMBOLS,
+            ELEVATED_PRIORITY_REFRESH_SYMBOLS,
+            DEFAULT_PRIORITY_REFRESH_SYMBOLS,
+            EXPANDED_PRIORITY_REFRESH_SYMBOLS,
+        }:
+            prior_capacity = DEFAULT_PRIORITY_REFRESH_SYMBOLS
+        coverage_pressure = cold_p95 >= COLD_STARVATION_AGE_SECONDS or cold_max >= COLD_STARVATION_AGE_SECONDS * 2
+        if state in {"RESOURCE_CRITICAL", "CRITICAL", "RESOURCE_STOPPED"} or hard_pressure_count >= 2:
+            capacity = MIN_PRIORITY_REFRESH_SYMBOLS
+            reason = "hard_cycle_or_resource_pressure"
+        elif cycle_pressure_count >= 3 or state in {"RESOURCE_ELEVATED", "ELEVATED", "RESOURCE_DEGRADED"}:
+            capacity = max(MIN_PRIORITY_REFRESH_SYMBOLS, prior_capacity - 100)
+            reason = "sustained_cycle_pressure"
+        elif coverage_pressure and cycle_pressure_count <= 1:
+            capacity = min(EXPANDED_PRIORITY_REFRESH_SYMBOLS, prior_capacity + 100)
+            reason = "coverage_age_pressure_with_cycle_headroom"
+        elif len(cycle_history) >= 4 and all(value < 13.0 for value in cycle_history[-4:]) and not coverage_pressure:
+            capacity = min(EXPANDED_PRIORITY_REFRESH_SYMBOLS, prior_capacity + 100)
+            reason = "sustained_cycle_headroom"
+        else:
+            capacity = prior_capacity
+            reason = "hysteresis_hold"
+        if state in {"RESOURCE_CRITICAL", "CRITICAL", "RESOURCE_STOPPED"}:
+            capacity = MIN_PRIORITY_REFRESH_SYMBOLS
+        capacity = max(MIN_PRIORITY_REFRESH_SYMBOLS, min(EXPANDED_PRIORITY_REFRESH_SYMBOLS, capacity))
         records = previous.get("priority_tiers") if isinstance(previous, dict) else []
         prior_by_symbol: dict[str, dict[str, Any]] = {}
         for record in records or ():
@@ -340,22 +384,45 @@ class BroadUniverseIntakePromotionV1:
             if current is None or DISCOVERY_TIER_RANK.get(str(record.get("tier") or "COLD"), 99) < DISCOVERY_TIER_RANK.get(str(current.get("tier") or "COLD"), 99):
                 prior_by_symbol[symbol] = record
 
-        def order_key(symbol: str) -> tuple[int, float, float, str]:
+        def order_key(symbol: str) -> tuple[int, int, float, float, str]:
             prior = prior_by_symbol.get(symbol) or {}
             tier = str(prior.get("tier") or "COLD").upper()
             if tier not in DISCOVERY_TIER_RANK:
                 tier = "COLD"
             last_observed = self._provider_timestamp_epoch(prior.get("last_observed_at")) or 0.0
             score = _to_float(prior.get("discovery_score"), 0.0)
-            return DISCOVERY_TIER_RANK[tier], -score, last_observed, symbol
+            age = max(0.0, time.time() - last_observed) if last_observed else float("inf")
+            catch_up = 0 if tier == "COLD" and last_observed and age >= COLD_STARVATION_AGE_SECONDS else 1
+            return DISCOVERY_TIER_RANK[tier], catch_up, -age, -score, symbol
 
         ordered = sorted(normalized, key=order_key)
         selected = ordered[: min(len(ordered), capacity)]
+        controller_payload = {
+            "schema_version": "astra_discovery_throughput_controller_v1",
+            "throughput_target": capacity,
+            "prior_throughput_target": prior_capacity,
+            "reason": reason,
+            "cycle_history_seconds": cycle_history,
+            "cycle_pressure_count_last_5": cycle_pressure_count,
+            "hard_pressure_count_last_5": hard_pressure_count,
+            "coverage_pressure": coverage_pressure,
+            "cold_p95_age_seconds": round(cold_p95, 3),
+            "cold_max_age_seconds": round(cold_max, 3),
+            "resource_state": state or "UNKNOWN",
+            "updated_at": _now_iso(),
+            "bounded": True,
+        }
+        merged = dict(previous) if isinstance(previous, dict) else {}
+        merged["priority_controller_v1"] = controller_payload
+        _safe_write_json(self.lane_hot_list_path, merged)
         return {
             "symbols": selected,
             "master_universe_size": len(normalized),
             "symbols_deferred": max(0, len(normalized) - len(selected)),
             "priority_refresh_capacity": capacity,
+            "prior_priority_refresh_capacity": prior_capacity,
+            "controller_reason": reason,
+            "coverage_pressure": coverage_pressure,
             "resource_state": state or "UNKNOWN",
             "cycle_elapsed_seconds": round(elapsed, 3),
             "tiered_refresh": True,
@@ -424,12 +491,41 @@ class BroadUniverseIntakePromotionV1:
             })
         counts = Counter(str(record.get("tier") or "COLD") for record in tiers)
         lane_counts = Counter(f"{record.get('lane')}:{record.get('tier')}" for record in tiers)
+        age_by_tier: dict[str, list[float]] = {tier: [] for tier in DISCOVERY_TIER_ORDER}
+        catch_up_queue: list[str] = []
+        for record in tiers:
+            tier = str(record.get("tier") or "COLD")
+            observed_epoch = self._provider_timestamp_epoch(record.get("last_observed_at"))
+            age = max(0.0, now - observed_epoch) if observed_epoch else float("inf")
+            if tier in age_by_tier and age != float("inf"):
+                age_by_tier[tier].append(age)
+            if tier == "COLD" and observed_epoch and age >= COLD_STARVATION_AGE_SECONDS:
+                catch_up_queue.append(str(record.get("symbol") or ""))
+        age_stats: dict[str, dict[str, float]] = {}
+        for tier, ages in age_by_tier.items():
+            ordered_ages = sorted(ages)
+            if not ordered_ages:
+                age_stats[tier] = {"average": 0.0, "p90": 0.0, "p95": 0.0, "max": 0.0, "count": 0}
+                continue
+            def percentile(values: list[float], fraction: float) -> float:
+                index = min(len(values) - 1, max(0, int((len(values) - 1) * fraction)))
+                return values[index]
+            age_stats[tier] = {
+                "average": round(sum(ordered_ages) / len(ordered_ages), 3),
+                "p90": round(percentile(ordered_ages, 0.90), 3),
+                "p95": round(percentile(ordered_ages, 0.95), 3),
+                "max": round(ordered_ages[-1], 3),
+                "count": len(ordered_ages),
+            }
         merged = dict(previous) if isinstance(previous, dict) else {}
         merged.update({
             "priority_tiers": tiers[:MAX_BROAD_OBSERVATION_SYMBOLS],
             "priority_tier_counts": {tier: int(counts.get(tier, 0)) for tier in DISCOVERY_TIER_ORDER},
             "priority_tier_lane_counts": {key: int(value) for key, value in sorted(lane_counts.items())},
             "priority_tier_generated_at": now_iso,
+            "priority_tier_age_stats_seconds": age_stats,
+            "cold_catch_up_queue": sorted(set(catch_up_queue))[:MAX_BROAD_OBSERVATION_SYMBOLS],
+            "cold_catch_up_queue_size": len(set(catch_up_queue)),
             "priority_tier_discovery_only": True,
             "broker_actions_added": 0,
             "candidate_evidence_fabricated": False,
@@ -441,6 +537,8 @@ class BroadUniverseIntakePromotionV1:
             "symbols_observed": len(tiers),
             "symbols_promoted": sum(1 for record in tiers if record.get("promotion_at") == now_iso),
             "symbols_demoted": sum(1 for record in tiers if record.get("demotion_at") == now_iso),
+            "age_stats_seconds": age_stats,
+            "cold_catch_up_queue_size": len(set(catch_up_queue)),
             "discovery_only": True,
             "broker_actions_added": 0,
         }
@@ -500,11 +598,26 @@ class BroadUniverseIntakePromotionV1:
             except Exception:
                 status["publisher_error"] = "canonical_observation_publisher_failed"
         priority = self.build_priority_tiers_v2(normalized)
+        refresh_elapsed_ms = _to_float(status.get("refresh_elapsed_ms"), 0.0)
+        full_rotation_seconds = (refresh_elapsed_ms / 1000.0) * (master_universe_size / max(1, len(normalized))) if refresh_elapsed_ms and normalized else 0.0
+        tier_age_stats = dict(priority.get("age_stats_seconds") or {})
+        cold_queue_size = _to_int(priority.get("cold_catch_up_queue_size"), 0)
+        tier_payload = _safe_read_json(self.lane_hot_list_path, {})
+        if isinstance(tier_payload, dict):
+            tier_payload.update({
+                "estimated_full_universe_rotation_seconds": round(full_rotation_seconds, 3),
+                "priority_tier_age_stats_seconds": tier_age_stats,
+                "cold_catch_up_queue_size": cold_queue_size,
+            })
+            _safe_write_json(self.lane_hot_list_path, tier_payload)
         status.update({
             "priority_tier_counts": priority.get("tier_counts", {}),
             "priority_tier_lane_counts": priority.get("lane_counts", {}),
             "priority_promotions": priority.get("symbols_promoted", 0),
             "priority_demotions": priority.get("symbols_demoted", 0),
+            "priority_tier_age_stats_seconds": tier_age_stats,
+            "cold_catch_up_queue_size": cold_queue_size,
+            "estimated_full_universe_rotation_seconds": round(full_rotation_seconds, 3),
             "priority_tiered": True,
         })
         with self._observation_lock:
