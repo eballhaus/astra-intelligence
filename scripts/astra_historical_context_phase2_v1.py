@@ -31,6 +31,8 @@ VERSION = "1.0.0"
 DEFAULT_STATE_DIR = Path("/Users/Shared/AstraRuntime/state")
 PIPELINE_NAME = "ASTRA_HISTORICAL_CONTEXT_PHASE2_V1"
 OUTPUT_DIRNAME = "historical_context_phase2_v1"
+LOG_FILENAME = "astra_historical_context_phase2_v1.log"
+PID_FILENAME = "astra_historical_context_phase2_v1.pid"
 MAX_LOCAL_SYMBOLS_PER_CHILD = 50
 POLL_SECONDS = 2.0
 RELAUNCH_DELAY_SECONDS = 15.0
@@ -74,6 +76,14 @@ def read_json(path: Path, default: Any = None) -> Any:
 
 def state_path(state_dir: Path) -> Path:
     return state_dir / "astra_historical_context_phase2_v1.json"
+
+
+def log_path(state_dir: Path) -> Path:
+    return state_dir / LOG_FILENAME
+
+
+def pid_path(state_dir: Path) -> Path:
+    return state_dir / PID_FILENAME
 
 
 def checkpoint_path(state_dir: Path, stage: int) -> Path:
@@ -212,6 +222,14 @@ def update_state(state_dir: Path, payload: Mapping[str, Any]) -> None:
     value = dict(payload)
     value["updated_at"] = now_iso()
     atomic_json(state_path(state_dir), value)
+
+
+def log_event(state_dir: Path, event: str, **fields: Any) -> None:
+    record = {"at": now_iso(), "event": event, **fields}
+    path = log_path(state_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n")
 
 
 def append_jsonl(path: Path, rows: Iterable[Mapping[str, Any]]) -> int:
@@ -416,7 +434,12 @@ def supervisor(args: argparse.Namespace) -> int:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return 2
+        pid_path(state_dir).write_text(str(os.getpid()), encoding="ascii")
+        log_event(state_dir, "SUPERVISOR_STARTED", pid=os.getpid(), checkpoint_root=str(state_dir))
         state = base_state(state_dir)
+        state["supervisor_pid"] = os.getpid()
+        state["log_path"] = str(log_path(state_dir))
+        state["pid_path"] = str(pid_path(state_dir))
         update_state(state_dir, state)
         stopped = False
 
@@ -435,6 +458,7 @@ def supervisor(args: argparse.Namespace) -> int:
                 state["last_error"] = "worker health/resource guard did not permit historical child"
                 state["child_pid"] = None
                 update_state(state_dir, state)
+                log_event(state_dir, "PAUSED_RESOURCE_GUARD", worker_health=health)
                 time.sleep(30.0)
                 continue
             stage = next((number for number, _name, _output in STAGES if state["stage_statuses"].get(str(number)) not in TERMINAL), None)
@@ -443,6 +467,7 @@ def supervisor(args: argparse.Namespace) -> int:
                 state["completed_at"] = state.get("completed_at") or now_iso()
                 state["child_pid"] = None
                 update_state(state_dir, state)
+                log_event(state_dir, "PIPELINE_COMPLETE")
                 break
             state["status"] = "RUNNING"
             state["current_stage"] = stage
@@ -453,6 +478,7 @@ def supervisor(args: argparse.Namespace) -> int:
             child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--child", "--stage", str(stage), "--state-dir", str(state_dir)], cwd=str(ROOT))
             state["child_pid"] = child.pid
             update_state(state_dir, state)
+            log_event(state_dir, "CHILD_STARTED", stage=stage, child_pid=child.pid, checkpoint=str(checkpoint_path(state_dir, stage)))
             while child.poll() is None and not stopped:
                 time.sleep(POLL_SECONDS)
                 health = worker_health(state_dir)
@@ -473,7 +499,9 @@ def supervisor(args: argparse.Namespace) -> int:
                 state["last_error"] = f"stage_{stage}_child_exit_{child.returncode}"
                 state["status"] = "INTEGRITY_FAILURE"
                 update_state(state_dir, state)
+                log_event(state_dir, "CHILD_FAILED", stage=stage, exit_code=child.returncode)
                 break
+            log_event(state_dir, "CHILD_CHECKPOINTED", stage=stage, status=stage_status, records_written=cp.get("records_written", 0))
             update_state(state_dir, state)
             if not stopped:
                 time.sleep(RELAUNCH_DELAY_SECONDS)
