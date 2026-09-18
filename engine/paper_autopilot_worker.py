@@ -217,7 +217,7 @@ class PaperAutopilotWorker:
         return round(ordered[index], 3)
 
     def _record_cycle_timing_v1(self, total_seconds: float, governance_seconds: float = 0.0) -> dict[str, Any]:
-        """Aggregate existing worker phase markers into bounded cycle telemetry."""
+        """Aggregate bounded cycle telemetry with non-overlapping attribution."""
         runtime = getattr(self.autopilot, "_runtime_state", {})
         phase_durations = dict(dict(runtime or {}).get("worker_phase_timing_v1") or {}) if isinstance(runtime, dict) else {}
         phase_durations = dict(phase_durations.get("durations_seconds") or {})
@@ -237,7 +237,7 @@ class PaperAutopilotWorker:
         broad_suite = getattr(self.autopilot, "broad_universe_intake_promotion_suite", None)
         broad_status = dict(getattr(broad_suite, "_observation_status", {}) or {}) if broad_suite is not None else {}
         broad_discovery_seconds = round(float(broad_status.get("refresh_elapsed_ms") or 0.0) / 1000.0, 3)
-        stages = {
+        inclusive_stages = {
             "active_position_management": review_sum(
                 "quote", "snapshot", "learned_exit", "exit_evaluation",
                 "decision_evidence", "quote_telemetry", "exit_submission",
@@ -255,11 +255,75 @@ class PaperAutopilotWorker:
                 "provider", "broker", "market_data", "quote", "fmp", "crypto_ranking",
             ),
         }
-        stages = {name: max(0.0, float(value or 0.0)) for name, value in stages.items()}
-        largest_name, largest_value = max(stages.items(), key=lambda item: item[1], default=("", 0.0))
+        inclusive_stages = {name: max(0.0, float(value or 0.0)) for name, value in inclusive_stages.items()}
+
+        def phase_sum_exact(*names: str) -> float:
+            wanted = {str(name).lower() for name in names}
+            return round(sum(
+                float(value or 0.0)
+                for name, value in phase_durations.items()
+                if str(name).lower() in wanted
+            ), 3)
+
+        # Assign each named worker phase once. Existing inclusive values stay
+        # available for compatibility, while this view identifies actual
+        # wall-clock contributors without double-counting nested labels.
+        exclusive_stages = {
+            "active_position_management": round(
+                review_sum(
+                    "quote", "snapshot", "learned_exit", "decision_evidence",
+                    "quote_telemetry", "trace_persistence", "post_review_bookkeeping",
+                )
+                + phase_sum_exact(
+                    "loss_containment_review", "profit_protection_review",
+                    "legacy_position_risk_triage", "position_exit_readiness",
+                    "legacy_portfolio_resolution", "legacy_quarantine_review",
+                ),
+                3,
+            ),
+            "exits": round(
+                review_sum("exit_evaluation", "exit_submission")
+                + phase_sum_exact("due_day_lane_close", "exit", "authorized_lane_exit"),
+                3,
+            ),
+            "reconciliation": phase_sum_exact(
+                "broker_position_snapshot", "entry_price_lineage_reconciliation",
+                "bounded_broker_reconciliation", "broker_dust_reconciliation",
+                "execution_reconciliation",
+            ),
+            "truth_learning_handoff": round(max(0.0, governance_seconds), 3),
+            "candidate_finalist_management": phase_sum_exact(
+                "candidate_collection", "partial_candidate_microphase", "safety_preflight",
+            ),
+            "hot_near_entry_refresh": phase_sum("hot", "near_entry"),
+            "warm_refresh": phase_sum("warm"),
+            "cold_discovery": max(phase_sum("cold", "discovery", "broad_observation"), broad_discovery_seconds),
+            "state_writes": round(sum(self._cycle_state_write_samples), 3),
+            "provider_broker_wait": phase_sum_exact(
+                "active_equity_fmp_observation", "active_equity_fmp_observation_pre_management",
+                "crypto_ranking_refresh", "crypto_ranking_refresh_pre_management",
+            ) + round(sum(
+                float(value or 0.0)
+                for name, value in phase_durations.items()
+                if str(name).lower().startswith("market_data:")
+            ), 3),
+        }
+        exclusive_stages = {name: max(0.0, float(value or 0.0)) for name, value in exclusive_stages.items()}
+        largest_name, largest_value = max(exclusive_stages.items(), key=lambda item: item[1], default=("", 0.0))
+        total = max(0.0, float(total_seconds))
+        inclusive_sum = round(sum(inclusive_stages.values()), 3)
+        exclusive_sum = round(sum(exclusive_stages.values()), 3)
         record = {
-            "total_seconds": round(max(0.0, total_seconds), 3),
-            "stages_seconds": stages,
+            "total_seconds": round(total, 3),
+            "stages_seconds": inclusive_stages,
+            "exclusive_stages_seconds": exclusive_stages,
+            "timing_attribution_v1": {
+                "inclusive_stage_sum_seconds": inclusive_sum,
+                "exclusive_stage_sum_seconds": exclusive_sum,
+                "overlap_seconds": round(max(0.0, inclusive_sum - total), 3),
+                "unattributed_seconds": round(max(0.0, total - exclusive_sum), 3),
+                "largest_stage_basis": "exclusive_wall_clock",
+            },
             "largest_stage": largest_name,
             "largest_stage_seconds": round(largest_value, 3),
         }

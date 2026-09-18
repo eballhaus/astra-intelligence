@@ -273,7 +273,7 @@ def test_priority_refresh_plan_adapts_capacity_and_prioritizes_existing_tiers() 
         normal = owner._priority_refresh_plan(symbols, resource_state="RESOURCE_NORMAL")
         elevated = owner._priority_refresh_plan(symbols, resource_state="RESOURCE_ELEVATED")
         assert normal["symbols"][0] == "HOT"
-        assert normal["priority_refresh_capacity"] == 1_300
+        assert normal["priority_refresh_capacity"] == 1_200
         assert 300 <= elevated["priority_refresh_capacity"] < normal["priority_refresh_capacity"]
         assert elevated["symbols_deferred"] > 0
 
@@ -319,6 +319,49 @@ def test_cold_catch_up_prioritizes_age_without_promoting_tier() -> None:
         assert plan["symbols"][0] == "OLD"
 
 
+def test_discovery_age_metrics_exclude_legacy_and_unknown_timestamps() -> None:
+    with TemporaryDirectory() as directory:
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        now = datetime.now(UTC).timestamp()
+        iso = lambda seconds: datetime.fromtimestamp(now - seconds, UTC).isoformat().replace("+00:00", "Z")
+        rows = [
+            {"symbol": "CURRENT", "provider_native_timestamp": iso(5), "change_percent": 5.0, "volume": 100},
+            {"symbol": "STALE", "provider_native_timestamp": iso(1_000), "change_percent": 4.0, "volume": 100},
+            {"symbol": "LEGACY", "provider_native_timestamp": iso(8 * 24 * 60 * 60), "change_percent": 3.0, "volume": 100},
+            {"symbol": "UNKNOWN", "change_percent": 2.0, "volume": 100},
+            {"symbol": "INVALID", "provider_native_timestamp": "not-a-timestamp", "change_percent": 1.0, "volume": 100},
+        ]
+        result = owner.build_priority_tiers_v2(rows, now_timestamp=now)
+        counts = result["timestamp_classification_counts"]
+        assert counts == {
+            "current_observed": 1,
+            "never_observed": 1,
+            "legacy_timestamp": 1,
+            "invalid_timestamp": 1,
+            "stale_current": 1,
+        }
+        assert sum(item["count"] for item in result["age_stats_seconds"].values()) == 1
+        records = json.loads((Path(directory) / "lane_aware_discovery_v1.json").read_text())[
+            "priority_tiers"
+        ]
+        assert next(item for item in records if item["symbol"] == "UNKNOWN")["last_observed_at"] == ""
+
+
+def test_legacy_discovery_age_does_not_create_controller_coverage_pressure() -> None:
+    with TemporaryDirectory() as directory:
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        now = datetime.now(UTC).timestamp()
+        old = datetime.fromtimestamp(now - (30 * 24 * 60 * 60), UTC).isoformat().replace("+00:00", "Z")
+        rows = [
+            {"symbol": f"S{index:02d}", "provider_native_timestamp": old, "change_percent": 0.1, "volume": 100}
+            for index in range(20)
+        ]
+        owner.build_priority_tiers_v2(rows, now_timestamp=now)
+        plan = owner._priority_refresh_plan(rows and [row["symbol"] for row in rows], resource_state="RESOURCE_NORMAL", cycle_elapsed_seconds=10.0)
+        assert plan["coverage_pressure"] is False
+        assert plan["controller_reason"] == "hysteresis_hold"
+
+
 def test_worker_cycle_timing_rollup_is_bounded_and_reports_slow_stage() -> None:
     worker = PaperAutopilotWorker.__new__(PaperAutopilotWorker)
     worker.autopilot = type("Autopilot", (), {"_runtime_state": {
@@ -332,7 +375,11 @@ def test_worker_cycle_timing_rollup_is_bounded_and_reports_slow_stage() -> None:
     assert metrics["rolling_p90_seconds"] == 16.0
     assert metrics["recent_max_seconds"] == 16.0
     assert metrics["cycles_over_15_seconds"] == 1
-    assert metrics["largest_stage_on_slow_cycles"] == "active_position_management"
+    assert metrics["largest_stage_on_slow_cycles"] == "exits"
+    latest = metrics["latest"]
+    assert latest["timing_attribution_v1"]["largest_stage_basis"] == "exclusive_wall_clock"
+    assert latest["exclusive_stages_seconds"]["exits"] == 5.0
+    assert latest["timing_attribution_v1"]["inclusive_stage_sum_seconds"] >= latest["timing_attribution_v1"]["exclusive_stage_sum_seconds"]
 
 
 def test_non_discovery_pressure_does_not_throttle_discovery() -> None:

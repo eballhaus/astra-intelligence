@@ -50,6 +50,12 @@ ELEVATED_PRIORITY_REFRESH_SYMBOLS = 600
 MIN_PRIORITY_REFRESH_SYMBOLS = 300
 EXPANDED_PRIORITY_REFRESH_SYMBOLS = 1_500
 COLD_STARVATION_AGE_SECONDS = 600.0
+# Discovery coverage is diagnostic freshness, not executable market-data
+# freshness. Preserve older values as diagnostics without using them for
+# controller pressure.
+DISCOVERY_CURRENT_MAX_AGE_SECONDS = 120.0
+DISCOVERY_LEGACY_AGE_SECONDS = 7 * 24 * 60 * 60.0
+DISCOVERY_FUTURE_TOLERANCE_SECONDS = 5.0
 CONTROLLER_HISTORY_LIMIT = 8
 
 # A compact built-in seed keeps the engine useful offline. Larger local or
@@ -214,6 +220,29 @@ class BroadUniverseIntakePromotionV1:
             return parsed.astimezone(timezone.utc).timestamp()
         except (TypeError, ValueError, OverflowError):
             return None
+
+    @classmethod
+    def _classify_discovery_timestamp(
+        cls,
+        value: Any,
+        *,
+        now_timestamp: float,
+    ) -> tuple[str, float | None]:
+        """Classify discovery age without treating unknown state as fresh."""
+        if not str(value or "").strip():
+            return "never_observed", None
+        epoch = cls._provider_timestamp_epoch(value)
+        if epoch is None:
+            return "invalid_timestamp", None
+        age = float(now_timestamp) - epoch
+        if age < -DISCOVERY_FUTURE_TOLERANCE_SECONDS:
+            return "invalid_timestamp", None
+        age = max(0.0, age)
+        if age <= DISCOVERY_CURRENT_MAX_AGE_SECONDS:
+            return "current_observed", age
+        if age > DISCOVERY_LEGACY_AGE_SECONDS:
+            return "legacy_timestamp", age
+        return "stale_current", age
 
     @classmethod
     def _normalize_snapshot_row(cls, raw: dict[str, Any], *, received_at: float) -> dict[str, Any] | None:
@@ -395,10 +424,14 @@ class BroadUniverseIntakePromotionV1:
             tier = str(prior.get("tier") or "COLD").upper()
             if tier not in DISCOVERY_TIER_RANK:
                 tier = "COLD"
+            timestamp_class, classified_age = self._classify_discovery_timestamp(
+                prior.get("last_observed_at"),
+                now_timestamp=time.time(),
+            )
             last_observed = self._provider_timestamp_epoch(prior.get("last_observed_at")) or 0.0
             score = _to_float(prior.get("discovery_score"), 0.0)
-            age = max(0.0, time.time() - last_observed) if last_observed else float("inf")
-            catch_up = 0 if tier == "COLD" and last_observed and age >= COLD_STARVATION_AGE_SECONDS else 1
+            age = classified_age if classified_age is not None else float("inf")
+            catch_up = 0 if tier == "COLD" and timestamp_class == "stale_current" and age >= COLD_STARVATION_AGE_SECONDS else 1
             return DISCOVERY_TIER_RANK[tier], catch_up, -age, -score, symbol
 
         ordered = sorted(normalized, key=order_key)
@@ -515,6 +548,12 @@ class BroadUniverseIntakePromotionV1:
             if prior_tier in {"HOT", "WARM"} and now - prior_seen <= HOT_LIST_HOLD_SECONDS:
                 if tier == "COLD" and index <= max(1, int(total * 0.25)):
                     tier = prior_tier
+            observation_timestamp = str(
+                row.get("provider_native_timestamp")
+                or row.get("provider_quote_timestamp")
+                or row.get("observation_timestamp")
+                or ""
+            ).strip()
             tiers.append({
                 "symbol": symbol,
                 "lane": lane,
@@ -524,7 +563,9 @@ class BroadUniverseIntakePromotionV1:
                 "reason": "relative_snapshot_movement_volume_spread_freshness",
                 "first_seen": str(prior.get("first_seen") or now_iso),
                 "last_seen": now_iso,
-                "last_observed_at": str(row.get("provider_native_timestamp") or now_iso),
+                # Missing provider time remains unknown; processing time must
+                # not manufacture a fresh coverage observation.
+                "last_observed_at": observation_timestamp,
                 "freshness": str(row.get("freshness_state") or "UNKNOWN"),
                 "promotion_at": str(prior.get("promotion_at") or (now_iso if tier != prior_tier else "")),
                 "demotion_at": now_iso if prior_tier and tier != prior_tier else str(prior.get("demotion_at") or ""),
@@ -538,13 +579,25 @@ class BroadUniverseIntakePromotionV1:
         lane_counts = Counter(f"{record.get('lane')}:{record.get('tier')}" for record in tiers)
         age_by_tier: dict[str, list[float]] = {tier: [] for tier in DISCOVERY_TIER_ORDER}
         catch_up_queue: list[str] = []
+        timestamp_classes = Counter()
         for record in tiers:
             tier = str(record.get("tier") or "COLD")
-            observed_epoch = self._provider_timestamp_epoch(record.get("last_observed_at"))
-            age = max(0.0, now - observed_epoch) if observed_epoch else float("inf")
-            if tier in age_by_tier and age != float("inf"):
+            timestamp_class, age = self._classify_discovery_timestamp(
+                record.get("last_observed_at"),
+                now_timestamp=now,
+            )
+            timestamp_classes[timestamp_class] += 1
+            # Controller age pressure uses only comparable current discovery
+            # timestamps. Older/unknown values remain diagnostic state and
+            # never become executable evidence.
+            if tier in age_by_tier and timestamp_class == "current_observed" and age is not None:
                 age_by_tier[tier].append(age)
-            if tier == "COLD" and observed_epoch and age >= COLD_STARVATION_AGE_SECONDS:
+            if (
+                tier == "COLD"
+                and timestamp_class == "stale_current"
+                and age is not None
+                and age >= COLD_STARVATION_AGE_SECONDS
+            ):
                 catch_up_queue.append(str(record.get("symbol") or ""))
         age_stats: dict[str, dict[str, float]] = {}
         for tier, ages in age_by_tier.items():
@@ -569,6 +622,13 @@ class BroadUniverseIntakePromotionV1:
             "priority_tier_lane_counts": {key: int(value) for key, value in sorted(lane_counts.items())},
             "priority_tier_generated_at": now_iso,
             "priority_tier_age_stats_seconds": age_stats,
+            "discovery_timestamp_classification_counts": {
+                key: int(timestamp_classes.get(key, 0))
+                for key in (
+                    "current_observed", "never_observed", "legacy_timestamp",
+                    "invalid_timestamp", "stale_current",
+                )
+            },
             "cold_catch_up_queue": sorted(set(catch_up_queue))[:MAX_BROAD_OBSERVATION_SYMBOLS],
             "cold_catch_up_queue_size": len(set(catch_up_queue)),
             "priority_tier_discovery_only": True,
@@ -583,6 +643,13 @@ class BroadUniverseIntakePromotionV1:
             "symbols_promoted": sum(1 for record in tiers if record.get("promotion_at") == now_iso),
             "symbols_demoted": sum(1 for record in tiers if record.get("demotion_at") == now_iso),
             "age_stats_seconds": age_stats,
+            "timestamp_classification_counts": {
+                key: int(timestamp_classes.get(key, 0))
+                for key in (
+                    "current_observed", "never_observed", "legacy_timestamp",
+                    "invalid_timestamp", "stale_current",
+                )
+            },
             "cold_catch_up_queue_size": len(set(catch_up_queue)),
             "discovery_only": True,
             "broker_actions_added": 0,
@@ -646,12 +713,14 @@ class BroadUniverseIntakePromotionV1:
         refresh_elapsed_ms = _to_float(status.get("refresh_elapsed_ms"), 0.0)
         full_rotation_seconds = (refresh_elapsed_ms / 1000.0) * (master_universe_size / max(1, len(normalized))) if refresh_elapsed_ms and normalized else 0.0
         tier_age_stats = dict(priority.get("age_stats_seconds") or {})
+        timestamp_classification_counts = dict(priority.get("timestamp_classification_counts") or {})
         cold_queue_size = _to_int(priority.get("cold_catch_up_queue_size"), 0)
         tier_payload = _safe_read_json(self.lane_hot_list_path, {})
         if isinstance(tier_payload, dict):
             tier_payload.update({
                 "estimated_full_universe_rotation_seconds": round(full_rotation_seconds, 3),
                 "priority_tier_age_stats_seconds": tier_age_stats,
+                "discovery_timestamp_classification_counts": timestamp_classification_counts,
                 "cold_catch_up_queue_size": cold_queue_size,
             })
             _safe_write_json(self.lane_hot_list_path, tier_payload)
@@ -661,6 +730,7 @@ class BroadUniverseIntakePromotionV1:
             "priority_promotions": priority.get("symbols_promoted", 0),
             "priority_demotions": priority.get("symbols_demoted", 0),
             "priority_tier_age_stats_seconds": tier_age_stats,
+            "discovery_timestamp_classification_counts": timestamp_classification_counts,
             "cold_catch_up_queue_size": cold_queue_size,
             "estimated_full_universe_rotation_seconds": round(full_rotation_seconds, 3),
             "priority_tiered": True,
