@@ -29,6 +29,16 @@ except Exception:  # pragma: no cover - fail closed if the shared owner is unava
             "exact_blockers": ["ACTIVATION_CONTRACT_UNAVAILABLE"],
         }
 
+try:
+    from engine.opportunity_discovery_expansion_v1 import OpportunityDiscoveryExpansionV1
+except Exception:  # pragma: no cover - additive feature join
+    OpportunityDiscoveryExpansionV1 = None  # type: ignore[assignment]
+
+try:
+    from engine.multi_horizon_paper_trading_learning_suite_v1 import MultiHorizonPaperTradingLearningSuiteV1
+except Exception:  # pragma: no cover - additive feature join
+    MultiHorizonPaperTradingLearningSuiteV1 = None  # type: ignore[assignment]
+
 VERSION = "1.0.0"
 MAX_TAIL_BYTES = 2_000_000
 MAX_ROWS = 1_000
@@ -60,6 +70,17 @@ BROAD_LANE_EVIDENCE_FIELDS = {
         "swing_trade_fit_score", "swing_fit_score", "multi_day_fit_score",
         "trend_persistence_score", "trend_quality_score", "momentum_score",
         "market_regime", "regime", "sector",
+    ),
+}
+
+BROAD_LANE_COMPLETE_FEATURES = {
+    "SCALP": (
+        "liquidity_score", "relative_volume_score", "intraday_acceleration_score",
+        "spread_quality_score", "freshness_quality_score", "scalp_fit_score",
+    ),
+    "SWING": (
+        "trend_persistence_score", "trend_quality_score", "volatility_score",
+        "market_regime", "sector", "swing_fit_score",
     ),
 }
 
@@ -190,6 +211,14 @@ class PaperOpportunityAllocationEngineV1:
         self._outcome_cache: dict[str, Any] | None = None
         self.profit_seeking_exploration = (
             ProfitSeekingAdaptiveExplorationV1(state_dir=self.state_dir) if ProfitSeekingAdaptiveExplorationV1 is not None else None
+        )
+        self.broad_feature_discovery = (
+            OpportunityDiscoveryExpansionV1(state_dir=self.state_dir)
+            if OpportunityDiscoveryExpansionV1 is not None else None
+        )
+        self.broad_feature_horizon = (
+            MultiHorizonPaperTradingLearningSuiteV1(state_dir=self.state_dir)
+            if MultiHorizonPaperTradingLearningSuiteV1 is not None else None
         )
 
     @staticmethod
@@ -462,6 +491,108 @@ class PaperOpportunityAllocationEngineV1:
             "freshness_quality_source": freshness_source or "UNAVAILABLE",
         }
 
+    @staticmethod
+    def _has_value(row: dict[str, Any], *keys: str) -> bool:
+        return any(row.get(key) not in (None, "", {}, []) for key in keys)
+
+    def enrich_broad_observation_features_v1(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Join only provenance-backed existing feature outputs onto an observation."""
+        candidate = dict(row or {})
+        provenance: dict[str, str] = {}
+        producers: list[str] = []
+        source = dict(candidate)
+        discovery = self.broad_feature_discovery
+        discovery_features: dict[str, Any] = {}
+        if discovery is not None:
+            try:
+                augment = getattr(discovery, "_augment_with_local_context", None)
+                if callable(augment):
+                    source = dict(augment(dict(candidate)) or candidate)
+                discovery_features = dict(discovery.score_row(candidate) or {})
+                producers.append("OpportunityDiscoveryExpansionV1._features")
+            except Exception:
+                discovery_features = {}
+
+        # Profile/cache fields are joined only when the existing local source
+        # actually contains them. They are context, not qualification.
+        for key in ("average_volume", "market_cap", "sector", "current_price"):
+            if candidate.get(key) in (None, "", {}, []) and source.get(key) not in (None, "", {}, []):
+                candidate[key] = source[key]
+                provenance[key] = "LOCAL_FMP_PROFILE_CACHE"
+
+        has_current_move = self._has_value(
+            source, "change_percent", "change_pct", "pct_change", "day_change_pct", "intraday_change_pct"
+        )
+        has_volume_baseline = self._has_value(
+            source, "relative_volume", "rvol", "relative_volume_ratio", "avg_volume", "average_volume", "volume_avg_20d"
+        )
+        if has_volume_baseline:
+            for key, producer_key in (
+                ("relative_volume_ratio", "relative_volume_ratio"),
+                ("relative_volume_score", "relative_volume_score"),
+                ("liquidity_score", "liquidity"),
+            ):
+                if candidate.get(key) in (None, "", {}, []) and discovery_features.get(producer_key) not in (None, "", {}, []):
+                    candidate[key] = discovery_features[producer_key]
+                    provenance[key] = "OpportunityDiscoveryExpansionV1._features"
+        if has_current_move:
+            for key in ("intraday_acceleration_score", "volatility_expansion_score", "momentum_expansion_score"):
+                if candidate.get(key) in (None, "", {}, []) and discovery_features.get(key) not in (None, "", {}, []):
+                    candidate[key] = discovery_features[key]
+                    provenance[key] = "OpportunityDiscoveryExpansionV1._features:CURRENT_MOVEMENT"
+
+        # Never copy a defaulted score from a shadow classifier. Only reuse its
+        # fit outputs when all non-default inputs for that fit are present.
+        horizon = self.broad_feature_horizon
+        if horizon is not None:
+            try:
+                horizon_input = {**source, **candidate}
+                classified = dict(horizon.classify_candidate(horizon_input) or {})
+                producers.append("MultiHorizonPaperTradingLearningSuiteV1.classify_candidate")
+                scalp_inputs = self._has_value(
+                    horizon_input, "liquidity_score", "live_quality_score", "data_quality_score"
+                ) and self._has_value(
+                    horizon_input, "execution_readiness_score", "order_execution_score"
+                ) and self._has_value(
+                    horizon_input, "intraday_score", "day_trade_score", "momentum_score", "intraday_acceleration_score"
+                ) and self._has_value(horizon_input, "momentum_score", "small_mid_momentum_score")
+                swing_inputs = all(
+                    self._has_value(horizon_input, key)
+                    for key in (
+                        "expected_return_pct", "context_score", "opportunity_score_pct",
+                        "rank_stability_10r", "confidence", "entry_quality_v3_score", "volatility_score",
+                    )
+                )
+                if scalp_inputs and candidate.get("scalp_fit_score") in (None, "", {}, []) and classified.get("scalp_fit_score") not in (None, "", {}, []):
+                    candidate["scalp_fit_score"] = classified["scalp_fit_score"]
+                    provenance["scalp_fit_score"] = "MultiHorizonPaperTradingLearningSuiteV1.classify_candidate"
+                if swing_inputs and candidate.get("swing_fit_score") in (None, "", {}, []) and classified.get("swing_trade_fit_score") not in (None, "", {}, []):
+                    candidate["swing_fit_score"] = classified["swing_trade_fit_score"]
+                    provenance["swing_fit_score"] = "MultiHorizonPaperTradingLearningSuiteV1.classify_candidate"
+            except Exception:
+                pass
+
+        candidate["lane_feature_evidence_join_v1"] = True
+        candidate["lane_feature_join_producers"] = list(dict.fromkeys(producers))
+        candidate["lane_feature_provenance_v1"] = provenance
+        candidate["lane_feature_join_status"] = "PARTIAL" if provenance else "UNAVAILABLE"
+        candidate["candidate_evidence_fabricated"] = False
+        candidate["observation_authority"] = False
+        candidate["executable_evidence"] = False
+        candidate["discovery_only"] = True
+        return candidate
+
+    @classmethod
+    def _lane_feature_payload_state(cls, row: dict[str, Any], lane: str) -> tuple[str, list[str]]:
+        required = BROAD_LANE_COMPLETE_FEATURES.get(str(lane).upper(), ())
+        missing = [key for key in required if row.get(key) in (None, "", {}, [])]
+        present = len(required) - len(missing)
+        if required and not missing:
+            return "COMPLETE", []
+        if present:
+            return "PARTIAL", missing
+        return "UNAVAILABLE", missing
+
     def _ranked_entry_decorations(self, decorated: list[dict[str, Any]]) -> list[dict[str, Any]]:
         market_return = None
         for row in decorated:
@@ -591,7 +722,7 @@ class PaperOpportunityAllocationEngineV1:
         lane = str(lane or "").upper().strip()
         if lane not in BROAD_LANE_EVALUATION_LANES:
             return {"lane_evaluation_status": "UNAVAILABLE", "lane_evaluation_missing": ["unsupported_lane"]}
-        candidate = dict(row or {})
+        candidate = self.enrich_broad_observation_features_v1(dict(row or {}))
         candidate["lane_id"] = lane
         candidate["lane_evaluation_only"] = True
         candidate["observation_authority"] = False
@@ -602,6 +733,7 @@ class PaperOpportunityAllocationEngineV1:
         relative = self._relative_strength_evidence(candidate, market_return_pct=None, sector_return_pct=None)
         soft = self._lane_soft_evidence(candidate, lane, relative)
         evidence_fields = self._broad_lane_evidence_fields(candidate, lane)
+        feature_payload_state, feature_payload_missing = self._lane_feature_payload_state(candidate, lane)
         freshness = str(candidate.get("execution_freshness_state") or candidate.get("freshness_state") or "").upper()
         missing: list[str] = []
         if not evidence_fields:
@@ -621,6 +753,10 @@ class PaperOpportunityAllocationEngineV1:
             "lane_evaluation_status": status,
             "lane_evaluation_missing": missing,
             "lane_evaluation_evidence_fields": evidence_fields,
+            "feature_payload_state": feature_payload_state,
+            "feature_payload_complete": feature_payload_state == "COMPLETE",
+            "feature_payload_partial": feature_payload_state == "PARTIAL",
+            "feature_payload_missing": feature_payload_missing,
             "lane_evaluation_source": "broad_live_observation_v1",
             "candidate_evidence_fabricated": False,
             "execution_authority": False,
@@ -636,12 +772,21 @@ class PaperOpportunityAllocationEngineV1:
         source_rows = [dict(row) for row in (rows or []) if isinstance(row, dict)][: max(0, int(max_observations))]
         evaluations: list[dict[str, Any]] = []
         missing_by_lane: dict[str, Counter[str]] = {lane: Counter() for lane in BROAD_LANE_EVALUATION_LANES}
+        feature_complete_by_lane = {lane: 0 for lane in BROAD_LANE_EVALUATION_LANES}
+        feature_partial_by_lane = {lane: 0 for lane in BROAD_LANE_EVALUATION_LANES}
+        feature_missing_by_lane: dict[str, Counter[str]] = {lane: Counter() for lane in BROAD_LANE_EVALUATION_LANES}
         attempted_by_lane = {lane: 0 for lane in BROAD_LANE_EVALUATION_LANES}
         for row in source_rows:
             for lane in BROAD_LANE_EVALUATION_LANES:
                 attempted_by_lane[lane] += 1
                 evaluated = self._evaluate_broad_observation_for_lane_v1(row, lane)
                 evaluations.append(evaluated)
+                if bool(evaluated.get("feature_payload_complete")):
+                    feature_complete_by_lane[lane] += 1
+                elif bool(evaluated.get("feature_payload_partial")):
+                    feature_partial_by_lane[lane] += 1
+                for reason in evaluated.get("feature_payload_missing") or ():
+                    feature_missing_by_lane[lane][reason] += 1
                 for reason in evaluated.get("lane_evaluation_missing") or ():
                     missing_by_lane[lane][reason] += 1
 
@@ -673,6 +818,9 @@ class PaperOpportunityAllocationEngineV1:
             "eligible": eligible_by_lane,
             "promoted": promoted_by_lane,
             "missing_evidence": {lane: dict(counts) for lane, counts in missing_by_lane.items()},
+            "feature_payload_complete": feature_complete_by_lane,
+            "feature_payload_partial": feature_partial_by_lane,
+            "feature_payload_missing": {lane: dict(counts) for lane, counts in feature_missing_by_lane.items()},
             "promoted_rows": promoted_rows,
             "evaluation_only": True,
             "observation_authority": False,
