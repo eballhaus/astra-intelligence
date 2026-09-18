@@ -22,6 +22,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -34,6 +35,7 @@ OUTPUT_DIRNAME = "historical_context_phase2_v1"
 LOG_FILENAME = "astra_historical_context_phase2_v1.log"
 PID_FILENAME = "astra_historical_context_phase2_v1.pid"
 MAX_LOCAL_SYMBOLS_PER_CHILD = 50
+MARKET_HOURS_LOCAL_SYMBOLS_PER_CHILD = 10
 POLL_SECONDS = 2.0
 RELAUNCH_DELAY_SECONDS = 15.0
 TERMINAL = {"COMPLETE", "COMPLETE_WITH_SUPPORTED_GAPS", "COMPLETE_NO_GAP", "PROVIDER_REQUIRED", "FAILED_INTEGRITY"}
@@ -58,6 +60,11 @@ STAGES: tuple[tuple[int, str, str], ...] = (
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def market_hours_now() -> bool:
+    local = datetime.now(ZoneInfo("America/New_York"))
+    return local.weekday() < 5 and (local.hour, local.minute) >= (9, 30) and (local.hour, local.minute) < (16, 0)
 
 
 def atomic_json(path: Path, value: Mapping[str, Any]) -> None:
@@ -316,7 +323,8 @@ def derived_local_stage(state_dir: Path, stage: int, checkpoint: dict[str, Any])
     symbols = manifest_symbols(state_dir)
     checkpoint["symbols_targeted"] = len(symbols)
     index = int(checkpoint.get("next_index") or 0)
-    batch = symbols[index : index + MAX_LOCAL_SYMBOLS_PER_CHILD]
+    batch_size = MARKET_HOURS_LOCAL_SYMBOLS_PER_CHILD if market_hours_now() else MAX_LOCAL_SYMBOLS_PER_CHILD
+    batch = symbols[index : index + batch_size]
     bars = local_bar_rows(state_dir, batch)
     if not bars and batch:
         checkpoint["status"] = "COMPLETE_WITH_SUPPORTED_GAPS"
@@ -370,8 +378,70 @@ def derived_local_stage(state_dir: Path, stage: int, checkpoint: dict[str, Any])
     checkpoint["records_written"] = int(checkpoint.get("records_written") or 0) + len(output_rows)
     checkpoint["last_successful_key"] = batch[-1] if batch else checkpoint.get("last_successful_key")
     checkpoint["status"] = "COMPLETE" if checkpoint["next_index"] >= len(symbols) else "RUNNING"
+    if stage in {4, 5, 6, 8} and checkpoint["status"] == "COMPLETE":
+        checkpoint["status"] = "COMPLETE_WITH_SUPPORTED_GAPS"
+        checkpoint["provider_required"] = {
+            4: ["historical implied-volatility, skew, term-structure and options open-interest provider"],
+            5: ["historical true quote/trade microstructure provider; OHLCV proxy only"],
+            6: ["historical quote-level transaction-cost observations; modelled replay-only proxy used"],
+            8: ["additional point-in-time cross-asset event context beyond existing local archive"],
+        }[stage]
     checkpoint["updated_at"] = now_iso()
     atomic_json(checkpoint_path(state_dir, stage), checkpoint)
+    return checkpoint
+
+
+def feature_store_stage(state_dir: Path, checkpoint: dict[str, Any]) -> dict[str, Any]:
+    """Consolidate Phase 2 feature outputs into one provenance-backed view."""
+    source_stages = (4, 5, 6, 8, 10)
+    output = output_path(state_dir, 11)
+    seen: set[str] = set()
+    if output.exists():
+        for line in output.read_text(encoding="utf-8", errors="ignore").splitlines():
+            try:
+                row = json.loads(line)
+                seen.add(str(row.get("feature_id") or ""))
+            except ValueError:
+                continue
+    rows: list[dict[str, Any]] = []
+    for source_stage in source_stages:
+        source = output_path(state_dir, source_stage)
+        if not source.exists():
+            continue
+        with source.open(encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    source_row = json.loads(line)
+                except ValueError:
+                    continue
+                feature = str(source_row.get("feature") or "")
+                symbol = str(source_row.get("symbol") or "")
+                if not feature or not symbol:
+                    continue
+                feature_id = hashlib.sha256(f"{symbol}|{feature}|{source_row.get('source_timestamp')}|{source_stage}".encode()).hexdigest()
+                if feature_id in seen:
+                    continue
+                seen.add(feature_id)
+                rows.append({
+                    "schema_version": "astra_historical_feature_store_v1",
+                    "feature_id": feature_id,
+                    "symbol": symbol,
+                    "timestamp": source_row.get("source_timestamp"),
+                    "feature": feature,
+                    "value": source_row.get("value"),
+                    "provenance": source_row.get("provenance") or {},
+                    "source_timestamp": source_row.get("source_timestamp"),
+                    "calculation_version": source_row.get("calculation_version") or VERSION,
+                    "lane_applicability": source_row.get("lane_applicability") or [],
+                    "quality": source_row.get("quality"),
+                    **safety_fields(),
+                })
+    written = append_jsonl(output, rows)
+    checkpoint["records_written"] = int(checkpoint.get("records_written") or 0) + written
+    checkpoint["status"] = "COMPLETE_WITH_SUPPORTED_GAPS"
+    checkpoint["provider_required"] = ["feature availability is limited to supported local Phase 2 outputs"]
+    checkpoint["updated_at"] = now_iso()
+    atomic_json(checkpoint_path(state_dir, 11), checkpoint)
     return checkpoint
 
 
@@ -419,6 +489,8 @@ def run_child(args: argparse.Namespace) -> int:
         result = provider_gap_stage(state_dir, args.stage, checkpoint)
     elif args.stage in {4, 5, 6, 8, 10}:
         result = derived_local_stage(state_dir, args.stage, checkpoint)
+    elif args.stage == 11:
+        result = feature_store_stage(state_dir, checkpoint)
     else:
         result = delegated_stage(state_dir, args.stage, checkpoint)
     print(json.dumps({"stage": args.stage, "status": result.get("status"), "next_index": result.get("next_index"), "records_written": result.get("records_written")}, sort_keys=True))
@@ -453,6 +525,7 @@ def supervisor(args: argparse.Namespace) -> int:
             health = worker_health(state_dir)
             state["worker_health"] = health
             state["resource_state"] = health["resource_state"]
+            state["market_hours_mode"] = market_hours_now()
             if not worker_safe(state_dir):
                 state["status"] = "RESOURCE_PAUSED_SAFE"
                 state["last_error"] = "worker health/resource guard did not permit historical child"
