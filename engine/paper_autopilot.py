@@ -6556,11 +6556,18 @@ class PaperAutopilotEngine:
                 "broker_actions_used": 0,
             }
 
-        broker_rows = {
-            str(symbol or "").upper().strip(): dict(row or {})
-            for symbol, row in dict(snapshot.get("broker_position_by_symbol") or {}).items()
-            if str(symbol or "").strip() and isinstance(row, Mapping)
-        }
+        broker_rows: dict[str, dict[str, Any]] = {}
+        for raw_symbol, raw_row in dict(snapshot.get("broker_position_by_symbol") or {}).items():
+            if not isinstance(raw_row, Mapping):
+                continue
+            row = dict(raw_row)
+            aliases = _broker_position_symbol_aliases_v1(row.get("symbol") or raw_symbol)
+            for alias in aliases:
+                # Broker crypto snapshots may use ETHUSD while the canonical
+                # candidate/lifecycle uses ETH/USD. Keep both documented
+                # aliases in the duplicate view so a broker-held position
+                # cannot be bypassed by representation drift.
+                broker_rows[alias] = {**row, "symbol": alias}
         open_rows = self._fetch_open_positions()
         by_symbol: dict[str, list[dict[str, Any]]] = {}
         for raw in open_rows:
@@ -9167,11 +9174,15 @@ class PaperAutopilotEngine:
         position-sized exposure.
         """
         snapshot = dict(broker_snapshot or {})
-        broker_rows = {
-            str(symbol or "").upper().strip(): dict(row or {})
-            for symbol, row in dict(snapshot.get("broker_position_by_symbol") or {}).items()
-            if str(symbol or "").strip() and isinstance(row, Mapping)
-        }
+        broker_rows: dict[str, dict[str, Any]] = {}
+        for raw_symbol, raw_row in dict(snapshot.get("broker_position_by_symbol") or {}).items():
+            if not isinstance(raw_row, Mapping):
+                continue
+            row = dict(raw_row)
+            for alias in _broker_position_symbol_aliases_v1(row.get("symbol") or raw_symbol):
+                # Alpaca can report ETHUSD while the canonical lifecycle uses
+                # ETH/USD. Preserve both documented aliases at this gate.
+                broker_rows[alias] = {**row, "symbol": alias}
         broker_meaningful: set[str] = set()
         broker_dust: set[str] = set()
         broker_ambiguous: set[str] = set()
@@ -9198,40 +9209,42 @@ class PaperAutopilotEngine:
         internal_dust: set[str] = set()
         for raw in internal_rows or []:
             row = dict(raw or {})
-            symbol = str(row.get("symbol") or "").upper().strip()
+            aliases = _broker_position_symbol_aliases_v1(row.get("symbol"))
             # A current broker snapshot is authoritative both when it contains
             # a symbol and when it proves the local row is no longer open.
-            if not symbol or broker_truth_current:
+            if not aliases or broker_truth_current:
                 continue
             classification = classify_meaningful_exposure_v1(row, source="internal")
-            details.setdefault(symbol, {})["internal"] = classification
+            for symbol in aliases:
+                details.setdefault(symbol, {})["internal"] = {**classification, "symbol": symbol}
             if bool(classification.get("meaningful_exposure")):
-                internal_meaningful.add(symbol)
+                internal_meaningful.update(aliases)
             elif str(classification.get("exposure_state") or "") == "DUST_ONLY_POSITION_PRESENT":
-                internal_dust.add(symbol)
+                internal_dust.update(aliases)
 
         pending_order_symbols: set[str] = set()
         for raw in list(snapshot.get("broker_pending_orders") or []):
             order = dict(raw or {})
-            symbol = str(order.get("symbol") or "").upper().strip()
-            if not symbol:
+            aliases = _broker_position_symbol_aliases_v1(order.get("symbol"))
+            if not aliases:
                 continue
             side = str(order.get("side") or order.get("order_side") or "").lower().strip()
             # A missing side is ambiguous and must remain fail-closed while an
             # order is open.  Sell orders cannot create additional exposure.
             if side in {"", "buy", "long"}:
-                pending_order_symbols.add(symbol)
-                details.setdefault(symbol, {})["open_order"] = {
-                    "exposure_state": "OPEN_ORDER_CONFLICT",
-                    "meaningful_exposure": True,
-                    "side": side or "unknown",
-                }
+                pending_order_symbols.update(aliases)
+                for symbol in aliases:
+                    details.setdefault(symbol, {})["open_order"] = {
+                        "exposure_state": "OPEN_ORDER_CONFLICT",
+                        "meaningful_exposure": True,
+                        "side": side or "unknown",
+                    }
 
-        reservation_symbols = {
-            str(row.get("symbol") or "").upper().strip()
-            for row in self._active_lane_reserve_commitments(expire_abandoned=expire_reservations)
-            if str(row.get("symbol") or "").strip()
-        }
+        reservation_symbols: set[str] = set()
+        for row in self._active_lane_reserve_commitments(expire_abandoned=expire_reservations):
+            reservation_symbols.update(
+                _broker_position_symbol_aliases_v1(row.get("symbol"))
+            )
         for symbol in reservation_symbols:
             details.setdefault(symbol, {})["reservation"] = {
                 "exposure_state": "SUBMISSION_RESERVATION_CONFLICT",
@@ -10958,7 +10971,12 @@ class PaperAutopilotEngine:
         elif not symbol:
             reason = "missing_symbol"
         elif symbol in open_syms:
-            reason = "duplicate_active_position"
+            reason = (
+                "DUPLICATE_ACTIVE_CRYPTO_SYMBOL_HORIZON"
+                if asset == "crypto"
+                and str(r.get("crypto_horizon") or "").upper() in {"CRYPTO_FAST", "CRYPTO_SWING"}
+                else "duplicate_active_position"
+            )
         elif self._cooldown_active(symbol):
             reason = "cooldown_active"
         elif total_capacity <= 0 and not reserve_capacity_allowed:
@@ -13652,18 +13670,57 @@ class PaperAutopilotEngine:
         or its original evaluation timestamp.
         """
         result = dict(state or {})
-        recovery_by_symbol = {
-            _text(row.get("symbol")).upper(): dict(row)
-            for row in (recovery or {}).get("positions") or []
-            if isinstance(row, dict) and _text(row.get("symbol"))
-        }
+        recovery_by_identity: dict[str, list[dict[str, Any]]] = {}
+        recovery_by_symbol: dict[str, list[dict[str, Any]]] = {}
+        for raw in (recovery or {}).get("positions") or []:
+            if not isinstance(raw, dict):
+                continue
+            row = dict(raw)
+            symbol = _text(row.get("symbol")).upper()
+            if symbol:
+                recovery_by_symbol.setdefault(symbol, []).append(row)
+            if str(row.get("canonical_identity_status") or "").upper() != "RESOLVED":
+                continue
+            for field in (
+                "canonical_lifecycle_id", "canonical_position_id", "position_id",
+            ):
+                identity = _text(row.get(field))
+                if identity:
+                    recovery_by_identity.setdefault(identity, []).append(row)
         decisions: dict[str, Any] = {}
         for decision_id, raw_decision in (result.get("decisions") or {}).items():
             if not isinstance(raw_decision, dict):
                 decisions[decision_id] = raw_decision
                 continue
             decision = dict(raw_decision)
-            resolved = recovery_by_symbol.get(_text(decision.get("symbol")).upper())
+            identity_candidates = {
+                _text(decision_id),
+                _text(decision.get("position_id")),
+                _text(decision.get("lifecycle_id")),
+                _text(decision.get("canonical_position_id")),
+                _text(decision.get("canonical_lifecycle_id")),
+            }
+            matching_rows = {
+                id(row): row
+                for identity in identity_candidates
+                if identity
+                for row in recovery_by_identity.get(identity, [])
+            }
+            resolved = next(iter(matching_rows.values())) if len(matching_rows) == 1 else None
+            symbol_fallback = False
+            if resolved is None:
+                symbol = _text(decision.get("symbol")).upper()
+                same_symbol_decisions = [
+                    raw for raw in (result.get("decisions") or {}).values()
+                    if isinstance(raw, dict) and _text(raw.get("symbol")).upper() == symbol
+                ]
+                candidates = recovery_by_symbol.get(symbol) or []
+                # Retain the established unique-symbol fallback only when
+                # there is exactly one current decision for that symbol.
+                # Multiple same-symbol lifecycles require exact identity.
+                if symbol and len(same_symbol_decisions) == 1 and len(candidates) == 1:
+                    resolved = candidates[0]
+                    symbol_fallback = True
             if resolved:
                 decision.update({
                     "lane": resolved.get("lane"),
@@ -13688,6 +13745,23 @@ class PaperAutopilotEngine:
                     if blocker not in blockers:
                         blockers.append(blocker)
                 decision["exact_blockers"] = blockers
+                if symbol_fallback:
+                    decision["recovery_method"] = "CURRENT_RECONCILED_SYMBOL_TIMESTAMP"
+            else:
+                # A broker position is often symbol-aggregated. Never project
+                # the latest same-symbol recovery row onto an older lifecycle
+                # when exact lifecycle/order identity is unavailable.
+                provenance = dict(decision.get("evidence_provenance") or {})
+                if "position_lane_horizon_recovery_v1" in provenance:
+                    provenance.pop("position_lane_horizon_recovery_v1", None)
+                    decision["evidence_provenance"] = provenance
+                    blockers = list(decision.get("exact_blockers") or [])
+                    if "AMBIGUOUS_SYMBOL_ONLY_MATCH" not in blockers:
+                        blockers.append("AMBIGUOUS_SYMBOL_ONLY_MATCH")
+                    decision["exact_blockers"] = blockers
+                    decision["lane_recovery_status"] = "AMBIGUOUS"
+                    decision["horizon_recovery_status"] = "AMBIGUOUS"
+                    decision["recovery_method"] = "EXACT_LIFECYCLE_ID_REQUIRED"
             decisions[decision_id] = decision
         result["decisions"] = decisions
         return result
