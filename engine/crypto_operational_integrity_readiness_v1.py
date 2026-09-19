@@ -294,7 +294,9 @@ def build_crypto_operational_integrity_readiness_v1(
         "human_configuration_required": not bool(lane.get("activation_requested")) or not capital_configured,
         "capital_readiness": {
             "configured": capital_configured, "configured_capital": capital_limit,
-            "configured_max_concurrent_positions": int(_num(lane.get("crypto_day_trade_capacity"), 0) + _num(lane.get("crypto_short_swing_capacity"), 0)),
+            "configured_max_concurrent_positions": int(_num(lane.get("global_crypto_position_limit"), 16.0)),
+            "configured_fast_execution_limit": int(_num(lane.get("crypto_day_trade_capacity"), 0)),
+            "configured_swing_execution_limit": int(_num(lane.get("crypto_short_swing_capacity"), 0)),
             "configured_per_trade_cap": None, "available_paper_buying_power": _num(buying_power, 0.0) if buying_power not in (None, "") else None,
             "human_provided": capital_configured, "blocker": "" if capital_configured else "CRYPTO_PAPER_CAPITAL_NOT_CONFIGURED",
         },

@@ -14,10 +14,13 @@ from datetime import datetime, timezone
 from typing import Any, Mapping, Iterable
 
 
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 LANES = ("SWING", "DAY", "SCALP", "CRYPTO")
 APPROVED_CEILINGS = {"DAY": 15000.0, "SCALP": 15000.0, "CRYPTO": 10000.0}
-APPROVED_CONCURRENT_POSITION_LIMITS = {"DAY": 3, "SCALP": 4, "CRYPTO": 4}
+APPROVED_CONCURRENT_POSITION_LIMITS = {"DAY": 3, "SCALP": 4, "CRYPTO": 16}
+CRYPTO_FAST_EXECUTION_LIMIT = 12
+CRYPTO_SWING_EXECUTION_LIMIT = 6
+GLOBAL_CRYPTO_POSITION_LIMIT = 16
 DEFAULT_GLOBAL_POSITION_LIMIT = 10
 DEFAULT_BROKER_STATE_MAX_AGE_SECONDS = 120.0
 
@@ -70,6 +73,64 @@ def _lane_for_position(row: Mapping[str, Any]) -> str:
         return lane
     asset = _text(row.get("asset_class") or row.get("asset_type")).lower()
     return "CRYPTO" if asset in {"crypto", "cryptocurrency"} else "SWING"
+
+
+def _crypto_horizon_bucket(row: Mapping[str, Any]) -> str:
+    horizon = _text(row.get("crypto_horizon")).upper()
+    if horizon == "CRYPTO_FAST":
+        return "fast"
+    if horizon == "CRYPTO_SWING":
+        return "swing"
+    return "generic"
+
+
+def _crypto_capacity_limit(name: str, env: Mapping[str, Any], default: int) -> int:
+    return max(0, _integer(env.get(name, default), default))
+
+
+def _crypto_bucket_occupancy(
+    active_rows: Iterable[Mapping[str, Any]],
+    pending_rows: Iterable[Mapping[str, Any]],
+    commitment_rows: Iterable[Mapping[str, Any]],
+) -> dict[str, int]:
+    """Count one crypto reservation per symbol across state transitions.
+
+    Open position, pending order, and worker commitment rows represent one
+    reservation as it moves through the execution lifecycle.  The first
+    authoritative state wins, preventing a filled order from being counted
+    again as a pending order or commitment.
+    """
+    seen_symbols: set[str] = set()
+    counts = {
+        "generic_open": 0,
+        "fast_open": 0,
+        "swing_open": 0,
+        "generic_pending": 0,
+        "fast_pending": 0,
+        "swing_pending": 0,
+        "generic_commitments": 0,
+        "fast_commitments": 0,
+        "swing_commitments": 0,
+    }
+    for source, rows in (
+        ("open", active_rows),
+        ("pending", pending_rows),
+        ("commitments", commitment_rows),
+    ):
+        for row in rows:
+            symbol = _text(row.get("symbol")).upper()
+            if not symbol or symbol in seen_symbols:
+                continue
+            seen_symbols.add(symbol)
+            counts[f"{_crypto_horizon_bucket(row)}_{source}"] += 1
+    counts["global_used"] = sum(
+        value for key, value in counts.items()
+        if key.endswith("_open") or key.endswith("_pending") or key.endswith("_commitments")
+    )
+    counts["generic_used"] = counts["generic_open"] + counts["generic_pending"] + counts["generic_commitments"]
+    counts["fast_used"] = counts["fast_open"] + counts["fast_pending"] + counts["fast_commitments"]
+    counts["swing_used"] = counts["swing_open"] + counts["swing_pending"] + counts["swing_commitments"]
+    return counts
 
 
 def _position_value(row: Mapping[str, Any]) -> float:
@@ -155,7 +216,7 @@ def _reserve_config(lane: str, env: Mapping[str, Any]) -> dict[str, Any]:
     elif lane == "CRYPTO":
         enabled_key = "ASTRA_CRYPTO_EVIDENCE_RESERVE_ENABLED"
         capital_key = "ASTRA_CRYPTO_EVIDENCE_CAPITAL_LIMIT"
-        position_key = "ASTRA_CRYPTO_EVIDENCE_POSITION_LIMIT"
+        position_key = "ASTRA_CRYPTO_GLOBAL_POSITION_LIMIT"
         entries_key = "ASTRA_CRYPTO_EVIDENCE_MAX_ROLLING_ENTRIES"
         loss_key = "ASTRA_CRYPTO_EVIDENCE_MAX_ROLLING_LOSS"
         fallback_capital_key = "ASTRA_CRYPTO_PAPER_CAPITAL_LIMIT"
@@ -177,7 +238,11 @@ def _reserve_config(lane: str, env: Mapping[str, Any]) -> dict[str, Any]:
         capital_status = "CAPITAL_LIMIT_EXCEEDS_APPROVAL"
     else:
         capital_status = "PASS"
-    default_position_limit = env.get("ASTRA_PAPER_HORIZON_SCALP_CAPACITY", "4") if lane == "SCALP" else "1"
+    default_position_limit = (
+        env.get("ASTRA_PAPER_HORIZON_SCALP_CAPACITY", "4")
+        if lane == "SCALP"
+        else GLOBAL_CRYPTO_POSITION_LIMIT if lane == "CRYPTO" else "1"
+    )
     raw_position_limit = env.get(position_key, default_position_limit)
     configured_position_limit = _integer(raw_position_limit, 1)
     if configured_position_limit <= 0:
@@ -318,6 +383,11 @@ def build_capacity_snapshot(
             lane_commitments[lane].append(row)
 
     lanes: dict[str, dict[str, Any]] = {}
+    crypto_limits = {
+        "fast": _crypto_capacity_limit("ASTRA_CRYPTO_FAST_EXECUTION_LIMIT", values, CRYPTO_FAST_EXECUTION_LIMIT),
+        "swing": _crypto_capacity_limit("ASTRA_CRYPTO_SWING_EXECUTION_LIMIT", values, CRYPTO_SWING_EXECUTION_LIMIT),
+        "global": _crypto_capacity_limit("ASTRA_CRYPTO_GLOBAL_POSITION_LIMIT", values, GLOBAL_CRYPTO_POSITION_LIMIT),
+    }
     for lane in LANES:
         config = _reserve_config(lane, values)
         raw_lane_rows = lane_rows[lane]
@@ -331,6 +401,19 @@ def build_capacity_snapshot(
         pending_order_count = len(lane_pending[lane])
         active_commitment_count = len(lane_commitments[lane])
         used = open_position_count + pending_order_count + active_commitment_count
+        crypto_occupancy = _crypto_bucket_occupancy(
+            active_lane_rows,
+            lane_pending[lane],
+            lane_commitments[lane],
+        ) if lane == "CRYPTO" else {}
+        if lane == "CRYPTO":
+            # The crypto global ceiling is independent of the general account
+            # strategy-slot ceiling. Generic legacy positions remain global
+            # occupancy but do not consume either horizon reserve.
+            used = int(crypto_occupancy["global_used"])
+            position_limit = crypto_limits["global"]
+        else:
+            position_limit = config.get("configured_position_limit")
         if lane in {"DAY", "SCALP"}:
             # Both intraday execution lanes use one approved capital book.
             # Per-lane position limits remain separate; capital accounting is
@@ -350,7 +433,6 @@ def build_capacity_snapshot(
         raw_lane_capital = round(used_capital + legacy_excluded_capital + dust_excluded_capital, 4)
         configured_limit = config.get("configured_capital_limit")
         capital_remaining = round(max(0.0, configured_limit - used_capital), 4) if configured_limit is not None else None
-        position_limit = config.get("configured_position_limit")
         positions_remaining = max(0, int(position_limit) - used) if position_limit is not None else None
         max_entries = config.get("max_entries")
         historical_entries_used = entry_counts.get(lane, 0)
@@ -360,13 +442,22 @@ def build_capacity_snapshot(
             blockers.append("BROKER_STATE_STALE")
         elif not position_details_available and lane in {"DAY", "SCALP", "CRYPTO"}:
             blockers.append("BROKER_POSITION_DETAILS_UNAVAILABLE")
-        if lane in {"DAY", "SCALP", "CRYPTO"}:
+        if lane in {"DAY", "SCALP"}:
             if config.get("capital_configuration_status") != "PASS":
                 blockers.append(str(config.get("capital_configuration_status")))
             if not config.get("reserve_enabled"):
                 blockers.append("CAPITAL_NOT_CONFIGURED")
             if positions_remaining is not None and positions_remaining <= 0:
                 blockers.append("LANE_POSITION_LIMIT_REACHED")
+            if capital_remaining is not None and capital_remaining <= 0:
+                blockers.append("LANE_RESERVE_EXHAUSTED")
+        elif lane == "CRYPTO":
+            if config.get("capital_configuration_status") != "PASS":
+                blockers.append(str(config.get("capital_configuration_status")))
+            if not config.get("reserve_enabled"):
+                blockers.append("CAPITAL_NOT_CONFIGURED")
+            if positions_remaining is not None and positions_remaining <= 0:
+                blockers.append("GLOBAL_CRYPTO_CAPACITY_EXHAUSTED")
             if capital_remaining is not None and capital_remaining <= 0:
                 blockers.append("LANE_RESERVE_EXHAUSTED")
         if buying_power is None:
@@ -389,6 +480,8 @@ def build_capacity_snapshot(
                     decision = "GLOBAL_RISK_BLOCKED"
                 elif "BROKER_STATE_STALE" in blockers:
                     decision = "BROKER_STATE_STALE"
+                elif "GLOBAL_CRYPTO_CAPACITY_EXHAUSTED" in blockers:
+                    decision = "GLOBAL_CRYPTO_CAPACITY_EXHAUSTED"
                 elif any(item in blockers for item in ("LANE_POSITION_LIMIT_REACHED", "LANE_RESERVE_EXHAUSTED")):
                     decision = "LANE_RESERVE_EXHAUSTED"
                 elif any(item in blockers for item in ("CAPITAL_CONFIGURATION_REQUIRED", "CAPITAL_CONFIGURATION_INVALID", "CAPITAL_NOT_CONFIGURED")):
@@ -425,7 +518,7 @@ def build_capacity_snapshot(
             "legacy_excluded_capital": legacy_excluded_capital,
             "capital_remaining": capital_remaining,
             "configured_position_limit": position_limit,
-            "approved_position_limit": config.get("approved_position_limit"),
+            "approved_position_limit": crypto_limits["global"] if lane == "CRYPTO" else config.get("approved_position_limit"),
             "positions_used": used,
             "raw_broker_position_count": len(raw_lane_rows),
             "legacy_excluded_position_count": len(legacy_excluded_rows),
@@ -459,6 +552,28 @@ def build_capacity_snapshot(
             "historical_entry_counts_advisory_only": True,
             "max_loss": config.get("max_loss"),
         }
+        if lane == "CRYPTO":
+            lanes[lane.lower()].update({
+                "capacity_contract": "astra_crypto_horizon_execution_capacity_v1",
+                "crypto_fast_execution_limit": crypto_limits["fast"],
+                "crypto_swing_execution_limit": crypto_limits["swing"],
+                "global_crypto_position_limit": crypto_limits["global"],
+                "generic_crypto_open": crypto_occupancy["generic_open"],
+                "fast_open": crypto_occupancy["fast_open"],
+                "swing_open": crypto_occupancy["swing_open"],
+                "generic_crypto_pending": crypto_occupancy["generic_pending"],
+                "fast_pending": crypto_occupancy["fast_pending"],
+                "swing_pending": crypto_occupancy["swing_pending"],
+                "generic_crypto_commitments": crypto_occupancy["generic_commitments"],
+                "fast_commitments": crypto_occupancy["fast_commitments"],
+                "swing_commitments": crypto_occupancy["swing_commitments"],
+                "generic_crypto_used": crypto_occupancy["generic_used"],
+                "fast_used": crypto_occupancy["fast_used"],
+                "swing_used": crypto_occupancy["swing_used"],
+                "global_crypto_used": crypto_occupancy["global_used"],
+                "global_crypto_remaining": max(0, crypto_limits["global"] - crypto_occupancy["global_used"]),
+                "horizon_capacity_authority": "astra_crypto_horizon_execution_capacity_v1",
+            })
     snapshot_basis = "|".join([
         generated_at, str(active_strategy_occupancy), str(global_limit), str(buying_power),
         str(active_strategy_occupancy), str(len(excluded_legacy_symbols)),
@@ -538,6 +653,17 @@ def build_capacity_snapshot(
         result[f"{prefix}_positions_remaining"] = view["positions_remaining"]
         result[f"{prefix}_reserve_available"] = view["reserve_available"]
         result[f"{prefix}_reserve_state"] = view["reserve_state"]
+    crypto_view = lanes["crypto"]
+    for key in (
+        "generic_crypto_open", "fast_open", "swing_open",
+        "generic_crypto_pending", "fast_pending", "swing_pending",
+        "generic_crypto_commitments", "fast_commitments", "swing_commitments",
+        "generic_crypto_used", "fast_used", "swing_used",
+        "global_crypto_used", "global_crypto_remaining",
+        "crypto_fast_execution_limit", "crypto_swing_execution_limit",
+        "global_crypto_position_limit",
+    ):
+        result[key] = crypto_view.get(key)
     return result
 
 
@@ -548,6 +674,7 @@ def candidate_capacity_decision(
     symbol: str = "",
     open_symbols: Iterable[str] | None = None,
     global_risk_allowed: bool | None = None,
+    crypto_horizon: str | None = None,
 ) -> dict[str, Any]:
     lane = _text(lane_id).upper()
     payload = dict((snapshot.get("lanes") or {}).get(lane.lower()) or {})
@@ -558,6 +685,20 @@ def candidate_capacity_decision(
         blockers.append("GLOBAL_RISK_BLOCKED")
     if snapshot.get("broker_reconciliation_status") != "FRESH":
         blockers.append("BROKER_STATE_STALE")
+    crypto_horizon = _text(crypto_horizon).upper()
+    if lane == "CRYPTO":
+        crypto_view = dict((snapshot.get("lanes") or {}).get("crypto") or {})
+        global_used = _integer(crypto_view.get("global_crypto_used"), _integer(snapshot.get("global_crypto_used"), 0))
+        global_limit = _integer(
+            crypto_view.get("global_crypto_position_limit"),
+            GLOBAL_CRYPTO_POSITION_LIMIT,
+        )
+        if global_used >= global_limit:
+            blockers.append("GLOBAL_CRYPTO_CAPACITY_EXHAUSTED")
+        if crypto_horizon == "CRYPTO_FAST" and _integer(crypto_view.get("fast_used"), 0) >= _integer(crypto_view.get("crypto_fast_execution_limit"), CRYPTO_FAST_EXECUTION_LIMIT):
+            blockers.append("CRYPTO_FAST_CAPACITY_EXHAUSTED")
+        elif crypto_horizon == "CRYPTO_SWING" and _integer(crypto_view.get("swing_used"), 0) >= _integer(crypto_view.get("crypto_swing_execution_limit"), CRYPTO_SWING_EXECUTION_LIMIT):
+            blockers.append("CRYPTO_SWING_CAPACITY_EXHAUSTED")
     # Dust and Governance-approved legacy overlays remain in the broker-wide
     # risk denominator, but the snapshot already excludes them from strategy
     # admission slots.  SWING must use that same established slot authority
@@ -600,6 +741,12 @@ def candidate_capacity_decision(
             decision = "GLOBAL_CAPACITY_EXHAUSTED"
         elif lane == "SWING" and "ACTIVE_STRATEGY_SLOT_CAPACITY_EXHAUSTED" in blockers:
             decision = "ACTIVE_STRATEGY_SLOT_CAPACITY_EXHAUSTED"
+        elif "GLOBAL_CRYPTO_CAPACITY_EXHAUSTED" in blockers:
+            decision = "GLOBAL_CRYPTO_CAPACITY_EXHAUSTED"
+        elif "CRYPTO_FAST_CAPACITY_EXHAUSTED" in blockers:
+            decision = "CRYPTO_FAST_CAPACITY_EXHAUSTED"
+        elif "CRYPTO_SWING_CAPACITY_EXHAUSTED" in blockers:
+            decision = "CRYPTO_SWING_CAPACITY_EXHAUSTED"
         elif any(item in blockers for item in ("LANE_POSITION_LIMIT_REACHED", "LANE_RESERVE_EXHAUSTED")):
             decision = "LANE_RESERVE_EXHAUSTED"
         else:
@@ -627,6 +774,14 @@ def candidate_capacity_decision(
         "open_position_count": payload.get("open_position_count", 0),
         "pending_order_count": payload.get("pending_order_count", 0),
         "active_commitment_count": payload.get("active_commitment_count", 0),
+        "crypto_horizon": crypto_horizon or None,
+        "crypto_fast_execution_limit": payload.get("crypto_fast_execution_limit"),
+        "crypto_swing_execution_limit": payload.get("crypto_swing_execution_limit"),
+        "global_crypto_position_limit": payload.get("global_crypto_position_limit"),
+        "fast_used": payload.get("fast_used"),
+        "swing_used": payload.get("swing_used"),
+        "global_crypto_used": payload.get("global_crypto_used"),
+        "global_crypto_remaining": payload.get("global_crypto_remaining"),
         "exact_blockers": list(dict.fromkeys(blockers)),
         "allowed": decision in {"AVAILABLE", "AVAILABLE_FROM_LANE_RESERVE"},
     }
@@ -639,6 +794,7 @@ def canonical_candidate_capacity_fact(
     symbol: str = "",
     open_symbols: Iterable[str] | None = None,
     global_risk_allowed: bool | None = None,
+    crypto_horizon: str | None = None,
 ) -> dict[str, Any]:
     """Return the only capacity fact a candidate execution consumer may use.
 
@@ -656,6 +812,7 @@ def canonical_candidate_capacity_fact(
         symbol=symbol,
         open_symbols=open_symbols,
         global_risk_allowed=global_risk_allowed,
+        crypto_horizon=crypto_horizon,
     ) if source else {
         "capacity_decision": "BROKER_STATE_STALE",
         "exact_blockers": ["CANONICAL_CAPACITY_SNAPSHOT_MISSING"],

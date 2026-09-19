@@ -1430,6 +1430,10 @@ _ELIGIBILITY_GATE_MAP_V1 = {
     "crypto_capacity_reached": ("CAPACITY_EXHAUSTED", "VALID_SAFETY_REJECTION", "canonical capacity authority"),
     "broker_state_stale": ("CAPACITY_EXHAUSTED", "CAPACITY_AUTHORITY_DEFECT", "PaperAutopilot broker reconciliation"),
     "global_capacity_exhausted": ("CAPACITY_EXHAUSTED", "VALID_SAFETY_REJECTION", "canonical capacity authority"),
+    "global_crypto_capacity_exhausted": ("CAPACITY_EXHAUSTED", "VALID_SAFETY_REJECTION", "canonical crypto capacity authority"),
+    "crypto_fast_capacity_exhausted": ("CAPACITY_EXHAUSTED", "VALID_SAFETY_REJECTION", "canonical CRYPTO_FAST capacity authority"),
+    "crypto_swing_capacity_exhausted": ("CAPACITY_EXHAUSTED", "VALID_SAFETY_REJECTION", "canonical CRYPTO_SWING capacity authority"),
+    "crypto_horizon_required": ("HORIZON_MISSING", "INCORRECT_METADATA_DEFECT", "crypto horizon contract"),
     "lane_reserve_exhausted": ("CAPACITY_EXHAUSTED", "VALID_SAFETY_REJECTION", "canonical capacity authority"),
     "capital_not_configured": ("CAPITAL_NOT_READY", "VALID_SAFETY_REJECTION", "existing lane capital configuration"),
     "buying_power_unavailable": ("CAPITAL_NOT_READY", "MISSING_INPUT_DEFECT", "paper broker account snapshot"),
@@ -1475,6 +1479,9 @@ def _capacity_trace_reason_v1(
         "BROKER_STATE_STALE": "broker_state_stale",
         "BUYING_POWER_INSUFFICIENT": "buying_power_insufficient",
         "GLOBAL_CAPACITY_EXHAUSTED": "max_concurrent_positions_reached",
+        "GLOBAL_CRYPTO_CAPACITY_EXHAUSTED": "global_crypto_capacity_exhausted",
+        "CRYPTO_FAST_CAPACITY_EXHAUSTED": "crypto_fast_capacity_exhausted",
+        "CRYPTO_SWING_CAPACITY_EXHAUSTED": "crypto_swing_capacity_exhausted",
         "GLOBAL_RISK_BLOCKED": "global_risk_blocked",
         "DUPLICATE_EXPOSURE_BLOCKED": "duplicate_active_position",
     }
@@ -1769,11 +1776,12 @@ class PaperAutopilotEngine:
         )
         self.interval_seconds = max(15, _to_int(kwargs.get("interval_seconds"), 45))
         self.max_stocks = max(1, _to_int(kwargs.get("max_stocks"), 6))
-        self.crypto_day_capacity = 6
-        self.crypto_short_swing_capacity = 2
+        self.crypto_day_capacity = max(0, _to_int(os.getenv("ASTRA_CRYPTO_FAST_EXECUTION_LIMIT"), 12))
+        self.crypto_short_swing_capacity = max(0, _to_int(os.getenv("ASTRA_CRYPTO_SWING_EXECUTION_LIMIT"), 6))
+        self.crypto_global_capacity = max(0, _to_int(os.getenv("ASTRA_CRYPTO_GLOBAL_POSITION_LIMIT"), 16))
         self.max_crypto = min(
-            self.crypto_day_capacity + self.crypto_short_swing_capacity,
-            max(0, _to_int(kwargs.get("max_crypto"), self.crypto_day_capacity + self.crypto_short_swing_capacity)),
+            self.crypto_global_capacity,
+            max(0, _to_int(kwargs.get("max_crypto"), self.crypto_global_capacity)),
         )
         self.max_new_positions_per_cycle = max(1, _to_int(kwargs.get("max_new_positions_per_cycle"), 2))
         self.configured_max_new_positions_per_cycle = int(self.max_new_positions_per_cycle)
@@ -8696,10 +8704,11 @@ class PaperAutopilotEngine:
             "approved_capital_ceiling": capital.get("approved_ceiling"),
             "capital_configuration_status": capital.get("capital_configuration_status"),
             "capability": capability,
-            "day_trade_capacity": 6,
-            "short_swing_capacity": 2,
-            "crypto_day_trade_capacity": 6,
-            "crypto_short_swing_capacity": 2,
+            "day_trade_capacity": 12,
+            "short_swing_capacity": 6,
+            "crypto_day_trade_capacity": 12,
+            "crypto_short_swing_capacity": 6,
+            "global_crypto_position_limit": 16,
             "scalp_broker_capacity": 0,
             "exact_blocker": "" if paper_ready else str(capital.get("capital_configuration_status") or "CRYPTO_CAPITAL_CONFIGURATION_REQUIRED") if not capital_configured else str(capability.get("exact_blocker") or "crypto_runtime_capability_not_validated"),
         }
@@ -10121,6 +10130,9 @@ class PaperAutopilotEngine:
                         ("candidate_id", "candidate_id"),
                         ("recommendation_id", "recommendation_id"),
                         ("lane", "lane_id"),
+                        ("crypto_horizon", "crypto_horizon"),
+                        ("crypto_horizon_status", "crypto_horizon_status"),
+                        ("crypto_horizon_source", "crypto_horizon_source"),
                         ("broker_order_id", "entry_order_id"),
                     ):
                         if not merged.get(target) and entry.get(source):
@@ -10230,6 +10242,7 @@ class PaperAutopilotEngine:
         safe_position_fields = (
             "symbol", "qty", "quantity", "market_value", "current_price", "lastday_price",
             "avg_entry_price", "asset_class", "asset_type", "lane_id", "position_owner",
+            "crypto_horizon", "crypto_horizon_status", "crypto_horizon_source", "crypto_horizon_provenance",
             "lifecycle_id", "candidate_id", "recommendation_id", "entry_order_id", "entry_fill_id",
             "entry_order_fill_id", "entry_timestamp", "unrealized_plpc",
             "classification", "classification_reason", "lifecycle_owner", "exit_owner",
@@ -10383,6 +10396,7 @@ class PaperAutopilotEngine:
         capacity_snapshot: dict[str, Any],
         *,
         cycle_id: str,
+        crypto_horizon: str = "",
     ) -> dict[str, Any]:
         """Hold a DAY/CRYPTO reserve only at final selection, never at review."""
         lane = str(row.get("lane_id") or "").upper()
@@ -10393,6 +10407,7 @@ class PaperAutopilotEngine:
             lane_id=lane,
             symbol=str(row.get("symbol") or ""),
             open_symbols=set(),
+            crypto_horizon=crypto_horizon or str(row.get("crypto_horizon") or ""),
         )
         if not decision.get("allowed"):
             return {"required": True, "commitment_state": "REJECTED", "allowed": False, "reason": decision.get("capacity_decision"), "capacity_decision": decision}
@@ -16770,6 +16785,7 @@ class PaperAutopilotEngine:
                         lane_id=early_lane,
                         symbol=early_symbol,
                         open_symbols=open_syms,
+                        crypto_horizon=str(row.get("crypto_horizon") or ""),
                     )
                     early_reason = _capacity_trace_reason_v1(
                         early_capacity,
@@ -16818,6 +16834,7 @@ class PaperAutopilotEngine:
                     lane_id=candidate_lane,
                     symbol=symbol,
                     open_symbols=open_syms,
+                    crypto_horizon=str(row.get("crypto_horizon") or ""),
                 )
                 capacity_blocked_by_legacy_global = bool(
                     (total_capacity <= 0 and not capacity_decision.get("allowed"))
@@ -16879,18 +16896,24 @@ class PaperAutopilotEngine:
                     candidate_horizon_source = "missing_horizon"
                     candidate_horizon_inferred = True
                 if asset == "crypto":
-                    if candidate_horizon == "scalp":
-                        horizon_ok, horizon_capacity_reason = False, "crypto_scalp_shadow_only"
-                    elif candidate_horizon == "swing_trade":
-                        horizon_ok = crypto_swing_available > 0
-                        horizon_capacity_reason = "crypto_short_swing_capacity_available" if horizon_ok else "crypto_short_swing_capacity_reached"
-                    else:
+                    crypto_horizon = str(row.get("crypto_horizon") or "").upper()
+                    if crypto_horizon == "CRYPTO_FAST":
                         candidate_horizon = "day_trade"
-                        horizon_ok = crypto_day_available > 0
-                        horizon_capacity_reason = "crypto_day_trade_capacity_available" if horizon_ok else "crypto_day_trade_capacity_reached"
+                        horizon_ok = bool(capacity_decision.get("allowed"))
+                        horizon_capacity_reason = "crypto_fast_capacity_available" if horizon_ok else str(
+                            capacity_decision.get("capacity_decision") or "CRYPTO_FAST_CAPACITY_EXHAUSTED"
+                        )
+                    elif crypto_horizon == "CRYPTO_SWING":
+                        candidate_horizon = "swing_trade"
+                        horizon_ok = bool(capacity_decision.get("allowed"))
+                        horizon_capacity_reason = "crypto_swing_capacity_available" if horizon_ok else str(
+                            capacity_decision.get("capacity_decision") or "CRYPTO_SWING_CAPACITY_EXHAUSTED"
+                        )
+                    else:
+                        horizon_ok, horizon_capacity_reason = False, "CRYPTO_HORIZON_REQUIRED"
                 else:
                     horizon_ok, horizon_capacity_reason = self._horizon_has_capacity(horizon_capacity, candidate_horizon)
-                if not horizon_ok and capacity_decision.get("allowed") and candidate_lane in {"DAY", "SCALP", "CRYPTO"}:
+                if not horizon_ok and capacity_decision.get("allowed") and candidate_lane in {"DAY", "SCALP"}:
                     # The evidence reserve replaces only the exhausted global
                     # slot.  Candidate quality, session, risk, liquidity, and
                     # lane position/capital gates still run below.
@@ -16910,6 +16933,10 @@ class PaperAutopilotEngine:
                         paper_entry_horizon_inferred=bool(candidate_horizon_inferred),
                         horizon_capacity=dict(horizon_capacity),
                         horizon_capacity_enabled=bool(self.horizon_capacity_enabled),
+                        capacity_decision=capacity_decision.get("capacity_decision"),
+                        capacity_source=capacity_decision.get("capacity_source"),
+                        capacity_snapshot_id=capacity_decision.get("snapshot_id"),
+                        capacity_blocker=(capacity_decision.get("exact_blockers") or [horizon_capacity_reason])[0],
                     ))
                     final_blocker_reason = horizon_capacity_reason
                     continue
@@ -17049,6 +17076,7 @@ class PaperAutopilotEngine:
                     submission_row,
                     evidence_capacity_snapshot,
                     cycle_id=cycle_id,
+                    crypto_horizon=str(submission_row.get("crypto_horizon") or ""),
                 )
                 row_trace["commitment_id"] = str(commitment.get("commitment_id") or "")
                 row_trace["active_commitment_id"] = row_trace["commitment_id"]
