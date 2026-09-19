@@ -1614,6 +1614,10 @@ def _candidate_decision_evidence_v1(
         "expected_return": pretrade.get("expected_return_range") or row.get("expected_return_range") or row.get("expected_return_pct"),
         "equity_pretrade_forecast_v1": dict(row.get("equity_pretrade_forecast_v1") or {}),
         "expected_hold": pretrade.get("expected_hold") or row.get("expected_hold") or row.get("expected_max_hold"),
+        "crypto_horizon": row.get("crypto_horizon"),
+        "crypto_horizon_status": row.get("crypto_horizon_status"),
+        "crypto_horizon_source": row.get("crypto_horizon_source"),
+        "crypto_horizon_provenance": dict(row.get("crypto_horizon_provenance") or {}) if isinstance(row.get("crypto_horizon_provenance"), Mapping) else row.get("crypto_horizon_provenance"),
         "risk_contract_status": pretrade.get("contract_state") or risk.get("risk_envelope_state"),
         "freshness_status": row.get("quote_freshness_status") or row.get("candidate_snapshot_freshness"),
         "quote_timestamp": row.get("provider_quote_timestamp") or row.get("quote_timestamp") or row.get("market_observation_timestamp"),
@@ -1684,6 +1688,10 @@ def _execution_trace_event(row: dict[str, Any], **values: Any) -> dict[str, Any]
         "market_session_mode": str(normalized.get("market_session_mode") or ""),
         "same_session_exit_required": bool(normalized.get("same_session_exit_required")),
         "overnight_allowed": bool(normalized.get("overnight_allowed")),
+        "crypto_horizon": normalized.get("crypto_horizon"),
+        "crypto_horizon_status": normalized.get("crypto_horizon_status"),
+        "crypto_horizon_source": normalized.get("crypto_horizon_source"),
+        "crypto_horizon_provenance": normalized.get("crypto_horizon_provenance"),
         "pretrade_decision_contract": dict(normalized.get("pretrade_decision_contract_v1") or {}),
         "pretrade_decision_contract_status": str((normalized.get("pretrade_decision_contract_v1") or {}).get("contract_status") or "INVALID"),
         "equity_risk_evidence_join_v1": dict(normalized.get("equity_risk_evidence_join_v1") or {}),
@@ -8852,6 +8860,7 @@ class PaperAutopilotEngine:
             "volatility_risk_status", "confidence", "ranking_score", "score",
             "assigned_horizon", "horizon_evidence_status", "horizon_evidence_missing",
             "horizon_provenance", "horizon_scores", "concentration_status", "budget_status",
+            "crypto_horizon", "crypto_horizon_status", "crypto_horizon_source", "crypto_horizon_provenance",
             "base_symbol", "quote_currency",
         ):
             value = candidate.get(field)
@@ -11224,6 +11233,10 @@ class PaperAutopilotEngine:
             "assigned_horizon": str(r.get("paper_entry_horizon_style") or r.get("trade_horizon_style") or r.get("best_horizon_style") or ""),
             "trade_horizon_style": str(r.get("trade_horizon_style") or r.get("best_horizon_style") or r.get("paper_entry_horizon_style") or ""),
             "paper_entry_horizon_style": str(r.get("paper_entry_horizon_style") or r.get("trade_horizon_style") or r.get("best_horizon_style") or ""),
+            "crypto_horizon": r.get("crypto_horizon"),
+            "crypto_horizon_status": r.get("crypto_horizon_status"),
+            "crypto_horizon_source": r.get("crypto_horizon_source"),
+            "crypto_horizon_provenance": r.get("crypto_horizon_provenance"),
             "paper_entry_horizon_source": str(r.get("paper_entry_horizon_source") or ""),
             "paper_entry_horizon_inferred": bool(r.get("paper_entry_horizon_inferred", False)),
             "opportunity_quality_score": round(_to_float(r.get("opportunity_quality_score"), 0.0), 2),
@@ -12422,7 +12435,10 @@ class PaperAutopilotEngine:
             broker_fill = {
                 **broker_fill,
                 "remaining_qty": remaining_qty,
-                "broker_residual_zero_confirmed": bool(residual.get("exit_allowed")),
+                # Dust-safe closure is authorized by identity and full-fill
+                # evidence, but it is not broker zero. Keep these states
+                # distinct for strict-truth provenance and reconciliation.
+                "broker_residual_zero_confirmed": bool(residual.get("exit_allowed") and not dust_safe_closure),
                 "broker_residual_lookup_status": str(residual.get("lookup_status") or ""),
                 "canonical_dust_safe_closure": canonical_dust_safe_closure,
             }

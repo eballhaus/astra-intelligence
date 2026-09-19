@@ -104,6 +104,20 @@ class _ResidualBroker(_Broker):
         payload["order"]["client_order_id"] = "swing-exit"
         return payload
 
+    def reconstruct_open_position_provenance(self, positions, limit=500):
+        return {
+            "ok": True,
+            "positions": [{
+                "symbol": "SWING",
+                "quantity_coverage_complete": True,
+                "matching_entry_fills": [{
+                    "entry_order_id": "swing-entry-order",
+                    "remaining_qty": self.quantity,
+                }],
+            }],
+            "broker_read_calls_used": 1,
+        }
+
 
 class _TradeIntel:
     def __init__(self) -> None:

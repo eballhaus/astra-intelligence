@@ -15,7 +15,7 @@ from engine.candidate_execution_integrity_v1 import (
     derive_crypto_horizon_evidence_v1,
 )
 from engine.astra_entry_lane_horizon_contract_v1 import build_entry_lane_horizon_contract_v1
-from engine.paper_autopilot import PaperAutopilotEngine
+from engine.paper_autopilot import PaperAutopilotEngine, _candidate_decision_evidence_v1
 
 
 def _snapshot():
@@ -118,6 +118,26 @@ class CryptoCapacityHorizonIntegrityRepairTests(unittest.TestCase):
         self.assertNotIn("exit_signal", evidence)
         self.assertNotIn("exit_order_id", evidence)
         self.assertNotIn("truth_id", evidence)
+
+    def test_explicit_crypto_horizon_survives_decision_and_order_handoffs(self):
+        row = _candidate(
+            assigned_horizon="day_trade",
+            paper_entry_horizon_style="day_trade",
+            crypto_horizon="CRYPTO_FAST",
+            crypto_horizon_status="RESOLVED",
+            crypto_horizon_source="crypto_15m_completed_bar_horizon_v1",
+            crypto_horizon_provenance={"bar_timestamp": "2026-09-18T00:00:00Z"},
+        )
+        decision = _candidate_decision_evidence_v1(row, {})
+        self.assertEqual(decision["crypto_horizon"], "CRYPTO_FAST")
+        self.assertEqual(decision["crypto_horizon_status"], "RESOLVED")
+        self.assertEqual(decision["crypto_horizon_source"], "crypto_15m_completed_bar_horizon_v1")
+        order: dict[str, object] = {}
+        PaperAutopilotEngine._copy_crypto_execution_evidence_to_order(order, row)
+        self.assertEqual(order["crypto_horizon"], "CRYPTO_FAST")
+        self.assertEqual(order["crypto_horizon_status"], "RESOLVED")
+        self.assertEqual(order["crypto_horizon_source"], "crypto_15m_completed_bar_horizon_v1")
+        self.assertNotIn("execution_eligible", decision)
 
     def test_legacy_capacity_boolean_cannot_override_stale_canonical_fact(self):
         fact = canonical_candidate_capacity_fact({}, lane_id="CRYPTO")
