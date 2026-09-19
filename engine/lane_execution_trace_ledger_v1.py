@@ -122,6 +122,10 @@ def _decision_snapshot(source: Mapping[str, Any], record: Mapping[str, Any], sta
         "asset_class": _text(record.get("asset_class")) or None,
         "asset_type": _text(source.get("asset_type") or record.get("asset_class")) or None,
         "lane_id": _text(record.get("lane_id")) or None,
+        "crypto_horizon": _text(source.get("crypto_horizon") or record.get("crypto_horizon")) or None,
+        "crypto_horizon_status": _text(source.get("crypto_horizon_status") or record.get("crypto_horizon_status")) or None,
+        "crypto_horizon_source": _text(source.get("crypto_horizon_source") or record.get("crypto_horizon_source")) or None,
+        "crypto_horizon_provenance": dict(source.get("crypto_horizon_provenance") or record.get("crypto_horizon_provenance") or {}) if isinstance(source.get("crypto_horizon_provenance") or record.get("crypto_horizon_provenance"), Mapping) else (source.get("crypto_horizon_provenance") or record.get("crypto_horizon_provenance")),
         "horizon": _text(source.get("paper_entry_horizon_style") or source.get("trade_horizon_style") or source.get("intended_horizon")) or None,
         "decision": state,
         "first_causal_blocker": blocker or None,
@@ -392,6 +396,10 @@ class LaneExecutionTraceLedgerV1:
                 "symbol": symbol, "canonical_symbol": _text(source.get("canonical_symbol") or symbol).upper(),
                 "asset_class": _text(source.get("asset_class") or source.get("asset_type")),
                 "instrument_type": _text(source.get("instrument_type")),
+                "crypto_horizon": _text(source.get("crypto_horizon")),
+                "crypto_horizon_status": _text(source.get("crypto_horizon_status")),
+                "crypto_horizon_source": _text(source.get("crypto_horizon_source")),
+                "crypto_horizon_provenance": dict(source.get("crypto_horizon_provenance") or {}) if isinstance(source.get("crypto_horizon_provenance"), Mapping) else source.get("crypto_horizon_provenance"),
                 "candidate_source": _text(source.get("candidate_source")), "candidate_seen": True,
                 "freshness_result": _text(
                     decision_evidence.get("freshness_status")

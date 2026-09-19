@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 import json
 import tempfile
 import unittest
+from pathlib import Path
 
 from engine.astra_continuous_system_integrity_scanner_v1 import ContinuousSystemIntegrityScannerV1
 from engine.astra_evidence_accumulation_capacity_v1 import (
@@ -15,6 +16,7 @@ from engine.candidate_execution_integrity_v1 import (
     derive_crypto_horizon_evidence_v1,
 )
 from engine.astra_entry_lane_horizon_contract_v1 import build_entry_lane_horizon_contract_v1
+from engine.lane_execution_trace_ledger_v1 import LaneExecutionTraceLedgerV1
 from engine.paper_autopilot import PaperAutopilotEngine, _candidate_decision_evidence_v1
 
 
@@ -138,6 +140,31 @@ class CryptoCapacityHorizonIntegrityRepairTests(unittest.TestCase):
         self.assertEqual(order["crypto_horizon_status"], "RESOLVED")
         self.assertEqual(order["crypto_horizon_source"], "crypto_15m_completed_bar_horizon_v1")
         self.assertNotIn("execution_eligible", decision)
+
+    def test_explicit_crypto_horizon_survives_persisted_trace_and_decision_snapshot(self):
+        row = _candidate(
+            candidate_id="cand-ledger-fast",
+            recommendation_id="rec-ledger-fast",
+            lane_id="CRYPTO",
+            candidate_generated_at="2026-09-18T00:00:00Z",
+            crypto_horizon="CRYPTO_FAST",
+            crypto_horizon_status="RESOLVED",
+            crypto_horizon_source="crypto_15m_completed_bar_horizon_v1",
+            crypto_horizon_provenance={"bar_timestamp": "2026-09-17T23:45:00Z"},
+            paper_entry_horizon_style="day_trade",
+            decision_reason="lane_reserve_exhausted",
+            eligible=False,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = LaneExecutionTraceLedgerV1(directory)
+            ledger.record([row], cycle_id="cycle-ledger-fast")
+            trace = json.loads((Path(directory) / "lane_execution_trace_v1.jsonl").read_text().splitlines()[0])
+            decision = json.loads((Path(directory) / "candidate_decision_ledger_v1.jsonl").read_text().splitlines()[0])
+        for payload in (trace, decision):
+            self.assertEqual(payload["crypto_horizon"], "CRYPTO_FAST")
+            self.assertEqual(payload["crypto_horizon_status"], "RESOLVED")
+            self.assertEqual(payload["crypto_horizon_source"], "crypto_15m_completed_bar_horizon_v1")
+            self.assertEqual(payload["crypto_horizon_provenance"]["bar_timestamp"], "2026-09-17T23:45:00Z")
 
     def test_legacy_capacity_boolean_cannot_override_stale_canonical_fact(self):
         fact = canonical_candidate_capacity_fact({}, lane_id="CRYPTO")
