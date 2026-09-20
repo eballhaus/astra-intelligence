@@ -1,0 +1,96 @@
+{
+  "schema_version": "astra_historical_acquisition_v1",
+  "provider": "FINNHUB",
+  "dataset": "company_news",
+  "symbols": [],
+  "start": null,
+  "end": null,
+  "window_size": 1,
+  "mode": "DRY_RUN",
+  "scale_authorized": false,
+  "priority": "LOW",
+  "estimated_calls": 0,
+  "estimated_bytes": 0,
+  "estimate_basis": "planning estimate, not guaranteed yield",
+  "checkpoint_path": "Dedicated archive root/index.sqlite3; provider+symbol+date",
+  "pit_requirement": "HISTORICAL_NEWS_EVIDENCE_GATE",
+  "rate_budget": {
+    "calls_per_minute": 20
+  },
+  "resource_budget": {
+    "max_calls": 10,
+    "max_bytes": 83886080,
+    "max_in_flight": 1,
+    "min_free_bytes": 268435456
+  },
+  "resume_state": {},
+  "acquisition_started": false,
+  "historical_replay_only": true,
+  "evidence_class": "HISTORICAL_REPLAY",
+  "broker_truth_eligible": false,
+  "natural_truth_eligible": false,
+  "learning_ack_eligible": false,
+  "automatic_policy_promotion": false,
+  "readiness_contracts": {
+    "macro_vintage": {
+      "status": "PROVIDER_REQUIRED",
+      "fields": [
+        "observation_date",
+        "release_date",
+        "vintage_date",
+        "realtime_start",
+        "provider_availability",
+        "ingested_at",
+        "source_series",
+        "version_id",
+        "availability_proof",
+        "replay_safe"
+      ],
+      "rule": "Current revised snapshots cannot be used at historical cutoffs; date-only vintage is insufficient for intraday admission."
+    },
+    "analyst_revision": {
+      "status": "DATA_SOURCE_REQUIRED",
+      "fields": [
+        "symbol",
+        "analyst",
+        "firm",
+        "old_value",
+        "new_value",
+        "effective_time",
+        "publication_time",
+        "source_provider",
+        "record_id",
+        "version_id",
+        "availability_proof",
+        "point_in_time_status"
+      ],
+      "rule": "No reconstructed consensus vintage or keyword-derived factual events."
+    },
+    "microstructure": {
+      "status": "PROVIDER_REQUIRED",
+      "fields": [
+        "bid",
+        "ask",
+        "bid_size",
+        "ask_size",
+        "spread",
+        "trade_price",
+        "trade_size",
+        "venue",
+        "event_time",
+        "provider_receive_time",
+        "available_to_astra_time",
+        "sequence",
+        "record_id",
+        "version_id",
+        "point_in_time_status"
+      ],
+      "local_index": [
+        "state/historical_context_phase2_v1/microstructure_context_v1.jsonl",
+        "state/historical_context_phase2_v1/execution_realism_v1.jsonl"
+      ],
+      "rule": "Existing OHLCV proxies are not historical quotes/trades; receive clocks must not be inferred."
+    }
+  },
+  "gap_registry": "reports/astra_historical_data_gap_registry_v1.json"
+}

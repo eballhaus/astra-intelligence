@@ -1,0 +1,252 @@
+{
+  "schema_version": "astra_historical_data_gap_registry_v1",
+  "evidence_basis": "Reused prior reports; no repeated archive census. Counts are prior reported coverage, not a new runtime measurement.",
+  "source_reports": [
+    "astra_historical_data_inventory_v1.md",
+    "astra_finnhub_historical_news_completeness_pit_v1.md",
+    "astra_sec_fmp_fred_pit_completion_v1.md",
+    "astra_historical_news_catalyst_pilot_v1.md"
+  ],
+  "allowed_classifications": [
+    "ALREADY_HAVE",
+    "PARTIAL",
+    "MISSING",
+    "PROVIDER_REQUIRED",
+    "NOT_WORTH_ACQUIRING_NOW"
+  ],
+  "datasets": [
+    {
+      "dataset": "historical news",
+      "status": "PARTIAL",
+      "local_coverage": "NVDA seven-day daily probe: 1,062 unique IDs; prior report evidence",
+      "pit_quality": "PARTIALLY_POINT_IN_TIME",
+      "lane_usefulness": [
+        "SCALP",
+        "DAY",
+        "SWING"
+      ],
+      "priority": "P1",
+      "provider_requirement": "Finnhub version-specific availability proof",
+      "acquisition_authorization": "NOT_AUTHORIZED; DRY_RUN only in this task"
+    },
+    {
+      "dataset": "SEC material events",
+      "status": "PARTIAL",
+      "local_coverage": "Prior pilot: 448 canonical catalysts; acceptance evidence for 447",
+      "pit_quality": "ACCEPTANCE_BASIS_WHERE_PROVEN",
+      "lane_usefulness": [
+        "DAY",
+        "SWING"
+      ],
+      "priority": "P1",
+      "provider_requirement": "SEC accession acceptance; retain receipt separately",
+      "acquisition_authorization": "NOT_AUTHORIZED; DRY_RUN only in this task"
+    },
+    {
+      "dataset": "FMP earnings/corporate actions",
+      "status": "PARTIAL",
+      "local_coverage": "Existing compressed core, tier3/tier4 and enrichment archives; adapter references retained rows",
+      "pit_quality": "PARTIALLY_POINT_IN_TIME",
+      "lane_usefulness": [
+        "DAY",
+        "SWING"
+      ],
+      "priority": "P1",
+      "provider_requirement": "Precise release/announcement evidence; no reacquisition",
+      "acquisition_authorization": "NOT_AUTHORIZED; DRY_RUN only in this task"
+    },
+    {
+      "dataset": "analyst revisions",
+      "status": "PROVIDER_REQUIRED",
+      "local_coverage": "No historical revision archive proven in prior inventory",
+      "pit_quality": "UNKNOWN",
+      "lane_usefulness": [
+        "DAY",
+        "SWING"
+      ],
+      "priority": "P1",
+      "provider_requirement": "Versioned analyst/firm estimates and publication history",
+      "acquisition_authorization": "NOT_AUTHORIZED; DRY_RUN only in this task"
+    },
+    {
+      "dataset": "FRED/ALFRED-style macro vintages",
+      "status": "PROVIDER_REQUIRED",
+      "local_coverage": "Current macro snapshots; no local vintage archive proven",
+      "pit_quality": "CURRENT_SNAPSHOT_ONLY",
+      "lane_usefulness": [
+        "DAY",
+        "SWING",
+        "CRYPTO"
+      ],
+      "priority": "P1",
+      "provider_requirement": "Release-time vintages, realtime intervals and version identity",
+      "acquisition_authorization": "NOT_AUTHORIZED; DRY_RUN only in this task"
+    },
+    {
+      "dataset": "quote microstructure",
+      "status": "PROVIDER_REQUIRED",
+      "local_coverage": "Existing OHLCV proxies only; no quote archive proven",
+      "pit_quality": "UNKNOWN",
+      "lane_usefulness": [
+        "SCALP",
+        "DAY",
+        "CRYPTO"
+      ],
+      "priority": "P1",
+      "provider_requirement": "Historical bid/ask sizes, receive clocks and sequence",
+      "acquisition_authorization": "NOT_AUTHORIZED; DRY_RUN only in this task"
+    },
+    {
+      "dataset": "trade microstructure",
+      "status": "PROVIDER_REQUIRED",
+      "local_coverage": "Existing OHLCV proxies only; no historical prints proven",
+      "pit_quality": "UNKNOWN",
+      "lane_usefulness": [
+        "SCALP",
+        "DAY",
+        "CRYPTO"
+      ],
+      "priority": "P1",
+      "provider_requirement": "Historical trade price/size, venue, receive clocks and sequence",
+      "acquisition_authorization": "NOT_AUTHORIZED; DRY_RUN only in this task"
+    },
+    {
+      "dataset": "options history",
+      "status": "NOT_WORTH_ACQUIRING_NOW",
+      "local_coverage": "Realized-volatility proxies only; no options archive proven",
+      "pit_quality": "UNKNOWN",
+      "lane_usefulness": [
+        "DAY",
+        "SWING"
+      ],
+      "priority": "P3",
+      "provider_requirement": "Options vendor only after defined research need",
+      "acquisition_authorization": "NOT_AUTHORIZED; DRY_RUN only in this task"
+    },
+    {
+      "dataset": "short interest / borrow",
+      "status": "PROVIDER_REQUIRED",
+      "local_coverage": "No time-series archive proven",
+      "pit_quality": "UNKNOWN",
+      "lane_usefulness": [
+        "DAY",
+        "SWING"
+      ],
+      "priority": "P2",
+      "provider_requirement": "Publication-time short interest and historical borrow snapshots",
+      "acquisition_authorization": "NOT_AUTHORIZED; DRY_RUN only in this task"
+    },
+    {
+      "dataset": "institutional ownership / 13F timing",
+      "status": "PARTIAL",
+      "local_coverage": "SEC subsets; no dedicated ownership time series proven",
+      "pit_quality": "PARTIALLY_POINT_IN_TIME",
+      "lane_usefulness": [
+        "SWING"
+      ],
+      "priority": "P2",
+      "provider_requirement": "SEC filing acceptance distinct from holdings quarter",
+      "acquisition_authorization": "NOT_AUTHORIZED; DRY_RUN only in this task"
+    },
+    {
+      "dataset": "insider transaction timing",
+      "status": "PARTIAL",
+      "local_coverage": "SEC subsets; dedicated transaction coverage unproven",
+      "pit_quality": "PARTIALLY_POINT_IN_TIME",
+      "lane_usefulness": [
+        "DAY",
+        "SWING"
+      ],
+      "priority": "P2",
+      "provider_requirement": "Filing acceptance distinct from transaction date",
+      "acquisition_authorization": "NOT_AUTHORIZED; DRY_RUN only in this task"
+    },
+    {
+      "dataset": "corporate guidance",
+      "status": "MISSING",
+      "local_coverage": "No structured guidance timeline proven; news/filings are possible raw sources",
+      "pit_quality": "UNKNOWN",
+      "lane_usefulness": [
+        "DAY",
+        "SWING"
+      ],
+      "priority": "P2",
+      "provider_requirement": "Issuer publication and version-bound guidance evidence",
+      "acquisition_authorization": "NOT_AUTHORIZED; DRY_RUN only in this task"
+    },
+    {
+      "dataset": "FDA/regulatory history",
+      "status": "MISSING",
+      "local_coverage": "No dedicated structured archive proven",
+      "pit_quality": "UNKNOWN",
+      "lane_usefulness": [
+        "SCALP",
+        "DAY",
+        "SWING"
+      ],
+      "priority": "P2",
+      "provider_requirement": "Regulator/issuer announcement history with publication proof",
+      "acquisition_authorization": "NOT_AUTHORIZED; DRY_RUN only in this task"
+    },
+    {
+      "dataset": "crypto regulatory events",
+      "status": "MISSING",
+      "local_coverage": "No dedicated event archive proven",
+      "pit_quality": "UNKNOWN",
+      "lane_usefulness": [
+        "CRYPTO"
+      ],
+      "priority": "P2",
+      "provider_requirement": "Jurisdiction-specific regulatory publication history",
+      "acquisition_authorization": "NOT_AUTHORIZED; DRY_RUN only in this task"
+    },
+    {
+      "dataset": "crypto listings/delistings",
+      "status": "MISSING",
+      "local_coverage": "No dedicated crypto exchange announcement archive proven",
+      "pit_quality": "UNKNOWN",
+      "lane_usefulness": [
+        "CRYPTO"
+      ],
+      "priority": "P2",
+      "provider_requirement": "Exchange announcement and effective timestamps",
+      "acquisition_authorization": "NOT_AUTHORIZED; DRY_RUN only in this task"
+    },
+    {
+      "dataset": "crypto protocol upgrades",
+      "status": "MISSING",
+      "local_coverage": "No dedicated protocol event archive proven",
+      "pit_quality": "UNKNOWN",
+      "lane_usefulness": [
+        "CRYPTO"
+      ],
+      "priority": "P2",
+      "provider_requirement": "Protocol announcement and activation timestamps",
+      "acquisition_authorization": "NOT_AUTHORIZED; DRY_RUN only in this task"
+    },
+    {
+      "dataset": "crypto security/hacks",
+      "status": "MISSING",
+      "local_coverage": "No dedicated incident archive proven",
+      "pit_quality": "UNKNOWN",
+      "lane_usefulness": [
+        "CRYPTO"
+      ],
+      "priority": "P2",
+      "provider_requirement": "First public disclosure and versioned incident evidence",
+      "acquisition_authorization": "NOT_AUTHORIZED; DRY_RUN only in this task"
+    },
+    {
+      "dataset": "crypto token unlocks/governance",
+      "status": "MISSING",
+      "local_coverage": "No dedicated unlock/governance archive proven",
+      "pit_quality": "UNKNOWN",
+      "lane_usefulness": [
+        "CRYPTO"
+      ],
+      "priority": "P2",
+      "provider_requirement": "Versioned schedules and governance publication evidence",
+      "acquisition_authorization": "NOT_AUTHORIZED; DRY_RUN only in this task"
+    }
+  ]
+}

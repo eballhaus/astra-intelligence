@@ -916,15 +916,17 @@ class ProviderRouter:
         with self._lock:
             self._quote_cache[key] = rec
 
-    def _request(self, provider: str, url: str, *, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> tuple[dict[str, Any], int | None, str, float]:
+    def _request(self, provider: str, url: str, *, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None, evidence_sink=None) -> tuple[dict[str, Any], int | None, str, float]:
         t0 = time.perf_counter()
         provider_name = str(provider or "").upper()
         safe_params = tuple(sorted((str(k), "<credential>" if str(k).lower() in {"apikey", "token", "api_key"} else str(v)) for k, v in (params or {}).items()))
         request_key = json.dumps([provider_name, str(url).split("?", 1)[0], safe_params], separators=(",", ":"))
+        if evidence_sink is not None:
+            request_key += str(time.time_ns())  # preserve actual archive receipt evidence
         with self._lock:
             self._request_metrics["requests_submitted"] += 1
             cached_result = self._request_results.get(request_key)
-            if cached_result and (time.time() - float(cached_result[0])) <= 2.0:
+            if evidence_sink is None and cached_result and (time.time() - float(cached_result[0])) <= 2.0:
                 self._request_metrics["requests_coalesced"] += 1
                 self._request_metrics["provider_calls_avoided"] += 1
                 return cached_result[1]
@@ -950,18 +952,37 @@ class ProviderRouter:
                 event.set()
             return result
         try:
-            resp = requests.get(url, params=params, headers=headers, timeout=4.5)
+            resp = requests.get(url, params=params, headers=headers, timeout=4.5, **({"stream": True, "allow_redirects": False} if evidence_sink is not None else {}))
+            if evidence_sink is not None:
+                record_call(provider_name, cost=1)
+                with self._lock:
+                    self._request_metrics["provider_calls_executed"] += 1
+                if int(resp.status_code) == 429:
+                    record_rate_limit(provider_name, http_status=429)
+                try:
+                    body = bytearray()
+                    for chunk in resp.iter_content(65536):
+                        body.extend(chunk)
+                        if len(body) > 8 * 1024 * 1024:
+                            evidence_sink(resp.status_code, {**dict(resp.headers), "X-Astra-Truncated": "true"}, bytes(body))
+                            raise ValueError("archive response exceeds bounded 8 MiB")
+                    resp._content = bytes(body)
+                    evidence_sink(resp.status_code, dict(resp.headers), resp.content)
+                finally:
+                    resp.close()
             latency = (time.perf_counter() - t0) * 1000.0
-            record_call(provider_name, cost=1)
-            with self._lock:
-                self._request_metrics["provider_calls_executed"] += 1
+            if evidence_sink is None:
+                record_call(provider_name, cost=1)
+                with self._lock:
+                    self._request_metrics["provider_calls_executed"] += 1
             status = int(resp.status_code)
             response_bytes = len(resp.content or b"")
             with self._lock:
                 self._request_response_bytes[request_key] = (time.time(), int(response_bytes))
             if status >= 400:
                 if status == 429:
-                    record_rate_limit(provider_name, http_status=status)
+                    if evidence_sink is None:
+                        record_rate_limit(provider_name, http_status=status)
                 else:
                     record_error(provider_name)
                 text = f"http_{status}"

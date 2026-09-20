@@ -1,0 +1,62 @@
+{
+  "schema_version": "astra_historical_news_infrastructure_pit_safety_v1",
+  "recovered_partial_implementation": true,
+  "status": "IMPLEMENTED_OFFLINE_VERIFIED",
+  "proven": [
+    "One symbol/calendar-day Finnhub windows; explicit half-open UTC membership",
+    "Raw response retained before normalization; spills retained with correct canonical day",
+    "Provider/article canonical identity; deterministic derived fallback; immutable raw-hash versions",
+    "Transactional checkpoint/resume with raw checksum verification; saturation persists across retries",
+    "Separate publication, unknown provider observation, unknown historical availability, actual receipt and ingestion clocks",
+    "Single historical-news evidence gate in existing canonical PIT authority; Finnhub defaults unsafe",
+    "SEC acceptance adapter preserves economic date separately and validates version-bound acceptance",
+    "Existing FMP bounded streaming adapter; no reacquisition",
+    "FRED current snapshots rejected; analyst and quote/trade readiness contracts only",
+    "18-domain canonical gap registry; DRY_RUN planner default"
+  ],
+  "not_proven": [
+    "Exhaustive Finnhub coverage or historical version availability",
+    "New production runtime deployment or loaded worker revision alignment",
+    "Natural PAPER trading performance or new broker truth",
+    "External dataset completeness; generic provider availability-proof validation"
+  ],
+  "what_was_wrong": "Interrupted implementation lacked reports and final verification; a smaller retry could replace a saturated checkpoint.",
+  "what_changed": "Recovered PIT/router/archive adapters and tests; explicit UTC interval and sticky saturation; completed registry and reports.",
+  "tests": {
+    "command": ".venv/bin/python -m pytest -q tests/test_astra_historical_data_infrastructure_v1.py tests/test_astra_pit_metadata_contract_v1.py tests/test_astra_historical_news_catalyst_pilot_v1.py",
+    "result": "57 passed",
+    "py_compile": "PASSED",
+    "git_diff_check": "PASSED",
+    "passed_count": 57
+  },
+  "runtime_verification": "Offline adapters exercised from this checkout using mock transport and temporary archives. Existing router behavior covered by regression tests. No worker restart/deployment; natural broker proof not claimed.",
+  "remaining_first_blocker": "PROVIDER_EXTERNAL: historical news version availability proof and missing external datasets",
+  "safety": {
+    "paper_only": true,
+    "provider_acquisition_calls": 0,
+    "bulk_acquisition_started": false,
+    "trading_behavior_changed": false,
+    "broker_truth_created": false,
+    "learning_acknowledgement_created": false,
+    "worker_restart": false
+  },
+  "attribution": {
+    "included": [
+      "engine/astra_pit_metadata_contract_v1.py",
+      "engine/provider_router.py",
+      "scripts/astra_historical_data_infrastructure_v1.py",
+      "tests/test_astra_historical_data_infrastructure_v1.py"
+    ],
+    "excluded": "All worker/Sentinel diffs, their tests, pre-existing reports, deleted state and other unrelated dirty files preserved unstaged."
+  },
+  "source_reports": [
+    "astra_historical_data_inventory_v1.md",
+    "astra_finnhub_historical_news_completeness_pit_v1.md",
+    "astra_sec_fmp_fred_pit_completion_v1.md",
+    "astra_historical_news_catalyst_pilot_v1.md"
+  ],
+  "executed_module": {
+    "path": "/Users/eric/Desktop/astra-intelligence-clean/scripts/astra_historical_data_infrastructure_v1.py",
+    "sha256": "ce23a2c061282d4c960f53a96a4c0456c621c0eab43be17d96ccddecce36b110"
+  }
+}

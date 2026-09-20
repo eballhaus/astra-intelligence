@@ -224,18 +224,38 @@ def normalize_historical_record(
     replay_safe = status == "POINT_IN_TIME_SAFE" and bool(context.get("replay_contract_valid", True))
     if context.get("validated_archive") and event is not None and available is not None and status != "POINT_IN_TIME_SAFE":
         replay_safe = False
+    if dataset_type.lower() in {"news", "catalyst"} and not context.get("_historical_gate_internal") and (
+        raw.get("historical_news_contract") or (source_provider or "").upper() == "FINNHUB"
+    ):
+        gate = historical_news_evidence_gate(raw, raw.get("available_to_astra_time"))
+        replay_safe = gate["replay_allowed"] and bool(context.get("replay_contract_valid", True))
+        status = "POINT_IN_TIME_SAFE" if replay_safe else "PARTIALLY_POINT_IN_TIME"
+        reason = gate["reason"]
+        risk = "NONE" if replay_safe else "HIGH"
+        available = _timestamp(raw.get("available_to_astra_time"))[0]
+        mapping["observed"] = _timestamp(raw.get("provider_observed_time"))[0]
+    if dataset_type.lower() in {"macro", "fred"}:
+        vintage, _, vintage_precision = _first_timestamp(raw, ("vintage_timestamp", "realtime_start", "vintage_date"))
+        if context.get("current_snapshot_only") or vintage is None or mapping["available_precision"] != "second":
+            replay_safe = False
+            status = "CURRENT_SNAPSHOT_ONLY" if context.get("current_snapshot_only") or vintage is None else "PARTIALLY_POINT_IN_TIME"
+            reason = "REJECTED: a historical vintage and precise availability are required; current revised values cannot be backdated"
+            risk = "HIGH"
     symbol = _text(raw.get("symbol") or raw.get("ticker") or raw.get("canonical_pair")) or None
     asset_class = _text(raw.get("asset_class") or raw.get("asset_type")) or None
     return {
+        **({key: raw.get(key) for key in ("historical_news_contract", "article_id", "version_id", "raw_hash", "availability_proof", "raw_provenance", "temporal_contradiction")}
+           if raw.get("historical_news_contract") and not context.get("_historical_gate_internal") else {}),
         "schema_version": SCHEMA_VERSION,
         "record_id": _record_id(raw, _text(dataset_type).lower(), source_file),
         "dataset_type": _text(dataset_type).lower(),
         "symbol": symbol,
         "asset_class": asset_class,
         "event_time": _iso(event),
-        "publication_time": _iso(publication),
+        "publication_time": raw.get("publication_time") if raw.get("historical_news_contract") else _iso(publication),
+        "historical_source_available_time": raw.get("historical_source_available_time"),
         "provider_observed_time": _iso(mapping["observed"]),
-        "available_to_astra_time": _iso(available),
+        "available_to_astra_time": raw.get("available_to_astra_time") if raw.get("historical_news_contract") else _iso(available),
         "ingested_at": _iso(ingested),
         "stored_at": _iso(stored),
         "source_provider": source_provider,
@@ -259,6 +279,8 @@ def replay_readiness(record: Mapping[str, Any]) -> dict[str, Any]:
     """Return an explicit admission decision for historical causal use."""
     normalized = dict(record)
     safe = normalized.get("replay_safe") is True and normalized.get("point_in_time_status") == "POINT_IN_TIME_SAFE"
+    if safe and normalized.get("historical_news_contract"):
+        safe = historical_news_evidence_gate(normalized, normalized.get("available_to_astra_time"))["replay_allowed"]
     return {
         "replay_allowed": safe,
         "record_id": normalized.get("record_id"),
@@ -274,3 +296,54 @@ def require_replay_safe(record: Mapping[str, Any]) -> Mapping[str, Any]:
     if not decision["replay_allowed"]:
         raise UnsafeReplayRecord(f"{decision.get('record_id') or 'record'}: {decision['reason']}")
     return record
+
+
+def historical_news_evidence_gate(record: Mapping[str, Any], cutoff: Any, *, basis: str = "historical_source") -> dict[str, Any]:
+    """HISTORICAL_NEWS_EVIDENCE_GATE: additional evidence, then canonical admission.
+
+    SEC accession acceptance is the existing approved source basis. Other news
+    requires a separately verified, version-bound evidence artifact. A caller's
+    replay_safe flag or publication timestamp alone is never evidence.
+    """
+    publication, _, precision = _timestamp(record.get("publication_time"))
+    available, _, ap = _timestamp(record.get("historical_source_available_time"))
+    receipt, _, rp = _timestamp(record.get("available_to_astra_time"))
+    limit, _, cp = _timestamp(cutoff)
+    proof = record.get("availability_proof")
+    proof = proof if isinstance(proof, Mapping) else {}
+    identity = record.get("article_id") or record.get("source_record_id")
+    version = record.get("version_id")
+    sec = (record.get("source_provider") == "SEC_EDGAR" and proof.get("basis") == "SEC_ACCEPTANCE"
+           and proof.get("accession") == identity and proof.get("acceptance_time") == record.get("publication_time"))
+    # No generic provider proof validator has been established yet. Fail closed
+    # until such a validator is implemented in this canonical owner.
+    raw = record.get("raw_provenance")
+    raw = raw if isinstance(raw, Mapping) else {}
+    raw_digest = hashlib.sha256(json.dumps(raw, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    proven = (sec and proof.get("raw_hash") == record.get("raw_hash") == raw_digest
+              and raw.get("accessionNumber") == identity
+              and _timestamp(raw.get("acceptanceDateTime"))[0] == publication)
+    def exact(value):
+        try:
+            stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            return stamp.timestamp() if stamp.tzinfo else None
+        except (ValueError, TypeError, OverflowError):
+            return None
+    publication, available, receipt, limit = (
+            exact(record.get("publication_time")), exact(record.get("historical_source_available_time")),
+            exact(record.get("available_to_astra_time")), exact(cutoff))
+    expected_version = hashlib.sha256(json.dumps(["SEC_EDGAR", identity, raw_digest], separators=(",", ":")).encode()).hexdigest()
+    proven = proven and version == expected_version and exact(raw.get("acceptanceDateTime")) == publication
+    valid = bool(proven and identity and version and record.get("raw_hash") and publication is not None
+                 and available is not None and receipt is not None and limit is not None
+                 and precision == ap == rp == cp == "second" and publication <= available <= receipt
+                 and not record.get("temporal_contradiction") and basis in {"historical_source", "actual_astra"})
+    if not valid:
+        return {"gate": "HISTORICAL_NEWS_EVIDENCE_GATE", "replay_allowed": False,
+                "reason": "REJECTED: historical availability/version evidence or cutoff is insufficient"}
+    admission = normalize_historical_record(
+        {**record, "event_time": record.get("publication_time")}, dataset_type="catalyst",
+        source_context={"replay_contract_valid": valid, "_historical_gate_internal": True})
+    allowed = valid and replay_readiness(admission)["replay_allowed"] and limit >= (receipt if basis == "actual_astra" else available)
+    return {"gate": "HISTORICAL_NEWS_EVIDENCE_GATE", "replay_allowed": bool(allowed),
+            "reason": "version-bound SEC acceptance and canonical PIT admission" if allowed else "REJECTED: historical availability/version evidence or cutoff is insufficient"}
