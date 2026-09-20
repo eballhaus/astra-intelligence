@@ -245,7 +245,8 @@ def resource_ready(state_dir, archive_root, minimum_free):
     if not stamp:
         return False
     age = (datetime.now(UTC) - datetime.fromisoformat(stamp.replace('Z', '+00:00'))).total_seconds()
-    return bool(health['worker_count'] == 1 and health['resource_state'] not in {'UNKNOWN', 'RESOURCE_ELEVATED', 'RESOURCE_CRITICAL', 'RESOURCE_HIGH'}
+    return bool(health['worker_count'] == 1 and health['resource_state'] == 'RESOURCE_NORMAL'
+                and not health.get('background_work_suspended')
                 and not health['last_error'] and 0 <= age <= 120 and shutil.disk_usage(archive_root).free >= minimum_free)
 
 

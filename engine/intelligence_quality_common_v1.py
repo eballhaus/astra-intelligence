@@ -4,6 +4,7 @@ import json
 import math
 import os
 import time
+import weakref
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -153,6 +154,8 @@ def append_jsonl_if_new(path: str, payload: dict[str, Any], key: str = "snapshot
 class CachedDiagnosticModule:
     module_name = "diagnostic_module"
     mode = "shadow_analysis"
+    _instances: weakref.WeakSet = weakref.WeakSet()
+    _memory_backpressure = False
 
     def __init__(self, state_dir: str = "state", ttl_seconds: float = CACHE_TTL_SECONDS) -> None:
         self.state_dir = str(state_dir or "state")
@@ -160,6 +163,39 @@ class CachedDiagnosticModule:
         self.cache_path = os.path.join(self.state_dir, "dashboard_cache", f"{self.module_name}.json")
         self._cache: dict[str, Any] | None = None
         self._cache_ts = 0.0
+        self._memory_compactions = 0
+        self._last_memory_compaction_at = None
+        CachedDiagnosticModule._instances.add(self)
+
+    @classmethod
+    def compact_worker_caches(cls, *, expired_only: bool = False) -> dict[str, Any]:
+        """Release derived diagnostic copies, never their canonical inputs.
+
+        These are advisory-only, recomputable outputs. Durable archives, truth,
+        reconciliation and learning acknowledgements are not owned here.
+        """
+        from engine.astra_runtime_governance_v1 import retained_size_lower_bound
+        items = size = 0
+        for instance in list(cls._instances):
+            expired = time.time() - instance._cache_ts > instance.ttl_seconds
+            if instance._cache is not None and (expired or not expired_only):
+                size += retained_size_lower_bound(instance._cache)[0]
+                instance._cache = None
+                instance._cache_ts = 0.0
+                instance._memory_compactions += 1
+                instance._last_memory_compaction_at = now_iso()
+                items += 1
+        return {"items_released": items, "detached_payload_bytes_lower_bound": size,
+                "owner": "CachedDiagnosticModule", "truth_mutations": 0}
+
+    def _admit_memory_cache(self, payload: dict[str, Any]) -> None:
+        from engine.astra_runtime_governance_v1 import retained_size_lower_bound, RuntimeLimits
+        size, truncated = retained_size_lower_bound(payload, max_nodes=16_384)
+        budget = RuntimeLimits.from_env().maximum_worker_memory_mb * 1024 * 1024 // 128
+        # An incomplete walk cannot prove the payload fits. The complete
+        # diagnostic remains on disk and is still returned to its caller.
+        self._cache = dict(payload) if not truncated and size <= budget else None
+        self._cache_ts = time.time() if self._cache is not None else 0.0
 
     def _fallback(self, reason: str = "insufficient_evidence", **extra: Any) -> dict[str, Any]:
         payload = {
@@ -174,9 +210,14 @@ class CachedDiagnosticModule:
         return with_safety(payload)
 
     def _cached(self, force: bool) -> dict[str, Any] | None:
+        if CachedDiagnosticModule._memory_backpressure:
+            return self._fallback("RESOURCE_MEMORY_BACKPRESSURE")
         now = time.time()
         if not force and self._cache and now - self._cache_ts <= self.ttl_seconds:
             return dict(self._cache)
+        # An expired payload has no fresh consumer; release the old reference
+        # before loading/rebuilding its successor to avoid overlapping copies.
+        self._cache = None
         if not force:
             cached = read_json(self.cache_path)
             if cached:
@@ -203,16 +244,16 @@ class CachedDiagnosticModule:
                     return None
                 persisted_at = min(persisted_times)
                 if now - persisted_at <= self.ttl_seconds:
-                    self._cache = dict(cached)
-                    self._cache_ts = persisted_at
+                    self._admit_memory_cache(cached)
+                    if self._cache is not None:
+                        self._cache_ts = persisted_at
                     return dict(cached)
         return None
 
     def _store(self, payload: dict[str, Any]) -> dict[str, Any]:
         out = with_safety(payload)
-        self._cache = dict(out)
-        self._cache_ts = time.time()
         write_json(self.cache_path, out)
+        self._admit_memory_cache(out)
         return out
 
     def status(self, statuses: dict[str, Any] | None = None, force: bool = False) -> dict[str, Any]:

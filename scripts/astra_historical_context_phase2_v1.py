@@ -134,6 +134,7 @@ def worker_health(state_dir: Path) -> dict[str, Any]:
         "worker_present": bool(runtime.get("active_worker_present")) and bool(pid),
         "worker_count": 1 if runtime.get("active_worker_present") and pid else 0,
         "resource_state": runtime.get("resource_state") or resource.get("resource_state") or "UNKNOWN",
+        "background_work_suspended": bool((runtime.get("resource_memory_telemetry_v1") or {}).get("background_work_suspended")),
         "last_error": runtime.get("last_error") or "",
         "cycle_count": runtime.get("cycle_count"),
         "cycle_elapsed_seconds": runtime.get("cycle_elapsed_seconds"),
@@ -146,7 +147,8 @@ def worker_safe(state_dir: Path) -> bool:
     health = worker_health(state_dir)
     return (
         health["worker_count"] == 1
-        and health["resource_state"] not in {"RESOURCE_ELEVATED", "RESOURCE_CRITICAL", "RESOURCE_HIGH"}
+        and health["resource_state"] == "RESOURCE_NORMAL"
+        and not health.get("background_work_suspended")
         and not health["last_error"]
     )
 
@@ -599,7 +601,7 @@ def supervisor(args: argparse.Namespace) -> int:
             while child.poll() is None and not stopped:
                 time.sleep(POLL_SECONDS)
                 health = worker_health(state_dir)
-                if health["resource_state"] in {"RESOURCE_ELEVATED", "RESOURCE_CRITICAL", "RESOURCE_HIGH"} or health["last_error"]:
+                if health["worker_count"] != 1 or health["resource_state"] != "RESOURCE_NORMAL" or health.get("background_work_suspended") or health["last_error"]:
                     child.terminate()
                     state["status"] = "RESOURCE_PAUSED_SAFE"
                     state["last_error"] = "worker health changed while phase2 child was running"

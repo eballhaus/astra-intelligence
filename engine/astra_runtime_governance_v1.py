@@ -11,6 +11,7 @@ import json
 import os
 import resource
 import shutil
+import sys
 import subprocess
 import tempfile
 import time
@@ -20,6 +21,154 @@ from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 from typing import Any
+from itertools import chain, islice
+
+
+def retained_size_lower_bound(value: Any, *, max_nodes: int = 4096) -> tuple[int, bool]:
+    """Bounded inspection of built-in containers only; never load lazy state.
+
+    A truncated walk is a lower bound, not a full heap attribution. Shared
+    references are counted once within an owner. No payload is returned.
+    """
+    seen: set[int] = set()
+    pending = [iter((value,))]
+    size = 0
+    visits = 0
+    while pending and visits < max_nodes:
+        try:
+            item = next(pending[-1])
+        except StopIteration:
+            pending.pop()
+            continue
+        except RuntimeError:
+            return size, True  # A concurrently updated cache is not stable.
+        visits += 1
+        if id(item) in seen:
+            continue
+        seen.add(id(item))
+        size += sys.getsizeof(item)
+        if type(item) is dict:
+            pending.append(chain.from_iterable(item.items()))
+        elif type(item) in (list, tuple, set, frozenset):
+            pending.append(iter(item))
+    return size, bool(pending)
+
+
+def worker_memory_owners(worker: Any) -> list[dict[str, Any]]:
+    """Inventory current roots, without archive reads or retaining references.
+
+    Unknown containers are protected: this registry grants no eviction rights.
+    Bounds on roots and nodes also bound the cost of diagnostic inspection.
+    """
+    roots: dict[str, Any] = {}
+    contracts: dict[str, dict[str, Any]] = {}
+    autopilot = getattr(worker, "autopilot", None)
+    runtime = getattr(autopilot, "_runtime_state", {})
+    for name, value in islice(runtime.items(), 160):
+        if type(value) in (dict, list, tuple, set):
+            roots["autopilot.runtime." + str(name)] = value
+    for name, value in vars(autopilot).items() if hasattr(autopilot, "__dict__") else ():
+        if name != "_runtime_state" and type(value) in (dict, list, tuple, set):
+            roots["autopilot." + name] = value
+    # Inspect loaded owners only; importing server_extend here starts services.
+    server = sys.modules.get("server_extend")
+    if server is not None:
+        for name, value in vars(server).items():
+            if "CACHE" in name.upper() and type(value) in (dict, list, tuple, set):
+                roots["server_extend." + name] = value
+            elif type(value).__module__.startswith("engine.") and hasattr(value, "__dict__"):
+                for attr, child in vars(value).items():
+                    if type(child) in (dict, list, tuple, set):
+                        roots["server_extend." + name + "." + attr] = child
+    # Module-owned caches are independent of the worker object. Inspect only
+    # already-loaded Astra modules, never import or walk historical storage.
+    for module_name, module in tuple(sys.modules.items()):
+        if not module_name.startswith(("engine.", "learning.", "utils.")) or module is None:
+            continue
+        for name, value in tuple(vars(module).items()):
+            if name.startswith("__"):
+                continue
+            if type(value) in (dict, list, tuple, set) and ("cache" in name.lower() or sys.getsizeof(value) >= 65536):
+                roots[module_name + "." + name] = value
+            elif type(value) in (str, bytes) and sys.getsizeof(value) >= 65536:
+                roots[module_name + "." + name] = value
+            elif type(value).__module__.startswith("engine.") and hasattr(value, "__dict__"):
+                for attr, child in tuple(vars(value).items()):
+                    if type(child) in (dict, list, tuple, set) and ("cache" in attr.lower() or sys.getsizeof(child) >= 65536):
+                        roots[module_name + "." + name + "." + attr] = child
+    diagnostics = sys.modules.get("engine.intelligence_quality_common_v1")
+    cache_class = getattr(diagnostics, "CachedDiagnosticModule", None)
+    for instance in list(getattr(cache_class, "_instances", ())):
+        name = "diagnostic." + instance.module_name
+        roots[name] = instance._cache if instance._cache is not None else {}
+        contracts[name] = {
+            "retention_class": "DIAGNOSTIC_ONLY", "retention_contract": "TTL",
+            "retention_limit": {"max_payloads": 1, "ttl_seconds": instance.ttl_seconds,
+                                "max_nodes": 16_384, "max_bytes": RuntimeLimits.from_env().maximum_worker_memory_mb * 1024 * 1024 // 128},
+            "oldest_item_age": max(0, time.time() - instance._cache_ts) if instance._cache else 0,
+            "reconstructable": True, "persisted_elsewhere": instance.cache_path,
+            "truth_critical": False, "last_compaction_at": instance._last_memory_compaction_at,
+            "evictions_compactions": instance._memory_compactions,
+            "reason_for_retention": "ONE_BOUNDED_FRESH_ADVISORY_OUTPUT",
+        }
+    router = getattr(autopilot, "_legacy_swing_fmp_router", None)
+    if router is not None:
+        with router._lock:
+            for name in ("_quote_cache", "_request_results", "_request_response_bytes", "_request_inflight"):
+                # Inspect while locked; do not copy potentially large payloads.
+                value = getattr(router, name, {})
+                roots["provider_router." + name] = value
+            router_rows = _memory_owner_rows({k: v for k, v in roots.items() if k.startswith("provider_router.")})
+        roots = {k: v for k, v in roots.items() if not k.startswith("provider_router.")}
+    else:
+        router_rows = []
+    # Large indexes must not disappear behind declaration order. The bounded
+    # table explicitly reports root truncation when inspection has to stop.
+    roots = dict(sorted(roots.items(), key=lambda pair: sys.getsizeof(pair[1]), reverse=True))
+    rows = _memory_owner_rows(roots) + router_rows
+    # Refine the largest truncated roots within a small aggregate time budget.
+    # Most owner rows are tiny; the initial lower bound must not be mistaken
+    # for a proof that a large nested payload is small.
+    deadline = time.monotonic() + .25
+    for row in sorted(rows, key=lambda r: r["estimated_memory_bytes"], reverse=True)[:16]:
+        if time.monotonic() >= deadline:
+            break
+        if row["estimate_truncated"] and row["owner_name"] in roots:
+            size, truncated = retained_size_lower_bound(roots[row["owner_name"]], max_nodes=65_536)
+            row.update(estimated_memory_bytes=size, estimate_truncated=truncated)
+    for row in rows:
+        row.update(contracts.get(row["owner_name"], {}))
+    if len(roots) > 256:
+        rows.append({"owner_name": "UNATTRIBUTED_MEMORY", "estimated_memory_bytes": 0,
+                     "item_count": len(roots) - 256, "reason_for_retention": "ROOT_INSPECTION_LIMIT"})
+    return sorted(rows, key=lambda row: row["estimated_memory_bytes"], reverse=True)
+
+
+def _memory_owner_rows(roots: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = []
+    for name, value in islice(roots.items(), 256):
+        size, truncated = retained_size_lower_bound(value)
+        rows.append({
+            "owner_name": name, "object_class": type(value).__name__,
+            "item_count": len(value), "estimated_memory_bytes": size,
+            "estimate_method": "bounded_lower_bound", "estimate_truncated": truncated,
+            "retention_class": "TRUTH_CRITICAL_ACTIVE",
+            "retention_limit": None, "oldest_item_age": None,
+            "growth_rate": None, "reconstructable": False,
+            "persisted_elsewhere": None, "truth_critical": True,
+            "last_compaction_at": None, "evictions_compactions": 0,
+            "reason_for_retention": "PROTECTED_PENDING_OWNER_CONTRACT",
+        })
+    return rows
+
+
+def memory_budget_state(rss_mb: float, hard_limit_mb: float) -> str:
+    if hard_limit_mb <= 0 or rss_mb <= 0:
+        return "UNKNOWN_FAIL_CLOSED"
+    ratio = rss_mb / hard_limit_mb
+    return ("HARD_FAIL_CLOSED" if ratio >= 1 else "MEMORY_PAUSE" if ratio >= .85
+            else "COMPACTION_REQUIRED" if ratio >= .75 else "ELEVATED" if ratio >= .60
+            else "NORMAL")
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -204,6 +353,10 @@ def canonical_runtime_invariants(state: dict[str, Any], *, backend_pid: int | No
             "safe_repair": repair,
         }
 
+    resource_facts = dict(state.get("resource") or {})
+    rss_mb = _as_float((resource_facts.get("worker_process") or {}).get("memory_mb"))
+    hard_mb = _as_float(limits.get("maximum_worker_memory_mb"), RuntimeLimits().maximum_worker_memory_mb)
+    worker_memory_unsafe = rss_mb >= .85 * hard_mb if hard_mb > 0 else True
     worker_absent = liveness.get("liveness_state") == "PROCESS_MISSING"
     heartbeat_stale = liveness.get("liveness_state") == "STALE_HEARTBEAT"
     return {
@@ -221,7 +374,7 @@ def canonical_runtime_invariants(state: dict[str, Any], *, backend_pid: int | No
         "LOAD_IS_NORMALIZED_BY_CPU_COUNT": result(bool((state.get("resource") or {}).get("logical_cpu_count")), "load divided by logical CPU count", (state.get("resource") or {}).get("normalized_load_1m"), "resource snapshot lacks logical CPU normalized load", "publish one bounded resource sample"),
         "ELEVATED_DOES_NOT_EQUAL_HIGH_PAUSE": result(str(state.get("resource_state") or "") not in {"RESOURCE_HIGH_PAUSE", "RESOURCE_MEMORY_PAUSE", "RESOURCE_API_LATENCY_PAUSE"} or int((state.get("resource_policy") or {}).get("consecutive_high_samples") or 0) >= int(limits.get("sustained_high_samples_required") or 3), "high pause requires sustained unsafe samples", state.get("resource_policy"), "high pause has no sustained-sample confirmation", "retain cooldown and collect bounded resource samples"),
         "HIGH_PAUSE_REQUIRES_SUSTAINED_PRESSURE": result(int((state.get("resource_policy") or {}).get("consecutive_high_samples") or 0) >= int(limits.get("sustained_high_samples_required") or 3) if str(state.get("resource_state") or "") == "RESOURCE_HIGH_PAUSE" else True, "configured consecutive high samples", (state.get("resource_policy") or {}).get("consecutive_high_samples"), "high pause was entered from a transient sample", "wait for sustained high pressure before pausing"),
-        "MEMORY_PRESSURE_FAILS_SAFE": result(str(state.get("resource_state") or "") != "RESOURCE_MEMORY_PAUSE" or str((state.get("resource") or {}).get("memory_pressure_state")) in {"elevated", "high"}, "memory pressure pause only with unsafe memory evidence", (state.get("resource") or {}).get("memory_pressure_state"), "memory pause lacks unsafe-memory evidence", "resample memory before changing state"),
+        "MEMORY_PRESSURE_FAILS_SAFE": result(str(state.get("resource_state") or "") != "RESOURCE_MEMORY_PAUSE" or worker_memory_unsafe or str(resource_facts.get("memory_pressure_state")) in {"elevated", "high"}, "memory pressure pause only with unsafe memory evidence", {"host_pressure": resource_facts.get("memory_pressure_state"), "worker_rss_mb": rss_mb, "configured_max_mb": hard_mb}, "memory pause lacks unsafe-memory evidence", "resample memory before changing state"),
         "API_LATENCY_CAN_PAUSE_WORKER": result(True, "latency policy configured", limits.get("maximum_api_latency_ms"), "API latency threshold missing", "publish runtime limits"),
         "RESOURCE_SAMPLING_FAILURE_FAILS_CLOSED": result(str(state.get("resource_state") or "") != "RESOURCE_UNKNOWN_FAIL_CLOSED" or str(state.get("cycle_state") or "") in {"PAUSED_RESOURCE_UNKNOWN", "CHECKPOINTED"}, "unknown samples pause acquisition", state.get("cycle_state"), "unknown resource sample allowed active acquisition", "pause until a complete sample is available"),
         "RECOVERY_REQUIRES_HEALTHY_HYSTERESIS": result(str(state.get("resource_state") or "") not in {"RESOURCE_RECOVERY_COOLDOWN"} or int((state.get("resource_policy") or {}).get("healthy_samples_observed") or 0) < int(limits.get("healthy_samples_required") or 3), "multiple healthy samples before resume", (state.get("resource_policy") or {}).get("healthy_samples_observed"), "recovery skipped healthy-sample hysteresis", "continue cooldown sampling"),
@@ -363,19 +516,21 @@ def classify_resource_signals(signals: dict[str, Any], *, limits: RuntimeLimits 
         missing.append("memory_pressure")
     if require_complete and latency is None:
         missing.append("backend_health_latency_ms")
+    if require_complete and worker_memory <= 0:
+        missing.append("worker_rss_mb")
     normalized_1m = _as_float(load_1m) / cpu_count if cpu_count > 0 else None
     normalized_5m = _as_float(load_5m) / cpu_count if cpu_count > 0 else None
     normalized_15m = _as_float(load_15m) / cpu_count if cpu_count > 0 else None
     candidate, reason = "RESOURCE_NORMAL", "machine_aware_signals_healthy"
     if missing:
         candidate, reason = "RESOURCE_UNKNOWN_FAIL_CLOSED", "missing_required_resource_signals:" + ",".join(missing)
-    elif memory_pressure == "high" or (available_memory is not None and _as_float(available_memory) < limits.minimum_available_memory_mb) or worker_memory > limits.maximum_worker_memory_mb:
+    elif memory_pressure == "high" or (available_memory is not None and _as_float(available_memory) < limits.minimum_available_memory_mb) or worker_memory >= .85 * limits.maximum_worker_memory_mb:
         candidate, reason = "RESOURCE_MEMORY_PAUSE", "memory_pressure_or_process_memory_limit"
     elif latency is not None and _as_float(latency) >= limits.maximum_api_latency_ms:
         candidate, reason = "RESOURCE_API_LATENCY_PAUSE", "backend_latency_above_pause_threshold"
     elif (normalized_1m is not None and normalized_1m >= limits.high_load_per_cpu and _as_float(cpu_idle) <= limits.minimum_cpu_idle_percent) or _as_float(cpu_idle) <= limits.critical_cpu_idle_percent:
         candidate, reason = "RESOURCE_HIGH_PAUSE", "sustained_normalized_load_and_low_cpu_idle_required"
-    elif (normalized_1m is not None and normalized_1m >= limits.elevated_load_per_cpu) or _as_float(cpu_idle) < limits.minimum_cpu_idle_percent or (latency is not None and _as_float(latency) >= limits.elevated_api_latency_ms):
+    elif worker_memory >= .60 * limits.maximum_worker_memory_mb or (normalized_1m is not None and normalized_1m >= limits.elevated_load_per_cpu) or _as_float(cpu_idle) < limits.minimum_cpu_idle_percent or (latency is not None and _as_float(latency) >= limits.elevated_api_latency_ms):
         candidate, reason = "RESOURCE_ELEVATED", "normalized_load_or_moderate_resource_pressure"
     return {
         **signals,
@@ -386,6 +541,7 @@ def classify_resource_signals(signals: dict[str, Any], *, limits: RuntimeLimits 
         "resource_candidate_state": candidate,
         "resource_candidate_reason": reason,
         "resource_sampling_complete": not bool(missing),
+        "memory_state": memory_budget_state(worker_memory, limits.maximum_worker_memory_mb),
         "missing_resource_signals": missing,
     }
 
