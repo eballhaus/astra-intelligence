@@ -18,6 +18,7 @@ from typing import Any, Mapping, Sequence
 from engine.astra_historical_learning_compression_helpers_v1 import (
     profile_and_compress_partition_v1,
 )
+from engine.astra_pit_metadata_contract_v1 import normalize_historical_record, replay_readiness
 from engine.astra_intraday_evidence_index_v1 import (
     fetch_intraday_raw_window,
     retrieve_intraday_session_matches,
@@ -217,10 +218,15 @@ def _same_archive_session(entry: Mapping[str, Any], forward: Sequence[Mapping[st
 
 def _decision_support(items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     rows = [dict(item) for item in items]
+    pit_rows = [dict(item.get("pit_metadata") or {}) for item in rows]
+    pit_safe = sum(1 for item in pit_rows if replay_readiness(item).get("replay_allowed"))
     return {
         "historical_evidence_consulted": bool(rows),
         "evidence_ids": [item["evidence_id"] for item in rows],
         "match_count": len(rows),
+        "pit_replay_safe_count": pit_safe,
+        "pit_replay_unsafe_count": max(0, len(pit_rows) - pit_safe),
+        "pit_replay_guard": "non_safe_records_are_not_admitted_to_compression_or_causal_replay",
         "advisory_only": True,
         "natural_paper_truth_remains_final_authority": True,
         "no_retroactive_natural_truth_attribution": True,
@@ -245,6 +251,17 @@ def _evidence_item(
     evidence_id = "historical-evidence:" + hashlib.sha256(("|".join(raw_keys) + f"|{lane}|{side}").encode()).hexdigest()[:24]
     outcome = _forward_outcome(entry, forward, side)
     provider = entry["provider"]
+    pit_metadata = normalize_historical_record(
+        entry,
+        dataset_type="market_bar",
+        source_context={
+            "completed_bar_proven": True,
+            "replay_contract_valid": True,
+            "source_file": query.get("database"),
+            "source_endpoint": query.get("source_endpoint"),
+            "source_provenance": query,
+        },
+    )
     return {
         "evidence_id": evidence_id,
         "id": evidence_id,
@@ -283,6 +300,8 @@ def _evidence_item(
         "sample_size": 1,
         "pattern_generalization_allowed": False,
         "data_quality": {"entry_bar_valid": True, "forward_bars_valid": len(forward), "complete_forward_window": True, "data_quality_score": 100.0},
+        "pit_metadata": pit_metadata,
+        "replay_safe": pit_metadata["replay_safe"],
         "sector_context": setup.get("sector"),
         "etf_context": setup.get("etf_context"),
         "catalyst_context": setup.get("catalyst"),
@@ -418,9 +437,18 @@ def _read_indexed_intraday_evidence(
 
 def compress_historical_evidence_v1(evidence_items: Sequence[Mapping[str, Any]], *, database: str) -> dict[str, Any]:
     """Use the existing pure compression/Teacher handoff for replay evidence."""
-    rows = [dict(item) for item in evidence_items if isinstance(item, Mapping)]
+    rows = []
+    rejected = []
+    for item in evidence_items:
+        if not isinstance(item, Mapping):
+            continue
+        decision = replay_readiness(dict(item.get("pit_metadata") or {}))
+        if decision.get("replay_allowed"):
+            rows.append(dict(item))
+        else:
+            rejected.append(decision)
     if not rows:
-        return {"status": "INSUFFICIENT_EVIDENCE", "persisted": False, **SAFETY}
+        return {"status": "INSUFFICIENT_EVIDENCE", "persisted": False, "pit_rejected_count": len(rejected), **SAFETY}
     result = profile_and_compress_partition_v1(
         {"source_identity": "historical_market_bars", "path": database, "source_snapshot": "read_only_archive_query"},
         "historical-evidence-production-v1",
@@ -431,6 +459,7 @@ def compress_historical_evidence_v1(evidence_items: Sequence[Mapping[str, Any]],
         "persisted": False,
         "historical_replay_only": True,
         "evidence_items_compressed": len(rows),
+        "pit_rejected_count": len(rejected),
         "canonical_compression_handoff": result.get("canonical_compression_handoff"),
         "canonical_teacher_handoff": result.get("canonical_teacher_handoff"),
         "packets": result.get("packets", []),

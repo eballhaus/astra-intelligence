@@ -1,0 +1,45 @@
+{
+  "schema_version": "astra_pit_migration_manifest_v1",
+  "mode": "READ_ONLY_DRY_RUN",
+  "generated_at": "2026-09-20",
+  "source_contract": "engine/astra_pit_metadata_contract_v1.py",
+  "source_inventory": [
+    "/Users/eric/Desktop/astra-intelligence-clean/reports/astra_historical_data_inventory_v1.json",
+    "/Users/Shared/AstraRuntime/state/ai_trading_memory.db",
+    "/Users/Shared/AstraRuntime/state/fmp_archive_*_v1.json",
+    "/Users/Shared/AstraRuntime/state/fmp_crypto_archive_v1_*",
+    "/Users/Shared/AstraRuntime/state/historical_context_phase2_v1/*.jsonl"
+  ],
+  "write_policy": {
+    "source_records_modified": false,
+    "sidecar_records_written": false,
+    "duplicate_archives_created": false,
+    "persistent_truth_modified": false,
+    "runtime_state_modified": false
+  },
+  "dataset_actions": [
+    {"dataset":"equity_intraday_1m","classification":"normalized_safe","basis":"validated completed-bar archive contract","action":"normalize on replay read; no source rewrite"},
+    {"dataset":"equity_intraday_5m","classification":"normalized_safe","basis":"validated completed-bar archive contract","action":"normalize on replay read; no source rewrite"},
+    {"dataset":"equity_intraday_15m","classification":"normalized_safe","basis":"validated completed-bar archive contract","action":"normalize on replay read; no source rewrite"},
+    {"dataset":"crypto_1m","classification":"normalized_safe","basis":"complete replay-only archive with validated windows","action":"normalize on replay read; no source rewrite"},
+    {"dataset":"crypto_5m","classification":"normalized_safe","basis":"complete replay-only archive with validated windows","action":"normalize on replay read; no source rewrite"},
+    {"dataset":"equity_daily","classification":"normalized_partial","basis":"event/ingestion timestamps exist; completion/adjustment availability is not uniform","action":"retain original; reject causal replay without validated context"},
+    {"dataset":"equity_intraday_1h","classification":"normalized_partial","basis":"rows exist but archive progress and validation states disagree","action":"retain original; resolve metadata before safe admission"},
+    {"dataset":"etf_history","classification":"normalized_partial","basis":"bar/action coverage differs by timeframe and symbol","action":"normalize declared subsets only"},
+    {"dataset":"crypto_1h","classification":"normalized_partial","basis":"supported empty windows","action":"retain gap markers; no inferred rows"},
+    {"dataset":"macro_regime","classification":"normalized_partial","basis":"derived source timestamps exist; raw FRED release/vintage is not local","action":"replay only with explicit vintage metadata"},
+    {"dataset":"sec_edgar","classification":"normalized_partial","basis":"normalized facts exist; sampled filing provenance is empty","action":"fail closed until filing timestamp is present"},
+    {"dataset":"fundamentals","classification":"normalized_partial","basis":"acceptedDate exists for some FMP records","action":"normalize only records with explicit filing availability"},
+    {"dataset":"earnings","classification":"normalized_partial","basis":"event date and provider update exist; release time often absent","action":"do not use update time as release time"},
+    {"dataset":"corporate_actions","classification":"normalized_partial","basis":"effective/declaration/payment fields exist but announcement semantics vary","action":"preserve all original dates and fail closed when publication is absent"},
+    {"dataset":"execution_microstructure","classification":"normalized_partial","basis":"OHLCV proxy only; quote_data unavailable","action":"keep advisory replay-only classification"},
+    {"dataset":"historical_features_forecasts","classification":"normalized_partial","basis":"source_timestamp and lookahead flags exist; availability is not uniform","action":"require explicit as-of before causal replay"},
+    {"dataset":"news_catalyst","classification":"requires_external_metadata","basis":"Phase 2 provider required and no historical archive","action":"no normalization possible"},
+    {"dataset":"analyst_estimates","classification":"requires_external_metadata","basis":"Phase 2 provider required and no adapter","action":"no normalization possible"},
+    {"dataset":"options_volatility","classification":"requires_external_metadata","basis":"no historical option-chain archive","action":"do not promote realized-volatility proxy to IV"},
+    {"dataset":"short_ownership","classification":"requires_external_metadata","basis":"no historical time-series archive","action":"no normalization possible"},
+    {"dataset":"crypto_specialized","classification":"requires_external_metadata","basis":"funding/open-interest/liquidation adapter absent","action":"no normalization possible"}
+  ],
+  "checkpoint_policy": "No checkpoint files were written because this dry run creates no normalized sidecar and reads bounded metadata only.",
+  "next_action": "Run a separately authorized metadata-only pass over existing SEC/FMP/FRED-compatible records after choosing whether to persist normalized fields in existing schemas or expose them on read."
+}

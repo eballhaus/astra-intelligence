@@ -1,0 +1,61 @@
+{
+  "schema_version": "astra_pit_metadata_normalization_v1",
+  "generated_at": "2026-09-20",
+  "read_only": true,
+  "contract_module": "engine/astra_pit_metadata_contract_v1.py",
+  "replay_guard": "require_replay_safe",
+  "source_archives_rewritten": false,
+  "new_archives_written": false,
+  "runtime_mutations": 0,
+  "broker_actions": 0,
+  "dataset_counts": {
+    "safe_datasets": 5,
+    "partially_normalized_datasets": 11,
+    "replay_unsafe_datasets": 5
+  },
+  "record_counts": {
+    "POINT_IN_TIME_SAFE": {"estimate": 8166526, "basis": "validated declared 1m/5m/15m equity and 1m/5m crypto bar rows; no sidecar written"},
+    "PARTIALLY_POINT_IN_TIME": {"estimate": 19072783, "basis": "canonical daily and 1-hour bar rows without uniform per-row availability/completion metadata; overlapping derived rows excluded"},
+    "TIMESTAMP_INSUFFICIENT": {"count": null, "basis": "not globally materialized; representative SEC, earnings, macro, news, feature and raw-bar records fail closed"},
+    "CURRENT_SNAPSHOT_ONLY": {"count": null, "basis": "dataset-specific; current/profile records are classified when source context marks them snapshot-only"},
+    "UNKNOWN": {"count": null, "basis": "dataset-specific; reserved for records with no usable timestamp fields"}
+  },
+  "replay_safe_coverage": {
+    "percent_estimate": 30.0,
+    "numerator_estimate": 8166526,
+    "denominator_canonical_market_bar_rows": 27243871,
+    "caveat": "source-contract estimate, not a materialized normalized archive; overlapping context representations excluded"
+  },
+  "dataset_adapters": {
+    "market_bar": "validated completion/as-of contract; fail closed without it",
+    "sec_filing": "period end separated from accepted/filing timestamp",
+    "fundamentals": "period end separated from accepted/filing timestamp",
+    "earnings": "event date separated from release timestamp",
+    "fred": "observation period separated from release/vintage timestamp",
+    "corporate_action": "effective date separated from announcement/publication",
+    "news": "event time separated from publication time",
+    "feature_snapshot": "source/as-of time only; no inferred publication"
+  },
+  "anti_lookahead_tests": {
+    "future_earnings_before_publication_rejected": true,
+    "sec_before_acceptance_rejected": true,
+    "macro_without_vintage_rejected": true,
+    "incomplete_bar_rejected": true,
+    "news_without_publication_rejected": true,
+    "fundamental_period_end_not_availability": true,
+    "missing_availability_fail_closed": true,
+    "raw_timestamps_preserved": true,
+    "live_systems_unchanged": true,
+    "paper_only": true
+  },
+  "external_data_gaps": [
+    "historical news/catalyst",
+    "point-in-time analyst revisions",
+    "historical options IV/skew/open interest",
+    "short interest and ownership time series",
+    "crypto funding/open interest/liquidations/basis/on-chain",
+    "true historical quote/trade/SIP/NBBO"
+  ],
+  "recommended_next_phase": "Metadata-only repair of existing SEC/FMP/FRED-compatible records and 1-hour completion metadata, then one narrowly scoped catalyst and quote/trade cohort if still required.",
+  "safety": {"paper_only": true, "trading_policy_changed": false, "worker_restart_required": false, "forced_orders_or_exits": 0}
+}
