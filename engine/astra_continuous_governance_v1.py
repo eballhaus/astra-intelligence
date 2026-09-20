@@ -302,6 +302,23 @@ class ContinuousGovernanceV1:
         activations = _dict(runtime_state.get("legacy_forward_activations"))
         return records, reviews, activations
 
+    @staticmethod
+    def _compact_legacy_observation(row: dict[str, Any]) -> dict[str, Any]:
+        """Keep governance diagnostics compact without dropping decision facts."""
+        return {
+            "activation_id": row.get("activation_id"),
+            "symbol": row.get("symbol"),
+            "identity": dict(row.get("identity") or {}),
+            "identity_complete": bool(row.get("identity_complete")),
+            "identity_conflict": bool(row.get("identity_conflict")),
+            "daily_sufficient": bool(row.get("daily_sufficient")),
+            "review_present": bool(row.get("review")),
+            "review_eligible": bool(row.get("review_eligible")),
+            "review_scheduled": bool(row.get("review_scheduled")),
+            "momentum_current": bool(row.get("momentum_current")),
+            "acknowledgements": dict(row.get("acknowledgements") or {}),
+        }
+
     def _invariants(self, worker_state: dict[str, Any], runtime_state: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         invariants: list[dict[str, Any]] = []
         # Raw worker snapshots intentionally stay compact.  The runtime
@@ -523,8 +540,9 @@ class ContinuousGovernanceV1:
             }
             row = {"activation_id": activation_id, "daily": daily, "review": review, "activation": activation, "identity": identity, "identity_complete": identity_complete, "identity_conflict": identity_conflict, "daily_sufficient": sufficient, "review_eligible": eligible, "review_scheduled": scheduled, "momentum_current": momentum_current, "acknowledgements": acks, "symbol": identity["symbol"]}
             rows.append(row)
+            compact_observation = self._compact_legacy_observation(row)
             def add(invariant_id: str, passed: bool, blocker: str, remediation: str | None = None) -> None:
-                invariants.append({"invariant_id": invariant_id, "owner": "PaperAutopilot", "dependencies": [activation_id], "state": "PASS" if passed else "LEGITIMATE_WAITING_STATE" if blocker.startswith("no_current") else "WARN", "observed_value": row, "expected_value": "current", "first_failed_at": None if passed else _now(), "last_checked_at": _now(), "failure_count": 0 if passed else 1, "severity": "WARN" if not passed else "INFO", "repairability": "ALLOWLISTED" if remediation else "LEGITIMATE_WAITING", "exact_blocker": None if passed else blocker, "allowed_remediations": [remediation] if remediation else []})
+                invariants.append({"invariant_id": invariant_id, "owner": "PaperAutopilot", "dependencies": [activation_id], "state": "PASS" if passed else "LEGITIMATE_WAITING_STATE" if blocker.startswith("no_current") else "WARN", "observed_value": compact_observation, "expected_value": "current", "first_failed_at": None if passed else _now(), "last_checked_at": _now(), "failure_count": 0 if passed else 1, "severity": "WARN" if not passed else "INFO", "repairability": "ALLOWLISTED" if remediation else "LEGITIMATE_WAITING", "exact_blocker": None if passed else blocker, "allowed_remediations": [remediation] if remediation else []})
             add("CANONICAL_SERIES_EXISTS", bool(daily.get("record_id")), "missing_canonical_daily_series")
             add("OPEN_POSITION_HAS_ONE_CANONICAL_LIFECYCLE", bool(review) or not sufficient, "no_current_eligible_broker_lifecycle_review")
             add("LIFECYCLE_HAS_LANE_STRATEGY_HORIZON", identity_complete, "ambiguous_or_missing_lifecycle_identity")

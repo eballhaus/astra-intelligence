@@ -1,3 +1,4 @@
+import json
 import math
 import tempfile
 import unittest
@@ -63,6 +64,31 @@ class ContinuousGovernanceTests(unittest.TestCase):
         self.assertEqual(campaign["final_state"], "LEGITIMATE_WAITING_STATE")
         self.assertEqual(result["repairs_executed"], 0)
         self.assertEqual(result["proof_rows"][0]["momentum_state"], "NOT_CURRENT")
+
+    def test_legacy_governance_observations_do_not_retain_full_evidence_payloads(self):
+        runtime_state = runtime(review=True, scheduled=True, momentum=True)
+        runtime_state["legacy_swing_canary"]["market_records"]["activation-nvda"]["HISTORICAL_BARS_DAILY"]["large_payload"] = ["bar"] * 10000
+        runtime_state["legacy_swing_canary"]["reviews"]["activation-nvda"]["large_payload"] = ["review"] * 10000
+        runtime_state["legacy_forward_activations"]["activation-nvda"]["large_payload"] = ["activation"] * 10000
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = ContinuousGovernanceV1(directory).run_worker_cycle(
+                worker_state=worker_state(), runtime_state=runtime_state, safety=SAFETY,
+            )
+
+        observed = [
+            row["observed_value"]
+            for row in result["invariants"]
+            if row.get("dependencies") == ["activation-nvda"]
+        ]
+        self.assertEqual(len(observed), 7)
+        self.assertTrue(all("daily" not in row and "review" not in row and "activation" not in row for row in observed))
+        self.assertTrue(all(row["identity_complete"] for row in observed))
+        self.assertTrue(all(row["daily_sufficient"] for row in observed))
+        self.assertTrue(all(row["review_eligible"] for row in observed))
+        self.assertTrue(all(row["review_scheduled"] for row in observed))
+        self.assertTrue(all(row["momentum_current"] for row in observed))
+        self.assertLess(len(json.dumps(observed, separators=(",", ":"))), 5000)
 
     def test_unambiguous_eligible_review_is_requeued_once_with_existing_budget(self):
         runtime_state = runtime(review=True, scheduled=False, momentum=False)
