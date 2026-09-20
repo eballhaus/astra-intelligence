@@ -90,6 +90,47 @@ class ContinuousGovernanceTests(unittest.TestCase):
         self.assertTrue(all(row["momentum_current"] for row in observed))
         self.assertLess(len(json.dumps(observed, separators=(",", ":"))), 5000)
 
+    def test_integrity_governance_observations_compact_root_cause_payloads(self):
+        runtime_state = runtime(review=False)
+        runtime_state["system_integrity_scanner_v1"] = {
+            "schema_version": "scanner-v1", "status": "CRITICAL", "scan_owner": "canonical_worker",
+            "scan_mode": "DEEP", "last_scan_at": "2026-09-20T00:00:00Z", "scan_runtime_ms": 42,
+            "state_mutations_from_get": 0,
+            "active_root_causes": [{
+                "root_cause_id": "root-1", "category": "EVIDENCE_CONSUMER_FAILURE", "severity": "CRITICAL",
+                "state": "OPEN", "current_vs_historical": "CURRENT", "first_bad_handoff": "producer -> consumer",
+                "likely_owner": "owner", "affected_position_identity": "life-1", "safe_correction_available": False,
+                "human_repair_required": True, "legitimate_fail_closed": False, "recurrence_state": "OPEN",
+                "first_detected_at": "2026-09-19T00:00:00Z", "last_detected_at": "2026-09-20T00:00:00Z",
+                "occurrence_count": 3, "verification_id": "verify-1",
+                "causal_handoff_integrity_v1": {
+                    "category": "EVIDENCE_CONSUMER_FAILURE", "producer": "producer", "consumer": "consumer",
+                    "producer_state": "READY", "consumer_state": "MISSING", "consumer_blocker": "missing",
+                    "lifecycle_id": "life-1", "symbol": "AAPL", "lane": "DAY", "field": "quote",
+                    "evidence_timestamp": "2026-09-20T00:00:00Z", "first_bad_handoff": "producer -> consumer",
+                },
+                "large_payload": ["diagnostic"] * 10000,
+            }],
+            "resource_protection": {"state_files_over_limit": 0, "sqlite_contention_detected": False},
+            "crypto_market_data": {"rotation_cycle_completion": "COMPLETE", "pairs_evaluated": 10},
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = ContinuousGovernanceV1(directory).run_worker_cycle(
+                worker_state=worker_state(), runtime_state=runtime_state, safety=SAFETY,
+            )
+
+        scanner = [
+            row for row in result["invariants"]
+            if row.get("owner") == "astra_continuous_system_integrity_scanner_v1"
+        ]
+        self.assertEqual(len(scanner), 22)
+        observed = scanner[0]["observed_value"]
+        self.assertNotIn("large_payload", json.dumps(observed))
+        self.assertEqual(observed["active_root_causes"][0]["category"], "EVIDENCE_CONSUMER_FAILURE")
+        self.assertEqual(observed["active_root_causes"][0]["causal_handoff_integrity_v1"]["consumer"], "consumer")
+        self.assertLess(len(json.dumps([row["observed_value"] for row in scanner], separators=(",", ":"))), 50000)
+
     def test_unambiguous_eligible_review_is_requeued_once_with_existing_budget(self):
         runtime_state = runtime(review=True, scheduled=False, momentum=False)
         with tempfile.TemporaryDirectory() as directory:

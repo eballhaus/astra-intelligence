@@ -319,6 +319,56 @@ class ContinuousGovernanceV1:
             "acknowledgements": dict(row.get("acknowledgements") or {}),
         }
 
+    @staticmethod
+    def _compact_integrity_observation(
+        integrity: dict[str, Any],
+        roots: list[dict[str, Any]],
+        resource: dict[str, Any],
+        crypto: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Project scanner diagnostics without repeating the full root-cause payload."""
+        root_fields = (
+            "root_cause_id", "category", "severity", "state", "current_vs_historical",
+            "first_bad_handoff", "likely_owner", "affected_position_identity",
+            "safe_correction_available", "human_repair_required", "legitimate_fail_closed",
+            "recurrence_state", "first_detected_at", "last_detected_at", "occurrence_count",
+            "verification_id",
+        )
+        handoff_fields = (
+            "category", "producer", "consumer", "producer_state", "consumer_state",
+            "consumer_blocker", "lifecycle_id", "symbol", "lane", "field",
+            "evidence_timestamp", "first_bad_handoff",
+        )
+        compact_roots = []
+        for root in roots:
+            compact = {field: root.get(field) for field in root_fields if field in root}
+            handoff = _dict(root.get("causal_handoff_integrity_v1"))
+            if handoff:
+                compact["causal_handoff_integrity_v1"] = {
+                    field: handoff.get(field) for field in handoff_fields if field in handoff
+                }
+            compact_roots.append(compact)
+        return {
+            "schema_version": integrity.get("schema_version"),
+            "status": integrity.get("status"),
+            "scan_owner": integrity.get("scan_owner"),
+            "scan_mode": integrity.get("scan_mode"),
+            "last_scan_at": integrity.get("last_scan_at"),
+            "scan_runtime_ms": integrity.get("scan_runtime_ms"),
+            "state_mutations_from_get": integrity.get("state_mutations_from_get"),
+            "active_root_causes": compact_roots,
+            "resource_protection": {
+                field: resource.get(field)
+                for field in ("sqlite_contention_detected", "state_files_over_limit", "unsafe_deep_scan_under_load", "deferred")
+                if field in resource
+            },
+            "crypto_market_data": {
+                field: crypto.get(field)
+                for field in ("rotation_cycle_completion", "rotation_cycles_remaining", "pairs_evaluated", "quote_observable_pairs", "pairs_data_quality_ready")
+                if field in crypto
+            },
+        }
+
     def _invariants(self, worker_state: dict[str, Any], runtime_state: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         invariants: list[dict[str, Any]] = []
         # Raw worker snapshots intentionally stay compact.  The runtime
@@ -823,9 +873,12 @@ class ContinuousGovernanceV1:
         integrity = _dict(runtime_state.get("system_integrity_scanner_v1"))
         if integrity:
             roots = [row for row in list(integrity.get("active_root_causes") or []) if isinstance(row, dict)]
+            resource = _dict(integrity.get("resource_protection"))
+            crypto = _dict(integrity.get("crypto_market_data"))
+            compact_observation = self._compact_integrity_observation(integrity, roots, resource, crypto)
             def scanner_invariant(invariant_id: str, passed: bool, blocker: str) -> None:
                 invariants.append({"invariant_id": invariant_id, "owner": "astra_continuous_system_integrity_scanner_v1", "dependencies": ["worker committed integrity scan"],
-                    "state": "PASS" if passed else "WARN", "observed_value": integrity, "expected_value": "no active critical root cause",
+                    "state": "PASS" if passed else "WARN", "observed_value": compact_observation, "expected_value": "no active critical root cause",
                     "first_failed_at": None if passed else _now(), "last_checked_at": _now(), "failure_count": 0 if passed else 1,
                     "severity": "INFO" if passed else "HIGH", "repairability": "DIAGNOSTIC", "exact_blocker": "" if passed else blocker,
                     "allowed_remediations": ["allowlisted derived-state correction only"]})
@@ -836,13 +889,11 @@ class ContinuousGovernanceV1:
             scanner_invariant("HISTORICAL_RECONCILIATION_CANNOT_OVERRIDE_CURRENT_POSITION_OWNER", not any(str(row.get("category")) == "HISTORICAL_RECONCILIATION_OWNERSHIP_COLLISION" for row in roots), "historical reconciliation row remains an operational position owner")
             scanner_invariant("SAFE_CORRECTION_MUST_BE_ALLOWLISTED", all(bool(row.get("safe_correction_available")) or bool(row.get("human_repair_required")) for row in roots), "unclassified correction authority")
             scanner_invariant("RECURRENT_DEFECT_MUST_ESCALATE", not any(str(row.get("state")) == "RECURRENT" for row in roots), "recurrent root cause requires review")
-            resource = _dict(integrity.get("resource_protection"))
             scanner_invariant("SENTINEL_DOES_NOT_EXCEED_RUNTIME_BUDGET", str(integrity.get("status")) != "SCAN_PARTIAL_RESOURCE_BUDGET", "Sentinel scan runtime budget exceeded")
             scanner_invariant("SENTINEL_DOES_NOT_CREATE_SQLITE_CONTENTION", not bool(resource.get("sqlite_contention_detected")), "Sentinel observed SQLite contention")
             scanner_invariant("SENTINEL_STATE_FILES_REMAIN_BOUNDED", _integer(resource.get("state_files_over_limit"), 0) == 0, "Sentinel bounded state file limit exceeded")
             scanner_invariant("SENTINEL_HAS_SINGLE_SCAN_OWNER", str(integrity.get("scan_owner") or "") == "canonical_worker", "Sentinel canonical worker owner absent")
             scanner_invariant("SENTINEL_DEEP_SCAN_DEFERS_UNDER_LOAD", not bool(resource.get("unsafe_deep_scan_under_load")), "deep Sentinel scan did not defer under load")
-            crypto = _dict(integrity.get("crypto_market_data"))
             scanner_invariant("CRYPTO_TRADING_SUPPORT_AND_QUOTE_OBSERVABILITY_ARE_DISTINCT", True, "")
             scanner_invariant("CRYPTO_VALID_UPSTREAM_QUOTE_MUST_SURVIVE_ALL_TRANSFORMATIONS", not any(str(row.get("category")) == "FIELD_DROPPED_DURING_TRANSFORMATION" for row in roots), "valid crypto quote microstructure dropped")
             scanner_invariant("CRYPTO_QUOTE_TIMESTAMP_LINEAGE_IS_PRESERVED", not any(str(row.get("category")) == "PRODUCER_CONSUMER_CONTRACT_MISMATCH" for row in roots), "crypto quote timestamp contract mismatch")
