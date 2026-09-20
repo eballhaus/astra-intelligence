@@ -113,6 +113,14 @@ def test_compaction_precedes_pause_and_recovery_requires_healthy_samples(monkeyp
     assert not worker._memory_background_suspended
     assert not CachedDiagnosticModule._memory_backpressure
     assert autopilot._runtime_state == {}
+    assert worker._memory_last_compaction_result['protected_owner_counts_unchanged']
+    # A deliberately faulty synthetic compactor must never authorize resume.
+    worker._memory_last_compaction = 0
+    facts['worker_process']['memory_mb'] = 900
+    monkeypatch.setattr(module, 'release_unused_native_memory', lambda: autopilot._runtime_state.update({'native_lane_exit_lifecycle_v1': {'unexpected': {}}}) or 0)
+    sample, policy = worker._sample_resource()
+    assert policy['resource_state'] == 'RESOURCE_UNKNOWN_FAIL_CLOSED'
+    assert not worker._memory_last_compaction_result['protected_owner_counts_unchanged']
 
 
 def test_historical_manifest_size_does_not_preload_archive(tmp_path, monkeypatch):
@@ -147,3 +155,26 @@ def test_cache_admission_counts_large_dictionary_keys(tmp_path):
     budget = RuntimeLimits.from_env().maximum_worker_memory_mb * 1024 * 1024 // 128
     diagnostic._admit_memory_cache({'x' * (budget + 1): None})
     assert diagnostic._cache is None
+
+
+def test_native_relief_delegates_only_free_page_selection(monkeypatch):
+    from engine import astra_runtime_governance_v1 as resource
+    calls = []
+    monkeypatch.setattr(resource, '_native_allocator_api', lambda: (None, None, lambda zone, goal: calls.append((zone, goal)) or 4096))
+    assert resource.release_unused_native_memory() == 4096
+    assert calls == [(None, 0)]
+    monkeypatch.setattr(resource, '_native_allocator_api', lambda: None)
+    assert resource.release_unused_native_memory() == 0
+    assert resource.native_allocator_snapshot() == {'supported': False}
+
+
+@pytest.mark.parametrize('resource', ['RESOURCE_ELEVATED', 'RESOURCE_MEMORY_PAUSE', 'RESOURCE_RECOVERY_COOLDOWN', 'FUTURE_UNKNOWN_STATE'])
+def test_canonical_historical_owner_does_not_convert_pause_to_one_row(resource, tmp_path, monkeypatch):
+    from engine import astra_incremental_historical_learning_governor_v1 as governor
+    monkeypatch.setattr(governor, '_warehouse_sources', lambda *_: pytest.fail('paused owner located history'))
+    checkpoint = tmp_path / governor.CHECKPOINT_FILE
+    checkpoint.write_text(__import__('json').dumps({'throughput': {'healthy_successful_cycles': 100}}))
+    result = governor.run_incremental_historical_learning_cycle_v1(str(tmp_path), resource_facts={'worker_health': 'HEALTHY', 'resource_state': resource})
+    assert result['status'] == 'DEFERRED_RESOURCE_PRESSURE'
+    assert result['partitions_processed'] == []
+    assert __import__('json').loads(checkpoint.read_text())['throughput']['healthy_successful_cycles'] == 0

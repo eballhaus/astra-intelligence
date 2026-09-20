@@ -119,7 +119,7 @@ def profile_and_compress_partition_v1(source_ref: Mapping[str, Any], partition_i
 def adaptive_throughput_v1(history: Mapping[str, Any] | None, resource_facts: Mapping[str, Any] | None) -> dict[str, Any]:
     """Recommend a bounded serial budget; pressure always wins immediately."""
     history, facts = dict(history or {}), dict(resource_facts or {})
-    unhealthy = bool(facts.get("worker_cycle_error") or facts.get("suppressed_execution_exception") or facts.get("trading_priority_active") or facts.get("background_work_suspended"))
+    unhealthy = bool(facts.get("worker_cycle_error") or facts.get("suppressed_execution_exception") or facts.get("trading_priority_active") or facts.get("background_work_suspended") or (facts.get("resource_memory_telemetry_v1") or {}).get("background_work_suspended"))
     pressure = str(facts.get("resource_state") or "RESOURCE_NORMAL").upper()
     if unhealthy or pressure not in {"RESOURCE_NORMAL"}:
         mode = "PAUSED"

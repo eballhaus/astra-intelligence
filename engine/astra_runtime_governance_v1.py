@@ -22,6 +22,55 @@ from datetime import timezone
 from pathlib import Path
 from typing import Any
 from itertools import chain, islice
+from functools import lru_cache
+
+
+@lru_cache(maxsize=1)
+def _native_allocator_api() -> Any:
+    """Darwin's public malloc API; no remote-process or Python-heap access."""
+    if sys.platform != "darwin":
+        return None
+    import ctypes
+
+    class Statistics(ctypes.Structure):
+        _fields_ = [("blocks_in_use", ctypes.c_uint), ("size_in_use", ctypes.c_size_t),
+                    ("max_size_in_use", ctypes.c_size_t), ("size_allocated", ctypes.c_size_t)]
+
+    try:
+        library = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+        statistics = library.malloc_zone_statistics
+        statistics.argtypes = [ctypes.c_void_p, ctypes.POINTER(Statistics)]
+        statistics.restype = None
+        relief = library.malloc_zone_pressure_relief
+        relief.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+        relief.restype = ctypes.c_size_t
+        return Statistics, statistics, relief
+    except (OSError, AttributeError):
+        return None
+
+
+def native_allocator_snapshot() -> dict[str, Any]:
+    api = _native_allocator_api()
+    if api is None:
+        return {"supported": False}
+    import ctypes
+    statistics = api[0]()
+    api[1](None, ctypes.byref(statistics))
+    return {"supported": True, "owner_name": "NATIVE_MALLOC_ALLOCATOR",
+            "blocks_in_use": statistics.blocks_in_use, "live_bytes": statistics.size_in_use,
+            "reserved_bytes": statistics.size_allocated,
+            "unused_reserved_bytes": max(0, statistics.size_allocated - statistics.size_in_use),
+            "reserved_bytes_are_not_rss": True}
+
+
+def release_unused_native_memory() -> int:
+    """Ask the allocator to release free pages, never free a live pointer.
+
+    malloc/malloc.h documents NULL as all zones, goal=0 as maximal pressure
+    relief, and the return value as bytes released. Unsupported hosts no-op.
+    """
+    api = _native_allocator_api()
+    return int(api[2](None, 0)) if api is not None else 0
 
 
 def retained_size_lower_bound(value: Any, *, max_nodes: int = 4096) -> tuple[int, bool]:

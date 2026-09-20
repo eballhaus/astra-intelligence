@@ -28,6 +28,8 @@ from engine.astra_runtime_governance_v1 import (
     memory_budget_state,
     process_info,
     classify_resource_signals,
+    native_allocator_snapshot,
+    release_unused_native_memory,
     rotate_log,
     utc_now,
     write_snapshot,
@@ -120,7 +122,10 @@ class PaperAutopilotWorker:
         self._memory_items_released = 0
         self._memory_bytes_released = 0
         self._memory_cyclic_objects_collected = 0
+        self._memory_native_bytes_released = 0
         self._memory_last_compaction = 0.0
+        self._memory_last_compaction_at = None
+        self._memory_last_compaction_result: dict[str, Any] = {}
         self._memory_last_healthy = time.monotonic()
         self._memory_owner_previous: dict[str, tuple[float, int, int]] = {}
         self._cycle_timing_history: list[dict[str, Any]] = []
@@ -482,6 +487,8 @@ class PaperAutopilotWorker:
         )
         rss = float((sample.get("worker_process") or {}).get("memory_mb") or 0)
         memory_state = memory_budget_state(rss, self.limits.maximum_worker_memory_mb)
+        recent_rss = self._memory_samples[-1]["rss_mb"] if self._memory_samples else rss
+        rapid_growth = rss - recent_rss >= .10 * self.limits.maximum_worker_memory_mb
         from engine.intelligence_quality_common_v1 import CachedDiagnosticModule
         expired = CachedDiagnosticModule.compact_worker_caches(expired_only=True)
         self._memory_items_released += expired["items_released"]
@@ -489,19 +496,6 @@ class PaperAutopilotWorker:
             self._memory_background_suspended = True
             self._memory_healthy_samples = 0
             CachedDiagnosticModule._memory_backpressure = True
-            if memory_state != "UNKNOWN_FAIL_CLOSED" and time.monotonic() - self._memory_last_compaction >= 60:
-                import gc
-                self._memory_last_compaction = time.monotonic()
-                self._memory_compactions_attempted += 1
-                released = CachedDiagnosticModule.compact_worker_caches()
-                self._memory_items_released += released["items_released"]
-                self._memory_cyclic_objects_collected += gc.collect()
-                measured = process_info(os.getpid())
-                if measured.get("running"):
-                    sample["worker_process"] = measured
-                    self._memory_compactions_successful += int(float(measured.get("memory_mb") or 0) < rss)
-                    self._memory_bytes_released += max(0, int((rss - float(measured.get("memory_mb") or 0)) * 1024 * 1024))
-                    sample = classify_resource_signals(sample, limits=self.limits, require_complete=True)
         elif memory_state == "NORMAL":
             self._memory_last_healthy = time.monotonic()
             self._memory_healthy_samples += 1
@@ -510,6 +504,33 @@ class PaperAutopilotWorker:
                 CachedDiagnosticModule._memory_backpressure = False
         else:
             self._memory_healthy_samples = 0
+        compact = memory_state in {"COMPACTION_REQUIRED", "MEMORY_PAUSE", "HARD_FAIL_CLOSED"} or rapid_growth
+        if compact and time.monotonic() - self._memory_last_compaction >= 60:
+            import gc
+            protected_counts = self._resource_memory_owner_counts()
+            self._memory_last_compaction = time.monotonic()
+            self._memory_last_compaction_at = utc_now()
+            self._memory_compactions_attempted += 1
+            released = CachedDiagnosticModule.compact_worker_caches()
+            self._memory_items_released += released["items_released"]
+            self._memory_cyclic_objects_collected += gc.collect()
+            self._memory_native_bytes_released += release_unused_native_memory()
+            measured = process_info(os.getpid())
+            invariant_ok = protected_counts == self._resource_memory_owner_counts()
+            self._memory_last_compaction_result = {
+                "at": self._memory_last_compaction_at, "rss_before_mb": rss,
+                "rss_after_mb": measured.get("memory_mb"), "protected_owner_counts_unchanged": invariant_ok,
+                "items_released": released["items_released"],
+                "trigger": "RAPID_GROWTH" if rapid_growth else memory_state,
+            }
+            if measured.get("running"):
+                sample["worker_process"] = measured
+                self._memory_compactions_successful += int(float(measured.get("memory_mb") or 0) < rss)
+                self._memory_bytes_released += max(0, int((rss - float(measured.get("memory_mb") or 0)) * 1024 * 1024))
+                sample = classify_resource_signals(sample, limits=self.limits, require_complete=True)
+            if not invariant_ok:
+                sample["resource_candidate_state"] = "RESOURCE_UNKNOWN_FAIL_CLOSED"
+                sample["resource_candidate_reason"] = "memory_compaction_protected_owner_count_changed"
         self.resource_policy = advance_resource_policy(self.resource_policy, sample, limits=self.limits)
         sample["resource_state"] = self.resource_policy["resource_state"]
         sample["resource_reason"] = self.resource_policy["resource_transition_reason"]
@@ -576,6 +597,17 @@ class PaperAutopilotWorker:
             # Optional introspection cannot interrupt trading-critical work.
             owners = [{"owner_name": "UNATTRIBUTED_MEMORY", "item_count": 0,
                        "estimated_memory_bytes": 0, "reason_for_retention": "INSPECTION_FAILED:" + type(exc).__name__}]
+        native = native_allocator_snapshot()
+        if native.get("supported"):
+            owners.append({"owner_name": "NATIVE_MALLOC_ALLOCATOR", "object_class": "malloc_zones",
+                           "item_count": native["blocks_in_use"], "estimated_memory_bytes": native["live_bytes"],
+                           "estimate_method": "native_live_allocations_not_rss", "estimate_truncated": False,
+                           "retention_class": "ACTIVE_WORKING_SET", "retention_limit": self.limits.maximum_worker_memory_mb * 1024 * 1024,
+                           "oldest_item_age": None, "reconstructable": False, "persisted_elsewhere": False,
+                           "truth_critical": True, "last_compaction_at": self._memory_last_compaction_at,
+                           "evictions_compactions": self._memory_compactions_attempted,
+                           "reason_for_retention": "LIVE_ALLOCATIONS_PROTECTED;ALLOCATOR_ONLY_FREE_PAGE_RECLAMATION"})
+            owners.sort(key=lambda row: row["estimated_memory_bytes"], reverse=True)
         now = time.monotonic()
         previous = self._memory_owner_previous
         self._memory_owner_previous = {}
@@ -611,6 +643,9 @@ class PaperAutopilotWorker:
             "items_released": self._memory_items_released,
             "bytes_released_estimate": self._memory_bytes_released,
             "cyclic_objects_collected": self._memory_cyclic_objects_collected,
+            "native_allocator": native,
+            "native_bytes_released": self._memory_native_bytes_released,
+            "last_compaction": self._memory_last_compaction_result,
             "background_work_suspended": self._memory_background_suspended,
             "time_since_last_healthy_state": round(time.monotonic() - self._memory_last_healthy, 2),
             "unattributed_memory_estimate": {"status": "UNATTRIBUTED_MEMORY", "rss_mb": memory_mb, "reason": "bounded owner lower bounds overlap; native heap and allocator retention unmeasured"},

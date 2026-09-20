@@ -120,9 +120,11 @@ def _resource_decision(state: Path, facts: Mapping[str, Any] | None = None) -> d
         return {"decision": "DEFER", "reason": f"WORKER_NOT_HEALTHY:{health}"}
     if facts.get("worker_cycle_error") or facts.get("suppressed_execution_exception"):
         return {"decision": "DEFER", "reason": "WORKER_EXECUTION_ERROR_PRESENT"}
-    resource = str(facts.get("resource_state") or "RESOURCE_NORMAL").upper()
-    if resource in {"RESOURCE_HIGH_PAUSE", "RESOURCE_MEMORY_PAUSE", "RESOURCE_API_LATENCY_PAUSE", "RESOURCE_UNKNOWN_FAIL_CLOSED"}:
+    resource = str(facts.get("resource_state") or "RESOURCE_UNKNOWN_FAIL_CLOSED").upper()
+    if resource != "RESOURCE_NORMAL":
         return {"decision": "DEFER", "reason": f"RESOURCE_PRESSURE:{resource}"}
+    if facts.get("background_work_suspended") or (facts.get("resource_memory_telemetry_v1") or {}).get("background_work_suspended"):
+        return {"decision": "DEFER", "reason": "RESOURCE_MEMORY_RECOVERY_HYSTERESIS"}
     if bool(facts.get("trading_priority_active") or facts.get("active_order_submission") or facts.get("active_position_exit")):
         return {"decision": "DEFER", "reason": "TRADING_PRIORITY_ACTIVE"}
     return {"decision": "RUN", "reason": "BOUNDED_BACKGROUND_WINDOW"}
@@ -417,6 +419,7 @@ def run_incremental_historical_learning_cycle_v1(
     max_bytes = min(MAX_BYTES_PER_PARTITION_HARD, max(1, int(max_bytes if max_bytes is not None else recommended.get("bytes", MAX_BYTES_PER_PARTITION))))
     decision = _resource_decision(state, resource_facts)
     if decision["decision"] != "RUN":
+        checkpoint.setdefault("throughput", {})["healthy_successful_cycles"] = 0
         velocity = checkpoint.setdefault("velocity", {})
         velocity["deferred_cycles"] = int(velocity.get("deferred_cycles") or 0) + 1
         checkpoint["last_checkpoint"] = {"status": "DEFERRED_RESOURCE_PRESSURE", "reason": decision["reason"], "at": _now()}
