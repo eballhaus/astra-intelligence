@@ -368,7 +368,9 @@ class BroadUniverseIntakePromotionV1:
             symbol = _norm_symbol(row.get("symbol"))
             if not symbol:
                 continue
-            tier = dict(tier_by_symbol.get(symbol) or {})
+            # Priority records are read-only metadata; copying every tier
+            # before the bounded projection only creates allocator churn.
+            tier = tier_by_symbol.get(symbol) or {}
             tier_name = str(tier.get("tier") or "COLD").upper()
             score = _to_float(tier.get("discovery_score"), self._snapshot_discovery_score(row))
             ranked.append((tier_rank.get(tier_name, len(tier_rank)), -score, symbol, row, tier))
@@ -600,7 +602,9 @@ class BroadUniverseIntakePromotionV1:
             for record in (previous_records or [])
             if isinstance(record, dict) and _norm_symbol(record.get("symbol"))
         }
-        rows = [dict(row) for row in (observation_rows or ()) if isinstance(row, dict) and _norm_symbol(row.get("symbol"))]
+        # Keep source observations read-only while ranking.  Independent
+        # dictionaries are materialized only for the persisted tier records.
+        rows = [row for row in (observation_rows or ()) if isinstance(row, dict) and _norm_symbol(row.get("symbol"))]
         rows.sort(key=lambda row: (-self._snapshot_discovery_score(row), _norm_symbol(row.get("symbol"))))
         total = len(rows)
         near_entry_symbols: set[str] = set()
@@ -616,7 +620,7 @@ class BroadUniverseIntakePromotionV1:
             score = self._snapshot_discovery_score(row)
             lane = self._lane_from_existing_row(row) or "DISCOVERY"
             key = f"{symbol}:{lane}"
-            prior = dict(prior_by_key.get(key) or {})
+            prior = prior_by_key.get(key) or {}
             tier = self._priority_tier_for_rank(index, total, near_entry=symbol in near_entry_symbols)
             prior_tier = str(prior.get("tier") or "").upper()
             prior_seen = self._provider_timestamp_epoch(prior.get("last_seen")) or 0.0
