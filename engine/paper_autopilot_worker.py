@@ -551,6 +551,13 @@ class PaperAutopilotWorker:
         ]
         active_states = {"REQUESTED", "HELD", "CONVERTED_TO_PENDING_ORDER"}
         last_trace = runtime.get("last_execution_trace") or {}
+        monitor_status = runtime.get("alpaca_ws_active_position_monitor_v1") or {}
+        broad_discovery = monitor_status.get("broad_discovery_observations") if isinstance(monitor_status, dict) else {}
+        broad_discovery = broad_discovery if isinstance(broad_discovery, dict) else {}
+        broad_discovery_count = (
+            int(monitor_status.get("broad_discovery_observation_count") or len(broad_discovery))
+            if isinstance(monitor_status, dict) else len(broad_discovery)
+        )
         return {
             "lane_reserve_commitments": len(commitment_rows),
             "lane_reserve_commitments_active": sum(
@@ -562,6 +569,14 @@ class PaperAutopilotWorker:
             "legacy_swing_market_evidence": len(dict(runtime.get("legacy_swing_market_evidence") or {})),
             "legacy_retirement_intents": len(dict((runtime.get("legacy_retirement_execution_v1") or {}).get("intents") or {})),
             "native_exit_lifecycles": len(dict(runtime.get("native_lane_exit_lifecycle_v1") or {})),
+            # This is an observation-only projection.  Track its bounded
+            # cardinality explicitly so repeated snapshot churn is visible
+            # without treating it as permission to evict canonical state.
+            "alpaca_ws_broad_discovery_rows": broad_discovery_count,
+            "alpaca_ws_broad_discovery_status_sample_rows": len(broad_discovery),
+            "alpaca_ws_broad_discovery_projection_compact": int(
+                str(monitor_status.get("broad_discovery_projection") or "") == "status_sample_v1"
+            ) if isinstance(monitor_status, dict) else 0,
         }
 
     def _record_resource_memory_telemetry(self, sample: dict[str, Any]) -> dict[str, Any]:
@@ -580,12 +595,14 @@ class PaperAutopilotWorker:
         if resource_state == "RESOURCE_NORMAL" and self._last_memory_resource_state in paused_states | {"RESOURCE_RECOVERY_COOLDOWN"}:
             self._memory_recovery_count += 1
         self._last_memory_resource_state = resource_state
+        allocated_blocks = int(sys.getallocatedblocks())
         self._memory_samples.append({
             "sampled_at": utc_now(),
             "rss_mb": round(memory_mb, 2),
             "resource_state": resource_state,
             "cycle_count": int(self.cycle_count),
             "monotonic_at": time.monotonic(),
+            "python_allocated_blocks": allocated_blocks,
         })
         self._memory_samples = self._memory_samples[-RESOURCE_MEMORY_SAMPLE_LIMIT:]
         baseline = float(self._memory_startup_mb or 0.0)
@@ -633,6 +650,16 @@ class PaperAutopilotWorker:
             "top_memory_owners": owners[:20],
             "memory_ownership_registry": owners,
             "python_allocated_blocks": sys.getallocatedblocks(),
+            "python_allocated_blocks_delta_recent_window": int(
+                allocated_blocks - int(self._memory_samples[0].get("python_allocated_blocks") or allocated_blocks)
+            ),
+            "allocator_growth_signal": (
+                "SUSTAINED_PYTHON_BLOCK_GROWTH"
+                if len(self._memory_samples) >= 4
+                and int(allocated_blocks - int(self._memory_samples[0].get("python_allocated_blocks") or allocated_blocks)) > 100_000
+                and memory_mb - float(self._memory_samples[0].get("rss_mb") or memory_mb) > 32.0
+                else "NO_SUSTAINED_PYTHON_BLOCK_GROWTH_SIGNAL"
+            ),
             "configured_max_mb": self.limits.maximum_worker_memory_mb,
             "headroom_mb": round(self.limits.maximum_worker_memory_mb - memory_mb, 2),
             "memory_state": memory_budget_state(memory_mb, self.limits.maximum_worker_memory_mb),
@@ -1081,6 +1108,7 @@ class PaperAutopilotWorker:
         # This scanner owns only bounded state diagnostics. It consumes the
         # facts already gathered by this worker and cannot reach providers,
         # brokers, LLMs, order paths, or mutable lifecycle truth.
+        truth_rows = self._bounded_broker_truth_rows_v1(runtime)
         integrity_scan = self.system_integrity_scanner.run_if_due(
             worker_state=worker_state,
             runtime_state=runtime,
@@ -1104,7 +1132,7 @@ class PaperAutopilotWorker:
                 "entry_lane_horizon_integrity": dict(getattr(self.autopilot, "entry_lane_horizon_ledger", None).snapshot() if getattr(self.autopilot, "entry_lane_horizon_ledger", None) is not None else {}),
                 "provider_consumption_telemetry": dict(runtime.get("provider_consumption_telemetry_v1") or {}),
                 "broker_positions": positions[:20],
-                "broker_truth_records": [dict(row) for row in list(runtime.get("broker_truth_records_v1") or []) if isinstance(row, dict)][:20],
+                "broker_truth_records": truth_rows[-20:],
                 "canonical_lifecycle_lessons": [dict(row) for row in list(runtime.get("canonical_lifecycle_lessons_v1") or []) if isinstance(row, dict)][:20],
                 "broker_position_truth_facts": [dict(row) for row in list(runtime.get("broker_position_truth_facts_v1") or []) if isinstance(row, dict)][:20],
                 "price_truth_facts": [dict(row) for row in list(runtime.get("price_truth_facts_v1") or []) if isinstance(row, dict)][:20],
@@ -1129,7 +1157,6 @@ class PaperAutopilotWorker:
         # One compact worker-written control-plane view keeps lane truth,
         # Sentinel, Governance, and Cortex evidence aligned for GET consumers.
         # It only composes the current cycle's committed records.
-        truth_rows = self._bounded_broker_truth_rows_v1(runtime)
         learning_rows = [dict(row) for row in (runtime.get("canonical_lifecycle_lessons_v1") or []) if isinstance(row, dict)]
         trade_intel = getattr(self.autopilot, "trade_intel", None)
         acknowledgements = getattr(trade_intel, "acknowledgements_for_truths", None)

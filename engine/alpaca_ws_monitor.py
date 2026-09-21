@@ -54,6 +54,52 @@ def _float_or_none(value: Any) -> float | None:
 SIP_CANARY_ENV = "ASTRA_ALPACA_SIP_CANARY_SYMBOLS"
 MAX_SIP_CANARY_SYMBOLS = 24
 MAX_BROAD_DISCOVERY_OBSERVATIONS = 3_000
+MAX_BROAD_DISCOVERY_STATUS_SAMPLE = 16
+# The broad-universe owner persists the complete observation rows.  The
+# websocket monitor is only a worker-owned status projection, so retaining
+# OHLCV and duplicate discovery fields here needlessly multiplies per-cycle
+# dict/string materialization and allocator churn.
+BROAD_DISCOVERY_STATUS_FIELDS = (
+    "symbol",
+    "bid",
+    "ask",
+    "price",
+    "trade_price",
+    "spread",
+    "provider",
+    "provider_used",
+    "provider_provenance",
+    "provider_native_timestamp",
+    "provider_native_timestamp_kind",
+    "receive_timestamp",
+    "last_checked_at",
+    "market_event_at",
+    "market_event_age_seconds",
+    "quote_age_seconds",
+    "freshness_state",
+    "execution_freshness_state",
+    "discovery_observation_state",
+    "observation_role",
+    "observation_authority",
+    "discovery_only",
+    "executable_evidence",
+    "candidate_evidence_fabricated",
+    "broker_actions_added",
+)
+
+
+def _compact_broad_discovery_status_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep only current quote/freshness lineage in the monitor projection.
+
+    Full broad rows remain owned by ``BroadUniverseIntakePromotionV1`` and
+    its existing persisted archive.  This projection is observation-only and
+    must not be used as a substitute for that canonical evidence source.
+    """
+    return {
+        key: row[key]
+        for key in BROAD_DISCOVERY_STATUS_FIELDS
+        if key in row
+    }
 
 
 class AlpacaWSMonitor:
@@ -101,6 +147,7 @@ class AlpacaWSMonitor:
         self._shadow_quotes: dict[str, dict[str, Any]] = {}
         self._shadow_bars: dict[str, dict[str, Any]] = {}
         self._broad_discovery_observations: dict[str, dict[str, Any]] = {}
+        self._broad_discovery_observation_count = 0
         self._crypto_quotes: dict[str, dict[str, Any]] = {}
         self._public_crypto_quotes: dict[str, dict[str, dict[str, Any]]] = {"KRAKEN": {}, "COINBASE": {}}
         self._stats: dict[str, Any] = {
@@ -472,32 +519,32 @@ class AlpacaWSMonitor:
         added to primary position subscriptions or executable evidence.  The
         caller supplies already-normalized provider timestamps.
         """
-        accepted: dict[str, dict[str, Any]] = {}
+        accepted_symbols: dict[str, Mapping[str, Any]] = {}
         for raw in rows or ():
             if not isinstance(raw, dict):
                 continue
             symbol = str(raw.get("symbol") or "").upper().strip()
             if not symbol or "/" in symbol:
                 continue
-            record = dict(raw)
-            record.update({
-                "symbol": symbol,
-                "provider": str(record.get("provider") or "ALPACA_SIP_BROAD_SNAPSHOT"),
-                "provider_used": str(record.get("provider_used") or "ALPACA_SIP_BROAD_SNAPSHOT"),
-                "observation_role": "BROAD_DISCOVERY_TIER0",
-                "observation_authority": False,
-                "discovery_only": True,
-                "executable_evidence": False,
-                "broker_actions_added": 0,
-            })
-            accepted[symbol] = record
-        if len(accepted) > MAX_BROAD_DISCOVERY_OBSERVATIONS:
-            accepted = dict(list(sorted(accepted.items()))[:MAX_BROAD_DISCOVERY_OBSERVATIONS])
+            accepted_symbols[symbol] = raw
+        if len(accepted_symbols) > MAX_BROAD_DISCOVERY_OBSERVATIONS:
+            accepted_symbols = dict(
+                list(sorted(accepted_symbols.items()))[:MAX_BROAD_DISCOVERY_OBSERVATIONS]
+            )
+        # The complete rows remain in the canonical broad-universe owner and
+        # archive.  Keep only a deterministic status sample here; retaining a
+        # full second map caused repeated ~1 MB snapshots and allocator churn.
+        sample = {
+            symbol: _compact_broad_discovery_status_row(raw)
+            for symbol, raw in list(sorted(accepted_symbols.items()))[:MAX_BROAD_DISCOVERY_STATUS_SAMPLE]
+        }
         with self._lock:
-            self._broad_discovery_observations = accepted
+            self._broad_discovery_observations = sample
+            self._broad_discovery_observation_count = len(accepted_symbols)
         return {
             "ok": True,
-            "observation_count": len(accepted),
+            "observation_count": len(accepted_symbols),
+            "status_sample_count": len(sample),
             "observation_role": "BROAD_DISCOVERY_TIER0",
             "observation_authority": False,
             "executable_evidence": False,
@@ -1473,7 +1520,10 @@ class AlpacaWSMonitor:
             "shared_state_consumed": False,
             "observations": observations,
             "broad_discovery_observations": broad_discovery_observations,
-            "broad_discovery_observation_count": len(broad_discovery_observations),
+            "broad_discovery_observation_count": self._broad_discovery_observation_count,
+            "broad_discovery_status_sample_count": len(broad_discovery_observations),
+            "broad_discovery_status_sample_limit": MAX_BROAD_DISCOVERY_STATUS_SAMPLE,
+            "broad_discovery_projection": "status_sample_v1",
             "crypto_public_fallback_enabled": self._public_crypto_stream_enabled(),
             "crypto_public_fallback_stats": public_crypto_stats,
             "crypto_public_fallback_connections": public_connections,
