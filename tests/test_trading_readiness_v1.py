@@ -314,6 +314,89 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(result["self_heal_successes"], 1)
         self.assertEqual(result["active_faults"], [])
 
+    def test_resolved_reconciliation_rechecks_before_readiness_interval(self):
+        monitor = self._monitor()
+        lifecycle_id = "DINO:2026-09-17T15:37:59"
+        unresolved = {
+            "system_integrity_scanner_v1": {
+                "active_root_causes": [{
+                    "category": "CAUSAL_HANDOFF_LOSS",
+                    "state": "OPEN",
+                    "current_vs_historical": "CURRENT",
+                    "severity": "CRITICAL",
+                    "first_bad_handoff": "broker-confirmed exit fill -> canonical lifecycle closure",
+                    "causal_handoff_integrity_v1": {
+                        "lane": "DAY",
+                        "symbol": "DINO",
+                        "lifecycle_id": lifecycle_id,
+                        "consumer_state": "AWAITING_BROKER_ZERO",
+                    },
+                }],
+            },
+        }
+        first = monitor.run_if_due(runtime_state=unresolved, worker_state={})
+        self.assertEqual(first["active_faults"][0]["fault_type"], "RECONCILIATION_FAILURE")
+        resolved = {
+            "system_integrity_scanner_v1": {"active_root_causes": []},
+            "native_lane_exit_lifecycle_v1": {
+                lifecycle_id: {
+                    "symbol": "DINO",
+                    "decision": "CLOSED",
+                    "closure_state": "CLOSED_PENDING_TRUTH",
+                    "broker_order_status": "FILLED",
+                    "broker_order_id": "exit-1",
+                    "exit_fill_id": "fill-1",
+                },
+            },
+            "authorized_lane_exit_pending": {},
+            "paper_sell_order_intents": {
+                "intent-1": {
+                    "position_id": lifecycle_id,
+                    "symbol": "DINO",
+                    "status": "CLOSED_BROKER_ZERO_RECONCILED",
+                    "broker_order_id": "exit-1",
+                    "exit_fill_id": "fill-1",
+                },
+            },
+        }
+        second = monitor.run_if_due(runtime_state=resolved, worker_state={})
+        self.assertTrue(second["due"])
+        self.assertEqual(second["active_faults"], [])
+        self.assertIn(first["active_faults"][0]["fault_type"] + ":" + first["active_faults"][0]["component"], second["fault_history"])
+
+    def test_unresolved_reconciliation_does_not_retire_cached_fault(self):
+        monitor = self._monitor()
+        lifecycle_id = "DINO:2026-09-17T15:37:59"
+        fault_runtime = {
+            "system_integrity_scanner_v1": {
+                "active_root_causes": [{
+                    "category": "CAUSAL_HANDOFF_LOSS",
+                    "state": "OPEN",
+                    "current_vs_historical": "CURRENT",
+                    "severity": "CRITICAL",
+                    "first_bad_handoff": "broker-confirmed exit fill -> canonical lifecycle closure",
+                    "causal_handoff_integrity_v1": {
+                        "lane": "DAY", "symbol": "DINO", "lifecycle_id": lifecycle_id,
+                        "consumer_state": "AWAITING_BROKER_ZERO",
+                    },
+                }],
+            },
+        }
+        first = monitor.run_if_due(runtime_state=fault_runtime, worker_state={})
+        unresolved = {
+            "system_integrity_scanner_v1": fault_runtime["system_integrity_scanner_v1"],
+            "native_lane_exit_lifecycle_v1": {lifecycle_id: {
+                "symbol": "DINO", "decision": "EXIT_READY", "closure_state": "AWAITING_BROKER_ZERO",
+                "broker_order_status": "FILLED", "broker_order_id": "exit-1", "exit_fill_id": "fill-1",
+            }},
+            "authorized_lane_exit_pending": {"pending-1": {"position_id": lifecycle_id}},
+            "paper_sell_order_intents": {"intent-1": {"position_id": lifecycle_id, "symbol": "DINO", "status": "BROKER_FILLED_AWAITING_CLOSURE"}},
+        }
+        second = monitor.run_if_due(runtime_state=unresolved, worker_state={})
+        self.assertFalse(second["due"])
+        self.assertEqual(len(second["active_faults"]), 1)
+        self.assertEqual(second["active_faults"][0]["fault_type"], first["active_faults"][0]["fault_type"])
+
     def test_failed_recovery_is_not_counted_as_success(self):
         result = self._monitor().run_if_due(
             runtime_state={"last_execution_trace": {"final_blocker_reason": "legacy_market_evidence_bounded"}},

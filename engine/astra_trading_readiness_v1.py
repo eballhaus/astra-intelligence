@@ -975,6 +975,65 @@ class AstraTradingReadinessV1:
     def _issue_key(issue: Mapping[str, Any]) -> str:
         return f"{_text(issue.get('fault_type'))}:{_text(issue.get('component'))}"
 
+    @staticmethod
+    def _resolved_reconciliation_requires_recheck(
+        previous: Mapping[str, Any], runtime: Mapping[str, Any]
+    ) -> bool:
+        """Recheck a cached reconciliation fault after exact closure proof.
+
+        Readiness normally uses a bounded interval.  A broker-filled exit can
+        complete during that interval, however, so retain the historical row
+        but do not keep reporting it as active when the worker has committed
+        exact terminal evidence for the same lifecycle.
+        """
+        prior_rows = [
+            *_rows(previous.get("active_faults")),
+            *_rows(previous.get("faults")),
+        ]
+        terminal_statuses = {
+            "CLOSED_BROKER_ZERO_RECONCILED",
+            "CLOSED_DUST_SAFE_RECONCILED",
+        }
+        native_states = _dict(runtime.get("native_lane_exit_lifecycle_v1"))
+        pending = _dict(runtime.get("authorized_lane_exit_pending"))
+        intents = _dict(runtime.get("paper_sell_order_intents"))
+        for fault in prior_rows:
+            if _text(fault.get("fault_type")).upper() != "RECONCILIATION_FAILURE":
+                continue
+            lifecycle_id = _text(fault.get("lifecycle_id"))
+            symbol = _text(fault.get("symbol")).upper()
+            if not lifecycle_id or not symbol:
+                continue
+            native = _dict(native_states.get(lifecycle_id))
+            if (
+                _text(native.get("symbol")).upper() != symbol
+                or _text(native.get("decision")).upper() != "CLOSED"
+                or _text(native.get("closure_state")).upper()
+                not in {"CLOSED", "CLOSED_PENDING_TRUTH", "STRICT_TRUTH_CREATED", "LEARNING_ACKNOWLEDGED"}
+                or _text(native.get("broker_order_status")).upper() != "FILLED"
+                or not _text(native.get("broker_order_id"))
+                or not _text(native.get("exit_fill_id"))
+            ):
+                continue
+            if any(
+                _text(item.get("position_id")) == lifecycle_id
+                for item in pending.values()
+                if isinstance(item, Mapping)
+            ):
+                continue
+            matching_terminal_intent = any(
+                _text(item.get("position_id")) == lifecycle_id
+                and _text(item.get("symbol")).upper() == symbol
+                and _text(item.get("status")).upper() in terminal_statuses
+                and _text(item.get("broker_order_id")) == _text(native.get("broker_order_id"))
+                and _text(item.get("exit_fill_id")) == _text(native.get("exit_fill_id"))
+                for item in intents.values()
+                if isinstance(item, Mapping)
+            )
+            if matching_terminal_intent:
+                return True
+        return False
+
     @classmethod
     def _new_fault_row(
         cls,
@@ -1979,6 +2038,7 @@ class AstraTradingReadinessV1:
             runtime_for_discovery["_canonical_equity_discovery_snapshot_v1"] = canonical_discovery
         current_discovery_flow = self._current_equity_candidate_flow(runtime_for_discovery)
         recheck_cached_discovery = bool(session.get("equity_session_open")) and cached_discovery_fault and current_discovery_flow
+        recheck_resolved_reconciliation = self._resolved_reconciliation_requires_recheck(previous, runtime_state)
         monotonic_current = now - float(previous.get("scan_monotonic") or 0.0) < interval
         wall_clock_current = _wall_clock_timestamp_is_current(
             previous.get("generated_at"),
@@ -1992,6 +2052,7 @@ class AstraTradingReadinessV1:
             and monotonic_current
             and wall_clock_current
             and not recheck_cached_discovery
+            and not recheck_resolved_reconciliation
         ):
             return {**previous, "due": False, "provider_calls_used": 0, "broker_actions_used": 0}
 
