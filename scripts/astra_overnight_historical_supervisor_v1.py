@@ -161,6 +161,7 @@ def run_once(*, state_dir: Path = STATE_ROOT, worker_state_dir: Path = WORKER_ST
             result = {"status": "WAITING_FOR_RESOURCES", "completed_lanes": sorted(completed), "updated_at": now_iso()}
             _write_json(status_path, result)
             return result
+        _write_json(status_path, {"status": "RUNNING", "lane": lane, "completed_lanes": sorted(completed), "updated_at": now_iso()})
         try:
             result = launch_child(lane, state_dir, log_path, poll_seconds, worker_state_dir)
         except TypeError:
