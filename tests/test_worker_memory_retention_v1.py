@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from engine.alpaca_ws_monitor import AlpacaWSMonitor
-from engine.paper_autopilot import PaperAutopilotEngine
+from engine.paper_autopilot import PaperAutopilotEngine, _compact_runtime_execution_trace_v1
 from engine.paper_autopilot_worker import PaperAutopilotWorker
 
 
@@ -142,3 +142,65 @@ def test_canary_checkpoint_does_not_duplicate_canonical_evidence_payloads():
     assert "fmp_records" not in canary
     assert canary["market_records_store"] == "legacy_swing_market_evidence"
     assert canary["fmp_records_store"] == "legacy_swing_fmp_evidence"
+
+
+def test_runtime_candidate_trace_compacts_reconstructable_full_contracts():
+    fat = {
+        "candidate_id": "cand-1",
+        "symbol": "AAPL",
+        "lane_id": "DAY",
+        "eligible": False,
+        "decision_reason": "PRETRADE_DECISION_CONTRACT_MISSING_FIELDS",
+        "pretrade_decision_contract_v1": {
+            "contract_state": "CONTRACT_INCOMPLETE",
+            "contract_status": "INVALID",
+            "missing_required_fields": ["expected_return_range"],
+            "full_forecast_payload": {"large": "x" * 100_000},
+        },
+        "candidate_decision_evidence_v1": {
+            "forecast_state": "INSUFFICIENT_FORECAST_EVIDENCE",
+            "equity_pretrade_forecast_v1": {"large": "x" * 100_000},
+        },
+        "eligibility_gate_attribution_v1": {
+            "candidate_id": "cand-1",
+            "first_failing_gate": {"code": "FORECAST", "detail": "missing"},
+        },
+        "large_derived_snapshot": {"payload": ["x"] * 100_000},
+    }
+    compact = _compact_runtime_execution_trace_v1({"per_candidate_decision_trace": [fat]})
+    row = compact["per_candidate_decision_trace"][0]
+
+    assert len(json.dumps(compact, separators=(",", ":"))) < 20_000
+    assert row["candidate_id"] == "cand-1"
+    assert row["pretrade_decision_contract_v1"]["missing_required_fields"] == ["expected_return_range"]
+    assert "full_forecast_payload" not in row["pretrade_decision_contract_v1"]
+    assert "candidate_decision_evidence_v1" in row
+    assert "large_derived_snapshot" not in row
+    assert compact["runtime_trace_storage_v1"]["retention_limit"] == 200
+    assert compact["runtime_trace_storage_v1"]["reconstructable"] is True
+
+
+def test_save_state_compacts_runtime_trace_without_changing_canonical_truth():
+    truth = {"broker_truth_records_v1": [{"truth_id": "truth-1", "status": "BROKER_CONFIRMED_COMPLETE"}]}
+    fat = {
+        "candidate_id": "cand-2",
+        "symbol": "MSFT",
+        "lane_id": "DAY",
+        "eligible": True,
+        "pretrade_decision_contract_v1": {"contract_state": "CONTRACT_COMPLETE", "full": "x" * 50_000},
+    }
+    with tempfile.TemporaryDirectory() as state_dir:
+        engine = object.__new__(PaperAutopilotEngine)
+        engine.state_path = os.path.join(state_dir, "paper_autopilot_state.json")
+        engine.paper_mode = True
+        engine._enabled = False
+        engine._adaptive_learning_capacity_policy = {}
+        engine._runtime_state = {**truth, "last_execution_trace": {"per_candidate_decision_trace": [fat]}}
+        engine._save_state_file(worker_owned=True)
+        saved = json.loads(open(engine.state_path, encoding="utf-8").read())
+
+    assert engine._runtime_state["broker_truth_records_v1"] == truth["broker_truth_records_v1"]
+    saved_row = saved["last_execution_trace"]["per_candidate_decision_trace"][0]
+    assert saved_row["candidate_id"] == "cand-2"
+    assert "full" not in saved_row["pretrade_decision_contract_v1"]
+    assert saved["last_execution_trace"]["runtime_trace_storage_v1"]["retained_item_count"] == 1

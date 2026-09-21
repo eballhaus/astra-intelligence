@@ -1720,6 +1720,145 @@ def _execution_trace_event(row: dict[str, Any], **values: Any) -> dict[str, Any]
     return trace
 
 
+_RUNTIME_CANDIDATE_TRACE_FIELDS = (
+    "symbol", "canonical_symbol", "asset_type", "asset_class", "instrument_type",
+    "lane_id", "candidate_id", "recommendation_id", "selection_id",
+    "candidate_source", "candidate_generated_at", "candidate_snapshot_freshness",
+    "source_snapshot_id", "source_record_id", "ranking_version", "generated_at",
+    "expires_at", "candidate_fingerprint", "position_owner", "exit_policy_owner",
+    "entry_owner", "exit_owner", "capital_book_id", "session_state",
+    "market_session_mode", "same_session_exit_required", "overnight_allowed",
+    "crypto_horizon", "crypto_horizon_status", "crypto_horizon_source",
+    "pretrade_decision_contract_status", "pretrade_decision_contract_state",
+    "candidate_terminal_state", "pretrade_decision_contract_missing_fields",
+    "pretrade_decision_contract_conflicts", "risk_envelope_id", "risk_envelope_state",
+    "expected_outcome_state", "eligible", "decision_reason", "commitment_score",
+    "duplicate_active_position", "duplicate_source", "duplicate_exposure_state",
+    "dust_only_position_present", "broker_reconciliation_active", "market_is_open",
+    "market_is_tradable", "paper_order_submission_allowed", "execution_confirmation_required",
+    "selected", "selection_reason", "order_ready", "order_readiness_reason",
+    "order_attempted", "order_result", "order_rejection_reason", "broker_error_sanitized",
+    "broker_order_id", "entry_fill_id", "position_id", "lifecycle_id", "truth_id",
+    "commitment_id", "active_commitment_id", "commitment_state", "commitment_final_state",
+    "capacity_decision", "capacity_source", "capacity_blocker", "lane_reserve_enabled",
+    "lane_reserve_available", "lane_positions_used", "lane_positions_remaining",
+    "lane_position_limit", "lane_open_position_count", "lane_pending_order_count",
+    "lane_active_commitment_count", "exact_blocker", "first_causal_blocker",
+    "partial_cycle_observation_only", "crypto_final_quote_refresh_attempted",
+    "crypto_final_quote_refresh_result", "crypto_final_refresh_quote_timestamp",
+    "crypto_inner_freshness_trace_v1", "risk_contract_status", "freshness_status",
+    "quote_timestamp", "bar_timestamp", "candidate_rank", "candidate_score",
+    "qualification_score", "forecast_state", "forecast_evidence_status",
+    "decision", "decision_type", "selection_status", "submission_attempted",
+)
+
+
+def _compact_runtime_candidate_trace_v1(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep diagnostic candidate state small; the canonical ledger owns detail."""
+    source = dict(row or {})
+    compact = {
+        key: source[key]
+        for key in _RUNTIME_CANDIDATE_TRACE_FIELDS
+        if key in source and not isinstance(source[key], (dict, list, tuple, set))
+    }
+    for key in (
+        "pretrade_decision_contract_missing_fields",
+        "pretrade_decision_contract_conflicts",
+    ):
+        if key in source:
+            compact[key] = [str(value) for value in list(source.get(key) or [])[:16]]
+    first_blocker = source.get("first_causal_blocker")
+    if isinstance(first_blocker, Mapping):
+        compact["first_causal_blocker"] = {
+            key: first_blocker[key]
+            for key in ("gate", "code", "status", "detail", "validity", "input_value")
+            if key in first_blocker
+        }
+    for key in ("crypto_horizon_provenance",):
+        value = source.get(key)
+        if isinstance(value, Mapping):
+            compact[key] = {
+                name: value[name]
+                for name in ("source", "source_id", "method", "observed_at", "confidence")
+                if name in value
+            }
+    attribution = source.get("eligibility_gate_attribution_v1")
+    if isinstance(attribution, Mapping):
+        first = attribution.get("first_failing_gate")
+        compact["eligibility_gate_attribution_v1"] = {
+            "schema": attribution.get("schema"),
+            "candidate_id": attribution.get("candidate_id"),
+            "symbol": attribution.get("symbol"),
+            "lane": attribution.get("lane"),
+            "eligibility_result": attribution.get("eligibility_result"),
+            "first_failing_gate": {
+                key: first[key]
+                for key in ("code", "gate", "status", "detail", "validity", "input_value")
+                if isinstance(first, Mapping) and key in first
+            },
+        }
+    failure = source.get("contract_failure_attribution_v1")
+    if isinstance(failure, Mapping):
+        compact["contract_failure_attribution_v1"] = {
+            key: failure[key]
+            for key in (
+                "schema_version", "candidate_id", "lane", "symbol", "missing_fields",
+                "stale_fields", "invalid_fields", "producer", "consumer", "freshness",
+                "failure_state", "repair_owner",
+            )
+            if key in failure
+        }
+    contract = source.get("pretrade_decision_contract_v1") or source.get("pretrade_decision_contract")
+    if isinstance(contract, Mapping):
+        compact_contract = {
+            key: contract[key]
+            for key in (
+                "schema_version", "contract_status", "contract_state", "order_ready_allowed",
+                "fail_closed_reason", "missing_required_fields", "stale_required_fields",
+                "conflicting_fields", "candidate_terminal_state",
+            )
+            if key in contract
+        }
+        compact["pretrade_decision_contract_v1"] = compact_contract
+        compact["pretrade_decision_contract"] = compact_contract
+    evidence = source.get("candidate_decision_evidence_v1")
+    if isinstance(evidence, Mapping):
+        compact["candidate_decision_evidence_v1"] = {
+            key: evidence[key]
+            for key in (
+                "candidate_rank", "candidate_score", "qualification_score", "forecast_state",
+                "forecast_evidence_status", "commitment_state", "commitment_score",
+                "momentum_state", "momentum_score", "regime", "regime_alignment",
+                "entry_quality", "expected_hold", "crypto_horizon", "crypto_horizon_status",
+                "risk_contract_status", "freshness_status", "quote_timestamp", "bar_timestamp",
+                "duplicate_exposure_state", "capacity_state", "capital_state", "session_state",
+                "price_at_decision", "source_ids", "missing_values_are_unavailable",
+            )
+            if key in evidence
+        }
+    return compact
+
+
+def _compact_runtime_execution_trace_v1(trace: Mapping[str, Any]) -> dict[str, Any]:
+    """Bound the reconstructable runtime view without touching canonical history."""
+    compact = dict(trace or {})
+    rows = [
+        _compact_runtime_candidate_trace_v1(row)
+        for row in list(compact.get("per_candidate_decision_trace") or [])[:200]
+        if isinstance(row, Mapping)
+    ]
+    compact["per_candidate_decision_trace"] = rows
+    compact["runtime_trace_storage_v1"] = {
+        "retention_class": "DERIVED_STATUS_VIEW",
+        "retention_limit": 200,
+        "retained_item_count": len(rows),
+        "reconstructable": True,
+        "canonical_persistence": "lane_execution_trace_v1.jsonl;candidate_decision_ledger_v1.jsonl",
+        "retention_reason": "bounded governance/status view; full decision evidence remains in canonical ledger",
+    }
+    return compact
+
+
 def normalize_operational_candidate(row: dict[str, Any]) -> dict[str, Any]:
     """Public, side-effect-free canonical candidate enrichment for readers."""
     return _normalize_paper_entry_bridge(row)
@@ -2290,7 +2429,9 @@ class PaperAutopilotEngine:
                     )
                     self._adaptive_learning_capacity_policy = persisted_policy
                 if isinstance(payload.get("last_execution_trace"), dict):
-                    self._runtime_state["last_execution_trace"] = dict(payload.get("last_execution_trace") or {})
+                    self._runtime_state["last_execution_trace"] = _compact_runtime_execution_trace_v1(
+                        payload.get("last_execution_trace") or {}
+                    )
                 if isinstance(payload.get("last_evidence_capacity_snapshot"), dict):
                     self._runtime_state["last_evidence_capacity_snapshot"] = dict(payload.get("last_evidence_capacity_snapshot") or {})
                 if isinstance(payload.get("crypto_rankings_snapshot_v1"), dict):
@@ -2326,6 +2467,11 @@ class PaperAutopilotEngine:
             return
 
     def _save_state_file(self, *, worker_owned: bool = False):
+        # The append-only lane ledger already owns full decision evidence. Keep
+        # only a compact, reconstructable runtime view across worker cycles.
+        self._runtime_state["last_execution_trace"] = _compact_runtime_execution_trace_v1(
+            self._runtime_state.get("last_execution_trace") or {}
+        )
         canary = dict(self._runtime_state.get("legacy_swing_canary") or {})
         # Full market/FMP evidence is persisted in their canonical top-level
         # stores.  Do not serialize duplicate advisory copies on every cycle.
@@ -2411,12 +2557,7 @@ class PaperAutopilotEngine:
             "broad_observation_multilane_handoff_v1": dict(self._runtime_state.get("broad_observation_multilane_handoff_v1") or {}),
             "astra_trading_readiness_v1": dict(self._runtime_state.get("astra_trading_readiness_v1") or {}),
             "trading_readiness_last_error_v1": dict(self._runtime_state.get("trading_readiness_last_error_v1") or {}),
-            "last_execution_trace": {
-                **dict(self._runtime_state.get("last_execution_trace") or {}),
-                "per_candidate_decision_trace": list(
-                    (self._runtime_state.get("last_execution_trace") or {}).get("per_candidate_decision_trace") or []
-                )[:200],
-            },
+            "last_execution_trace": dict(self._runtime_state.get("last_execution_trace") or {}),
         }
         try:
             # The API process may persist only the guarded enable switch.  It
