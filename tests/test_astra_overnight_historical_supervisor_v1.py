@@ -26,7 +26,7 @@ def test_supervisor_runs_one_child_at_a_time_and_resumes_checkpoint(tmp_path, mo
 
     result = supervisor.run_once(state_dir=tmp_path, status_path=tmp_path / "status.json", log_path=tmp_path / "history.log", launch_child=launch)
     assert result["status"] == "COMPLETE"
-    assert launches == ["news-proof", "macro", "analyst", "microstructure"]
+    assert launches == ["news-proof", "historical-news", "macro", "analyst", "microstructure"]
     checkpoint = json.loads((tmp_path / supervisor.SUPERVISOR_ROOT / supervisor.CHECKPOINT_NAME).read_text())
     assert checkpoint["completed_lanes"] == sorted(supervisor.LANES)
 
@@ -41,6 +41,10 @@ def test_runner_command_has_one_state_dir_and_preserves_resume_lane():
     assert command.count("--state-dir") == 1
     assert command[command.index("--state-dir") + 1] == str(supervisor.STATE_ROOT)
     assert command[command.index("microstructure")] == "microstructure"
+
+    news = supervisor._runner_command("historical-news", supervisor.STATE_ROOT)
+    assert news.count("--state-dir") == 1
+    assert news[news.index("--max-days") + 1] == "1"
 
 
 def test_supervisor_does_not_mark_provider_failure_complete(tmp_path, monkeypatch):

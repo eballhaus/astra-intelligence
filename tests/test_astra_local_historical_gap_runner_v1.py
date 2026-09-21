@@ -140,3 +140,90 @@ def test_analyst_cli_preserves_symbols_once(tmp_path, monkeypatch):
     assert runner.main(["analyst", "--state-dir", str(tmp_path), "--symbols", "AAPL", "MSFT"]) == 0
     assert captured["symbols"] == ["AAPL", "MSFT"]
     assert captured["max_symbols"] == 2
+
+
+def test_historical_news_reuses_bounded_checkpointed_acquisition(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_acquire(manifest, archive, router, state_dir):
+        captured.update(manifest=manifest, archive=archive, state_dir=state_dir)
+        return {"status": "COMPLETE_OBSERVED", "requests": 0, "exhaustive_coverage_proven": False}
+
+    monkeypatch.setattr(runner, "resource_gate", lambda state_dir: {"allowed": True, "mode": "NORMAL", "reason": "RESOURCE_NORMAL"})
+    monkeypatch.setattr(runner, "acquire", fake_acquire)
+    result = runner.run_historical_news(
+        state_dir=tmp_path,
+        symbols=["MSFT", "AAPL"],
+        end="2026-09-18",
+        max_days=1,
+        router=object(),
+    )
+    assert result["status"] == "COMPLETE_OBSERVED"
+    assert result["provider_calls"] == 0
+    assert captured["manifest"]["mode"] == "BOUNDED_PILOT"
+    assert captured["manifest"]["estimated_calls"] == 2
+    assert captured["manifest"]["checkpoint_path"].endswith("index.sqlite3")
+    assert result["broker_actions_added"] == 0
+    assert result["truth_records_added"] == 0
+
+
+def test_analyst_entitlement_falls_back_to_fmp_and_persists_backoff(tmp_path, monkeypatch):
+    class FakeRouter:
+        calls = []
+
+        def _key_for(self, provider, asset):
+            return f"{provider.lower()}-test-key"
+
+        def _request(self, provider, url, *, params, headers):
+            self.calls.append(provider)
+            if provider == "FINNHUB":
+                return ({}, 403, "entitlement", 1.0)
+            return ([{"id": "fmp-1", "publishedDate": "2026-09-18T12:00:00Z", "date": "2026-09-18"}], 200, "", 1.0)
+
+    router = FakeRouter()
+    monkeypatch.setattr(runner, "load_shared_environment", lambda: {})
+    monkeypatch.setattr(runner, "resource_gate", lambda state_dir: {"allowed": True, "mode": "NORMAL", "reason": "RESOURCE_NORMAL"})
+    monkeypatch.setattr(runner.time, "sleep", lambda *_: None)
+    monkeypatch.setenv("FINNHUB_API_KEY", "finnhub-test-key")
+    monkeypatch.setenv("FMP_API_KEY", "fmp-test-key")
+
+    first = runner.run_analyst(state_dir=tmp_path, symbols=["AAPL"], max_symbols=1, router=router)
+    assert first["status"] == "COMPLETE"
+    assert first["provider"] == "FMP"
+    assert first["fallback"] == "FMP_AFTER_FINNHUB_ENTITLEMENT_BLOCKED"
+    assert router.calls == ["FINNHUB", "FMP"]
+
+    router.calls.clear()
+    second = runner.run_analyst(state_dir=tmp_path, symbols=["AAPL"], max_symbols=1, router=router)
+    assert second["status"] == "COMPLETE"
+    assert router.calls == ["FMP"]
+    backoff = json.loads((tmp_path / runner.LOCAL_ROOT_NAME / "analyst_entitlement_backoff.json").read_text())
+    assert backoff["status"] == "ENTITLEMENT_BLOCKED"
+    assert backoff["broker_actions_added"] == 0
+
+
+def test_analyst_entitlement_backoff_prevents_repeat_without_fallback(tmp_path, monkeypatch):
+    root = tmp_path / runner.LOCAL_ROOT_NAME
+    root.mkdir(parents=True)
+    (root / "analyst_entitlement_backoff.json").write_text(json.dumps({
+        "finnhub_blocked_until_epoch": runner.time.time() + 3600,
+    }))
+
+    class FakeRouter:
+        calls = 0
+
+        def _key_for(self, provider, asset):
+            return "finnhub-test-key" if provider == "FINNHUB" else ""
+
+        def _request(self, *args, **kwargs):
+            self.calls += 1
+            raise AssertionError("entitlement-blocked endpoint must not be retried")
+
+    router = FakeRouter()
+    monkeypatch.setattr(runner, "load_shared_environment", lambda: {})
+    monkeypatch.setattr(runner, "resource_gate", lambda state_dir: {"allowed": True, "mode": "NORMAL", "reason": "RESOURCE_NORMAL"})
+    monkeypatch.setenv("FINNHUB_API_KEY", "finnhub-test-key")
+    monkeypatch.delenv("FMP_API_KEY", raising=False)
+    result = runner.run_analyst(state_dir=tmp_path, symbols=["AAPL"], max_symbols=1, router=router)
+    assert result["status"] == "ENTITLEMENT_BLOCKED"
+    assert router.calls == 0

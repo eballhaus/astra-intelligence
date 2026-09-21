@@ -27,7 +27,7 @@ DEFAULT_PID = Path("/tmp/astra_history_overnight.pid")
 DEFAULT_STATUS = Path("/tmp/astra_history_overnight_status.json")
 DEFAULT_LOG = Path("/tmp/astra_history_overnight.log")
 CHECKPOINT_NAME = "overnight_supervisor_checkpoint.json"
-LANES = ("news-proof", "macro", "analyst", "microstructure")
+LANES = ("news-proof", "historical-news", "macro", "analyst", "microstructure")
 POLL_SECONDS = 60
 
 
@@ -97,6 +97,8 @@ def _runner_command(lane: str, state_dir: Path) -> list[str]:
     command = [sys.executable, "-B", str(runner), lane, "--state-dir", str(state_dir)]
     if lane == "macro":
         command += ["--max-series", "10", "--max-years", "5"]
+    elif lane == "historical-news":
+        command += ["--symbols", "AAPL", "MSFT", "TSLA", "--max-days", "1"]
     elif lane == "analyst":
         command += ["--symbols", "AAPL", "MSFT", "TSLA", "--max-years", "1"]
     elif lane == "microstructure":
@@ -172,7 +174,7 @@ def run_once(*, state_dir: Path = STATE_ROOT, worker_state_dir: Path = WORKER_ST
             result = {"status": "WAITING_FOR_RESOURCES", "lane": lane, "completed_lanes": sorted(completed), "updated_at": now_iso()}
             _write_json(status_path, result)
             return result
-        if status in {"COMPLETE", "NO_SERIES_IDENTIFIED", "UNPROVEN", "PROVEN"}:
+        if status in {"COMPLETE", "COMPLETE_OBSERVED", "EMPTY_OBSERVED", "NO_SERIES_IDENTIFIED", "UNPROVEN", "PROVEN"}:
             completed.add(lane)
             checkpoint = {"schema_version": "astra_overnight_historical_supervisor_v1", "completed_lanes": sorted(completed), "updated_at": now_iso()}
             _write_json(checkpoint_path, checkpoint)

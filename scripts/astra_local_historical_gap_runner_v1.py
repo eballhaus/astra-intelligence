@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
 
 from engine.astra_pit_metadata_contract_v1 import normalize_historical_record
 from scripts.astra_historical_context_phase2_v1 import now_iso, read_json, worker_health
-from scripts.astra_historical_data_infrastructure_v1 import durable_write
+from scripts.astra_historical_data_infrastructure_v1 import acquisition_manifest, acquire, durable_write
 
 STATE_ROOT = Path("/Users/Shared/AstraRuntime/state")
 SHARED_ENV = Path("/Users/Shared/AstraRuntime/.env")
@@ -39,6 +39,9 @@ MAX_MACRO_SERIES = 10
 MAX_MACRO_YEARS = 5
 MAX_ANALYST_SYMBOLS = 10
 MAX_ANALYST_YEARS = 1
+MAX_HISTORICAL_NEWS_SYMBOLS = 3
+MAX_HISTORICAL_NEWS_DAYS = 3
+ANALYST_ENTITLEMENT_BACKOFF_SECONDS = 24 * 60 * 60
 TERMINAL_PROVIDER_STATES = {"AUTHENTICATION_FAILED", "ENTITLEMENT_BLOCKED", "RATE_LIMITED", "RESOURCE_BLOCKED"}
 NY = ZoneInfo("America/New_York")
 
@@ -197,6 +200,54 @@ def _bounded_days(end: str | None, max_days: int) -> list[str]:
             days.append(cursor.isoformat())
         cursor -= timedelta(days=1)
     return sorted(days)
+
+
+def run_historical_news(
+    *,
+    state_dir: Path = STATE_ROOT,
+    symbols: Iterable[str] = DEFAULT_MICRO_SYMBOLS,
+    end: str | None = None,
+    max_days: int = 1,
+    router: Any = None,
+) -> dict[str, Any]:
+    """Run the existing Finnhub daily archive as a bounded resumable pilot."""
+    gate = resource_gate(state_dir)
+    result: dict[str, Any] = {
+        "lane": "historical-news",
+        **SAFETY,
+        "resource_gate": gate,
+        "provider_calls": 0,
+        "records": 0,
+    }
+    if not gate["allowed"]:
+        result.update(status="RESOURCE_BLOCKED", reason=gate["reason"])
+        return result
+    selected = sorted({_safe_symbol(symbol) for symbol in symbols})
+    if not selected or len(selected) > MAX_HISTORICAL_NEWS_SYMBOLS:
+        raise ValueError(f"historical-news pilot accepts 1-{MAX_HISTORICAL_NEWS_SYMBOLS} symbols")
+    days = _bounded_days(end, min(max(1, int(max_days)), MAX_HISTORICAL_NEWS_DAYS))
+    if len(selected) * len(days) > 10:
+        raise ValueError("historical-news pilot exceeds ten daily windows")
+    archive_root = _root(Path(state_dir)) / "historical-news" / "archive"
+    manifest = acquisition_manifest(
+        mode="BOUNDED_PILOT",
+        symbols=selected,
+        start=days[0],
+        end=days[-1],
+        checkpoint_path=str(archive_root / "index.sqlite3"),
+        max_calls=10,
+    )
+    outcome = acquire(manifest, archive_root, router or _router(), Path(state_dir))
+    result.update(
+        status=str(outcome.get("status") or "PROVIDER_ERROR"),
+        provider_calls=int(outcome.get("requests") or 0),
+        symbols=selected,
+        days=days,
+        checkpoint_path=str(archive_root / "index.sqlite3"),
+        exhaustive_coverage_proven=bool(outcome.get("exhaustive_coverage_proven")),
+    )
+    _atomic_json(_root(Path(state_dir)) / "historical_news_checkpoint.json", result)
+    return result
 
 
 def discover_fred_series(state_dir: Path = STATE_ROOT, *, limit: int = MAX_MACRO_SERIES) -> list[str]:
@@ -402,11 +453,26 @@ def run_analyst(*, state_dir: Path = STATE_ROOT, symbols: Iterable[str] = DEFAUL
     load_shared_environment(); router = router or _router()
     finnhub_key = str(os.getenv("FINNHUB_API_KEY") or getattr(router, "_key_for", lambda *_: "")("FINNHUB", "stock") or "").strip()
     fmp_key = str(os.getenv("FMP_API_KEY") or getattr(router, "_key_for", lambda *_: "")("FMP", "stock") or "").strip()
-    provider = "FINNHUB" if finnhub_key else "FMP" if fmp_key else ""
-    if not provider: result.update(status="AUTHENTICATION_FAILED", reason="no configured Finnhub/FMP credential"); return result
+    entitlement_path = _root(Path(state_dir)) / "analyst_entitlement_backoff.json"
+    entitlement = _read_json(entitlement_path, {}) or {}
+    blocked_until = float(entitlement.get("finnhub_blocked_until_epoch") or 0.0)
+    finnhub_available = bool(finnhub_key and blocked_until <= time.time())
+    provider = "FINNHUB" if finnhub_available else "FMP" if fmp_key else ""
+    if not provider:
+        if finnhub_key and blocked_until > time.time():
+            result.update(
+                status="ENTITLEMENT_BLOCKED",
+                reason="Finnhub analyst entitlement backoff active and no FMP fallback is configured",
+                finnhub_blocked_until_epoch=blocked_until,
+            )
+        else:
+            result.update(status="AUTHENTICATION_FAILED", reason="no configured Finnhub/FMP credential")
+        return result
     archive = _root(Path(state_dir)) / "analyst"; raw_dir, norm_dir = archive / "raw", archive / "normalized"; raw_dir.mkdir(parents=True, exist_ok=True); norm_dir.mkdir(parents=True, exist_ok=True)
     start = (datetime.now(UTC).date() - timedelta(days=365 * min(int(max_years), MAX_ANALYST_YEARS))).isoformat(); end = datetime.now(UTC).date().isoformat(); statuses=[]
-    for symbol in selected:
+    symbol_index = 0
+    while symbol_index < len(selected):
+        symbol = selected[symbol_index]
         if provider == "FINNHUB":
             specs = [("upgrade_downgrade", "https://finnhub.io/api/v1/stock/upgrade-downgrade", {"symbol": symbol, "from": start, "to": end, "token": finnhub_key}), ("price_target", "https://finnhub.io/api/v1/stock/price-target", {"symbol": symbol, "from": start, "to": end, "token": finnhub_key})]
         else:
@@ -423,7 +489,26 @@ def run_analyst(*, state_dir: Path = STATE_ROOT, symbols: Iterable[str] = DEFAUL
             normalized=[_analyst_record(symbol,provider,row,receipt=receipt,source_file=str(shard)) for row in raw_rows if isinstance(row,dict) and (row.get("publishedDate") or row.get("publication_time") or row.get("published_at") or row.get("publishedAt"))]
             if normalized: _atomic_jsonl(norm_dir/f"{symbol}_{family}.jsonl",normalized); result["records"] += len(normalized)
             statuses.append({"symbol":symbol,"family":family,"status":state,"raw_records":len(raw_rows),"normalized_records":len(normalized)})
+            if state == "ENTITLEMENT_BLOCKED" and provider == "FINNHUB":
+                _atomic_json(entitlement_path, {
+                    "provider": "FINNHUB",
+                    "status": "ENTITLEMENT_BLOCKED",
+                    "finnhub_blocked_until_epoch": time.time() + ANALYST_ENTITLEMENT_BACKOFF_SECONDS,
+                    "updated_at": now_iso(),
+                    **SAFETY,
+                })
+                if fmp_key:
+                    provider = "FMP"
+                    result["fallback"] = "FMP_AFTER_FINNHUB_ENTITLEMENT_BLOCKED"
+                    break
             if state != "SUCCESS": result.update(status=state,statuses=statuses); return result
+        else:
+            symbol_index += 1
+            continue
+        if provider == "FMP":
+            continue
+        result.update(status=state, statuses=statuses)
+        return result
     result.update(status="COMPLETE",provider=provider,statuses=statuses,selection={"max_symbols":MAX_ANALYST_SYMBOLS,"max_years":MAX_ANALYST_YEARS})
     _atomic_json(_root(Path(state_dir))/"analyst_checkpoint.json",result); return result
 
@@ -462,8 +547,9 @@ def run_command(command: str, **kwargs: Any) -> dict[str, Any]:
     elif command == "microstructure": result = run_microstructure(**kwargs)
     elif command == "analyst": result = run_analyst(**kwargs)
     elif command == "news-proof": result = run_news_proof(**kwargs)
+    elif command == "historical-news": result = run_historical_news(**kwargs)
     elif command == "all":
-        result = {name: run_command(name, **kwargs) for name in ("macro", "microstructure", "analyst", "news-proof")}
+        result = {name: run_command(name, **kwargs) for name in ("news-proof", "historical-news", "macro", "analyst", "microstructure")}
     else: raise ValueError(f"unsupported command: {command}")
     _write_reports(result if command == "all" else {command: result})
     return result
@@ -471,7 +557,7 @@ def run_command(command: str, **kwargs: Any) -> dict[str, Any]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser=argparse.ArgumentParser(description=__doc__); sub=parser.add_subparsers(dest="command",required=True)
-    for name in ("macro","microstructure","analyst","news-proof","all"):
+    for name in ("macro","microstructure","analyst","news-proof","historical-news","all"):
         p=sub.add_parser(name); p.add_argument("--state-dir",type=Path,default=STATE_ROOT); p.add_argument("--symbols",nargs="*",default=list(DEFAULT_MICRO_SYMBOLS)); p.add_argument("--end"); p.add_argument("--max-days",type=int,default=MAX_MICRO_DAYS); p.add_argument("--max-series",type=int,default=MAX_MACRO_SERIES); p.add_argument("--max-years",type=int,default=MAX_MACRO_YEARS)
     return parser
 
@@ -479,6 +565,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args=build_parser().parse_args(argv); values=vars(args); command=values.pop("command"); state_dir=values.pop("state_dir")
     if command in {"news-proof"}: values={}
+    elif command == "historical-news": values={"symbols":values.pop("symbols"),"end":values.pop("end"),"max_days":values.pop("max_days")}
     elif command == "macro": values={"max_series":values.pop("max_series"),"max_years":values.pop("max_years")}
     elif command == "microstructure": values={"symbols":values.pop("symbols"),"end":values.pop("end"),"max_days":values.pop("max_days")}
     elif command == "analyst":
