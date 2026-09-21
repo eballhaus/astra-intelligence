@@ -171,6 +171,8 @@ def test_broad_snapshots_are_batched_normalized_and_published_as_observation_onl
         owner._refresh_broad_observations(symbols)
         assert len(router.snapshot_batches) == 3
         assert [len(batch) for batch in router.snapshot_batches] == [100, 100, 51]
+        assert len(owner._observation_rows) == 16
+        assert owner._observation_rows_is_status_sample is True
         rows = owner.current_broad_observation_rows()
         assert len(rows) == 251
         assert len(published) == 251

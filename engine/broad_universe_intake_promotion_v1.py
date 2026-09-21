@@ -38,6 +38,7 @@ ALPACA_UNIVERSE_TTL_SECONDS = 86_400
 DEFAULT_BROAD_OBSERVATION_REFRESH_SECONDS = 60
 DEFAULT_BROAD_OBSERVATION_BATCH_SIZE = 100
 MAX_BROAD_OBSERVATION_SYMBOLS = 3_000
+MAX_BROAD_OBSERVATION_STATUS_SAMPLE = 16
 MAX_LANE_EVALUATION_INPUTS = 300
 
 LANE_DISCOVERY_LANES = ("SCALP", "DAY", "SWING")
@@ -195,6 +196,7 @@ class BroadUniverseIntakePromotionV1:
         self._observation_lock = threading.RLock()
         self._observation_thread: threading.Thread | None = None
         self._observation_rows: list[dict[str, Any]] = []
+        self._observation_rows_is_status_sample = False
         self._observation_status: dict[str, Any] = {
             "status": "NOT_STARTED",
             "observation_role": "BROAD_DISCOVERY_TIER0",
@@ -326,7 +328,7 @@ class BroadUniverseIntakePromotionV1:
 
     def current_broad_observation_rows(self) -> list[dict[str, Any]]:
         with self._observation_lock:
-            if self._observation_rows:
+            if self._observation_rows and not self._observation_rows_is_status_sample:
                 rows = [dict(row) for row in self._observation_rows]
             else:
                 rows = []
@@ -827,6 +829,13 @@ class BroadUniverseIntakePromotionV1:
         with self._observation_lock:
             self._observation_status = status
         self._write_observation_state(rows=normalized, status=status)
+        # The complete rows are durable in broad_live_observations_v1.json and
+        # remain available through current_broad_observation_rows(). Keep only
+        # a compact status sample on the long-lived worker object to avoid a
+        # second full snapshot retaining thousands of small Python objects.
+        with self._observation_lock:
+            self._observation_rows = normalized[:MAX_BROAD_OBSERVATION_STATUS_SAMPLE]
+            self._observation_rows_is_status_sample = True
 
     def schedule_broad_observation_refresh(
         self,
