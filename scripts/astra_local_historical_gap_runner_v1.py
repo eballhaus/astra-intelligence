@@ -100,15 +100,20 @@ def _read_json(path: Path, default: Any = None) -> Any:
 
 
 def resource_gate(state_dir: Path = STATE_ROOT) -> dict[str, Any]:
-    """Historical work is allowed only with one healthy normal worker."""
+    """Allow bounded history work during NORMAL or REDUCE_BATCH resource states."""
     health = worker_health(Path(state_dir))
     state = str(health.get("resource_state") or "UNKNOWN")
-    blocked = state != "RESOURCE_NORMAL" or int(health.get("worker_count") or 0) != 1 or bool(health.get("last_error"))
+    worker_count = int(health.get("worker_count") or 0)
+    last_error = bool(health.get("last_error"))
+    allowed_states = {"RESOURCE_NORMAL", "RESOURCE_ELEVATED"}
+    blocked = state not in allowed_states or worker_count != 1 or last_error
+    mode = "REDUCED" if state == "RESOURCE_ELEVATED" and not blocked else "NORMAL" if not blocked else "BLOCKED"
     return {
         "allowed": not blocked,
+        "mode": mode,
         "resource_state": state,
-        "worker_count": int(health.get("worker_count") or 0),
-        "reason": "RESOURCE_NORMAL" if not blocked else "worker_resource_or_health_gate",
+        "worker_count": worker_count,
+        "reason": "REDUCE_BATCH" if mode == "REDUCED" else "RESOURCE_NORMAL" if mode == "NORMAL" else "worker_resource_or_health_gate",
         "health": {k: health.get(k) for k in ("worker_pid", "cycle_count", "updated_at", "last_error", "source_identity")},
     }
 
@@ -119,7 +124,35 @@ def _router():
     return ProviderRouter()
 
 
-def _call(router: Any, provider: str, url: str, *, params: Mapping[str, Any], headers: Mapping[str, str] | None = None) -> dict[str, Any]:
+def _blocked_call() -> dict[str, Any]:
+    return {
+        "requested_at": now_iso(),
+        "received_at": now_iso(),
+        "http_status": 0,
+        "error": "RESOURCE_BLOCKED",
+        "latency_ms": 0.0,
+        "data": {},
+    }
+
+
+def _call(
+    router: Any,
+    provider: str,
+    url: str,
+    *,
+    params: Mapping[str, Any],
+    headers: Mapping[str, str] | None = None,
+    state_dir: Path = STATE_ROOT,
+) -> dict[str, Any]:
+    gate = resource_gate(Path(state_dir))
+    if not gate["allowed"]:
+        return _blocked_call()
+    # Historical work stays deliberately low priority.
+    time.sleep(10 if gate.get("mode") == "REDUCED" else 2)
+    # Resource state may change while pacing; never issue a request after a
+    # pause or worker-health failure.
+    if not resource_gate(Path(state_dir))["allowed"]:
+        return _blocked_call()
     requested_at = now_iso()
     data, status, error, latency = router._request(provider, url, params=dict(params), headers=dict(headers or {}))
     return {
@@ -246,7 +279,12 @@ def run_macro(*, state_dir: Path = STATE_ROOT, max_series: int = MAX_MACRO_SERIE
     for series_id in series:
         if not resource_gate(state_dir)["allowed"]:
             statuses.append({"series_id": series_id, "status": "RESOURCE_BLOCKED"}); break
-        call = _call(router, "FRED", "https://api.stlouisfed.org/fred/series/observations", params={"series_id": series_id, "api_key": key, "file_type": "json", "observation_start": start, "observation_end": end, "realtime_start": start, "realtime_end": end})
+        call = _call(router, "FRED", "https://api.stlouisfed.org/fred/series/observations", params={"series_id": series_id, "api_key": key, "file_type": "json", "observation_start": start, "observation_end": end, "realtime_start": start, "realtime_end": end}, state_dir=Path(state_dir))
+        if call.get("error") == "RESOURCE_BLOCKED":
+            statuses.append({"series_id": series_id, "status": "RESOURCE_BLOCKED"})
+            result.update(status="RESOURCE_BLOCKED", series_status=statuses)
+            _atomic_json(_root(Path(state_dir)) / "macro_checkpoint.json", result)
+            return result
         result["provider_calls"] += 1
         state = _status(call)
         shard = raw_dir / f"{series_id}_{uuid.uuid4().hex}.json"
@@ -318,12 +356,22 @@ def run_microstructure(*, state_dir: Path = STATE_ROOT, symbols: Iterable[str] =
                     load_shared_environment(); api_key = str(os.getenv("APCA_API_KEY_ID") or os.getenv("ALPACA_API_KEY_ID") or os.getenv("ALPACA_API_KEY") or "").strip(); secret = str(os.getenv("APCA_API_SECRET_KEY") or os.getenv("ALPACA_API_SECRET") or "").strip()
                     if not api_key or not secret:
                         result.update(status="AUTHENTICATION_FAILED", reason="Alpaca credentials unavailable"); return result
-                    call = _call(router, "ALPACA", endpoint, params=params, headers={"APCA-API-KEY-ID": api_key, "APCA-API-SECRET-KEY": secret})
+                    call = _call(router, "ALPACA", endpoint, params=params, headers={"APCA-API-KEY-ID": api_key, "APCA-API-SECRET-KEY": secret}, state_dir=Path(state_dir))
+                    if call.get("error") == "RESOURCE_BLOCKED":
+                        statuses.append({"key": key, "status": "RESOURCE_BLOCKED", "page": page})
+                        result.update(status="RESOURCE_BLOCKED", statuses=statuses)
+                        return result
                     result["provider_calls"] += 1; state = _status(call); receipt = call["received_at"]
                     page_id = f"{symbol}_{day}_{feed}_{page:05d}"
                     raw_path = raw_dir / f"{page_id}.json"; normalized_path = normalized_dir / f"{page_id}.jsonl"
                     _atomic_json(raw_path, {"provider": "ALPACA_SIP", "symbol": symbol, "feed": feed, "request": params, "receipt": receipt, "response": call["data"]})
-                    rows = (call["data"].get(feed) or []) if isinstance(call["data"], dict) else []
+                    payload = (call["data"].get(feed) or []) if isinstance(call["data"], dict) else []
+                    if isinstance(payload, dict):
+                        rows = payload.get(symbol) or payload.get(symbol.upper()) or []
+                    elif isinstance(payload, list):
+                        rows = payload
+                    else:
+                        rows = []
                     normalized = [_micro_record(symbol, feed, row, receipt=receipt, source_file=str(raw_path)) for row in rows if isinstance(row, dict)]
                     if normalized: _atomic_jsonl(normalized_path, normalized); result["records"] += len(normalized)
                     token = call["data"].get("next_page_token") if isinstance(call["data"], dict) else None
@@ -365,7 +413,12 @@ def run_analyst(*, state_dir: Path = STATE_ROOT, symbols: Iterable[str] = DEFAUL
             specs = [("analyst_estimates", "https://financialmodelingprep.com/stable/analyst-estimates", {"symbol": symbol, "apikey": fmp_key})]
         for family, endpoint, params in specs:
             if not resource_gate(state_dir)["allowed"]: result.update(status="RESOURCE_BLOCKED", statuses=statuses); return result
-            call = _call(router, provider, endpoint, params=params); result["provider_calls"] += 1; state = _status(call); receipt=call["received_at"]; raw_rows = call["data"].get("_list") if isinstance(call["data"], dict) and isinstance(call["data"].get("_list"), list) else call["data"] if isinstance(call["data"], list) else []
+            call = _call(router, provider, endpoint, params=params, state_dir=Path(state_dir))
+            if call.get("error") == "RESOURCE_BLOCKED":
+                statuses.append({"symbol": symbol, "family": family, "status": "RESOURCE_BLOCKED"})
+                result.update(status="RESOURCE_BLOCKED", statuses=statuses)
+                return result
+            result["provider_calls"] += 1; state = _status(call); receipt=call["received_at"]; raw_rows = call["data"].get("_list") if isinstance(call["data"], dict) and isinstance(call["data"].get("_list"), list) else call["data"] if isinstance(call["data"], list) else []
             shard=raw_dir/f"{symbol}_{family}.json"; _atomic_json(shard,{"provider":provider,"symbol":symbol,"family":family,"request":{"start":start,"end":end},"receipt":receipt,"response":call["data"]})
             normalized=[_analyst_record(symbol,provider,row,receipt=receipt,source_file=str(shard)) for row in raw_rows if isinstance(row,dict) and (row.get("publishedDate") or row.get("publication_time") or row.get("published_at") or row.get("publishedAt"))]
             if normalized: _atomic_jsonl(norm_dir/f"{symbol}_{family}.jsonl",normalized); result["records"] += len(normalized)
@@ -430,7 +483,7 @@ def main(argv: list[str] | None = None) -> int:
     elif command == "microstructure": values={"symbols":values.pop("symbols"),"end":values.pop("end"),"max_days":values.pop("max_days")}
     elif command == "analyst": values={"symbols":values.pop("symbols"),"max_symbols":min(len(values.pop("symbols")),MAX_ANALYST_SYMBOLS),"max_years":min(values.pop("max_years"),MAX_ANALYST_YEARS)}
     else: values={"state_dir":state_dir}
-    result=run_command(command,state_dir=state_dir,**values); print(json.dumps(result,sort_keys=True,separators=(",",":"))); return 0
+    result=run_command(command,**values); print(json.dumps(result,sort_keys=True,separators=(",",":"))); return 0
 
 
 if __name__ == "__main__":
