@@ -2203,6 +2203,28 @@ class PaperAutopilotEngine:
                     self._runtime_state["legacy_swing_market_activity"] = dict(payload.get("legacy_swing_market_activity") or {})
                 elif isinstance(nested_canary.get("market_activity"), dict):
                     self._runtime_state["legacy_swing_market_activity"] = dict(nested_canary.get("market_activity") or {})
+                if not self._runtime_state.get("legacy_swing_fmp_evidence") and isinstance(nested_canary.get("fmp_records"), dict):
+                    self._runtime_state["legacy_swing_fmp_evidence"] = dict(nested_canary.get("fmp_records") or {})
+                if not self._runtime_state.get("legacy_swing_fmp_activity") and isinstance(nested_canary.get("fmp_activity"), dict):
+                    self._runtime_state["legacy_swing_fmp_activity"] = dict(nested_canary.get("fmp_activity") or {})
+                # Market/FMP evidence has dedicated top-level canonical stores.
+                # Older snapshots also nested full copies under the advisory
+                # canary, causing every checkpoint to materialize the same
+                # payload twice.  Keep a compact storage reference instead;
+                # the top-level fallback above preserves older snapshots that
+                # only contained the nested form.
+                compact_canary = dict(self._runtime_state.get("legacy_swing_canary") or {})
+                for field, store_key in (
+                    ("market_records", "legacy_swing_market_evidence"),
+                    ("market_activity", "legacy_swing_market_activity"),
+                    ("fmp_records", "legacy_swing_fmp_evidence"),
+                    ("fmp_activity", "legacy_swing_fmp_activity"),
+                ):
+                    nested_value = compact_canary.pop(field, None)
+                    if isinstance(nested_value, dict):
+                        compact_canary[f"{field}_store"] = store_key
+                        compact_canary[f"{field}_count"] = len(nested_value)
+                self._runtime_state["legacy_swing_canary"] = compact_canary
                 if isinstance(payload.get("legacy_swing_exit_lifecycle"), dict):
                     self._runtime_state["legacy_swing_exit_lifecycle"] = dict(payload.get("legacy_swing_exit_lifecycle") or {})
                 if isinstance(payload.get("legacy_retirement_entry_provenance_v1"), dict):
@@ -2304,6 +2326,19 @@ class PaperAutopilotEngine:
             return
 
     def _save_state_file(self, *, worker_owned: bool = False):
+        canary = dict(self._runtime_state.get("legacy_swing_canary") or {})
+        # Full market/FMP evidence is persisted in their canonical top-level
+        # stores.  Do not serialize duplicate advisory copies on every cycle.
+        for field, store_key in (
+            ("market_records", "legacy_swing_market_evidence"),
+            ("market_activity", "legacy_swing_market_activity"),
+            ("fmp_records", "legacy_swing_fmp_evidence"),
+            ("fmp_activity", "legacy_swing_fmp_activity"),
+        ):
+            nested_value = canary.pop(field, None)
+            if isinstance(nested_value, dict):
+                canary[f"{field}_store"] = store_key
+                canary[f"{field}_count"] = len(nested_value)
         payload = {
             "autopilot_enabled": bool(getattr(self, "_enabled", False)),
             "paper_mode": self.paper_mode,
@@ -2332,7 +2367,7 @@ class PaperAutopilotEngine:
             "legacy_swing_fmp_evidence": dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {}),
             "legacy_swing_fmp_activity": dict(self._runtime_state.get("legacy_swing_fmp_activity") or {}),
             "legacy_forward_activations": dict(self._runtime_state.get("legacy_forward_activations") or {}),
-            "legacy_swing_canary": dict(self._runtime_state.get("legacy_swing_canary") or {}),
+            "legacy_swing_canary": canary,
             "legacy_swing_market_evidence": dict(self._runtime_state.get("legacy_swing_market_evidence") or {}),
             "legacy_swing_market_activity": dict(self._runtime_state.get("legacy_swing_market_activity") or {}),
             "legacy_swing_exit_lifecycle": dict(self._runtime_state.get("legacy_swing_exit_lifecycle") or {}),
@@ -6325,10 +6360,14 @@ class PaperAutopilotEngine:
             "writer_adapter_result": adapter_result,
             "last_refresh_at": _now_iso(), "broker_actions": 0, "natural_orders": 0, "fixture_orders": 0,
             "worker_acknowledgement": "CANARY_CONFIGURATION_CONSUMED_BY_WORKER",
-            "fmp_activity": fmp_activity,
-            "fmp_records": fmp_records,
-            "market_activity": market_activity,
-            "market_records": market_records,
+            "fmp_activity_store": "legacy_swing_fmp_activity",
+            "fmp_activity_count": len(fmp_activity),
+            "fmp_records_store": "legacy_swing_fmp_evidence",
+            "fmp_records_count": len(fmp_records),
+            "market_activity_store": "legacy_swing_market_activity",
+            "market_activity_count": len(market_activity),
+            "market_records_store": "legacy_swing_market_evidence",
+            "market_records_count": len(market_records),
             "direct_confirmations": {key: dict(value.get("direct_confirmation") or {}) for key, value in reviews.items()},
         }
         return {

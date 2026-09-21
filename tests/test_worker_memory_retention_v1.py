@@ -4,10 +4,12 @@ from __future__ import annotations
 import copy
 import json
 import os
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from engine.alpaca_ws_monitor import AlpacaWSMonitor
+from engine.paper_autopilot import PaperAutopilotEngine
 from engine.paper_autopilot_worker import PaperAutopilotWorker
 
 
@@ -106,3 +108,37 @@ def test_memory_telemetry_reports_observation_bound_and_allocator_signal():
     assert telemetry["allocator_growth_signal"] == "SUSTAINED_PYTHON_BLOCK_GROWTH"
     assert telemetry["owner_counts"]["alpaca_ws_broad_discovery_rows"] == 32
     assert runtime["broker_truth_records_v1"] == truth["broker_truth_records_v1"]
+
+
+def test_canary_checkpoint_does_not_duplicate_canonical_evidence_payloads():
+    market = {"activation-a": {"HISTORICAL_BARS": {"record_id": "bar-a", "bars": [{"c": 10.0}]}}}
+    fmp = {"activation-a": {"record_id": "fmp-a", "normalized_fields": {"sector": "Technology"}}}
+    with tempfile.TemporaryDirectory() as state_dir:
+        engine = object.__new__(PaperAutopilotEngine)
+        engine.state_path = os.path.join(state_dir, "paper_autopilot_state.json")
+        engine.paper_mode = True
+        engine._enabled = False
+        engine._adaptive_learning_capacity_policy = {}
+        engine._runtime_state = {
+            "legacy_swing_market_evidence": market,
+            "legacy_swing_market_activity": {"cycle_state": "CYCLE_COMPLETE"},
+            "legacy_swing_fmp_evidence": fmp,
+            "legacy_swing_fmp_activity": {"request_count": 1},
+            "legacy_swing_canary": {
+                "market_records": market,
+                "market_activity": {"cycle_state": "CYCLE_COMPLETE"},
+                "fmp_records": fmp,
+                "fmp_activity": {"request_count": 1},
+                "reviews": {},
+            },
+        }
+        engine._save_state_file(worker_owned=True)
+        saved = json.loads(open(engine.state_path, encoding="utf-8").read())
+
+    assert saved["legacy_swing_market_evidence"] == market
+    assert saved["legacy_swing_fmp_evidence"] == fmp
+    canary = saved["legacy_swing_canary"]
+    assert "market_records" not in canary
+    assert "fmp_records" not in canary
+    assert canary["market_records_store"] == "legacy_swing_market_evidence"
+    assert canary["fmp_records_store"] == "legacy_swing_fmp_evidence"
