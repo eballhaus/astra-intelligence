@@ -481,7 +481,9 @@ def main(argv: list[str] | None = None) -> int:
     if command in {"news-proof"}: values={}
     elif command == "macro": values={"max_series":values.pop("max_series"),"max_years":values.pop("max_years")}
     elif command == "microstructure": values={"symbols":values.pop("symbols"),"end":values.pop("end"),"max_days":values.pop("max_days")}
-    elif command == "analyst": values={"symbols":values.pop("symbols"),"max_symbols":min(len(values.pop("symbols")),MAX_ANALYST_SYMBOLS),"max_years":min(values.pop("max_years"),MAX_ANALYST_YEARS)}
+    elif command == "analyst":
+        symbols = values.pop("symbols")
+        values = {"symbols": symbols, "max_symbols": min(len(symbols), MAX_ANALYST_SYMBOLS), "max_years": min(values.pop("max_years"), MAX_ANALYST_YEARS)}
     else: values={"state_dir":state_dir}
     result=run_command(command,**values); print(json.dumps(result,sort_keys=True,separators=(",",":"))); return 0
 

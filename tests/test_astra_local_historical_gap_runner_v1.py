@@ -127,3 +127,16 @@ def test_news_proof_never_calls_provider(tmp_path):
     result = runner.run_news_proof(state_dir=tmp_path)
     assert result["provider_calls"] == 0
     assert result["replay_safe"] is False
+
+
+def test_analyst_cli_preserves_symbols_once(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured.update({"command": command, **kwargs})
+        return {"status": "AUTHENTICATION_FAILED"}
+
+    monkeypatch.setattr(runner, "run_command", fake_run)
+    assert runner.main(["analyst", "--state-dir", str(tmp_path), "--symbols", "AAPL", "MSFT"]) == 0
+    assert captured["symbols"] == ["AAPL", "MSFT"]
+    assert captured["max_symbols"] == 2
