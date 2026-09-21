@@ -147,6 +147,7 @@ def run_once(*, state_dir: Path = STATE_ROOT, worker_state_dir: Path = WORKER_ST
     checkpoint_path = _checkpoint_path(state_dir)
     checkpoint = _read_json(checkpoint_path, {"completed_lanes": []})
     completed = set(str(item) for item in checkpoint.get("completed_lanes", []) if item in LANES)
+    provider_blocked: list[str] = []
     gate = resource_gate(worker_state_dir)
     if not gate["allowed"]:
         result = {"status": "WAITING_FOR_RESOURCES", "resource_gate": gate, "completed_lanes": sorted(completed), "updated_at": now_iso()}
@@ -175,10 +176,15 @@ def run_once(*, state_dir: Path = STATE_ROOT, worker_state_dir: Path = WORKER_ST
             checkpoint = {"schema_version": "astra_overnight_historical_supervisor_v1", "completed_lanes": sorted(completed), "updated_at": now_iso()}
             _write_json(checkpoint_path, checkpoint)
         else:
-            result = {"status": "WAITING_FOR_PROVIDER", "lane": lane, "lane_result": result, "completed_lanes": sorted(completed), "updated_at": now_iso()}
-            _write_json(status_path, result)
-            return result
-    result = {"status": "COMPLETE" if completed == set(LANES) else "WAITING_FOR_PROVIDER", "completed_lanes": sorted(completed), "updated_at": now_iso()}
+            provider_blocked.append(lane)
+            _log(log_path, f"lane={lane} provider_status={status or 'UNKNOWN'}; continuing independent lanes")
+            continue
+    result = {
+        "status": "COMPLETE" if completed == set(LANES) else "WAITING_FOR_PROVIDER" if provider_blocked else "WAITING_FOR_RESOURCES",
+        "provider_blocked_lanes": provider_blocked,
+        "completed_lanes": sorted(completed),
+        "updated_at": now_iso(),
+    }
     _write_json(status_path, result)
     return result
 

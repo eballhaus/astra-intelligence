@@ -52,5 +52,6 @@ def test_supervisor_does_not_mark_provider_failure_complete(tmp_path, monkeypatc
         launch_child=lambda *args: {"status": "AUTHENTICATION_FAILED"},
     )
     assert result["status"] == "WAITING_FOR_PROVIDER"
+    assert result["provider_blocked_lanes"] == list(supervisor.LANES)
     checkpoint = tmp_path / supervisor.SUPERVISOR_ROOT / supervisor.CHECKPOINT_NAME
     assert not checkpoint.exists()
