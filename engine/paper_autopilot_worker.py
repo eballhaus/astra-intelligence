@@ -68,6 +68,7 @@ from engine.adaptive_profit_capture_intelligence_v1 import (
     build_profit_capture_trade_effectiveness_v2,
     load_bounded_broker_truth_records_v1,
 )
+from engine.alpaca_ws_monitor import _compact_broad_discovery_status_row
 
 
 # A cycle may contain bounded local persistence work that lasts longer than
@@ -76,6 +77,24 @@ from engine.adaptive_profit_capture_intelligence_v1 import (
 ACTIVE_CYCLE_HEARTBEAT_SECONDS = 5.0
 RESOURCE_MEMORY_SAMPLE_LIMIT = 16
 CYCLE_TIMING_HISTORY_LIMIT = 32
+
+
+def _compact_monitor_status_v1(status: dict[str, Any]) -> dict[str, Any]:
+    """Prevent a full broad-observation map crossing into worker state."""
+    compact = dict(status or {})
+    rows = compact.get("broad_discovery_observations")
+    if isinstance(rows, dict):
+        total = int(compact.get("broad_discovery_observation_count") or len(rows))
+        compact["broad_discovery_observations"] = {
+            symbol: _compact_broad_discovery_status_row(row)
+            for symbol, row in sorted(rows.items())[:16]
+            if isinstance(row, dict)
+        }
+        compact["broad_discovery_observation_count"] = total
+        compact["broad_discovery_status_sample_count"] = len(compact["broad_discovery_observations"])
+        compact["broad_discovery_status_sample_limit"] = 16
+        compact["broad_discovery_projection"] = "status_sample_v1"
+    return compact
 
 
 class PaperAutopilotWorker:
@@ -558,13 +577,21 @@ class PaperAutopilotWorker:
             int(monitor_status.get("broad_discovery_observation_count") or len(broad_discovery))
             if isinstance(monitor_status, dict) else len(broad_discovery)
         )
+        trace_rows = list(dict(last_trace).get("per_candidate_decision_trace") or []) if isinstance(last_trace, dict) else []
+        try:
+            trace_bytes = len(json.dumps(trace_rows, separators=(",", ":"), ensure_ascii=True))
+        except (TypeError, ValueError):
+            trace_bytes = 0
         return {
             "lane_reserve_commitments": len(commitment_rows),
             "lane_reserve_commitments_active": sum(
                 1 for record in commitment_rows
                 if str(record.get("commitment_state") or "").upper() in active_states
             ),
-            "last_execution_trace_candidates": len(list(dict(last_trace).get("per_candidate_decision_trace") or [])) if isinstance(last_trace, dict) else 0,
+            "last_execution_trace_candidates": len(trace_rows),
+            "last_execution_trace_candidate_bytes": trace_bytes,
+            "last_execution_trace_candidate_bound": 200,
+            "last_execution_trace_candidate_reconstructable": 1,
             "legacy_forward_activations": len(dict(runtime.get("legacy_forward_activations") or {})),
             "legacy_swing_market_evidence": len(dict(runtime.get("legacy_swing_market_evidence") or {})),
             "legacy_retirement_intents": len(dict((runtime.get("legacy_retirement_execution_v1") or {}).get("intents") or {})),
@@ -1251,7 +1278,7 @@ class PaperAutopilotWorker:
             current = dict(runtime)
             try:
                 from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
-                monitor_status = dict(ALPACA_WS_MONITOR.status() or {})
+                monitor_status = _compact_monitor_status_v1(dict(ALPACA_WS_MONITOR.status() or {}))
                 # Keep the worker-owned monitor snapshot available to API
                 # consumers. This is observation-only and avoids an API
                 # process creating a competing websocket owner.

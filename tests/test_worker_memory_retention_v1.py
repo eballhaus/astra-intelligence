@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from engine.alpaca_ws_monitor import AlpacaWSMonitor
 from engine.paper_autopilot import PaperAutopilotEngine, _compact_runtime_execution_trace_v1
-from engine.paper_autopilot_worker import PaperAutopilotWorker
+from engine.paper_autopilot_worker import PaperAutopilotWorker, _compact_monitor_status_v1
 
 
 def _broad_row(symbol: str) -> dict:
@@ -204,3 +204,20 @@ def test_save_state_compacts_runtime_trace_without_changing_canonical_truth():
     assert saved_row["candidate_id"] == "cand-2"
     assert "full" not in saved_row["pretrade_decision_contract_v1"]
     assert saved["last_execution_trace"]["runtime_trace_storage_v1"]["retained_item_count"] == 1
+
+
+def test_worker_monitor_handoff_compacts_full_broad_status_snapshot():
+    rows = {
+        f"SYM{i:04d}": _broad_row(f"SYM{i:04d}")
+        for i in range(1061)
+    }
+    compact = _compact_monitor_status_v1({
+        "broad_discovery_observations": rows,
+        "broad_discovery_observation_count": len(rows),
+    })
+
+    assert len(compact["broad_discovery_observations"]) == 16
+    assert compact["broad_discovery_observation_count"] == 1061
+    assert compact["broad_discovery_status_sample_limit"] == 16
+    assert compact["broad_discovery_projection"] == "status_sample_v1"
+    assert "open" not in compact["broad_discovery_observations"]["SYM0000"]
