@@ -88,6 +88,20 @@ class CandidateCollectionEquitySourceFailureTests(unittest.TestCase):
         self.assertTrue(all(row["asset_type"] == "crypto" for row in rows))
         engine.broker.assert_not_called()
 
+    def test_candidate_collection_does_not_retain_cycle_payloads(self):
+        source_rows = [{"symbol": f"S{index:03d}", "price": 100.0} for index in range(30)]
+        engine = self._engine(lambda: {"stocks": {"final": source_rows}})
+        with patch.dict(os.environ, {"ASTRA_PROCESS_ROLE": "api"}):
+            for _ in range(5):
+                rows = engine._collect_candidate_rows()
+                self.assertTrue(rows)
+
+        memory_contract = engine._runtime_state["candidate_collection_memory_v1"]
+        self.assertEqual(memory_contract["retained_rows"], 0)
+        self.assertEqual(memory_contract["max_retained_rows"], 0)
+        self.assertTrue(memory_contract["reconstructable"])
+        self.assertEqual(source_rows[0], {"symbol": "S000", "price": 100.0})
+
 
 if __name__ == "__main__":
     unittest.main()

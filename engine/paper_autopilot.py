@@ -8168,7 +8168,10 @@ class PaperAutopilotEngine:
                 if not isinstance(cur, dict):
                     return []
                 cur = cur.get(k)
-            return [dict(x) for x in (cur or []) if isinstance(x, dict)] if isinstance(cur, list) else []
+            # Source rows are normalized into independent working rows below;
+            # copying them here first only creates a duplicate cycle-local
+            # payload before the canonical deduplication boundary.
+            return [x for x in (cur or []) if isinstance(x, dict)] if isinstance(cur, list) else []
 
         rows.extend(_rows_from(["stocks", "final"]))
         rows.extend(_rows_from(["top_action_views", "canonical_decision_views", "stocks_buy_candidates"]))
@@ -8211,7 +8214,7 @@ class PaperAutopilotEngine:
             try:
                 broad_inputs = broad_owner.bounded_lane_evaluation_inputs_v1()
                 broad_handoff = dict(allocator.evaluate_broad_observations_v1(broad_inputs) or {})
-                rows.extend([dict(row) for row in (broad_handoff.get("promoted_rows") or []) if isinstance(row, dict)])
+                rows.extend([row for row in (broad_handoff.get("promoted_rows") or []) if isinstance(row, dict)])
                 self._runtime_state["broad_observation_multilane_handoff_v1"] = {
                     key: value for key, value in broad_handoff.items() if key != "promoted_rows"
                 }
@@ -8330,6 +8333,18 @@ class PaperAutopilotEngine:
                 dedup = list(self.portfolio_diversification_v2_suite.rank_for_paper_selection(dedup) or dedup)
             except Exception:
                 pass
+        self._runtime_state["candidate_collection_memory_v1"] = {
+            "schema_version": "astra_candidate_collection_memory_v1",
+            "source_rows": len(rows),
+            "deduplicated_rows": len(dedup),
+            "decorator_pipeline_bounded": True,
+            "cycle_local": True,
+            "reconstructable": True,
+            "canonical_source": "current_candidate_producers_and_durable_lane_ledgers",
+            "retention_reason": "ACTIVE_CYCLE_ONLY",
+            "max_retained_rows": 0,
+            "retained_rows": 0,
+        }
         # Publish only the existing, already-ranked qualified finalists for
         # the observation canary. This compact diagnostic snapshot is not
         # candidate authority and is never consumed by order selection.
