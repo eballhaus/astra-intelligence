@@ -329,12 +329,17 @@ class BroadUniverseIntakePromotionV1:
     def current_broad_observation_rows(self) -> list[dict[str, Any]]:
         with self._observation_lock:
             if self._observation_rows and not self._observation_rows_is_status_sample:
-                rows = [dict(row) for row in self._observation_rows]
+                # Treat canonical observation rows as read-only.  Callers
+                # already create lane-specific projections when needed; a
+                # second full dict copy here only increases allocator churn.
+                rows = [row for row in self._observation_rows if isinstance(row, dict)]
             else:
                 rows = []
         if not rows:
             payload = _safe_read_json(self.broad_observation_path, {})
-            rows = [dict(row) for row in (payload.get("rows") or []) if isinstance(row, dict)] if isinstance(payload, dict) else []
+            # The archive remains the complete source of truth. Keep its row
+            # objects read-only and avoid a duplicate full-map materialization.
+            rows = [row for row in (payload.get("rows") or []) if isinstance(row, dict)] if isinstance(payload, dict) else []
         return [
             row for row in rows
             if str(row.get("freshness_state") or "").upper() == "CURRENT"
@@ -358,30 +363,32 @@ class BroadUniverseIntakePromotionV1:
             if symbol:
                 tier_by_symbol[symbol] = record
         tier_rank = {tier: index for index, tier in enumerate(DISCOVERY_TIER_ORDER)}
-        enriched: list[dict[str, Any]] = []
+        ranked: list[tuple[int, float, str, dict[str, Any], dict[str, Any]]] = []
         for row in rows:
             symbol = _norm_symbol(row.get("symbol"))
             if not symbol:
                 continue
             tier = dict(tier_by_symbol.get(symbol) or {})
-            enriched.append({
+            tier_name = str(tier.get("tier") or "COLD").upper()
+            score = _to_float(tier.get("discovery_score"), self._snapshot_discovery_score(row))
+            ranked.append((tier_rank.get(tier_name, len(tier_rank)), -score, symbol, row, tier))
+        limit = max(0, int(max_observations))
+        ranked.sort(key=lambda item: item[:3])
+        # Only the bounded lane-evaluation set receives independent dicts.
+        # The full archive remains available for later explicit retrieval.
+        return [
+            {
                 **dict(row),
                 "discovery_priority_tier": str(tier.get("tier") or "COLD").upper(),
                 "discovery_priority_rank": _to_int(tier.get("rank"), 999999),
-                "discovery_score": _to_float(tier.get("discovery_score"), self._snapshot_discovery_score(row)),
+                "discovery_score": -negative_score,
                 "lane_evaluation_input": True,
                 "observation_authority": False,
                 "executable_evidence": False,
                 "discovery_only": True,
-            })
-        enriched.sort(
-            key=lambda row: (
-                tier_rank.get(str(row.get("discovery_priority_tier") or "COLD").upper(), len(tier_rank)),
-                -_to_float(row.get("discovery_score"), 0.0),
-                str(row.get("symbol") or ""),
-            )
-        )
-        return enriched[: max(0, int(max_observations))]
+            }
+            for _tier_rank, negative_score, _symbol, row, tier in ranked[:limit]
+        ]
 
     @staticmethod
     def _snapshot_discovery_score(row: dict[str, Any]) -> float:

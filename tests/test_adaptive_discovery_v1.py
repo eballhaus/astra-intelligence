@@ -184,6 +184,44 @@ def test_broad_snapshots_are_batched_normalized_and_published_as_observation_onl
         assert rows[0]["volume"] == 5000.0
 
 
+def test_lane_evaluation_materializes_only_bounded_projection() -> None:
+    with TemporaryDirectory() as directory:
+        owner = BroadUniverseIntakePromotionV1(state_dir=directory)
+        now = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+        def symbol_for(index: int) -> str:
+            letters = []
+            value = index
+            while value:
+                letters.append(chr(65 + (value % 26)))
+                value //= 26
+            return "S" + "".join(reversed(letters or ["A"]))
+
+        rows = [
+            {
+                "symbol": symbol_for(index),
+                "freshness_state": "CURRENT",
+                "quote_age_seconds": 1.0,
+                "change_percent": float(index),
+                "volume": 1_000_000.0,
+                "provider_native_timestamp": now,
+            }
+            for index in range(400)
+        ]
+        owner._observation_rows = rows
+        owner._observation_rows_is_status_sample = False
+
+        full_rows = owner.current_broad_observation_rows()
+        bounded = owner.bounded_lane_evaluation_inputs_v1(max_observations=7)
+
+        assert len(full_rows) == 400
+        assert full_rows[0] is rows[0]
+        assert len(bounded) == 7
+        assert all(row["lane_evaluation_input"] is True for row in bounded)
+        assert all(row["observation_authority"] is False for row in bounded)
+        assert {row["symbol"] for row in bounded}.issubset({symbol_for(index) for index in range(400)})
+
+
 def test_freshly_checked_quiet_snapshot_separates_coverage_from_execution_freshness() -> None:
     received_at = datetime(2026, 9, 17, 14, 30, tzinfo=UTC).timestamp()
     old_event = datetime(2026, 9, 17, 14, 29, 0, tzinfo=UTC).isoformat().replace("+00:00", "Z")
