@@ -12681,7 +12681,17 @@ class PaperAutopilotEngine:
                     "remaining_qty": residual.get("broker_residual_quantity"),
                 }
             remaining_qty = residual.get("broker_residual_quantity")
-            if remaining_qty is not None and remaining_qty > 0.0 and not dust_safe_closure:
+            # ``broker_residual_lookup`` already classifies an equity residue
+            # at or below the canonical zero tolerance as
+            # BROKER_ZERO_CONFIRMED.  Do not reintroduce a stricter raw-float
+            # gate here: a broker-confirmed near-zero residue must follow the
+            # same closure path as an exact zero.
+            if (
+                remaining_qty is not None
+                and remaining_qty > 0.0
+                and not dust_safe_closure
+                and not bool(residual.get("exit_allowed"))
+            ):
                 return {"ok": False, "error": "broker_residual_quantity_nonzero", "remaining_qty": remaining_qty, "filled_qty": filled_qty}
             canonical_dust_safe_closure = {
                 "status": "VERIFIED_CANONICAL_DUST_SAFE_CLOSURE",

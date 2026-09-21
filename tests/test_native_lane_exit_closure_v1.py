@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import pathlib
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -19,6 +21,45 @@ class _Broker:
 
     def order(self, _order_id):
         return {"ok": True, "order": {"id": "sell-1", "symbol": "DAY", "status": self.status, "filled_qty": "2"}}
+
+
+class _NearZeroDinoBroker(_Broker):
+    def __init__(self):
+        super().__init__(status="filled")
+
+    def order(self, _order_id):
+        return {
+            "ok": True,
+            "order": {
+                "id": "dino-exit-1",
+                "client_order_id": "dino-exit",
+                "symbol": "DINO",
+                "status": "filled",
+                "filled_qty": "0.867818",
+                "filled_avg_price": "116.276",
+                "filled_at": "2026-09-17T19:55:15.750279Z",
+            },
+        }
+
+    def positions(self):
+        return {"ok": True, "positions": [{
+            "symbol": "DINO", "qty": "0.000000087", "qty_available": "0.000000087",
+            "market_value": "0.00001", "asset_class": "us_equity",
+        }]}
+
+    def reconstruct_open_position_provenance(self, _positions, limit=500):
+        return {
+            "ok": True,
+            "positions": [{
+                "symbol": "DINO",
+                "quantity_coverage_complete": True,
+                "matching_entry_fills": [{
+                    "entry_order_id": "entry-1",
+                    "remaining_qty": 0.000000087,
+                }],
+            }],
+            "broker_read_calls_used": 1,
+        }
 
 
 def _row():
@@ -189,6 +230,69 @@ class NativeLaneExitClosureTests(unittest.TestCase):
         self.assertEqual(downgraded["closure_state"], "AWAITING_BROKER_ZERO")
         self.assertEqual(downgraded["exit_fill_id"], "sell-1")
         self.assertTrue(downgraded["downgrade_suppressed"])
+
+    def test_dino_near_zero_equity_residual_honors_broker_zero_tolerance(self):
+        with tempfile.TemporaryDirectory() as directory, patch("engine.paper_autopilot.close_lifecycle_record", None):
+            root = pathlib.Path(directory)
+            (root / "broker_truth_records_v1.json").write_text('{"records": []}', encoding="utf-8")
+            broker = _NearZeroDinoBroker()
+            engine = PaperAutopilotEngine(
+                db_path=str(root / "paper.db"),
+                state_path=str(root / "state.json"),
+                alpaca_paper_broker=broker,
+            )
+            engine._position_tracker = None
+            engine.trade_lifecycle_excursion_suite = None
+            row = {
+                **_row(),
+                "symbol": "DINO",
+                "asset_type": "stock",
+                "status": "OPEN",
+                "position_id": "DINO:2026-09-17T15:37:59",
+                "quantity": 0.867818087,
+                "entry_timestamp": "2026-09-17T15:40:56.147925Z",
+                "entry_price": 115.22,
+                "source_bucket": "paper_autopilot_candidate",
+                "entry_metadata_generation": "V1_MANDATORY",
+                "row_json": "{}",
+                "lifecycle_notes": "{}",
+                "entry_order_id": "entry-1",
+                "entry_fill_id": "entry-1",
+            }
+            with engine._connect() as conn:
+                available = {item[1] for item in conn.execute("PRAGMA table_info(paper_positions)")}
+                insert_row = {key: value for key, value in row.items() if key in available}
+                columns = ", ".join(insert_row)
+                placeholders = ", ".join("?" for _ in insert_row)
+                conn.execute(
+                    f"INSERT INTO paper_positions ({columns}, created_at, updated_at) VALUES ({placeholders}, ?, ?)",
+                    (*insert_row.values(), datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")),
+                )
+                conn.commit()
+            engine._runtime_state["authorized_lane_exit_pending"] = {
+                "dino-exit-1": {
+                    "position_id": row["position_id"],
+                    "symbol": "DINO",
+                    "lane_id": "DAY",
+                    "order_id": "dino-exit-1",
+                    "client_order_id": "dino-exit",
+                    "exit_reason": "day_lane_session_close_required",
+                    "normalized_sell_qty": 0.867818,
+                },
+            }
+
+            result = engine._refresh_authorized_lane_exit_pending()
+
+            self.assertEqual(result["filled"], 1)
+            self.assertEqual(result["pending"], 0)
+            with engine._connect() as conn:
+                status, exit_order_id, exit_fill_id = conn.execute(
+                    "SELECT status, exit_order_id, exit_fill_id FROM paper_positions WHERE position_id=?",
+                    (row["position_id"],),
+                ).fetchone()
+            self.assertEqual(status, "CLOSED")
+            self.assertEqual(exit_order_id, "dino-exit-1")
+            self.assertEqual(exit_fill_id, "dino-exit-1")
 
     def test_broker_filled_state_cannot_be_downgraded_to_premarket_blocker(self):
         engine = self._engine()
