@@ -14112,14 +14112,14 @@ class PaperAutopilotEngine:
         self,
         managed_rows_by_symbol: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> dict[str, dict[str, Any]]:
-        """Return fresh identity-bound observations from existing producers.
+        """Return fresh observations associated with current positions.
 
         The worker WS snapshot and the FMP supplemental snapshot share the
-        canonical management contract.  WS rows may not carry lifecycle
-        aliases because the producer is symbol-based, so bind them to the
-        already-authoritative managed row for that symbol before validation.
-        No observation is accepted unless its provider-native timestamp is
-        executable-fresh under the existing contract.
+        canonical management contract.  Provider rows may be symbol-based
+        and carry no lifecycle alias, so associate them only with the current
+        managed symbol/asset.  If both sides carry identities, they must
+        intersect; an explicit mismatch remains fail-closed.  A provider row
+        never creates lifecycle ownership on its own.
         """
         managed = {
             str(symbol or "").upper().strip(): dict(row or {})
@@ -14195,6 +14195,10 @@ class PaperAutopilotEngine:
                     managed_row = dict(managed.get(alias) or {})
                     if managed_row:
                         break
+            # Observations are consumed only for a currently managed symbol;
+            # a producer snapshot must not introduce an unmanaged position.
+            if not managed_row:
+                continue
             managed_aliases = {
                 value for value in (
                     _pick_first_text(managed_row.get("canonical_position_id")),
@@ -14256,16 +14260,19 @@ class PaperAutopilotEngine:
                         managed_row.get("lifecycle_id"),
                         managed_row.get("position_id"),
                     )
-                    if not identity:
-                        continue
-                    candidate["canonical_position_id"] = identity
-                    candidate["canonical_position_aliases"] = sorted(managed_aliases or {identity})
-                    lifecycle_id = _pick_first_text(managed_row.get("lifecycle_id"))
-                    position_id = _pick_first_text(managed_row.get("position_id"))
-                    if lifecycle_id:
-                        candidate["lifecycle_id"] = lifecycle_id
-                    if position_id:
-                        candidate["position_id"] = position_id
+                    if identity:
+                        # This is an exact association to the one current
+                        # managed row, not a lifecycle identity inferred from
+                        # provider data.  When the managed row has no identity
+                        # the observation remains identity-free.
+                        candidate["canonical_position_id"] = identity
+                        candidate["canonical_position_aliases"] = sorted(managed_aliases or {identity})
+                        lifecycle_id = _pick_first_text(managed_row.get("lifecycle_id"))
+                        position_id = _pick_first_text(managed_row.get("position_id"))
+                        if lifecycle_id:
+                            candidate["lifecycle_id"] = lifecycle_id
+                        if position_id:
+                            candidate["position_id"] = position_id
                 else:
                     candidate["canonical_position_aliases"] = sorted(observation_aliases | managed_aliases)
                 provider_native = _pick_first_text(
@@ -14496,9 +14503,33 @@ class PaperAutopilotEngine:
                     *[_pick_first_text(value) for value in (cached_observation.get("canonical_position_aliases") or [])],
                 ) if value
             }
+            cached_symbol = str(cached_observation.get("symbol") or symbol).upper().strip()
+            cached_asset_type = _norm_asset(
+                cached_observation.get("asset_type")
+                or cached_observation.get("asset_class")
+                or ("crypto" if str(managed_row.get("lane_id") or managed_row.get("lane") or "").upper() == "CRYPTO" else "stock")
+            )
+            managed_asset_type = _norm_asset(
+                managed_row.get("asset_type")
+                or managed_row.get("asset_class")
+                or ("crypto" if str(managed_row.get("lane_id") or managed_row.get("lane") or "").upper() == "CRYPTO" else asset_type)
+            )
+            if cached_asset_type == "crypto" and managed_asset_type == "crypto":
+                cached_symbol_match = bool(
+                    _broker_position_symbol_aliases_v1(cached_symbol)
+                    & _broker_position_symbol_aliases_v1(symbol)
+                )
+            else:
+                cached_symbol_match = cached_symbol == symbol
+            cached_identity_compatible = (
+                not observation_identity_aliases
+                or bool(managed_identity_aliases & observation_identity_aliases)
+            )
             if (
                 cached_observation
-                and bool(managed_identity_aliases & observation_identity_aliases)
+                and cached_symbol_match
+                and cached_asset_type == managed_asset_type
+                and cached_identity_compatible
                 and bool(cached_timestamp.get("executable_freshness"))
             ):
                 quote = cached_observation

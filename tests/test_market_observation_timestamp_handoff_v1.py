@@ -138,6 +138,54 @@ class MarketObservationTimestampHandoffTests(unittest.TestCase):
         self.assertEqual(quotes["SHIBUSD"]["provider_native_timestamp"], native_timestamp)
         self.assertEqual(quotes["SHIBUSD"]["position_id"], "crypto-position")
 
+    def test_fresh_crypto_handoff_without_lifecycle_identity_is_consumed_by_symbol(self):
+        engine = self._engine()
+        native_timestamp = _iso(-2)
+        engine.get_latest_row_fn = lambda *_args: self.fail("fresh symbol-matched observation should avoid a provider request")
+        engine._runtime_state["crypto_rankings_snapshot_v1"] = {
+            "crypto_quote_handoffs_v1": [{
+                "symbol": "ETH/USD",
+                "quote_received": True,
+                "provider_bid": 2490.0,
+                "provider_ask": 2491.0,
+                "provider_quote_timestamp": native_timestamp,
+                "quote_observed_at": _iso(-1),
+                "quote_provider": "kraken_public_ws",
+            }],
+        }
+        quotes = engine._loss_containment_quote_evidence(
+            {"ETHUSD": {"symbol": "ETHUSD", "asset_type": "crypto", "current_price": 2490.5}},
+            managed_rows_by_symbol={"ETHUSD": {"symbol": "ETHUSD", "asset_type": "crypto", "lane_id": "CRYPTO"}},
+        )
+        quote = quotes["ETHUSD"]
+        self.assertEqual(quote["provider_native_timestamp"], native_timestamp)
+        self.assertEqual(quote["provider_used"], "kraken_public_ws")
+        self.assertNotIn("position_id", quote)
+        self.assertNotIn("lifecycle_id", quote)
+        self.assertTrue(canonical_market_timestamp_v1(quote, source_type="QUOTE", max_age_seconds=20)["executable_freshness"])
+
+    def test_explicit_mismatched_crypto_identity_remains_fail_closed(self):
+        engine = self._engine()
+        engine.get_latest_row_fn = lambda *_args: {}
+        engine._runtime_state["alpaca_ws_active_position_monitor_v1"] = {
+            "observations": {
+                "ETH/USD": {
+                    "symbol": "ETH/USD",
+                    "price": 2490.5,
+                    "provider_quote_timestamp": _iso(-2),
+                    "receive_timestamp": _iso(-1),
+                    "provider_used": "KRAKEN_PUBLIC_WS",
+                    "position_id": "sibling-position",
+                },
+            },
+        }
+        quotes = engine._loss_containment_quote_evidence(
+            {"ETHUSD": {"symbol": "ETHUSD", "asset_type": "crypto", "current_price": 2490.5}},
+            managed_rows_by_symbol={"ETHUSD": {"symbol": "ETHUSD", "asset_type": "crypto", "lane_id": "CRYPTO", "position_id": "active-position"}},
+        )
+        evidence = canonical_market_timestamp_v1(quotes["ETHUSD"], source_type="QUOTE", max_age_seconds=20)
+        self.assertTrue(evidence["market_observation_unavailable"])
+
     def test_stale_crypto_handoff_remains_fail_closed(self):
         engine = self._engine()
         engine.get_latest_row_fn = lambda *_args: {}
