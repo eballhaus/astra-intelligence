@@ -249,6 +249,76 @@ class PositionLaneHorizonRecoveryTests(unittest.TestCase):
         self.assertEqual((row["lane"], row["horizon"]), ("DAY", "scalp"))
         self.assertEqual(row["recovery_method"], "EXACT_ID_LINK")
 
+    def test_autopilot_consumes_resolved_crypto_horizon_over_legacy_day_trade(self):
+        from engine.paper_autopilot import PaperAutopilotEngine
+
+        broker = _broker(
+            symbol="ETH/USD",
+            asset_class="crypto",
+            entry_fill_id="crypto-fill-1",
+            position_id="crypto-position-1",
+        )
+        lifecycle = {
+            **broker,
+            "status": "OPEN",
+            "position_id": "crypto-position-1",
+            "entry_fill_id": "crypto-fill-1",
+            "lane_id": "CRYPTO",
+            "paper_entry_horizon_style": "day_trade",
+            "crypto_horizon": "CRYPTO_FAST",
+            "crypto_horizon_status": "RESOLVED",
+            "crypto_horizon_source": "crypto_15m_completed_bar_horizon_v1",
+            "expected_max_hold": "multi_hour",
+            "same_session_exit_required": False,
+            "overnight_allowed": True,
+        }
+        original_broker = dict(broker)
+        original_lifecycle = dict(lifecycle)
+        with tempfile.TemporaryDirectory() as directory:
+            engine = PaperAutopilotEngine(
+                db_path=f"{directory}/positions.db",
+                state_path=f"{directory}/paper_autopilot_state.json",
+                enabled=False,
+            )
+            engine._runtime_state["last_evidence_capacity_snapshot"] = {
+                "position_rows_for_read_only_consumers": [dict(broker)],
+            }
+            ledger = engine._recover_broker_position_lane_horizon_v1(
+                {"ETH/USD": broker}, [lifecycle]
+            )
+
+        row = ledger["positions"][0]
+        self.assertEqual(row["lane"], "CRYPTO")
+        self.assertEqual(row["horizon"], "CRYPTO_FAST")
+        self.assertEqual(row["horizon_status"], "RESOLVED")
+        self.assertIn(row["horizon_source"], {"ACTIVE_POSITION_LIFECYCLE", "CURRENT_RECONCILIATION_ACTIVE_LIFECYCLE"})
+        self.assertEqual(row["horizon_source_id"], "crypto-position-1")
+        self.assertEqual(broker, original_broker)
+        self.assertEqual(lifecycle, original_lifecycle)
+
+    def test_crypto_horizon_unavailable_or_conflicting_stays_fail_closed(self):
+        broker = _broker(
+            symbol="ETH/USD",
+            asset_class="crypto",
+            entry_fill_id="f1",
+            position_id="p1",
+        )
+        unavailable = build_position_lane_horizon_recovery_v1(
+            {"ETH/USD": broker}, evidence_rows=[]
+        )["positions"][0]
+        self.assertEqual(unavailable["horizon_status"], "UNAVAILABLE")
+        self.assertIn("CANONICAL_HORIZON_EVIDENCE_UNAVAILABLE", unavailable["exact_blockers"])
+
+        conflicting = build_position_lane_horizon_recovery_v1(
+            {"ETH/USD": broker},
+            evidence_rows=[
+                {**broker, "position_id": "p1", "entry_fill_id": "f1", "lane_id": "CRYPTO", "crypto_horizon": "CRYPTO_FAST", "crypto_horizon_status": "RESOLVED", "current_reconciled": True},
+                {**broker, "position_id": "p1", "entry_fill_id": "f1", "lane_id": "CRYPTO", "crypto_horizon": "CRYPTO_SWING", "crypto_horizon_status": "RESOLVED", "current_reconciled": True},
+            ],
+        )["positions"][0]
+        self.assertEqual(conflicting["horizon_status"], "CONFLICT")
+        self.assertIn("CANONICAL_HORIZON_CONFLICT", conflicting["exact_blockers"])
+
     def test_retained_advisory_decision_receives_current_recovery_metadata(self):
         from engine.paper_autopilot import PaperAutopilotEngine
 

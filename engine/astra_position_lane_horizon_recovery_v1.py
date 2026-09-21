@@ -175,6 +175,24 @@ def _source_claim(
     overnight_allowed = _bool_or_none(
         _contract_value("overnight_allowed", metadata, row, row_metadata)
     )
+    explicit_crypto_horizon = _text(
+        metadata.get("crypto_horizon") or row.get("crypto_horizon") or row_metadata.get("crypto_horizon")
+    )
+    explicit_crypto_horizon_status = _text(
+        metadata.get("crypto_horizon_status")
+        or row.get("crypto_horizon_status")
+        or row_metadata.get("crypto_horizon_status")
+    ).upper()
+    # Crypto may retain the legacy generic ``day_trade`` field for backward
+    # compatibility.  A resolved explicit sub-horizon is the stronger
+    # identity contract; unresolved/conflicting values remain unavailable.
+    crypto_horizon = (
+        explicit_crypto_horizon
+        if _asset(row.get("asset_class") or row.get("asset_type")) == "crypto"
+        and explicit_crypto_horizon.upper() in {"CRYPTO_FAST", "CRYPTO_SWING"}
+        and explicit_crypto_horizon_status in {"", "RESOLVED"}
+        else ""
+    )
     return {
         "source_type": source_type,
         "source_id": source_id,
@@ -182,7 +200,8 @@ def _source_claim(
         "match_method": match_method,
         "lane": _lane(metadata.get("lane") or metadata.get("lane_id") or row.get("lane_id") or row.get("original_lane") or row.get("lane")),
         "horizon": _horizon(
-            metadata.get("horizon") or metadata.get("intended_horizon") or row.get("canonical_horizon")
+            crypto_horizon
+            or metadata.get("horizon") or metadata.get("intended_horizon") or row.get("canonical_horizon")
             or row.get("paper_entry_horizon_style")
             or row.get("original_horizon")
             or row.get("intended_horizon")
