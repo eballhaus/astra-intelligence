@@ -1451,6 +1451,12 @@ class PaperAutopilotWorker:
         symbol_budget = 1 if resource_state == "RESOURCE_ELEVATED" or policy.get("resume_mode") == "RESUME_ONE_SYMBOL" else self.limits.maximum_symbols_per_cycle
         # This is a per-process cycle budget, not a persistent strategy setting.
         self.autopilot.max_stocks = min(int(original_max_stocks), symbol_budget)
+        # Read-only reconstructable workloads use the same sampled resource
+        # decision as this worker cycle.  This is telemetry/control context,
+        # not trading authority or a second resource policy.
+        runtime_state = getattr(self.autopilot, "_runtime_state", None)
+        if isinstance(runtime_state, dict):
+            runtime_state["worker_resource_state_v1"] = resource_state
         cycle_started_at = utc_now()
         self._sync_autopilot_progress("external_cycle_active", cycle_started_at=cycle_started_at, persist=True)
         self._publish(resource=before, resource_policy=policy, cycle_id=cycle_id, cycle_state="ACTIVE_BOUNDED", last_cycle_started_at=cycle_started_at, resource_pause_state=resource_state)

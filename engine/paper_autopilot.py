@@ -315,6 +315,28 @@ except Exception:  # pragma: no cover - allocation engine is additive
             }
 
 try:
+    from engine.reconstructable_worker_isolation_v1 import run_broad_observation_evaluation_v1
+except Exception:  # pragma: no cover - isolated observation work fails closed
+    def run_broad_observation_evaluation_v1(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "schema_version": "astra_reconstructable_worker_isolation_v1",
+            "task": "broad_observation_evaluation_v1",
+            "status": "FAILED_SAFE",
+            "failure_reason": "isolation_unavailable",
+            "promoted_rows": [],
+            "evaluation_only": True,
+            "observation_authority": False,
+            "executable_evidence": False,
+            "candidate_evidence_fabricated": False,
+            "execution_authority": False,
+            "broker_authority": False,
+            "truth_authority": False,
+            "policy_authority": False,
+            "learning_ack_authority": False,
+            "paper_only": True,
+        }
+
+try:
     from engine.edge_development_suite_v1 import EdgeDevelopmentSuiteV1
 except Exception:  # pragma: no cover - edge suite is additive
     class EdgeDevelopmentSuiteV1:  # type: ignore[override]
@@ -8213,7 +8235,20 @@ class PaperAutopilotEngine:
         ):
             try:
                 broad_inputs = broad_owner.bounded_lane_evaluation_inputs_v1()
-                broad_handoff = dict(allocator.evaluate_broad_observations_v1(broad_inputs) or {})
+                resource_state = str(
+                    self._runtime_state.get("worker_resource_state_v1")
+                    or self._runtime_state.get("resource_state")
+                    or "RESOURCE_NORMAL"
+                )
+                state_dir = str(getattr(allocator, "state_dir", "") or os.path.dirname(self.state_path) or "state")
+                broad_handoff = dict(
+                    run_broad_observation_evaluation_v1(
+                        broad_inputs,
+                        state_dir=state_dir,
+                        resource_state=resource_state,
+                    )
+                    or {}
+                )
                 rows.extend([row for row in (broad_handoff.get("promoted_rows") or []) if isinstance(row, dict)])
                 self._runtime_state["broad_observation_multilane_handoff_v1"] = {
                     key: value for key, value in broad_handoff.items() if key != "promoted_rows"
