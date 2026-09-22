@@ -8,6 +8,12 @@ from datetime import datetime, timezone
 from statistics import mean
 from typing import Any
 
+from engine.astra_canonical_market_timestamp_v1 import (
+    SOURCE_QUOTE,
+    canonical_market_timestamp_v1,
+    provider_future_timestamp_tolerance_seconds_v1,
+)
+
 try:
     from engine.profit_seeking_adaptive_exploration_v1 import ProfitSeekingAdaptiveExplorationV1
 except Exception:  # pragma: no cover - additive hook
@@ -57,6 +63,10 @@ LANE_FINALIST_LIMIT = 10
 LANE_HISTORY_LIMITS = {"SCALP": 3, "DAY": 5, "SWING": 8}
 MAX_RANK_STATE_SYMBOLS_PER_LANE = 80
 BROAD_LANE_EVALUATION_LANES = ("SCALP", "DAY", "SWING")
+# Reuse the worker's existing twelve-row equity-risk observation handoff for
+# authoritative lane enrichment. This is an evidence budget, not a new
+# candidate or provider budget.
+AUTHORITATIVE_BROAD_LANE_ENRICHMENT_LIMIT = 12
 
 # These are existing feature names consumed by _lane_soft_evidence/_features.
 # They are presence checks only; no values or thresholds are synthesized.
@@ -552,6 +562,10 @@ class PaperOpportunityAllocationEngineV1:
         self._bounded_lane_evidence_cache = {"historical": historical, "current_risk": current_risk}
         return self._bounded_lane_evidence_cache
 
+    def invalidate_bounded_lane_evidence_cache_v1(self) -> None:
+        """Make a post-refresh enrichment observe the current worker snapshot."""
+        self._bounded_lane_evidence_cache = None
+
     def _join_bounded_lane_evidence_v1(
         self,
         candidate: dict[str, Any],
@@ -566,10 +580,22 @@ class PaperOpportunityAllocationEngineV1:
         current = dict((evidence.get("current_risk") or {}).get(symbol) or {})
         if current:
             bar_evidence = dict(current.get("bar_evidence") or {})
-            for key in ("atr_pct", "volatility_pct", "completed_bar_timestamp", "bar_evidence"):
+            # The worker observer is the canonical current quote/bar producer.
+            # Join its provider timestamp and quote fields before lane evidence
+            # construction so freshness is evaluated on the refreshed quote,
+            # never on the older broad-observation snapshot.
+            for key in (
+                "price", "current_price", "bid", "ask", "quote_timestamp",
+                "provider_quote_timestamp", "provider_native_timestamp",
+                "quote_age_seconds", "quote_provider", "provider_used",
+                "atr_pct", "volatility_pct", "completed_bar_timestamp", "bar_evidence",
+            ):
                 if candidate.get(key) in (None, "", {}, []) and current.get(key) not in (None, "", {}, []):
                     candidate[key] = current[key]
                     provenance[key] = "worker_equity_risk_observer"
+            if candidate.get("provider_quote_timestamp") in (None, "") and current.get("quote_timestamp") not in (None, ""):
+                candidate["provider_quote_timestamp"] = current["quote_timestamp"]
+                provenance["provider_quote_timestamp"] = "worker_equity_risk_observer"
             if candidate.get("completed_bar_count") in (None, "", {}, []) and bar_evidence.get("count"):
                 candidate["completed_bar_count"] = bar_evidence["count"]
                 provenance["completed_bar_count"] = "worker_equity_risk_observer"
@@ -591,6 +617,17 @@ class PaperOpportunityAllocationEngineV1:
                 if candidate.get("completed_bar_source_timestamp") in (None, "", {}, []) and bar_evidence.get("provider_native_timestamp"):
                     candidate["completed_bar_source_timestamp"] = bar_evidence["provider_native_timestamp"]
                     provenance["completed_bar_source_timestamp"] = "worker_equity_risk_observer"
+                swing_bar_evidence = dict(current.get("swing_bar_evidence") or {})
+                if swing_bar_evidence:
+                    if candidate.get("swing_completed_bars") in (None, "", {}, []) and isinstance(swing_bar_evidence.get("completed_bars"), list):
+                        candidate["swing_completed_bars"] = list(swing_bar_evidence["completed_bars"])
+                        provenance["swing_completed_bars"] = "worker_equity_risk_observer"
+                    if candidate.get("swing_bar_timeframe") in (None, "", {}, []) and swing_bar_evidence.get("resolution"):
+                        candidate["swing_bar_timeframe"] = swing_bar_evidence["resolution"]
+                        provenance["swing_bar_timeframe"] = "worker_equity_risk_observer"
+                    if candidate.get("swing_completed_bar_source_timestamp") in (None, "", {}, []) and swing_bar_evidence.get("provider_native_timestamp"):
+                        candidate["swing_completed_bar_source_timestamp"] = swing_bar_evidence["provider_native_timestamp"]
+                        provenance["swing_completed_bar_source_timestamp"] = "worker_equity_risk_observer"
                 producers.append("worker_equity_risk_observer")
 
         for feature, record in ((evidence.get("historical") or {}).get(symbol) or {}).items():
@@ -708,6 +745,26 @@ class PaperOpportunityAllocationEngineV1:
             except Exception:
                 pass
 
+        # Discovery/profile joins above can supply the remaining scalar lane
+        # inputs (for example volume-derived SCALP scores and sector). Re-run
+        # the same canonical evidence builder after those joins so its
+        # sufficiency result reflects the complete package rather than the
+        # pre-enrichment ordering.
+        if callable(build_lane_evidence_v1):
+            try:
+                final_lane_evidence = dict(build_lane_evidence_v1(candidate) or {})
+            except Exception:
+                final_lane_evidence = {}
+            if final_lane_evidence:
+                for key, value in dict(final_lane_evidence.get("derived_evidence") or {}).items():
+                    if candidate.get(key) in (None, "", {}, []) and value not in (None, "", {}, []):
+                        candidate[key] = value
+                        provenance[key] = f"astra_canonical_lane_evidence_v1:{key}"
+                candidate["astra_lane_evidence_v1"] = final_lane_evidence
+                candidate["astra_lane_evidence_provenance_v1"] = dict(final_lane_evidence.get("provenance") or {})
+                if "astra_canonical_lane_evidence_v1" not in producers:
+                    producers.append("astra_canonical_lane_evidence_v1")
+
         candidate["lane_feature_evidence_join_v1"] = True
         candidate["lane_feature_join_producers"] = list(dict.fromkeys(producers))
         candidate["lane_feature_provenance_v1"] = provenance
@@ -717,6 +774,103 @@ class PaperOpportunityAllocationEngineV1:
         candidate["executable_evidence"] = False
         candidate["discovery_only"] = True
         return candidate
+
+    def authoritative_broad_lane_candidates_v1(
+        self,
+        rows: list[dict[str, Any]] | None,
+        *,
+        max_symbols: int = AUTHORITATIVE_BROAD_LANE_ENRICHMENT_LIMIT,
+    ) -> dict[str, Any]:
+        """Build bounded SCALP/SWING evidence rows for the normal candidate path.
+
+        This method only joins existing evidence and marks incomplete rows. It
+        never sets qualification, eligibility, execution authority, or broker
+        truth. The normal PaperAutopilot candidate trace remains the sole
+        qualification and promotion owner.
+        """
+        source_rows = [dict(row) for row in (rows or []) if isinstance(row, dict)]
+        source_rows = source_rows[: max(0, int(max_symbols))]
+        result_rows: list[dict[str, Any]] = []
+        attempted = {lane: 0 for lane in ("SCALP", "SWING")}
+        complete = {lane: 0 for lane in ("SCALP", "SWING")}
+        incomplete = {lane: 0 for lane in ("SCALP", "SWING")}
+        incomplete_reasons: dict[str, Counter[str]] = {lane: Counter() for lane in ("SCALP", "SWING")}
+
+        for row in source_rows:
+            enriched = self.enrich_broad_observation_features_v1(row)
+            lane_contract = dict(enriched.get("astra_lane_evidence_v1") or {})
+            sufficiency = dict(lane_contract.get("sufficiency") or {})
+            for lane, horizon in (("SCALP", "scalp"), ("SWING", "swing_trade")):
+                attempted[lane] += 1
+                projection = dict(enriched)
+                projection.update({
+                    "lane_id": lane,
+                    "paper_entry_horizon_style": horizon,
+                    "trade_horizon_style": horizon,
+                    "lane_assignment_source": "authoritative_lane_feature_enrichment_v1",
+                    "lane_feature_enrichment_source": "broad_live_observation_v1",
+                    "lane_feature_enrichment_bounded": True,
+                    "lane_feature_enrichment_authoritative": True,
+                    # Evidence authority is intentionally not execution
+                    # authority. Existing pretrade gates still decide.
+                    "observation_authority": False,
+                    "executable_evidence": False,
+                    "candidate_evidence_fabricated": False,
+                    "discovery_only": True,
+                })
+                canonical_missing = list(
+                    (sufficiency.get(lane) or {}).get("missing_fields") or []
+                ) if isinstance(sufficiency.get(lane), dict) else []
+                payload_state, payload_missing = self._lane_feature_payload_state(projection, lane)
+                missing = list(dict.fromkeys(canonical_missing + payload_missing))
+                if payload_state != "COMPLETE":
+                    missing.append("lane_specific_features")
+                if not bool((sufficiency.get(lane) or {}).get("state") == "COMPLETE"):
+                    missing.append("canonical_lane_evidence")
+                missing = list(dict.fromkeys(missing))
+                freshness = canonical_market_timestamp_v1(
+                    projection,
+                    source_type=SOURCE_QUOTE,
+                    max_age_seconds=20.0,
+                    future_tolerance_seconds=provider_future_timestamp_tolerance_seconds_v1(
+                        projection,
+                        source_type=SOURCE_QUOTE,
+                        asset_type="stock",
+                    ),
+                )
+                if not bool(freshness.get("executable_freshness")):
+                    missing.append(str(freshness.get("first_causal_blocker") or "CURRENT_PROVIDER_QUOTE_UNAVAILABLE"))
+                    projection["lane_feature_enrichment_freshness"] = freshness
+                missing = list(dict.fromkeys(missing))
+                projection["lane_feature_enrichment_status"] = "COMPLETE" if not missing else "INCOMPLETE"
+                projection["lane_feature_enrichment_missing"] = missing
+                if missing:
+                    incomplete[lane] += 1
+                    for reason in missing:
+                        incomplete_reasons[lane][str(reason)] += 1
+                    continue
+                complete[lane] += 1
+                result_rows.append(projection)
+
+        return {
+            "schema_version": "astra_authoritative_lane_feature_enrichment_v1",
+            "source": "broad_live_observation_v1",
+            "observations_considered": len(source_rows),
+            "shortlist_limit": max(0, int(max_symbols)),
+            "bounded": True,
+            "enrichment_attempted": attempted,
+            "enrichment_complete": complete,
+            "enrichment_incomplete": incomplete,
+            "incomplete_reasons": {lane: dict(counts) for lane, counts in incomplete_reasons.items()},
+            "qualified": {"SCALP": 0, "SWING": 0},
+            "promoted": {"SCALP": 0, "SWING": 0},
+            "rejected": {"SCALP": incomplete["SCALP"], "SWING": incomplete["SWING"]},
+            "rows": result_rows,
+            "observation_authority": False,
+            "executable_evidence": False,
+            "candidate_evidence_fabricated": False,
+            "broker_actions_added": 0,
+        }
 
     @classmethod
     def _lane_feature_payload_state(cls, row: dict[str, Any], lane: str) -> tuple[str, list[str]]:

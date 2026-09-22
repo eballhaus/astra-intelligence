@@ -1693,6 +1693,9 @@ def _execution_trace_event(row: dict[str, Any], **values: Any) -> dict[str, Any]
         "instrument_type": str(normalized.get("instrument_type") or ""),
         "asset_classification_source": str(normalized.get("asset_classification_source") or ""),
         "lane_id": str(normalized.get("lane_id") or "").upper(),
+        "lane_feature_enrichment_authoritative": bool(normalized.get("lane_feature_enrichment_authoritative", False)),
+        "lane_feature_enrichment_status": str(normalized.get("lane_feature_enrichment_status") or ""),
+        "lane_feature_enrichment_missing": list(normalized.get("lane_feature_enrichment_missing") or []),
         "candidate_id": str(normalized.get("candidate_id") or ""),
         "recommendation_id": str(normalized.get("recommendation_id") or ""),
         "selection_id": str(normalized.get("selection_id") or ""),
@@ -1745,6 +1748,8 @@ def _execution_trace_event(row: dict[str, Any], **values: Any) -> dict[str, Any]
 _RUNTIME_CANDIDATE_TRACE_FIELDS = (
     "symbol", "canonical_symbol", "asset_type", "asset_class", "instrument_type",
     "lane_id", "candidate_id", "recommendation_id", "selection_id",
+    "lane_feature_enrichment_authoritative", "lane_feature_enrichment_status",
+    "lane_feature_enrichment_missing",
     "candidate_source", "candidate_generated_at", "candidate_snapshot_freshness",
     "source_snapshot_id", "source_record_id", "ranking_version", "generated_at",
     "expires_at", "candidate_fingerprint", "position_owner", "exit_policy_owner",
@@ -2470,6 +2475,8 @@ class PaperAutopilotEngine:
                     self._runtime_state["astra_natural_truth_lifecycle_intelligence_v1"] = dict(payload.get("astra_natural_truth_lifecycle_intelligence_v1") or {})
                 if isinstance(payload.get("broad_observation_multilane_handoff_v1"), dict):
                     self._runtime_state["broad_observation_multilane_handoff_v1"] = dict(payload.get("broad_observation_multilane_handoff_v1") or {})
+                if isinstance(payload.get("authoritative_lane_feature_enrichment_v1"), dict):
+                    self._runtime_state["authoritative_lane_feature_enrichment_v1"] = dict(payload.get("authoritative_lane_feature_enrichment_v1") or {})
                 if payload.get("last_cycle_utc"):
                     self._runtime_state["last_cycle_utc"] = str(payload.get("last_cycle_utc") or "")
                 for key in (
@@ -2584,6 +2591,7 @@ class PaperAutopilotEngine:
             "system_integrity_scanner_v1": dict(self._runtime_state.get("system_integrity_scanner_v1") or {}),
             "astra_natural_truth_lifecycle_intelligence_v1": dict(self._runtime_state.get("astra_natural_truth_lifecycle_intelligence_v1") or {}),
             "broad_observation_multilane_handoff_v1": dict(self._runtime_state.get("broad_observation_multilane_handoff_v1") or {}),
+            "authoritative_lane_feature_enrichment_v1": dict(self._runtime_state.get("authoritative_lane_feature_enrichment_v1") or {}),
             "astra_trading_readiness_v1": dict(self._runtime_state.get("astra_trading_readiness_v1") or {}),
             "trading_readiness_last_error_v1": dict(self._runtime_state.get("trading_readiness_last_error_v1") or {}),
             "last_execution_trace": runtime_mapping("last_execution_trace"),
@@ -8232,6 +8240,7 @@ class PaperAutopilotEngine:
         # observation owner remains non-executable; only rows that already
         # carry real lane qualification can be promoted downstream.
         broad_handoff: dict[str, Any] = {}
+        authoritative_broad_rows: list[dict[str, Any]] = []
         broad_owner = self.broad_universe_intake_promotion_suite
         allocator = self.paper_opportunity_allocator
         if (
@@ -8242,6 +8251,25 @@ class PaperAutopilotEngine:
         ):
             try:
                 broad_inputs = broad_owner.bounded_lane_evaluation_inputs_v1()
+                # The broad owner already supplies a current, priority-rotated
+                # shortlist. Keep only the same bounded size as the existing
+                # equity-risk observer handoff; full-universe enrichment is
+                # deliberately not allowed in the worker cycle.
+                authoritative_broad_rows = [
+                    {
+                        **dict(row),
+                        "authoritative_lane_enrichment_requested": True,
+                    }
+                    for row in (broad_inputs or [])
+                    if isinstance(row, dict)
+                ][:12]
+                self._runtime_state["authoritative_lane_feature_source_v1"] = {
+                    "rows": authoritative_broad_rows,
+                    "observations_considered": len(broad_inputs or []),
+                    "shortlist_limit": 12,
+                    "bounded": True,
+                    "source": "broad_live_observation_v1",
+                }
                 resource_state = str(
                     self._runtime_state.get("worker_resource_state_v1")
                     or self._runtime_state.get("resource_state")
@@ -8261,6 +8289,15 @@ class PaperAutopilotEngine:
                     key: value for key, value in broad_handoff.items() if key != "promoted_rows"
                 }
             except Exception as exc:
+                self._runtime_state["authoritative_lane_feature_source_v1"] = {
+                    "rows": [],
+                    "observations_considered": 0,
+                    "shortlist_limit": 12,
+                    "bounded": True,
+                    "source": "broad_live_observation_v1",
+                    "status": "FAILED_SAFE",
+                    "error": str(exc)[:180],
+                }
                 self._runtime_state["broad_observation_multilane_handoff_v1"] = {
                     "schema_version": "astra_broad_observation_multilane_handoff_v1",
                     "status": "FAILED_SAFE",
@@ -8269,6 +8306,15 @@ class PaperAutopilotEngine:
                     "observation_authority": False,
                     "executable_evidence": False,
                 }
+        else:
+            self._runtime_state["authoritative_lane_feature_source_v1"] = {
+                "rows": [],
+                "observations_considered": 0,
+                "shortlist_limit": 12,
+                "bounded": True,
+                "source": "broad_live_observation_v1",
+                "status": "NOT_CONFIGURED",
+            }
 
         dedup: list[dict[str, Any]] = []
         seen: dict[str, int] = {}
@@ -8532,10 +8578,25 @@ class PaperAutopilotEngine:
                 rows.append(row)
                 selected_symbols.add(symbol)
                 break
+        # Current broad observations are enriched only after this bounded
+        # observer refresh. Put their rotated shortlist ahead of ordinary
+        # remainder rows so available quote/bar evidence can reach SCALP/SWING
+        # without expanding the existing twelve-row provider budget.
+        broad_source = dict(self._runtime_state.get("authoritative_lane_feature_source_v1") or {})
+        broad_rows = [
+            dict(row) for row in (broad_source.get("rows") or [])
+            if isinstance(row, Mapping)
+            and _norm_asset(row.get("asset_type") or row.get("asset_class") or "stock") != "crypto"
+        ]
         # Keep one bounded provider slice per refresh, but rotate the remainder
         # so a stable top-of-book candidate cannot permanently starve other
         # strong DAY rows from current bar-risk evidence.
         remaining_rows = []
+        for row in broad_rows:
+            symbol = str(row.get("symbol") or row.get("ticker") or "").upper().strip()
+            if symbol and symbol not in selected_symbols:
+                remaining_rows.append(row)
+                selected_symbols.add(symbol)
         for row in equity_rows:
             symbol = str(row.get("symbol") or row.get("ticker") or "").upper().strip()
             if not symbol or symbol in selected_symbols:
@@ -8579,6 +8640,83 @@ class PaperAutopilotEngine:
         self._note_worker_progress("equity_risk_envelope_refresh")
         self._publish_equity_risk_candidate_handoff_v1(candidate_rows)
         return dict(self.refresh_equity_risk_envelopes_fn() or {})
+
+    def _append_authoritative_broad_lane_candidates_v1(
+        self,
+        candidate_rows: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Join the refreshed observer output into the normal candidate path."""
+        allocator = self.paper_opportunity_allocator
+        source = dict(self._runtime_state.get("authoritative_lane_feature_source_v1") or {})
+        source_rows = [dict(row) for row in (source.get("rows") or []) if isinstance(row, Mapping)]
+        if allocator is None or not source_rows or not callable(
+            getattr(allocator, "authoritative_broad_lane_candidates_v1", None)
+        ):
+            summary = {
+                "schema_version": "astra_authoritative_lane_feature_enrichment_v1",
+                "status": "NO_INPUT",
+                "observations_considered": int(source.get("observations_considered") or 0),
+                "shortlist_limit": int(source.get("shortlist_limit") or 12),
+                "bounded": True,
+                "enrichment_attempted": {"SCALP": 0, "SWING": 0},
+                "enrichment_complete": {"SCALP": 0, "SWING": 0},
+                "enrichment_incomplete": {"SCALP": 0, "SWING": 0},
+                "incomplete_reasons": {"SCALP": {}, "SWING": {}},
+                "qualified": {"SCALP": 0, "SWING": 0},
+                "promoted": {"SCALP": 0, "SWING": 0},
+                "rejected": {"SCALP": 0, "SWING": 0},
+            }
+            return candidate_rows, summary
+        try:
+            invalidate = getattr(allocator, "invalidate_bounded_lane_evidence_cache_v1", None)
+            if callable(invalidate):
+                # The broad diagnostic fanout may have populated the allocator
+                # cache before the worker risk observer refreshed its snapshot.
+                invalidate()
+            enrichment = dict(
+                allocator.authoritative_broad_lane_candidates_v1(
+                    source_rows,
+                )
+                or {}
+            )
+            enriched_rows = [row for row in (enrichment.pop("rows", []) or []) if isinstance(row, dict)]
+            existing = {
+                (
+                    str(row.get("symbol") or row.get("ticker") or "").upper().strip(),
+                    str(row.get("lane_id") or row.get("lane") or "").upper().strip(),
+                )
+                for row in candidate_rows
+                if isinstance(row, Mapping)
+            }
+            new_rows = [
+                row for row in enriched_rows
+                if (
+                    str(row.get("symbol") or row.get("ticker") or "").upper().strip(),
+                    str(row.get("lane_id") or row.get("lane") or "").upper().strip(),
+                ) not in existing
+            ]
+            if new_rows and callable(getattr(allocator, "decorate_candidates", None)):
+                new_rows = list(allocator.decorate_candidates(new_rows) or new_rows)
+            enriched_rows = new_rows
+            enrichment["status"] = "COMPLETE" if enriched_rows else "NO_COMPLETE_LANE_EVIDENCE"
+            enrichment["rows_added"] = len(enriched_rows)
+            return [*candidate_rows, *enriched_rows], enrichment
+        except Exception as exc:
+            return candidate_rows, {
+                "schema_version": "astra_authoritative_lane_feature_enrichment_v1",
+                "status": "FAILED_SAFE",
+                "observations_considered": len(source_rows),
+                "shortlist_limit": int(source.get("shortlist_limit") or 12),
+                "bounded": True,
+                "enrichment_attempted": {"SCALP": len(source_rows), "SWING": len(source_rows)},
+                "enrichment_complete": {"SCALP": 0, "SWING": 0},
+                "enrichment_incomplete": {"SCALP": len(source_rows), "SWING": len(source_rows)},
+                "incomplete_reasons": {"SCALP": {"enrichment_exception": 1}, "SWING": {"enrichment_exception": 1}},
+                "qualified": {"SCALP": 0, "SWING": 0},
+                "promoted": {"SCALP": 0, "SWING": 0},
+                "rejected": {"SCALP": len(source_rows), "SWING": len(source_rows)},
+                "error": str(exc)[:180],
+            }
 
     def _assign_trusted_quote_to_candidate(
         self,
@@ -11486,6 +11624,9 @@ class PaperAutopilotEngine:
             "operational_probe_only": bool(r.get("operational_probe_only", False)),
             "operational_source_rejection": str(r.get("operational_source_rejection") or ""),
             "lane_id": str(r.get("lane_id") or ""),
+            "lane_feature_enrichment_authoritative": bool(r.get("lane_feature_enrichment_authoritative", False)),
+            "lane_feature_enrichment_status": str(r.get("lane_feature_enrichment_status") or ""),
+            "lane_feature_enrichment_missing": list(r.get("lane_feature_enrichment_missing") or []),
             "lane_activation_contract": activation,
             "lane_execution_enabled": bool(activation.get("execution_enabled")),
             "asset_class": str(r.get("asset_class") or ""),
@@ -17017,6 +17158,8 @@ class PaperAutopilotEngine:
                         "status": "FAILED_FAIL_CLOSED",
                         "exact_blocker": f"equity_risk_envelope_refresh_exception:{str(exc)[:120]}",
                     }
+            candidates, authoritative_lane_enrichment = self._append_authoritative_broad_lane_candidates_v1(candidates)
+            self._runtime_state["authoritative_lane_feature_enrichment_v1"] = dict(authoritative_lane_enrichment)
             # Full-cycle traces can stop at the existing selection cap before
             # `_candidate_trace_row` runs. Join the current, symbol-matched
             # observer output here so those honest capacity rejections retain
@@ -17581,6 +17724,30 @@ class PaperAutopilotEngine:
                     final_blocker_reason = broker_error or str(opened_row.get("error") or "paper_order_rejected")
                 decision_trace.append(row_trace)
 
+            # Complete the bounded enrichment counters with the result of the
+            # existing qualification/selection path. No flag here grants
+            # authority; it only explains where enriched rows stopped.
+            if isinstance(authoritative_lane_enrichment, dict):
+                qualified_by_lane = {"SCALP": 0, "SWING": 0}
+                promoted_by_lane = {"SCALP": 0, "SWING": 0}
+                rejected_by_lane = {"SCALP": 0, "SWING": 0}
+                for trace_row in decision_trace:
+                    if not isinstance(trace_row, Mapping) or not trace_row.get("lane_feature_enrichment_authoritative"):
+                        continue
+                    lane = str(trace_row.get("lane_id") or "").upper().strip()
+                    if lane not in qualified_by_lane:
+                        continue
+                    if bool(trace_row.get("eligible")):
+                        qualified_by_lane[lane] += 1
+                    else:
+                        rejected_by_lane[lane] += 1
+                    if bool(trace_row.get("selected") or trace_row.get("order_ready")):
+                        promoted_by_lane[lane] += 1
+                authoritative_lane_enrichment["qualified"] = qualified_by_lane
+                authoritative_lane_enrichment["promoted"] = promoted_by_lane
+                authoritative_lane_enrichment["rejected"] = rejected_by_lane
+                self._runtime_state["authoritative_lane_feature_enrichment_v1"] = dict(authoritative_lane_enrichment)
+
             if opened > 0:
                 final_blocker_reason = "orders_submitted"
             elif not final_blocker_reason:
@@ -17606,6 +17773,7 @@ class PaperAutopilotEngine:
                 "strict_truth_promotion_retry": dict(strict_truth_promotion_retry),
                 "positions_skipped": int(skipped),
                 "candidates_seen": int(len(candidates)),
+                "authoritative_lane_feature_enrichment_v1": dict(authoritative_lane_enrichment),
                 "paper_opportunity_allocation": allocation_status,
                 "market_session_execution_timing": session_status,
                 "adaptive_learning_infrastructure": adaptive_learning_status,

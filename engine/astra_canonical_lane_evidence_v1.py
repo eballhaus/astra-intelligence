@@ -122,10 +122,22 @@ def _valid_bars(
     now: datetime,
     allowed_timeframes: set[str],
     minimum: int,
+    evidence_key: str = "bar_evidence",
+    bars_key: str = "completed_bars",
+    timeframe_key: str = "bar_timeframe",
 ) -> tuple[list[dict[str, Any]], str | None, str | None]:
-    evidence = row.get("bar_evidence") if isinstance(row.get("bar_evidence"), Mapping) else {}
-    raw_bars = row.get("completed_bars") or evidence.get("completed_bars")
-    resolution = _text(row.get("bar_timeframe") or evidence.get("resolution")).upper()
+    evidence = row.get(evidence_key) if isinstance(row.get(evidence_key), Mapping) else {}
+    raw_bars = row.get(bars_key) or evidence.get("completed_bars")
+    resolution = _text(row.get(timeframe_key) or evidence.get("resolution")).upper()
+    # Preserve the established generic completed-bar contract for fixtures and
+    # existing producers that provide one bar set. A dedicated swing set wins
+    # when present, allowing 15-minute risk bars and 1-hour swing bars to
+    # coexist without changing either lane's requirements.
+    if not raw_bars and bars_key != "completed_bars":
+        generic_evidence = row.get("bar_evidence") if isinstance(row.get("bar_evidence"), Mapping) else {}
+        raw_bars = row.get("completed_bars") or generic_evidence.get("completed_bars")
+        if not resolution:
+            resolution = _text(row.get("bar_timeframe") or generic_evidence.get("resolution")).upper()
     if resolution not in allowed_timeframes or not isinstance(raw_bars, list):
         return [], resolution or None, None
 
@@ -326,7 +338,13 @@ def build_lane_evidence_v1(row: Mapping[str, Any] | None, *, now: datetime | Non
         provenance["scalp_horizon_evidence_v1"] = dict(provenance["scalp_fit_score"])
 
     swing_bars, swing_timeframe, swing_last = _valid_bars(
-        source, now=current, allowed_timeframes=SWING_TIMEFRAMES, minimum=SWING_STRUCTURE_MIN_BARS
+        source,
+        now=current,
+        allowed_timeframes=SWING_TIMEFRAMES,
+        minimum=SWING_STRUCTURE_MIN_BARS,
+        evidence_key="swing_bar_evidence",
+        bars_key="swing_completed_bars",
+        timeframe_key="swing_bar_timeframe",
     )
     swing_structure, persistence, trend_quality = _structure(
         swing_bars, timeframe=swing_timeframe or "", minimum=SWING_STRUCTURE_MIN_BARS, state_name="multi_day"

@@ -22336,6 +22336,11 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
             cached = dict(cached_rows_by_symbol.get(symbol) or {})
             if not cached:
                 continue
+            if candidate.get("authoritative_lane_enrichment_requested") and not cached.get("swing_bar_evidence"):
+                # The bounded lane shortlist also needs completed 1-hour bars
+                # for the existing SWING evidence contract.
+                refresh_candidates.append(candidate)
+                continue
             # Risk evidence is market-data keyed by symbol. Keep the current
             # candidate identity attached while reusing only the still-valid
             # provider observation; never extend its validity window here.
@@ -22356,6 +22361,7 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
 
     observations: list[dict] = list(reusable_rows)
     failures: list[dict] = []
+    swing_provider_calls = 0
     end = now_utc
     start = end - timedelta(hours=6)
     for candidate in refresh_candidates:
@@ -22413,6 +22419,52 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
             if local_bar_time.date() == now_et.date() and 570 <= local_minute < 960:
                 regular_session_bars.append(normalized_bar)
         forecast_bars = regular_session_bars[-8:]
+        swing_bar_evidence: dict[str, Any] = {}
+        if candidate.get("authoritative_lane_enrichment_requested"):
+            swing_provider_calls += 1
+            swing_payload = dict(ALPACA_PAPER_BROKER.historical_bars(
+                symbol,
+                asset_class="stock",
+                timeframe="1Hour",
+                limit=24,
+                start=(end - timedelta(days=7)).isoformat().replace("+00:00", "Z"),
+                end=end.isoformat().replace("+00:00", "Z"),
+            ) or {})
+            swing_bars: list[dict[str, Any]] = []
+            for bar in swing_payload.get("bars") or []:
+                if not isinstance(bar, dict):
+                    continue
+                raw_time = str(bar.get("t") or bar.get("timestamp") or bar.get("bar_timestamp") or "").strip()
+                parsed_epoch = _parse_iso_or_epoch(raw_time) if raw_time else 0.0
+                if parsed_epoch <= 0.0 or parsed_epoch + 3600.0 > now_epoch:
+                    continue
+                open_price = _to_float(bar.get("o"), -1.0)
+                high = _to_float(bar.get("h"), -1.0)
+                low = _to_float(bar.get("l"), -1.0)
+                close = _to_float(bar.get("c"), -1.0)
+                volume_value = _to_float(bar.get("v"), -1.0)
+                if min(open_price, high, low, close) <= 0.0 or high < max(open_price, close, low) or low > min(open_price, close):
+                    continue
+                swing_bars.append({
+                    "provider_native_timestamp": raw_time,
+                    "open": open_price,
+                    "high": high,
+                    "low": low,
+                    "close": close,
+                    "volume": volume_value if volume_value >= 0.0 else None,
+                    "is_complete": True,
+                })
+            swing_bars.sort(key=lambda row: _parse_iso_or_epoch(str(row.get("provider_native_timestamp") or "")))
+            if len(swing_bars) >= 20:
+                swing_bar_evidence = {
+                    "source": "AlpacaPaperBroker.historical_bars",
+                    "provider": str(swing_payload.get("provider") or "ALPACA_PAPER_BROKER"),
+                    "evidence_class": "CURRENT_PROVIDER_BAR",
+                    "resolution": "1Hour",
+                    "count": len(swing_bars),
+                    "provider_native_timestamp": swing_bars[-1].get("provider_native_timestamp"),
+                    "completed_bars": swing_bars[-24:],
+                }
         observations.append({
             "symbol": symbol, "candidate_id": candidate.get("candidate_id") or candidate.get("ledger_id"),
             "asset_class": "equity", "current_price": round(price, 6), "price": round(price, 6),
@@ -22436,6 +22488,7 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
                 "bar_window_end": forecast_bars[-1]["provider_native_timestamp"] if forecast_bars else None,
                 "completed_bars": forecast_bars,
             },
+            "swing_bar_evidence": swing_bar_evidence,
             "risk_evidence_source": "AlpacaPaperBroker.historical_bars" if closed_session else "AlpacaPaperBroker.latest_quote+historical_bars",
             "freshness_state": "HISTORICAL_CURRENT" if closed_session else "CURRENT",
         })
@@ -22447,7 +22500,7 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
     }
     PAPER_AUTOPILOT._runtime_state["equity_risk_envelopes_snapshot_v1"] = snapshot
     PAPER_AUTOPILOT._save_state_file()
-    return {"status": snapshot["status"], "rows": len(observations), "failed_symbols": len(failures), "provider_calls_used": len(refresh_candidates) * (1 if closed_session else 2), "broker_actions_used": 0, "order_session_eligible": not closed_session}
+    return {"status": snapshot["status"], "rows": len(observations), "failed_symbols": len(failures), "provider_calls_used": len(refresh_candidates) * (1 if closed_session else 2) + swing_provider_calls, "broker_actions_used": 0, "order_session_eligible": not closed_session}
 
 
 def _provider_role_policy_v1(provider_name):
