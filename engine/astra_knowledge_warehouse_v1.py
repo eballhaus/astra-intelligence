@@ -28,9 +28,30 @@ from engine.intelligence_quality_common_v1 import (
 VERSION = "1.0.0"
 MAX_RESULTS = 100
 MAX_FILES = 8
+MAX_SOURCE_REFERENCES = 16
 MAX_RAW_ROWS = 240
 MAX_RAW_BYTES = 1_000_000
 DISTILLED_LESSONS_REGISTRY = "historical_evidence_distilled_lessons_v1.json"
+CANONICAL_HISTORICAL_LEARNING_PATHS = frozenset({
+    "canonical_lifecycle_lessons_v1.jsonl",
+    "opportunity_cost_learning_v1.jsonl",
+    "trade_lifecycle_excursion_v2.jsonl",
+    "trade_memory_similarity_v1.jsonl",
+    "market_context_learning_suite_v1.jsonl",
+    "replay_counterfactual_learning_v2.jsonl",
+    "adaptive_profit_capture_intelligence_v1.jsonl",
+    "adaptive_execution_exit_intelligence_v3.jsonl",
+    "exit_learning_expansion_suite_v1.jsonl",
+    "trade_archetype_regime_intelligence_v1.jsonl",
+    "candidate_decision_ledger_v1.jsonl",
+    "outcome_labels_v1.jsonl",
+})
+PROVIDER_ARCHIVE_CONTRACTS = (
+    ("historical_news_catalysts", "historical_context_phase2_v1/local_gap_runner_v1/historical-news/archive", "index.sqlite3", "news_catalyst"),
+    ("fred_macro_vintages", "historical_context_phase2_v1/local_gap_runner_v1/macro/normalized", None, "macro_regime"),
+    ("analyst_revisions", "historical_context_phase2_v1/local_gap_runner_v1/analyst/normalized", None, "candidate_entry"),
+    ("quote_trade_microstructure", "historical_context_phase2_v1/local_gap_runner_v1/microstructure/normalized", None, "execution_quality"),
+)
 SUPPORTED_DIMENSIONS = (
     "symbol", "asset_class", "sector", "theme", "catalyst", "regime",
     "archetype", "trade_style", "horizon", "recommendation_state",
@@ -105,7 +126,7 @@ class AstraKnowledgeWarehouseV1(CachedDiagnosticModule):
         ranked.sort(key=lambda pair: (-pair[0], str(pair[1].get("store"))))
         return [row for _, row in ranked[: max(1, min(MAX_FILES, int(max_files or MAX_FILES)))]]
 
-    def source_references(self, allowed_paths: set[str] | None = None, max_sources: int = MAX_FILES) -> list[dict[str, Any]]:
+    def source_references(self, allowed_paths: set[str] | None = None, max_sources: int = MAX_SOURCE_REFERENCES) -> list[dict[str, Any]]:
         """Return bounded manifest references without opening raw evidence."""
         allowed = {str(path) for path in (allowed_paths or set())}
         rows = []
@@ -122,7 +143,92 @@ class AstraKnowledgeWarehouseV1(CachedDiagnosticModule):
                 "record_count_estimate": source.get("record_count_estimate"),
                 "index_generation": source.get("index_generation"), "index_available": source.get("index_available", False),
             })
-        return sorted(rows, key=lambda row: str(row["path"]))[:max(1, min(MAX_FILES, int(max_sources or MAX_FILES)))]
+        return sorted(rows, key=lambda row: str(row["path"]))[:max(1, min(MAX_SOURCE_REFERENCES, int(max_sources or MAX_SOURCE_REFERENCES)))]
+
+    def historical_utilization_registry(self, statuses: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Report proven routes without opening raw archives or claiming influence."""
+        statuses = dict(statuses or {})
+        rows: list[dict[str, Any]] = []
+        for source in self._catalog():
+            path = str(source.get("path") or "")
+            if path not in CANONICAL_HISTORICAL_LEARNING_PATHS:
+                continue
+            exists = bool(source.get("exists"))
+            rows.append({
+                "dataset_family": str(source.get("store") or path),
+                "canonical_storage_index": source.get("index") or path,
+                "exists": exists,
+                "indexed": bool(source.get("index_available")),
+                "retrievable": exists,
+                "retrieval_consumer": "AstraKnowledgeWarehouseV1.source_references",
+                "retrieval_contract": "bounded_manifest_partition",
+                "compression_path": "Knowledge Compression Engine V1",
+                "reaches_teacher": exists,
+                "downstream_consumer": "Teacher -> V8/V9 -> Cortex advisory",
+                "supported_decision_stages": list(source.get("readers") or []),
+                "pit_replay_safety": "source evidence tier preserved; replay cannot become broker truth",
+                "outcome_feedback_available": path in {"canonical_lifecycle_lessons_v1.jsonl", "candidate_decision_ledger_v1.jsonl", "outcome_labels_v1.jsonl"},
+                "utilization_status": "ACTIVE" if exists else "PARTIAL",
+                "reason": "canonical bounded learning route available" if exists else "route registered; source currently absent",
+                "data_exists": exists,
+                "data_retrievable": exists,
+                "data_actually_consumed": False,
+                "consumption_reason": "decision-time application requires explicit provenance; availability is not influence",
+            })
+        gap_statuses = {
+            "historical_news_catalysts": statuses.get("historical-news") or statuses.get("historical_news"),
+            "fred_macro_vintages": statuses.get("macro"),
+            "analyst_revisions": statuses.get("analyst"),
+            "quote_trade_microstructure": statuses.get("microstructure"),
+        }
+        for family, relative, index_name, stages in PROVIDER_ARCHIVE_CONTRACTS:
+            root = os.path.join(self.state_dir, relative)
+            exists = os.path.exists(root)
+            indexed = bool(index_name and os.path.isfile(os.path.join(root, index_name)))
+            provider_status = str((gap_statuses.get(family) or {}).get("status") or "")
+            blocked = provider_status in {"AUTHENTICATION_FAILED", "ENTITLEMENT_BLOCKED", "RATE_LIMITED"}
+            rows.append({
+                "dataset_family": family,
+                "canonical_storage_index": os.path.join(relative, index_name) if index_name else relative,
+                "exists": exists,
+                "indexed": indexed,
+                "retrievable": False,
+                "retrieval_consumer": None,
+                "retrieval_contract": "provider archive retained; canonical learner route not proven",
+                "compression_path": None,
+                "reaches_teacher": False,
+                "downstream_consumer": None,
+                "supported_decision_stages": [stages],
+                "pit_replay_safety": "retained PIT contract only; not natural broker truth",
+                "outcome_feedback_available": False,
+                "utilization_status": "PROVIDER_BLOCKED" if blocked else "STORED_NOT_CONSUMED" if exists else "PARTIAL",
+                "reason": provider_status or "no validated canonical compression consumer for this provider archive",
+                "data_exists": exists,
+                "data_retrievable": False,
+                "data_actually_consumed": False,
+                "consumption_reason": "fail closed until a dataset-specific canonical learner contract exists",
+            })
+        active = sum(row["utilization_status"] == "ACTIVE" for row in rows)
+        stored_unused = sum(row["utilization_status"] == "STORED_NOT_CONSUMED" for row in rows)
+        markdown = ["# Astra Historical Utilization Registry V1", ""]
+        markdown.extend(
+            f"- {row['dataset_family']}: {row['utilization_status']} - {row['reason']}"
+            for row in rows
+        )
+        return with_safety({
+            "schema_version": "astra_historical_utilization_registry_v1",
+            "status": "ok",
+            "rows": rows,
+            "summary": {"datasets": len(rows), "active": active, "stored_not_consumed": stored_unused},
+            "human_readable_report": "\n".join(markdown) + "\n",
+            "bounded": True,
+            "raw_archives_opened": 0,
+            "full_history_scan_used": False,
+            "provider_calls_used": 0,
+            "broker_calls_used": 0,
+            "llm_calls_used": 0,
+            "historical_evidence_natural_truth_eligible": False,
+        })
 
     def query(self, query: dict[str, Any] | None = None) -> dict[str, Any]:
         started = time.perf_counter()
@@ -276,6 +382,7 @@ class AstraKnowledgeWarehouseV1(CachedDiagnosticModule):
             "rotation_status": "not_started_non_destructive",
             "compression_status": "existing_summary_indexes_and_lesson_compression_reused",
             "distilled_lesson_reuse": distilled_lesson_reuse,
+            "historical_utilization_registry_v1": self.historical_utilization_registry(statuses),
             "incremental_index_status": {
                 "index_generation_observed": any(row.get("index_generation") for row in indexes),
                 "index_lag_measured": False,

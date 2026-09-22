@@ -30,7 +30,10 @@ SAFETY = {
 
 def warehouse_partition_references_v1(state_dir: str, allowed_paths: set[str]) -> list[dict[str, Any]]:
     """Ask the Warehouse Manager for manifest-first source references."""
-    return AstraKnowledgeWarehouseV1(state_dir=state_dir).source_references(allowed_paths=allowed_paths, max_sources=8)
+    return AstraKnowledgeWarehouseV1(state_dir=state_dir).source_references(
+        allowed_paths=allowed_paths,
+        max_sources=max(1, len(allowed_paths)),
+    )
 
 
 def _identity(row: Mapping[str, Any], source: str) -> tuple[str, str]:
