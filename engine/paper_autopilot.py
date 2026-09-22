@@ -2494,6 +2494,13 @@ class PaperAutopilotEngine:
         self._runtime_state["last_execution_trace"] = _compact_runtime_execution_trace_v1(
             self._runtime_state.get("last_execution_trace") or {}
         )
+        def runtime_mapping(key: str) -> dict[str, Any]:
+            # These derived runtime views are already compacted in place and
+            # are serialized read-only below. Avoid another shallow copy of
+            # multi-megabyte reconstructable payloads on every checkpoint.
+            value = self._runtime_state.get(key)
+            return value if isinstance(value, dict) else {}
+
         canary = dict(self._runtime_state.get("legacy_swing_canary") or {})
         # Full market/FMP evidence is persisted in their canonical top-level
         # stores.  Do not serialize duplicate advisory copies on every cycle.
@@ -2532,12 +2539,12 @@ class PaperAutopilotEngine:
             "broker_dust_quarantine_v1": dict(self._runtime_state.get("broker_dust_quarantine_v1") or {}),
             "broker_dust_cleanup_v1": dict(self._runtime_state.get("broker_dust_cleanup_v1") or {}),
             "paper_sell_order_intents": dict(self._runtime_state.get("paper_sell_order_intents") or {}),
-            "legacy_swing_fmp_evidence": dict(self._runtime_state.get("legacy_swing_fmp_evidence") or {}),
-            "legacy_swing_fmp_activity": dict(self._runtime_state.get("legacy_swing_fmp_activity") or {}),
-            "legacy_forward_activations": dict(self._runtime_state.get("legacy_forward_activations") or {}),
+            "legacy_swing_fmp_evidence": runtime_mapping("legacy_swing_fmp_evidence"),
+            "legacy_swing_fmp_activity": runtime_mapping("legacy_swing_fmp_activity"),
+            "legacy_forward_activations": runtime_mapping("legacy_forward_activations"),
             "legacy_swing_canary": canary,
-            "legacy_swing_market_evidence": dict(self._runtime_state.get("legacy_swing_market_evidence") or {}),
-            "legacy_swing_market_activity": dict(self._runtime_state.get("legacy_swing_market_activity") or {}),
+            "legacy_swing_market_evidence": runtime_mapping("legacy_swing_market_evidence"),
+            "legacy_swing_market_activity": runtime_mapping("legacy_swing_market_activity"),
             "legacy_swing_exit_lifecycle": dict(self._runtime_state.get("legacy_swing_exit_lifecycle") or {}),
             "legacy_retirement_entry_provenance_v1": dict(self._runtime_state.get("legacy_retirement_entry_provenance_v1") or {}),
             "legacy_retirement_owner_approval_v1": dict(self._runtime_state.get("legacy_retirement_owner_approval_v1") or {}),
@@ -2579,7 +2586,7 @@ class PaperAutopilotEngine:
             "broad_observation_multilane_handoff_v1": dict(self._runtime_state.get("broad_observation_multilane_handoff_v1") or {}),
             "astra_trading_readiness_v1": dict(self._runtime_state.get("astra_trading_readiness_v1") or {}),
             "trading_readiness_last_error_v1": dict(self._runtime_state.get("trading_readiness_last_error_v1") or {}),
-            "last_execution_trace": dict(self._runtime_state.get("last_execution_trace") or {}),
+            "last_execution_trace": runtime_mapping("last_execution_trace"),
         }
         try:
             # The API process may persist only the guarded enable switch.  It

@@ -144,6 +144,39 @@ def test_canary_checkpoint_does_not_duplicate_canonical_evidence_payloads():
     assert canary["fmp_records_store"] == "legacy_swing_fmp_evidence"
 
 
+def test_checkpoint_reuses_large_reconstructable_runtime_mappings():
+    derived = {
+        "activation-a": {"symbol": "AAPL", "payload": ["x"] * 1000}
+    }
+    captured = {}
+    original_dump = json.dump
+
+    def capture_dump(payload, handle, **kwargs):
+        captured.update({
+            "forward_reused": payload["legacy_forward_activations"] is derived,
+            "market_reused": payload["legacy_swing_market_evidence"] is derived,
+            "trace_reused": payload["last_execution_trace"] is engine._runtime_state["last_execution_trace"],
+        })
+        return original_dump(payload, handle, **kwargs)
+
+    trace = {"per_candidate_decision_trace": []}
+    with tempfile.TemporaryDirectory() as state_dir:
+        engine = object.__new__(PaperAutopilotEngine)
+        engine.state_path = os.path.join(state_dir, "paper_autopilot_state.json")
+        engine.paper_mode = True
+        engine._enabled = False
+        engine._adaptive_learning_capacity_policy = {}
+        engine._runtime_state = {
+            "legacy_forward_activations": derived,
+            "legacy_swing_market_evidence": derived,
+            "last_execution_trace": trace,
+        }
+        with patch("engine.paper_autopilot.json.dump", side_effect=capture_dump):
+            engine._save_state_file(worker_owned=True)
+
+    assert captured == {"forward_reused": True, "market_reused": True, "trace_reused": True}
+
+
 def test_runtime_candidate_trace_compacts_reconstructable_full_contracts():
     fat = {
         "candidate_id": "cand-1",
