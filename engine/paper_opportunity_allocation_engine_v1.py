@@ -613,19 +613,33 @@ class PaperOpportunityAllocationEngineV1:
             # The worker observer is the canonical current quote/bar producer.
             # Join its provider timestamp and quote fields before lane evidence
             # construction so freshness is evaluated on the refreshed quote,
-            # never on the older broad-observation snapshot.
+            # never on the older broad-observation snapshot.  These are
+            # market-observation fields, not candidate identity or score
+            # fields, so the current observer must replace stale values.
+            current_observation_fields = {
+                "price", "current_price", "bid", "ask", "quote_timestamp",
+                "provider_quote_timestamp", "provider_native_timestamp",
+                "quote_age_seconds", "quote_provider", "provider_used",
+                "atr_pct", "volatility_pct", "completed_bar_timestamp",
+                "bar_evidence", "completed_bar_count", "completed_bars",
+                "bar_timeframe", "completed_bar_source_timestamp",
+                "swing_completed_bars", "swing_bar_timeframe",
+                "swing_completed_bar_source_timestamp",
+            }
             for key in (
                 "price", "current_price", "bid", "ask", "quote_timestamp",
                 "provider_quote_timestamp", "provider_native_timestamp",
                 "quote_age_seconds", "quote_provider", "provider_used",
                 "atr_pct", "volatility_pct", "completed_bar_timestamp", "bar_evidence",
             ):
-                if candidate.get(key) in (None, "", {}, []) and current.get(key) not in (None, "", {}, []):
+                if key in current_observation_fields and current.get(key) not in (None, "", {}, []):
                     candidate[key] = current[key]
                     provenance[key] = "worker_equity_risk_observer"
-            if candidate.get("provider_quote_timestamp") in (None, "") and current.get("quote_timestamp") not in (None, ""):
+            if current.get("quote_timestamp") not in (None, ""):
                 candidate["provider_quote_timestamp"] = current["quote_timestamp"]
+                candidate["provider_native_timestamp"] = current["quote_timestamp"]
                 provenance["provider_quote_timestamp"] = "worker_equity_risk_observer"
+                provenance["provider_native_timestamp"] = "worker_equity_risk_observer"
             if candidate.get("completed_bar_count") in (None, "", {}, []) and bar_evidence.get("count"):
                 candidate["completed_bar_count"] = bar_evidence["count"]
                 provenance["completed_bar_count"] = "worker_equity_risk_observer"

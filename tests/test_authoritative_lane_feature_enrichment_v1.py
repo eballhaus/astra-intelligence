@@ -131,6 +131,27 @@ def test_incomplete_or_stale_evidence_fails_closed(tmp_path: Path):
     assert result["candidate_evidence_fabricated"] is False
 
 
+def test_current_observer_replaces_stale_broad_quote_for_freshness(tmp_path: Path):
+    row = _fixture_state(tmp_path, fresh=False)
+    now = datetime.now(timezone.utc)
+    current = json.loads((tmp_path / "paper_autopilot_state.json").read_text())
+    risk_row = current["equity_risk_envelopes_snapshot_v1"]["rows"][0]
+    risk_row["quote_timestamp"] = now.isoformat().replace("+00:00", "Z")
+    current["equity_risk_envelopes_snapshot_v1"]["status"] = "CURRENT"
+    (tmp_path / "paper_autopilot_state.json").write_text(json.dumps(current))
+
+    allocator = PaperOpportunityAllocationEngineV1(state_dir=str(tmp_path))
+    result = allocator.authoritative_broad_lane_candidates_v1([row])
+
+    assert result["enrichment_complete"] == {"SCALP": 1, "SWING": 1}
+    assert {item["provider_native_timestamp"] for item in result["rows"]} == {risk_row["quote_timestamp"]}
+    assert all(
+        item["lane_feature_provenance_v1"]["provider_native_timestamp"]
+        == "worker_equity_risk_observer"
+        for item in result["rows"]
+    )
+
+
 def test_enrichment_budget_is_bounded(tmp_path: Path):
     row = _fixture_state(tmp_path)
     allocator = PaperOpportunityAllocationEngineV1(state_dir=str(tmp_path))
