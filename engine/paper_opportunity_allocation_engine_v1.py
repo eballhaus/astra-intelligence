@@ -106,6 +106,36 @@ MEGA_CAP_SYMBOL_FALLBACK = {
 }
 
 
+def select_equity_risk_refresh_candidates_v1(
+    candidates: list[dict[str, Any]],
+    previous_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Keep the bounded lane-enrichment shortlist out of stale cache reuse."""
+    cached_rows_by_symbol = {
+        str(row.get("symbol") or "").upper().strip(): dict(row)
+        for row in list(previous_rows or [])
+        if isinstance(row, dict) and str(row.get("symbol") or "").strip()
+    }
+    refresh_candidates: list[dict[str, Any]] = []
+    reusable_rows: list[dict[str, Any]] = []
+    for candidate in list(candidates or []):
+        if not isinstance(candidate, dict):
+            continue
+        symbol = str(candidate.get("symbol") or candidate.get("ticker") or "").upper().strip()
+        if not symbol:
+            continue
+        cached = dict(cached_rows_by_symbol.get(symbol) or {})
+        if bool(candidate.get("authoritative_lane_enrichment_requested")):
+            refresh_candidates.append(candidate)
+            continue
+        if not cached:
+            continue
+        if candidate.get("candidate_id") is not None:
+            cached["candidate_id"] = candidate.get("candidate_id")
+        reusable_rows.append(cached)
+    return refresh_candidates, reusable_rows
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 

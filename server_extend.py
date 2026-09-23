@@ -510,7 +510,10 @@ except Exception:
                 "forced_early_exit_enabled": False,
             }
 try:
-    from engine.paper_opportunity_allocation_engine_v1 import PaperOpportunityAllocationEngineV1
+    from engine.paper_opportunity_allocation_engine_v1 import (
+        PaperOpportunityAllocationEngineV1,
+        select_equity_risk_refresh_candidates_v1,
+    )
 except Exception:
     class PaperOpportunityAllocationEngineV1:  # type: ignore[override]
         def __init__(self, *args, **kwargs):
@@ -552,6 +555,9 @@ except Exception:
                 "api_calls_used": 0,
                 "live_trading_changed": False,
             }
+
+    def select_equity_risk_refresh_candidates_v1(candidates, previous_rows):
+        return list(candidates or []), []
 try:
     from engine.edge_development_suite_v1 import EdgeDevelopmentSuiteV1
 except Exception:
@@ -22298,11 +22304,19 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
         prior_valid_until = float(previous.get("valid_until_epoch") or 0.0)
     except (TypeError, ValueError):
         prior_valid_until = 0.0
+    candidates = _bounded_current_equity_candidate_rows_v1()
+    authoritative_lane_refresh_requested = any(
+        bool(isinstance(candidate, dict) and candidate.get("authoritative_lane_enrichment_requested"))
+        for candidate in candidates
+    )
     # Preserve fail-closed evidence while its existing refresh window is
     # active.  A failed bounded batch must not block every worker cycle with
-    # the same sequential provider waits.
+    # the same sequential provider waits.  The bounded authoritative lane
+    # shortlist is the exception: it must get a fresh provider attempt or an
+    # explicit fail-closed result, never a silent cache skip.
     if prior_status in {"FAILED_FAIL_CLOSED", "PARTIAL_FAIL_CLOSED"} and (
-        prior_valid_until > now_epoch or closed_session
+        (prior_valid_until > now_epoch or closed_session)
+        and not authoritative_lane_refresh_requested
     ):
         return {
             "status": "RECENT_FAILURE_COOLDOWN",
@@ -22312,7 +22326,6 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
             "broker_actions_used": 0,
             "order_session_eligible": not closed_session,
         }
-    candidates = _bounded_current_equity_candidate_rows_v1()
     cache_current = bool(
         previous.get("status") in {"CURRENT", "OFF_HOURS_HISTORICAL_CURRENT"}
         and previous.get("rows")
@@ -22321,32 +22334,16 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
     reusable_rows: list[dict] = []
     refresh_candidates = list(candidates)
     if cache_current:
-        cached_rows_by_symbol = {
-            str(row.get("symbol") or "").upper().strip(): dict(row)
-            for row in list(previous.get("rows") or [])
-            if isinstance(row, dict) and str(row.get("symbol") or "").strip()
-        }
         # Candidate rotation must not turn the observer's existing bounded
         # refresh cadence into a full sequential provider batch each cycle.
-        # Newly seen symbols remain without risk evidence and fail closed at
-        # the existing pretrade join until the refresh window expires.
-        refresh_candidates = []
-        for candidate in candidates:
-            symbol = str(candidate.get("symbol") or candidate.get("ticker") or "").upper().strip()
-            cached = dict(cached_rows_by_symbol.get(symbol) or {})
-            if not cached:
-                continue
-            if candidate.get("authoritative_lane_enrichment_requested") and not cached.get("swing_bar_evidence"):
-                # The bounded lane shortlist also needs completed 1-hour bars
-                # for the existing SWING evidence contract.
-                refresh_candidates.append(candidate)
-                continue
-            # Risk evidence is market-data keyed by symbol. Keep the current
-            # candidate identity attached while reusing only the still-valid
-            # provider observation; never extend its validity window here.
-            if candidate.get("candidate_id") is not None:
-                cached["candidate_id"] = candidate.get("candidate_id")
-            reusable_rows.append(cached)
+        # Ordinary newly seen symbols remain without risk evidence and fail
+        # closed at the existing pretrade join.  The authoritative shortlist
+        # is selected separately so its provider quote/1-hour-bar evidence is
+        # never replaced by a still-valid-but-too-old cache row.
+        refresh_candidates, reusable_rows = select_equity_risk_refresh_candidates_v1(
+            candidates,
+            list(previous.get("rows") or []),
+        )
     if cache_current and not refresh_candidates:
         return {"status": "CURRENT_CACHE_REUSED", "rows": len(previous.get("rows") or []), "provider_calls_used": 0, "broker_actions_used": 0}
     if not candidates:

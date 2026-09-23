@@ -6,7 +6,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from engine.paper_autopilot import PaperAutopilotEngine
-from engine.paper_opportunity_allocation_engine_v1 import PaperOpportunityAllocationEngineV1
+from engine.paper_opportunity_allocation_engine_v1 import (
+    PaperOpportunityAllocationEngineV1,
+    select_equity_risk_refresh_candidates_v1,
+)
 
 
 def _bars(now: datetime, count: int, step_minutes: int) -> list[dict]:
@@ -159,3 +162,22 @@ def test_worker_boundary_keeps_existing_qualification_owner(tmp_path: Path):
     assert all(row["lane_feature_enrichment_authoritative"] is True for row in candidates)
     assert all(row["observation_authority"] is False for row in candidates)
     assert all("qualified" not in row and "eligible" not in row for row in candidates)
+
+
+def test_lane_enrichment_bypasses_risk_cache_for_new_and_stale_symbols():
+    candidates = [
+        {"symbol": "NEW", "authoritative_lane_enrichment_requested": True},
+        {"symbol": "STALE", "authoritative_lane_enrichment_requested": True},
+        {"symbol": "ORDINARY_NEW"},
+        {"symbol": "ORDINARY_CACHED", "candidate_id": "cand-1"},
+    ]
+    previous_rows = [
+        {"symbol": "STALE", "quote_timestamp": "2026-09-23T19:30:00Z"},
+        {"symbol": "ORDINARY_CACHED", "quote_timestamp": "2026-09-23T19:30:00Z"},
+    ]
+
+    refresh, reusable = select_equity_risk_refresh_candidates_v1(candidates, previous_rows)
+
+    assert [row["symbol"] for row in refresh] == ["NEW", "STALE"]
+    assert [row["symbol"] for row in reusable] == ["ORDINARY_CACHED"]
+    assert reusable[0]["candidate_id"] == "cand-1"
