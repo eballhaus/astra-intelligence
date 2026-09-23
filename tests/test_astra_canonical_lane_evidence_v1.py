@@ -25,14 +25,15 @@ def _quote(**overrides):
     return row
 
 
-def _bars(count, *, timeframe="15Min", start_hour=17):
+def _bars(count, *, timeframe="15Min", start_hour=17, start_at=None):
     bars = []
     for index in range(count):
         if timeframe == "1Day":
             stamp = (datetime(2026, 8, 25, 20, tzinfo=timezone.utc) + timedelta(days=index)).isoformat().replace("+00:00", "Z")
         else:
-            hour = start_hour + index
-            stamp = f"2026-09-18T{hour:02d}:00:00Z" if hour < 24 else f"2026-09-19T{hour - 24:02d}:00:00Z"
+            base = start_at or datetime(2026, 9, 18, start_hour, 0, tzinfo=timezone.utc)
+            step_minutes = 15 if timeframe.lower() in {"15min", "15m"} else 60
+            stamp = (base + timedelta(minutes=step_minutes * index)).isoformat().replace("+00:00", "Z")
         close = 100.0 + index * 0.25
         bars.append({
             "provider_native_timestamp": stamp,
@@ -52,7 +53,7 @@ def test_scalp_contract_derives_spread_freshness_and_fit_from_real_inputs():
         relative_volume_score=76,
         intraday_acceleration_score=74,
         momentum_expansion_score=71,
-        bar_evidence=_bars(4, start_hour=14),
+        bar_evidence=_bars(4, start_hour=17),
     )
     result = build_lane_evidence_v1(row, now=NOW)
     derived = result["derived_evidence"]
@@ -123,7 +124,7 @@ def test_allocator_joins_canonical_evidence_without_execution_authority(tmp_path
                 "quote_execution_eligible": True,
                 "atr_pct": 1.2,
                 "completed_bar_timestamp": "2026-09-18T17:45:00Z",
-                "bar_evidence": _bars(4, start_hour=14),
+                "bar_evidence": _bars(4, start_at=live_now - timedelta(minutes=60)),
             }],
         }
     }

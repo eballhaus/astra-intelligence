@@ -1322,8 +1322,10 @@ class ProviderRouter:
                 data, status, err, latency = self._request(p, url, params={"symbols": pair}, headers=headers)
             else:
                 pair = str(symbol or "").upper()
+                sip_verified = str(os.getenv("ASTRA_ALPACA_SIP_ENTITLEMENT_VERIFIED", "0")).strip().lower() in {"1", "true", "yes", "on"}
+                feed = "sip" if sip_verified else "iex"
                 url = f"https://data.alpaca.markets/v2/stocks/{pair}/quotes/latest"
-                data, status, err, latency = self._request(p, url, headers=headers)
+                data, status, err, latency = self._request(p, url, params={"feed": feed}, headers=headers)
             if err:
                 return {"ok": False, "error": err, "status": status, "latency_ms": latency,
                         "endpoint": url, "feed": "us", "request_symbol": pair if asset_type == "crypto" else symbol,
@@ -1356,13 +1358,13 @@ class ProviderRouter:
                 "change": None,
                 "change_percent": None,
                 "quote_timestamp": quote.get("t"),
-                "quote_source": "ALPACA_MARKET_DATA" if asset_type == "crypto" else "ALPACA_MARKET_DATA",
+                "quote_source": "ALPACA_MARKET_DATA" if asset_type == "crypto" else ("ALPACA_SIP_MARKET_DATA" if feed == "sip" else "ALPACA_IEX_MARKET_DATA"),
                 "quote_record_id": quote.get("i") or quote.get("id"),
                 "status": status,
                 "error": "",
                 "latency_ms": latency,
                 "field_path": "quotes.<pair>.ap/bp" if asset_type == "crypto" else "quote.ap/quote.bp",
-                "endpoint": url, "feed": "us" if asset_type == "crypto" else "iex",
+                "endpoint": url, "feed": "us" if asset_type == "crypto" else feed,
                 "request_symbol": pair if asset_type == "crypto" else symbol,
                 "response_key": response_key,
                 "response_keys": sorted(str(key) for key in (data.get("quotes") or {}).keys())[:20] if asset_type == "crypto" else ["quote"],

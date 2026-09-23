@@ -22280,6 +22280,67 @@ def _bounded_current_equity_candidate_rows_v1(max_rows: int = 12) -> list[dict]:
     return list(reversed(rows))
 
 
+def _worker_authoritative_equity_quote_v1(symbol: str) -> dict[str, Any]:
+    """Prefer worker-owned SIP observations, then use bounded SIP REST."""
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return {"ok": False, "symbol": sym, "response_state": "EMPTY_RESPONSE", "quote": {}}
+    sip_verified = str(os.getenv("ASTRA_ALPACA_SIP_ENTITLEMENT_VERIFIED", "0")).strip().lower() in {"1", "true", "yes", "on"}
+    try:
+        monitor_status = dict(ALPACA_WS_MONITOR.status() or {})
+    except Exception:
+        monitor_status = {}
+    if sip_verified and monitor_status.get("sip_entitlement_verified") is False:
+        sip_verified = False
+    ws_reader = getattr(ALPACA_WS_MONITOR, "get_observation", None)
+    if not callable(ws_reader):
+        ws_reader = getattr(ALPACA_WS_MONITOR, "get_quote", None)
+    if callable(ws_reader):
+        try:
+            ws_quote = dict(ws_reader(sym, max_age_seconds=20.0) or {})
+        except Exception:
+            ws_quote = {}
+        ws_provider = str(ws_quote.get("provider_used") or ws_quote.get("provider") or "").upper()
+        accepted_ws_providers = {"ALPACA_WS_SIP", "ALPACA_WS_SIP_CANARY"}
+        if not sip_verified:
+            accepted_ws_providers.add("ALPACA_WS_IEX")
+        native_timestamp = str(
+            ws_quote.get("provider_native_timestamp")
+            or ws_quote.get("provider_quote_timestamp")
+            or ws_quote.get("quote_timestamp")
+            or ""
+        ).strip()
+        price = _to_float(ws_quote.get("price"), 0.0)
+        if ws_provider in accepted_ws_providers and native_timestamp and price > 0.0:
+            return {
+                "ok": True,
+                "symbol": sym,
+                "feed": "sip" if ws_provider != "ALPACA_WS_IEX" else "iex",
+                "provider": ws_provider,
+                "quote_source": "ALPACA_WS_SIP" if ws_provider != "ALPACA_WS_IEX" else "ALPACA_WS_IEX",
+                "observation_path": "worker_websocket",
+                "response_state": "SUCCESS",
+                "quote": {
+                    "bp": ws_quote.get("bid"),
+                    "ap": ws_quote.get("ask"),
+                    "t": native_timestamp,
+                    "i": ws_quote.get("quote_record_id"),
+                },
+                "broker_actions": 0,
+            }
+    requested_feed = "sip" if sip_verified else "iex"
+    try:
+        payload = dict(ALPACA_PAPER_BROKER.latest_quote(sym, feed=requested_feed) or {})
+    except TypeError:
+        # Compatibility for narrow test doubles; production broker supports feed.
+        payload = dict(ALPACA_PAPER_BROKER.latest_quote(sym) or {})
+    payload["feed"] = requested_feed
+    payload["provider"] = "ALPACA_SIP_REST" if requested_feed == "sip" else "ALPACA_IEX_REST"
+    payload["quote_source"] = payload["provider"]
+    payload["observation_path"] = "bounded_rest_fallback"
+    return payload
+
+
 def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
     """Persist bounded, worker-owned equity quote/bar observations.
 
@@ -22365,11 +22426,31 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
         symbol = str(candidate.get("symbol") or candidate.get("ticker") or "").upper().strip()
         quote_payload, quote, price = {}, {}, 0.0
         if not closed_session:
-            quote_payload = dict(ALPACA_PAPER_BROKER.latest_quote(symbol) or {})
+            quote_payload = _worker_authoritative_equity_quote_v1(symbol)
             quote = dict(quote_payload.get("quote") or {})
             price = _to_float(quote.get("ap"), _to_float(quote.get("bp"), 0.0))
             if not quote_payload.get("ok") or price <= 0:
                 failures.append({"symbol": symbol, "blocker": str(quote_payload.get("response_state") or "FRESH_QUOTE_UNAVAILABLE")})
+                continue
+            quote_time = str(quote.get("t") or "").strip()
+            quote_record = {
+                "symbol": symbol,
+                "provider_native_timestamp": quote_time,
+                "provider_used": quote_payload.get("provider") or quote_payload.get("quote_source"),
+                "asset_type": "stock",
+            }
+            quote_freshness = canonical_market_timestamp_v1(
+                quote_record,
+                source_type=SOURCE_QUOTE,
+                max_age_seconds=20.0,
+                future_tolerance_seconds=provider_future_timestamp_tolerance_seconds_v1(
+                    quote_record,
+                    source_type=SOURCE_QUOTE,
+                    asset_type="stock",
+                ),
+            )
+            if not bool(quote_freshness.get("executable_freshness")):
+                failures.append({"symbol": symbol, "blocker": str(quote_freshness.get("first_causal_blocker") or "FRESH_QUOTE_UNAVAILABLE")})
                 continue
         bars_payload = dict(ALPACA_PAPER_BROKER.historical_bars(
             symbol, asset_class="stock", timeframe="15Min", limit=24,
@@ -22406,6 +22487,7 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
         if closed_session:
             price = latest_bar_close
         quote_time = str(quote.get("t") or latest_bar_time)
+        quote_provider = str(quote_payload.get("provider") or quote_payload.get("quote_source") or bars_payload.get("provider") or "")
         regular_session_bars = []
         for _bar, raw_bar_time, _close, normalized_bar in completed_bars:
             bar_epoch = _parse_iso_or_epoch(raw_bar_time)
@@ -22458,6 +22540,7 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
                     "provider": str(swing_payload.get("provider") or "ALPACA_PAPER_BROKER"),
                     "evidence_class": "CURRENT_PROVIDER_BAR",
                     "resolution": "1Hour",
+                    "bar_timestamp_semantics": "START",
                     "count": len(swing_bars),
                     "provider_native_timestamp": swing_bars[-1].get("provider_native_timestamp"),
                     "completed_bars": swing_bars[-24:],
@@ -22467,6 +22550,14 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
             "asset_class": "equity", "current_price": round(price, 6), "price": round(price, 6),
             "bid": _to_float(quote.get("bp"), 0.0), "ask": _to_float(quote.get("ap"), 0.0),
             "quote_timestamp": quote_time if not closed_session else None,
+            "provider_quote_timestamp": quote_time if not closed_session else None,
+            "provider_native_timestamp": quote_time if not closed_session else None,
+            "quote_provider": quote_provider or None,
+            "provider_used": quote_provider or None,
+            "quote_source": quote_payload.get("quote_source") or quote_provider or None,
+            "quote_observation_path": quote_payload.get("observation_path") or "completed_bar_only",
+            "quote_freshness_status": str((quote_freshness if not closed_session else {}).get("freshness_status") or "NOT_APPLICABLE"),
+            "quote_age_seconds": (quote_freshness if not closed_session else {}).get("age_seconds"),
             "completed_bar_timestamp": latest_bar_time,
             "atr_pct": round(sum(ranges) / len(ranges), 4),
             "downside_range_pct": round(max(ranges), 4),
@@ -22479,6 +22570,7 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
                 "provider": str(bars_payload.get("provider") or "ALPACA_PAPER_BROKER"),
                 "evidence_class": "CURRENT_PROVIDER_BAR",
                 "resolution": "15Min",
+                "bar_timestamp_semantics": "START",
                 "count": len(completed_bars),
                 "provider_native_timestamp": latest_bar_time,
                 "bar_window_start": forecast_bars[0]["provider_native_timestamp"] if forecast_bars else None,
@@ -22486,7 +22578,7 @@ def _refresh_equity_risk_envelopes_snapshot_v1() -> dict:
                 "completed_bars": forecast_bars,
             },
             "swing_bar_evidence": swing_bar_evidence,
-            "risk_evidence_source": "AlpacaPaperBroker.historical_bars" if closed_session else "AlpacaPaperBroker.latest_quote+historical_bars",
+            "risk_evidence_source": "AlpacaPaperBroker.historical_bars" if closed_session else f"{quote_payload.get('observation_path') or 'bounded_rest_fallback'}+historical_bars",
             "freshness_state": "HISTORICAL_CURRENT" if closed_session else "CURRENT",
         })
     snapshot = {

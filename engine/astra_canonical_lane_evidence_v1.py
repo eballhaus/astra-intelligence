@@ -8,7 +8,7 @@ completed-bar evidence, with an explicit provenance record.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from statistics import mean
 from typing import Any, Mapping
 
@@ -26,6 +26,16 @@ SCALP_STRUCTURE_MIN_BARS = 4
 SWING_STRUCTURE_MIN_BARS = 20
 SCALP_TIMEFRAMES = {"5MIN", "15MIN", "1HOUR", "5M", "15M", "1H"}
 SWING_TIMEFRAMES = {"1DAY", "1D", "1HOUR", "1H"}
+BAR_INTERVAL_SECONDS = {
+    "5MIN": 5 * 60,
+    "5M": 5 * 60,
+    "15MIN": 15 * 60,
+    "15M": 15 * 60,
+    "1HOUR": 60 * 60,
+    "1H": 60 * 60,
+    "1DAY": 24 * 60 * 60,
+    "1D": 24 * 60 * 60,
+}
 
 
 def _text(value: Any) -> str:
@@ -158,6 +168,26 @@ def _valid_bars(
     parsed.sort(key=lambda item: item[0])
     if len(parsed) < minimum or any(left[0] >= right[0] for left, right in zip(parsed, parsed[1:])):
         return [], resolution, None
+    # Alpaca intraday bar timestamps identify the interval start. A completed
+    # bar is therefore usable after its end, but an arbitrarily old completed
+    # window must not masquerade as current lane evidence. Keep the boundary
+    # timeframe-aware rather than applying quote TTLs to bars: two completed
+    # intervals allow normal provider/session publication delay while still
+    # failing closed across a market-session gap.
+    interval_seconds = BAR_INTERVAL_SECONDS.get(resolution)
+    if interval_seconds:
+        timestamp_semantics = _text(
+            row.get("bar_timestamp_semantics")
+            or evidence.get("bar_timestamp_semantics")
+            or "START"
+        ).upper()
+        latest_end = parsed[-1][0]
+        if timestamp_semantics not in {"END", "CLOSE"}:
+            latest_end = latest_end + timedelta(seconds=interval_seconds)
+        age_seconds = (now - latest_end).total_seconds()
+        max_age_intervals = 7 if resolution in {"1DAY", "1D"} else 2
+        if age_seconds < 0 or age_seconds > float(interval_seconds * max_age_intervals):
+            return [], resolution, None
     bars = [item[1] for item in parsed]
     return bars, resolution, _iso(parsed[-1][0])
 

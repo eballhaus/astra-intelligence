@@ -621,13 +621,16 @@ class AlpacaPaperBroker:
             "response_truncated": bool(next_page_token),
         }
 
-    def latest_quote(self, symbol: str) -> dict[str, Any]:
+    def latest_quote(self, symbol: str, *, feed: str = "iex") -> dict[str, Any]:
         sym = _safe_text(symbol).upper()
-        ok, data, error, status = self._market_data_request(f"/v2/stocks/{urllib.parse.quote(sym)}/quotes/latest?feed=iex")
+        selected_feed = "sip" if _safe_text(feed).lower() == "sip" else "iex"
+        ok, data, error, status = self._market_data_request(
+            f"/v2/stocks/{urllib.parse.quote(sym)}/quotes/latest?feed={selected_feed}"
+        )
         quote = dict(data.get("quote") or {}) if isinstance(data, dict) else {}
         if not ok:
-            return {"ok": False, "symbol": sym, "response_state": self._market_error_state(status, error), "http_status": status, "error": error, "quote": {}, "broker_actions": 0}
-        return {"ok": bool(quote), "symbol": sym, "response_state": "SUCCESS" if quote else "EMPTY_RESPONSE", "http_status": status, "quote": quote, "broker_actions": 0}
+            return {"ok": False, "symbol": sym, "feed": selected_feed, "response_state": self._market_error_state(status, error), "http_status": status, "error": error, "quote": {}, "broker_actions": 0}
+        return {"ok": bool(quote), "symbol": sym, "feed": selected_feed, "response_state": "SUCCESS" if quote else "EMPTY_RESPONSE", "http_status": status, "quote": quote, "broker_actions": 0}
 
     def asset_metadata(self, symbol: str) -> dict[str, Any]:
         """Read canonical asset metadata from the paper trading API; no order path."""
