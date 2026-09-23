@@ -465,6 +465,39 @@ class TradingReadinessTests(unittest.TestCase):
             [row["fault_type"] for row in result["active_faults"]],
         )
 
+    def test_ambiguous_crypto_identity_does_not_become_provider_handoff_fault(self):
+        monitor = self._monitor()
+        runtime = {
+            "last_execution_trace": {},
+            "crypto_rankings_snapshot_v1": {
+                "rows": [{
+                    "symbol": "ETH/USD",
+                    "price": 2670.0,
+                    "provider_native_timestamp": _iso(-1),
+                }],
+            },
+            "loss_containment_state_v1": {
+                "decisions": {
+                    "ETH/USD:2026-09-19T02:07:36": {
+                        "symbol": "ETHUSD",
+                        "lane": "CRYPTO",
+                        "position_id": "ETH/USD:2026-09-19T02:07:36",
+                        "exact_blockers": [
+                            "MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE",
+                            "AMBIGUOUS_SYMBOL_ONLY_MATCH",
+                        ],
+                    },
+                },
+            },
+        }
+
+        issues = monitor._issues(runtime, monitor._session())
+
+        assert not any(
+            row["fault_type"] == "PRODUCER_FRESH_CONSUMER_UNAVAILABLE"
+            for row in issues
+        )
+
     def test_historical_cycle_scanner_row_cannot_override_current_passing_cycle(self):
         result = self._monitor().run_if_due(
             runtime_state={

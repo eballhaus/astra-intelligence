@@ -1846,6 +1846,13 @@ class AstraTradingReadinessV1:
                 }:
                     continue
                 blockers = {str(blocker) for blocker in (row.get("exact_blockers") or [])}
+                # An ambiguous lifecycle is intentionally fail-closed.  Its
+                # missing timestamp is an ownership limitation, not proof
+                # that the provider observation failed to reach management.
+                # Keep the canonical decision auditable, but do not escalate
+                # it as a repairable producer/consumer handoff fault.
+                if "AMBIGUOUS_SYMBOL_ONLY_MATCH" in blockers:
+                    continue
                 if (
                     "MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE" in str(row.get("first_causal_blocker") or row.get("reason") or "")
                     or "MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE" in blockers
