@@ -14423,6 +14423,7 @@ class PaperAutopilotEngine:
                         # managed row, not a lifecycle identity inferred from
                         # provider data.  When the managed row has no identity
                         # the observation remains identity-free.
+                        candidate["observation_identity_source"] = "MANAGED_SYMBOL_ASSOCIATION_ONLY"
                         candidate["canonical_position_id"] = identity
                         candidate["canonical_position_aliases"] = sorted(managed_aliases or {identity})
                         lifecycle_id = _pick_first_text(managed_row.get("lifecycle_id"))
@@ -14661,6 +14662,12 @@ class PaperAutopilotEngine:
                     *[_pick_first_text(value) for value in (cached_observation.get("canonical_position_aliases") or [])],
                 ) if value
             }
+            if cached_observation.get("observation_identity_source") == "MANAGED_SYMBOL_ASSOCIATION_ONLY":
+                # A provider quote without lifecycle identity remains valid
+                # symbol-level market evidence. The helper may attach a
+                # consumer association for compatibility, but that metadata
+                # must not reject a sibling same-symbol lifecycle.
+                observation_identity_aliases = set()
             cached_symbol = str(cached_observation.get("symbol") or symbol).upper().strip()
             cached_asset_type = _norm_asset(
                 cached_observation.get("asset_type")

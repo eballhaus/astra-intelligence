@@ -630,6 +630,42 @@ class AlpacaWSMonitorTests(unittest.TestCase):
         self.assertEqual(quotes["ETHUSD"]["provider_native_timestamp"], quotes["ETHUSD"]["provider_quote_timestamp"])
         self.assertEqual(quotes["ETHUSD"]["canonical_position_id"], "position-eth")
 
+    def test_symbol_association_does_not_reject_fresh_quote_for_sibling_lifecycle(self):
+        engine = PaperAutopilotEngine(
+            db_path=os.path.join(tempfile.mkdtemp(prefix="astra_crypto_ws_sibling_"), "paper.db"),
+            state_path=os.path.join(tempfile.mkdtemp(prefix="astra_crypto_ws_sibling_state_"), "state.json"),
+            enabled=False,
+        )
+        native_timestamp = _iso()
+        with patch.object(
+            engine,
+            "_canonical_active_position_observations_v1",
+            return_value={"ETHUSD": {
+                "symbol": "ETHUSD",
+                "asset_type": "crypto",
+                "provider_used": "ALPACA_WS_CRYPTO",
+                "provider_native_timestamp": native_timestamp,
+                "provider_quote_timestamp": native_timestamp,
+                "quote_timestamp": native_timestamp,
+                "price": 3500.0,
+                "canonical_position_id": "sibling-eth",
+                "canonical_position_aliases": ["sibling-eth"],
+                "observation_identity_source": "MANAGED_SYMBOL_ASSOCIATION_ONLY",
+            }},
+        ):
+            quotes = engine._loss_containment_quote_evidence(
+                {"ETHUSD": {"symbol": "ETHUSD", "asset_type": "crypto", "current_price": 3500.0}},
+                managed_rows_by_symbol={"ETHUSD": {
+                    "symbol": "ETHUSD",
+                    "asset_type": "crypto",
+                    "lane_id": "CRYPTO",
+                    "canonical_position_id": "clean-eth",
+                }},
+            )
+
+        self.assertEqual(quotes["ETHUSD"]["provider_native_timestamp"], native_timestamp)
+        self.assertEqual(quotes["ETHUSD"]["provider_used"], "ALPACA_WS_CRYPTO")
+
     def test_loss_containment_normalizes_slash_crypto_quote_for_compact_broker_symbols(self):
         engine = PaperAutopilotEngine(
             db_path=os.path.join(tempfile.mkdtemp(prefix="astra_crypto_ws_alias_loss_"), "paper.db"),
