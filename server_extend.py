@@ -3557,6 +3557,7 @@ FMP_ENRICHMENT_QUOTE_TTL_SECONDS = max(120, min(900, int(float(os.getenv("ASTRA_
 FMP_ENRICHMENT_PROFILE_TTL_SECONDS = max(86400, int(float(os.getenv("ASTRA_FMP_ENRICHMENT_PROFILE_TTL_SECONDS", "86400"))))
 FMP_ENRICHMENT_DAILY_SOFT_CAP_BYTES = max(65536, int(float(os.getenv("ASTRA_FMP_ENRICHMENT_DAILY_SOFT_CAP_BYTES", "524288"))))
 FMP_ENRICHMENT_CYCLE_SOFT_CAP_BYTES = max(2048, int(float(os.getenv("ASTRA_FMP_ENRICHMENT_CYCLE_SOFT_CAP_BYTES", "12288"))))
+FMP_ENRICHMENT_CACHE_MAX_ENTRIES = 2048
 
 def _env_float(name, default):
     try:
@@ -38024,6 +38025,11 @@ def _fmp_enrichment_cache_get(endpoint_key, symbol, ttl_seconds):
     row = dict(cache.get(key) or {})
     if not row:
         return None
+    if bool(row.get("negative")):
+        if time.time() >= _to_float(row.get("expires_at"), 0.0):
+            return None
+        row["negative_cache_active"] = True
+        return row
     ts = _to_float(row.get("ts"), 0.0)
     if (time.time() - ts) > max(1.0, _to_float(ttl_seconds, 0.0)):
         return None
@@ -38038,7 +38044,51 @@ def _fmp_enrichment_cache_set(endpoint_key, symbol, payload, bytes_used):
         "payload": dict(payload or {}),
         "bytes": int(max(0, _to_float(bytes_used, 0.0))),
     }
+    if len(cache) > FMP_ENRICHMENT_CACHE_MAX_ENTRIES:
+        keep = sorted(
+            cache.items(),
+            key=lambda item: _to_float(item[1].get("expires_at") or item[1].get("ts"), 0.0),
+            reverse=True,
+        )[:FMP_ENRICHMENT_CACHE_MAX_ENTRIES]
+        cache = dict(keep)
     _fmp_enrichment_cache_write(cache)
+
+
+def _fmp_enrichment_negative_cache_set(endpoint_key, symbol, *, status_code, blocked_reason):
+    reason = str(blocked_reason or "provider_error").strip().lower()
+    status = int(_to_float(status_code, 0.0))
+    if status in {401, 403} or reason in {"unsupported_endpoint", "invalid_endpoint"}:
+        failure_class, cooldown_seconds = "PERMANENT_REVALIDATION", 6 * 60 * 60
+    elif status == 429 or "rate" in reason or "limit" in reason:
+        failure_class, cooldown_seconds = "RATE_LIMITED", 15 * 60
+    elif status == 404 or "empty" in reason or "not_found" in reason or "not_covered" in reason:
+        failure_class, cooldown_seconds = "EMPTY_OR_NOT_COVERED", 60 * 60
+    elif "timeout" in reason or "network" in reason or "request_exception" in reason:
+        failure_class, cooldown_seconds = "TRANSIENT", 5 * 60
+    else:
+        failure_class, cooldown_seconds = "TRANSIENT", 15 * 60
+    cache = _fmp_enrichment_cache_load()
+    key = f"{str(endpoint_key).lower()}::{str(symbol or '').upper().strip()}"
+    now = time.time()
+    cache[key] = {
+        "ts": now,
+        "expires_at": now + cooldown_seconds,
+        "negative": True,
+        "failure_class": failure_class,
+        "status_code": status,
+        "blocked_reason": reason,
+        "payload": {},
+        "bytes": 0,
+    }
+    if len(cache) > FMP_ENRICHMENT_CACHE_MAX_ENTRIES:
+        keep = sorted(
+            cache.items(),
+            key=lambda item: _to_float(item[1].get("expires_at") or item[1].get("ts"), 0.0),
+            reverse=True,
+        )[:FMP_ENRICHMENT_CACHE_MAX_ENTRIES]
+        cache = dict(keep)
+    _fmp_enrichment_cache_write(cache)
+    return {"failure_class": failure_class, "cooldown_seconds": cooldown_seconds}
 
 
 def _fmp_small_endpoint_request(endpoint_key, symbol, cycle_state, call_reason):
@@ -38051,6 +38101,40 @@ def _fmp_small_endpoint_request(endpoint_key, symbol, cycle_state, call_reason):
     family = "quote_profile"
     cached = _fmp_enrichment_cache_get(endpoint, sym, ttl_seconds)
     if isinstance(cached, dict) and cached:
+        if bool(cached.get("negative_cache_active")):
+            cycle_state["suppressed_by_cooldown"] = int(_to_float(cycle_state.get("suppressed_by_cooldown"), 0.0)) + 1
+            _fmp_efficiency_record_event(
+                {
+                    "endpoint_family": family,
+                    "endpoint_path_template": path_template,
+                    "symbol": sym,
+                    "symbol_count": 1,
+                    "status_code": int(_to_float(cached.get("status_code"), 0.0)),
+                    "ok": False,
+                    "cache_hit": True,
+                    "bytes_estimated": 0,
+                    "bytes_actual_if_available": 0,
+                    "useful_fields_count": 0,
+                    "useful_score": 0.0,
+                    "call_reason": str(call_reason or "candidate_enrichment"),
+                    "caller_context": "top_buys_fmp_enrichment_v1",
+                    "ttl_seconds": int(max(0, _to_float(cached.get("expires_at"), time.time()) - time.time())),
+                    "blocked_reason": "negative_cache_cooldown",
+                    "failure_class": str(cached.get("failure_class") or "TRANSIENT"),
+                    "api_calls_delta": 0,
+                    "bandwidth_delta": 0,
+                    "provider_governor_allowed": True,
+                }
+            )
+            return {
+                "ok": False,
+                "blocked_reason": "negative_cache_cooldown",
+                "data": {},
+                "cache_hit": True,
+                "suppressed_by_cooldown": True,
+                "bytes": 0,
+                "fields_used": [],
+            }
         data_cached = dict(cached.get("payload") or {})
         fields = [str(k) for k, v in data_cached.items() if v not in (None, "", 0, 0.0)]
         _fmp_efficiency_record_event(
@@ -38229,6 +38313,9 @@ def _fmp_small_endpoint_request(endpoint_key, symbol, cycle_state, call_reason):
                     "provider_governor_allowed": True,
                 }
             )
+            _fmp_enrichment_negative_cache_set(
+                endpoint, sym, status_code=status, blocked_reason=f"http_{status}"
+            )
             return {"ok": False, "blocked_reason": f"http_{status}", "data": {}, "cache_hit": False, "bytes": int(max(0, body_bytes)), "fields_used": []}
         parsed = resp.json()
         rows = parsed if isinstance(parsed, list) else parsed.get("_list", parsed) if isinstance(parsed, dict) else []
@@ -38240,6 +38327,35 @@ def _fmp_small_endpoint_request(endpoint_key, symbol, cycle_state, call_reason):
         fields_used = [str(k) for k, v in data_obj.items() if v not in (None, "", 0, 0.0)]
         useful_fields = int(len(fields_used))
         useful_score = float(min(100.0, useful_fields * 8.0))
+        if not data_obj or not fields_used:
+            record_reason = "empty_response"
+            _fmp_enrichment_negative_cache_set(
+                endpoint, sym, status_code=status, blocked_reason=record_reason
+            )
+            _fmp_efficiency_record_event(
+                {
+                    "endpoint_family": family,
+                    "endpoint_path_template": path_template,
+                    "symbol": sym,
+                    "symbol_count": 1,
+                    "status_code": status,
+                    "ok": False,
+                    "cache_hit": False,
+                    "bytes_estimated": int(max(0, body_bytes)),
+                    "bytes_actual_if_available": int(max(0, body_bytes)),
+                    "useful_fields_count": 0,
+                    "useful_score": 0.0,
+                    "call_reason": str(call_reason or "candidate_enrichment"),
+                    "caller_context": "top_buys_fmp_enrichment_v1",
+                    "ttl_seconds": int(ttl_seconds),
+                    "blocked_reason": record_reason,
+                    "failure_class": "EMPTY_OR_NOT_COVERED",
+                    "api_calls_delta": 1,
+                    "bandwidth_delta": int(max(0, body_bytes)),
+                    "provider_governor_allowed": True,
+                }
+            )
+            return {"ok": False, "blocked_reason": record_reason, "data": {}, "cache_hit": False, "bytes": int(max(0, body_bytes)), "fields_used": []}
         _fmp_enrichment_cache_set(endpoint, sym, data_obj, body_bytes)
         _fmp_efficiency_record_event(
             {
@@ -38266,6 +38382,9 @@ def _fmp_small_endpoint_request(endpoint_key, symbol, cycle_state, call_reason):
     except Exception:
         record_error("FMP")
         cycle_state["blocked"] = int(_to_float(cycle_state.get("blocked"), 0.0)) + 1
+        _fmp_enrichment_negative_cache_set(
+            endpoint, sym, status_code=0, blocked_reason="request_exception"
+        )
         _fmp_efficiency_record_event(
             {
                 "endpoint_family": family,
@@ -38301,6 +38420,7 @@ def _apply_controlled_fmp_enrichment_v1(payload):
         "cache_hits": 0,
         "cache_misses": 0,
         "blocked": 0,
+        "suppressed_by_cooldown": 0,
     }
     seen = set()
     candidates = []
@@ -38361,6 +38481,7 @@ def _apply_controlled_fmp_enrichment_v1(payload):
         "max_fmp_enrichment_calls_per_cycle": int(MAX_FMP_ENRICHMENT_CALLS_PER_CYCLE),
         "profile_ttl_seconds": int(FMP_ENRICHMENT_PROFILE_TTL_SECONDS),
         "quote_ttl_seconds": int(FMP_ENRICHMENT_QUOTE_TTL_SECONDS),
+        "suppressed_by_cooldown": int(_to_float(cycle_state.get("suppressed_by_cooldown"), 0.0)),
         "daily_soft_cap_bytes": int(FMP_ENRICHMENT_DAILY_SOFT_CAP_BYTES),
         "cycle_soft_cap_bytes": int(FMP_ENRICHMENT_CYCLE_SOFT_CAP_BYTES),
         "symbols_considered": list(candidates),

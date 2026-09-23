@@ -5338,6 +5338,25 @@ class PaperAutopilotEngine:
             return False
         return (now - observed).total_seconds() <= 6 * 60 * 60
 
+    @staticmethod
+    def _legacy_swing_fmp_failure_policy(
+        response_state: Any,
+        error_category: Any,
+    ) -> tuple[str, int]:
+        """Classify failed advisory context requests without changing authority."""
+        state = str(response_state or "").upper().strip()
+        category = str(error_category or "").lower().strip()
+        permanent = {
+            "AUTHENTICATION_FAILED", "ENTITLEMENT_BLOCKED", "UNSUPPORTED_ENDPOINT",
+        }
+        if state in permanent or any(token in category for token in ("unsupported", "entitlement", "credential", "authentication")):
+            return "PERMANENT_REVALIDATION", 6 * 60 * 60
+        if state == "EMPTY_RESPONSE" or any(token in category for token in ("empty", "not_covered", "not_found")):
+            return "EMPTY_RESPONSE", 60 * 60
+        if state in {"RATE_LIMITED", "TIMEOUT", "PROVIDER_ERROR", "PROVIDER_UNAVAILABLE"}:
+            return "TRANSIENT", 15 * 60
+        return "TRANSIENT", 15 * 60
+
     def _legacy_swing_profile_context(self, symbol: str) -> dict[str, Any]:
         """Prefer exact SEC identity/facts and retain FMP as migration fallback."""
         sec_fetcher = getattr(self, "_legacy_swing_sec_fetcher", None)
@@ -5405,6 +5424,10 @@ class PaperAutopilotEngine:
             "requests_failed_this_cycle": 0,
             "max_symbols_per_cycle": max(1, min(int(max_symbols or 1), 5)),
             "broker_actions": 0,
+            "suppressed_by_cooldown": 0,
+            "suppression_by_failure_class": dict(prior_activity.get("suppression_by_failure_class") or {}),
+            "failure_categories": dict(prior_activity.get("failure_categories") or {}),
+            "provider_attempts_by_provider": dict(prior_activity.get("provider_attempts_by_provider") or {}),
         }
         attempted = 0
         ordered = sorted(registry.items())
@@ -5425,6 +5448,13 @@ class PaperAutopilotEngine:
             if retry_at:
                 try:
                     if datetime.fromisoformat(retry_at.replace("Z", "+00:00")).astimezone(UTC) > now:
+                        failure_class, _cooldown = self._legacy_swing_fmp_failure_policy(
+                            previous.get("response_state"), previous.get("error_category")
+                        )
+                        activity["suppressed_by_cooldown"] += 1
+                        suppressed = dict(activity.get("suppression_by_failure_class") or {})
+                        suppressed[failure_class] = int(suppressed.get(failure_class) or 0) + 1
+                        activity["suppression_by_failure_class"] = suppressed
                         continue
                 except (TypeError, ValueError):
                     pass
@@ -5439,9 +5469,14 @@ class PaperAutopilotEngine:
             state = str(response.get("response_state") or "PROVIDER_ERROR").upper()
             success = state in {"SUCCESS", "PARTIAL"} and bool(response.get("normalized_fields"))
             provider = str(response.get("provider") or "FMP").upper()
+            provider_attempts = dict(activity.get("provider_attempts_by_provider") or {})
+            provider_attempts[provider] = int(provider_attempts.get(provider) or 0) + 1
+            activity["provider_attempts_by_provider"] = provider_attempts
             record_prefix = "legacy-fmp" if provider == "FMP" else f"legacy-{provider.lower()}"
             retry_count = int(previous.get("retry_count") or 0) + (0 if success else 1)
-            backoff_minutes = 60 if retry_count >= 2 else 15
+            failure_class, cooldown_seconds = self._legacy_swing_fmp_failure_policy(
+                state, response.get("error_category")
+            )
             fmp_record = {
                 "schema_version": "legacy_swing_fmp_evidence_v1",
                 "record_id": f"{record_prefix}:company-profile:{activation_id}",
@@ -5464,8 +5499,10 @@ class PaperAutopilotEngine:
                 "quality_state": "VALID" if success else "INVALID",
                 "normalized_fields": dict(response.get("normalized_fields") or {}),
                 "error_category": str(response.get("error_category") or ""),
-                "retry_count": retry_count,
-                "next_retry_at": (now + timedelta(minutes=backoff_minutes)).isoformat().replace("+00:00", "Z") if not success else None,
+                "retry_count": retry_count if not success else 0,
+                "failure_class": failure_class if not success else "",
+                "cooldown_seconds": int(cooldown_seconds) if not success else 0,
+                "next_retry_at": (now + timedelta(seconds=cooldown_seconds)).isoformat().replace("+00:00", "Z") if not success else None,
                 "last_success_at": response.get("response_at") if success else previous.get("last_success_at"),
                 "consumer_acknowledged": False,
                 "influence_state": "UNAVAILABLE" if not success else "NEUTRAL",
@@ -5492,6 +5529,10 @@ class PaperAutopilotEngine:
                 activity["failure_count"] += 1
                 activity["requests_failed_this_cycle"] += 1
                 activity["retry_count"] = retry_count
+                categories = dict(activity.get("failure_categories") or {})
+                category = str(response.get("error_category") or state or "PROVIDER_ERROR")
+                categories[category] = int(categories.get(category) or 0) + 1
+                activity["failure_categories"] = categories
                 activity["next_refresh_at"] = fmp_record["next_retry_at"]
         # Earnings and catalyst context are complementary to a profile, not
         # aliases for it.  Refresh one due, symbol-scoped family per worker
@@ -5516,11 +5557,27 @@ class PaperAutopilotEngine:
                 auxiliary = dict(fmp_record.get("auxiliary_context") or {})
                 prior_event = dict(auxiliary.get(event_family) or {})
                 if self._legacy_swing_fmp_is_current(prior_event, now) and event_family != "news_catalyst":
+                    activity["cache_hits"] = int(activity.get("cache_hits") or 0) + 1
                     continue
                 if event_family == "news_catalyst" and self._legacy_swing_fmp_is_current(prior_event, now):
                     try:
                         observed = datetime.fromisoformat(str(prior_event.get("response_at") or "").replace("Z", "+00:00")).astimezone(UTC)
                         if (now - observed).total_seconds() <= event_max_age:
+                            activity["cache_hits"] = int(activity.get("cache_hits") or 0) + 1
+                            continue
+                    except (TypeError, ValueError):
+                        pass
+                retry_at = str(prior_event.get("next_retry_at") or "")
+                if retry_at:
+                    try:
+                        if datetime.fromisoformat(retry_at.replace("Z", "+00:00")).astimezone(UTC) > now:
+                            failure_class, _cooldown = self._legacy_swing_fmp_failure_policy(
+                                prior_event.get("response_state"), prior_event.get("error_category")
+                            )
+                            activity["suppressed_by_cooldown"] += 1
+                            suppressed = dict(activity.get("suppression_by_failure_class") or {})
+                            suppressed[failure_class] = int(suppressed.get(failure_class) or 0) + 1
+                            activity["suppression_by_failure_class"] = suppressed
                             continue
                     except (TypeError, ValueError):
                         pass
@@ -5560,6 +5617,10 @@ class PaperAutopilotEngine:
                 success = state == "SUCCESS" and bool(response.get("normalized_fields"))
                 event_provider = str(response.get("provider") or "FMP").upper()
                 event_prefix = "legacy-fmp" if event_provider == "FMP" else f"legacy-{event_provider.lower()}"
+                event_retry_count = int(prior_event.get("retry_count") or 0) + (0 if success else 1)
+                event_failure_class, event_cooldown_seconds = self._legacy_swing_fmp_failure_policy(
+                    state, response.get("error_category")
+                )
                 auxiliary[event_family] = {
                     "record_id": f"{event_prefix}:{event_family}:{activation_id}", "provider": event_provider,
                     "endpoint_family": event_family, "symbol": symbol,
@@ -5567,6 +5628,10 @@ class PaperAutopilotEngine:
                     "response_state": state, "freshness_state": "CURRENT" if success else "UNAVAILABLE",
                     "normalized_fields": dict(response.get("normalized_fields") or {}),
                     "error_category": str(response.get("error_category") or ""),
+                    "retry_count": event_retry_count if not success else 0,
+                    "failure_class": event_failure_class if not success else "",
+                    "cooldown_seconds": int(event_cooldown_seconds) if not success else 0,
+                    "next_retry_at": (now + timedelta(seconds=event_cooldown_seconds)).isoformat().replace("+00:00", "Z") if not success else None,
                     "consumer_acknowledged": False, "broker_actions": 0,
                 }
                 fmp_record.setdefault("record_id", f"legacy-fmp:company-profile:{activation_id}")
@@ -5578,6 +5643,11 @@ class PaperAutopilotEngine:
                 activity["event_family_scheduled"] = event_family
                 activity["event_symbol_requested"] = symbol
                 activity["event_request_succeeded"] = success
+                if not success:
+                    categories = dict(activity.get("failure_categories") or {})
+                    category = str(response.get("error_category") or state or "PROVIDER_ERROR")
+                    categories[category] = int(categories.get(category) or 0) + 1
+                    activity["failure_categories"] = categories
                 break
         activity["event_rotation_cursor"] = (event_cursor + 1) % len(event_specs)
         activity["rotation_cursor"] = (cursor + max(1, attempted)) % max(1, len(ordered))

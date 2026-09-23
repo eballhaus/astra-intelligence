@@ -152,6 +152,33 @@ class LegacySwingFmpConsumptionTests(unittest.TestCase):
         self.assertIn(record["influence_state"], {"NEUTRAL", "BLOCKING"})
         self.assertEqual(engine._runtime_state["legacy_swing_canary"]["broker_actions"], 0)
 
+    def test_failed_event_context_is_suppressed_until_bounded_revalidation(self):
+        calls = []
+        engine = object.__new__(PaperAutopilotEngine)
+        engine._runtime_state = {"legacy_swing_fmp_activity": {"event_rotation_cursor": 1}}
+        engine._legacy_swing_sec_fetcher = lambda _symbol: {"response_state": "PARTIAL", "normalized_fields": {"sic": "7372"}}
+        engine._legacy_swing_fmp_fetcher = lambda _symbol: (_ for _ in ()).throw(AssertionError("FMP profile fallback not expected"))
+
+        class Router:
+            def fetch_finnhub_news_context(self, symbol):
+                calls.append(("FINNHUB", symbol))
+                return {"provider": "FINNHUB", "response_state": "ENTITLEMENT_BLOCKED", "error_category": "entitlement_unavailable"}
+
+            def fetch_fmp_news_context(self, symbol):
+                calls.append(("FMP", symbol))
+                return {"provider": "FMP", "response_state": "ENTITLEMENT_BLOCKED", "error_category": "entitlement_unavailable"}
+
+        engine._legacy_swing_fmp_router = Router()
+        _records, first = engine._refresh_legacy_swing_fmp_evidence(_registry())
+        assert calls == [("FINNHUB", "AAA"), ("FMP", "AAA")]
+        assert first["event_request_succeeded"] is False
+
+        engine._runtime_state["legacy_swing_fmp_activity"]["event_rotation_cursor"] = 1
+        _records, second = engine._refresh_legacy_swing_fmp_evidence(_registry())
+        assert calls == [("FINNHUB", "AAA"), ("FMP", "AAA")]
+        assert second["suppressed_by_cooldown"] == 1
+        assert second["suppression_by_failure_class"]["PERMANENT_REVALIDATION"] == 1
+
 
 if __name__ == "__main__":
     unittest.main()
