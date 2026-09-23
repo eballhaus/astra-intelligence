@@ -843,6 +843,35 @@ class ActiveEquityFMPSupplementTests(unittest.TestCase):
         self.assertEqual(state["refresh_state"], "NO_CANONICAL_ACTIVE_EQUITY_POSITIONS")
         self.assertEqual(state["calls_this_refresh"], 0)
 
+    def test_closed_equity_session_slows_advisory_fmp_refresh(self):
+        engine = self._engine()
+        calls: list[str] = []
+
+        class Router:
+            def get_quote(self, symbol, **kwargs):
+                calls.append(symbol)
+                return {
+                    "provider_used": "FMP", "price": 100.0,
+                    "provider_quote_timestamp": _iso(), "quote_quality": "live",
+                    "quote_source": "FMP_MARKET_DATA", "attempted_providers": ["FMP"],
+                }
+
+        engine._legacy_swing_fmp_router = Router()
+        engine._fetch_open_positions = lambda asset_type=None: [{
+            "symbol": "AAPL", "asset_type": "stock", "status": "OPEN", "quantity": 1,
+            "lane_id": "DAY", "lifecycle_id": "life-a", "entry_fill_id": "fill-a",
+        }]
+        with patch.object(engine, "_legacy_regular_session_open", return_value=False):
+            first = engine._refresh_active_equity_fmp_observations_v1()
+            prior = dict(engine._runtime_state["active_equity_fmp_observations_v1"])
+            prior["last_refresh_epoch"] = time.time() - 61.0
+            engine._runtime_state["active_equity_fmp_observations_v1"] = prior
+            second = engine._refresh_active_equity_fmp_observations_v1()
+
+        self.assertEqual(first["cadence_seconds"], 300)
+        self.assertEqual(second["refresh_state"], "CADENCE_NOT_DUE")
+        self.assertEqual(calls, ["AAPL"])
+
     def test_stale_fmp_price_is_not_persisted_as_live_observation(self):
         engine = self._engine()
 

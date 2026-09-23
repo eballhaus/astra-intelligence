@@ -1895,6 +1895,13 @@ class PaperAutopilotEngine:
     def __init__(self, db_path: str = "state/ai_trading_memory.db", *args, **kwargs):
         self.db_path = str(db_path or "state/ai_trading_memory.db")
         self.state_path = str(kwargs.get("state_path") or "state/paper_autopilot_state.json")
+        # The worker only needs the guarded enable switch before each cycle.
+        # Keep that control-plane value in a tiny atomic sidecar instead of
+        # reparsing the full derived runtime snapshot on every cycle.
+        self.control_state_path = str(
+            kwargs.get("control_state_path")
+            or os.path.join(os.path.dirname(self.state_path) or "state", "paper_autopilot_control_v1.json")
+        )
         self.loss_containment_state_path = str(
             kwargs.get("loss_containment_state_path")
             or os.path.join(os.path.dirname(self.state_path) or "state", "loss_containment_state_v1.json")
@@ -2492,8 +2499,34 @@ class PaperAutopilotEngine:
                 ):
                     if key in payload:
                         self._runtime_state[key] = payload.get(key)
+                self._write_control_state_file()
         except Exception:
             return
+
+    def _write_control_state_file(self) -> None:
+        """Persist only the guarded enable switch for fast worker polling."""
+        temporary_path = f"{self.control_state_path}.{os.getpid()}.tmp"
+        try:
+            os.makedirs(os.path.dirname(self.control_state_path) or ".", exist_ok=True)
+            payload = {
+                "schema_version": "astra_paper_autopilot_control_v1",
+                "autopilot_enabled": bool(self._enabled),
+                "paper_mode": self.paper_mode,
+                "updated_at": _now_iso(),
+            }
+            with open(temporary_path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, separators=(",", ":"), ensure_ascii=True)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_path, self.control_state_path)
+        except Exception:
+            # The full state file remains the migration fallback. A control
+            # write failure must never enable trading or change fail-closed use.
+            try:
+                if os.path.exists(temporary_path):
+                    os.unlink(temporary_path)
+            except Exception:
+                pass
 
     def _save_state_file(self, *, worker_owned: bool = False):
         # The append-only lane ledger already owns full decision evidence. Keep
@@ -5561,7 +5594,12 @@ class PaperAutopilotEngine:
         """
         now = time.time()
         prior = dict(self._runtime_state.get("active_equity_fmp_observations_v1") or {})
-        cadence_seconds = 60
+        # FMP is a management supplement, not executable quote authority.
+        # Keep its regular-session cadence, but avoid polling unchanged equity
+        # context after the session while broker/SIP position supervision and
+        # crypto continue at their existing cadence.
+        regular_session_open = self._legacy_regular_session_open()
+        cadence_seconds = 60 if regular_session_open else 300
         previous_at = _to_float(prior.get("last_refresh_epoch"), 0.0)
         try:
             open_rows = self._fetch_open_positions(asset_type="stock")
@@ -5605,6 +5643,7 @@ class PaperAutopilotEngine:
             "schema_version": "active_equity_fmp_observations_v1",
             "provider": "FMP",
             "cadence_seconds": cadence_seconds,
+            "market_session_scope": "REGULAR_SESSION" if regular_session_open else "EQUITY_MARKET_CLOSED",
             "market_observation_only": True,
             "execution_authority": "UNCHANGED",
             "entry_freshness_eligible": False,
@@ -5625,6 +5664,17 @@ class PaperAutopilotEngine:
             return state
         if now - previous_at < cadence_seconds:
             state["refresh_state"] = "CADENCE_NOT_DUE"
+            # Preserve an existing provider cooldown in the bounded status so
+            # reduced after-hours cadence does not hide a known failure.
+            retry_after_by_symbol = dict(state.get("retry_after_epoch_by_symbol") or {})
+            for symbol in symbols:
+                retry_after = _to_float(retry_after_by_symbol.get(symbol), 0.0)
+                if retry_after > now:
+                    state["errors"].append({
+                        "symbol": symbol,
+                        "reason": "fmp_quote_failure_cooldown",
+                        "retry_after_epoch": round(retry_after, 3),
+                    })
             self._runtime_state["active_equity_fmp_observations_v1"] = state
             return state
 
@@ -13812,6 +13862,7 @@ class PaperAutopilotEngine:
 
     def toggle(self, enabled: bool):
         self._enabled = bool(enabled)
+        self._write_control_state_file()
         self._save_state_file()
         return {"ok": True, "autopilot_enabled": self._enabled}
 
@@ -13835,13 +13886,20 @@ class PaperAutopilotEngine:
         """
         result = {
             "ok": False,
-            "control_state_source": "paper_autopilot_state_file",
+            "control_state_source": self.control_state_path,
             "autopilot_enabled": False,
             "control_state_sync": "FAILED_CLOSED",
         }
         try:
-            with open(self.state_path, "r", encoding="utf-8") as handle:
-                payload = json.load(handle)
+            source = self.control_state_path
+            try:
+                with open(self.control_state_path, "r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+            except (FileNotFoundError, json.JSONDecodeError, OSError):
+                # One-time compatibility path for pre-sidecar deployments.
+                source = self.state_path
+                with open(self.state_path, "r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
             enabled = payload.get("autopilot_enabled") if isinstance(payload, dict) else None
             if not isinstance(enabled, bool):
                 raise ValueError("autopilot_enabled_missing_or_invalid")
@@ -13850,6 +13908,7 @@ class PaperAutopilotEngine:
                 "ok": True,
                 "autopilot_enabled": bool(self._enabled),
                 "control_state_sync": "SYNCHRONIZED",
+                "control_state_source": source,
             })
         except Exception as exc:
             self._enabled = False

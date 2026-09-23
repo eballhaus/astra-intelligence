@@ -247,9 +247,24 @@ class ResetBoundaryTests(unittest.TestCase):
             self.assertTrue(sync["autopilot_enabled"])
             self.assertTrue(worker_owner.enabled())
             Path(state_path).write_text("{}", encoding="utf-8")
+            Path(worker_owner.control_state_path).write_text("{}", encoding="utf-8")
             failed = worker_owner.refresh_control_state_from_disk()
             self.assertFalse(failed["ok"])
             self.assertFalse(worker_owner.enabled())
+
+    def test_control_sync_uses_small_sidecar_when_runtime_snapshot_is_unreadable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = os.path.join(tmp, "paper_autopilot_state.json")
+            api_owner = PaperAutopilotEngine(state_path=state_path, enabled=False)
+            worker_owner = PaperAutopilotEngine(state_path=state_path, enabled=False)
+            api_owner.enable()
+            Path(state_path).write_text("not-json", encoding="utf-8")
+
+            sync = worker_owner.refresh_control_state_from_disk()
+
+            self.assertTrue(sync["ok"])
+            self.assertTrue(sync["autopilot_enabled"])
+            self.assertEqual(sync["control_state_source"], worker_owner.control_state_path)
 
     def test_sentinel_recognizes_verified_forward_only_boundary(self):
         boundary = build_forward_only_activation_boundary_v1(
