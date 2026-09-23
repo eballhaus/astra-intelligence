@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -70,6 +71,36 @@ class IncrementalHistoricalLearningGovernorV1Tests(unittest.TestCase):
         self.assertIsNone(status["current_priority_partition"])
         self.assertEqual(status["current_status"], "ERROR")
         self.assertEqual(first["status"], "COMPLETE")
+
+    def test_consumed_prefix_recovery_proves_append_and_does_not_duplicate_packets(self):
+        root = self._root({"candidate_decision_ledger_v1.jsonl": [self._row(symbol="A"), self._row(symbol="B")]})
+        source = root / "candidate_decision_ledger_v1.jsonl"
+        first = run_incremental_historical_learning_cycle_v1(str(root), resource_facts=HEALTHY, max_rows=1, max_bytes=4096)
+        previous_size = source.stat().st_size
+        backup = root / ".astra_state_pre_migration_test"
+        backup.mkdir()
+        shutil.copyfile(source, backup / source.name)
+        with source.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(self._row(symbol="C")) + "\n")
+        resumed = run_incremental_historical_learning_cycle_v1(str(root), resource_facts=HEALTHY, max_rows=1, max_bytes=4096)
+        state = json.loads((root / CHECKPOINT_FILE).read_text())
+        packets = json.loads((root / "historical_learning_compressed_packets_v1.json").read_text())
+        self.assertEqual(resumed["partitions_processed"][0]["cursor_start"], first["partitions_processed"][0]["next_cursor"])
+        self.assertEqual(state["sources"]["candidate_decision_ledger_v1.jsonl"]["last_revision_recovery"], "SAFE_APPEND_PROVEN")
+        self.assertFalse(state["sources"]["candidate_decision_ledger_v1.jsonl"].get("rewrite_detected"))
+        self.assertEqual(len(packets["packets"]), 2)
+        self.assertGreater(previous_size, 0)
+
+    def test_unconsumed_revision_adopts_zero_without_replaying_learning(self):
+        root = self._root({"candidate_decision_ledger_v1.jsonl": [self._row(symbol="NEW")]})
+        source = root / "candidate_decision_ledger_v1.jsonl"
+        checkpoint = {"sources": {source.name: {"snapshot_version": "old", "source_size_bytes": 999, "next_offset": 999, "partitions_completed": 0, "rewrite_detected": True}}}
+        (root / CHECKPOINT_FILE).write_text(json.dumps(checkpoint))
+        result = run_incremental_historical_learning_cycle_v1(str(root), resource_facts=HEALTHY, max_rows=10, max_bytes=4096)
+        state = json.loads((root / CHECKPOINT_FILE).read_text())
+        self.assertEqual(result["partitions_processed"][0]["cursor_start"], 0)
+        self.assertEqual(state["sources"][source.name]["last_revision_recovery"], "UNCONSUMED_REVISION_ADOPTED")
+        self.assertFalse(state["sources"][source.name].get("rewrite_detected"))
 
     def test_priority_prefers_candidate_decision_evidence(self):
         root = self._root({

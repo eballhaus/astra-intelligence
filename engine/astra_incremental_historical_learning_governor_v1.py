@@ -10,6 +10,7 @@ import json
 import os
 import tempfile
 import time
+import hashlib
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -140,25 +141,117 @@ def _work_budget(checkpoint: Mapping[str, Any], resource_facts: Mapping[str, Any
     return adaptive_throughput_v1((checkpoint.get("throughput") or {}), resource_facts)
 
 
-def _source_state(checkpoint: dict[str, Any], name: str, snapshot: Mapping[str, Any]) -> dict[str, Any]:
+def _packet_source_count(state: Path, name: str) -> int:
+    registry = _read(state / PACKET_REGISTRY_FILE)
+    return sum(
+        1
+        for packet in (registry.get("packets") or {}).values()
+        if isinstance(packet, Mapping) and str(packet.get("warehouse_source_path") or "") == name
+    )
+
+
+def _prefix_digest(path: Path, size: int) -> str | None:
+    """Hash only a proven prior prefix; never materialize a cold source."""
+    digest = hashlib.sha256()
+    remaining = max(0, int(size))
+    try:
+        with path.open("rb") as handle:
+            while remaining:
+                chunk = handle.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    return None
+                digest.update(chunk)
+                remaining -= len(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def _backup_prefix_digest(state: Path, name: str, size: int) -> tuple[str | None, str | None]:
+    """Use an existing migration backup only as revision evidence."""
+    roots = []
+    configured = os.getenv("ASTRA_HISTORICAL_SOURCE_BACKUP_ROOT")
+    if configured:
+        roots.append(Path(configured).expanduser())
+    roots.extend(sorted(state.parent.glob(".astra_state_pre_migration_*/")))
+    roots.extend(sorted(state.glob(".astra_state_pre_migration_*/")))
+    for root in roots:
+        candidate = root / name
+        try:
+            if candidate.stat().st_size != int(size):
+                continue
+        except OSError:
+            continue
+        return _prefix_digest(candidate, size), str(candidate)
+    return None, None
+
+
+def _record_revision_history(source: dict[str, Any], previous_version: str | None, recovery: str) -> None:
+    if not previous_version:
+        return
+    history = source.setdefault("source_revision_history", [])
+    entry = {"snapshot_version": previous_version, "recovery": recovery, "recorded_at": _now()}
+    if entry not in history:
+        history.append(entry)
+    del history[:-4]
+
+
+def _source_state(state: Path, checkpoint: dict[str, Any], name: str, snapshot: Mapping[str, Any]) -> dict[str, Any]:
     sources = checkpoint.setdefault("sources", {})
     previous = dict(sources.get(name) or {})
     if previous.get("snapshot_version") == snapshot.get("version"):
         return previous
     previous_size = int(previous.get("source_size_bytes") or 0)
-    if previous and int(snapshot.get("size_bytes") or 0) > previous_size and int(previous.get("next_offset") or 0) >= previous_size:
-        # JSONL producers append in normal operation; retain the completed prefix.
-        previous["next_offset"] = min(int(previous.get("next_offset") or 0), previous_size)
-    elif previous:
-        # Rewritten history needs an explicit source rebuild; silently adding it
-        # would duplicate or mix outcome aggregates from two revisions.
+    current_size = int(snapshot.get("size_bytes") or 0)
+    previous_offset = int(previous.get("next_offset") or 0)
+    previous_partitions = int(previous.get("partitions_completed") or 0)
+    packet_count = _packet_source_count(state, name)
+    previous_version = str(previous.get("snapshot_version") or "") or None
+    recovery = None
+    if not previous:
+        previous["next_offset"] = 0
+        previous["partitions_completed"] = 0
+        recovery = "NEW_SOURCE"
+    elif current_size > previous_size and previous_offset >= previous_size:
+        # A completed prefix followed by growth is the canonical append case.
+        previous["next_offset"] = min(previous_offset, previous_size)
+        recovery = "APPEND_AFTER_COMPLETED_PREFIX"
+    elif current_size > previous_size and previous.get("append_only_proven"):
+        # A prior bounded prefix proof establishes the source's append contract.
+        previous["next_offset"] = min(previous_offset, previous_size)
+        recovery = "APPEND_AFTER_PRIOR_PROOF"
+    elif previous_partitions == 0 and packet_count == 0:
+        # No learning output was consumed from this revision, so adopting the
+        # current revision at offset zero cannot duplicate packets or lessons.
+        previous["next_offset"] = 0
+        previous["partitions_completed"] = 0
+        previous.pop("rewrite_detected", None)
+        previous.pop("last_error", None)
+        recovery = "UNCONSUMED_REVISION_ADOPTED"
+    elif current_size >= previous_size:
+        digest, backup_path = _backup_prefix_digest(state, name, previous_size)
+        if digest and backup_path and digest == _prefix_digest(state / name, previous_size):
+            previous["next_offset"] = min(previous_offset, previous_size)
+            previous["append_only_proven"] = True
+            previous["revision_evidence"] = {"method": "MIGRATION_BACKUP_PREFIX", "backup_path": backup_path, "prefix_bytes": previous_size}
+            recovery = "SAFE_APPEND_PROVEN"
+        else:
+            recovery = "SAFE_REBUILD_REQUIRED"
+    else:
+        recovery = "SAFE_REBUILD_REQUIRED"
+    if recovery == "SAFE_REBUILD_REQUIRED":
         previous["rewrite_detected"] = True
         previous["last_status"] = "ERROR"
         previous["last_error"] = "SOURCE_REVISION_REQUIRES_SAFE_REBUILD"
-        previous["next_offset"] = int(snapshot.get("size_bytes") or 0)
+        previous["next_offset"] = previous_offset
     else:
-        previous["next_offset"] = 0
-        previous["partitions_completed"] = 0
+        previous.pop("rewrite_detected", None)
+        previous.pop("last_error", None)
+        if previous.get("last_status") == "ERROR":
+            previous["last_status"] = "READY"
+    if previous_version:
+        _record_revision_history(previous, previous_version, recovery or "UNKNOWN")
+    previous["last_revision_recovery"] = recovery
     previous.update({"snapshot_version": snapshot.get("version"), "source_size_bytes": snapshot.get("size_bytes"), "source_mtime_ns": snapshot.get("mtime_ns")})
     sources[name] = previous
     return previous
@@ -186,7 +279,7 @@ def _candidates(
         snapshot = _snapshot(state / name)
         if not snapshot:
             continue
-        source = _source_state(checkpoint, name, snapshot)
+        source = _source_state(state, checkpoint, name, snapshot)
         if source.get("rewrite_detected"):
             counts["error"] += 1
             continue
@@ -379,6 +472,59 @@ def _coverage(
     }
 
 
+def _source_progress(
+    state: Path, checkpoint: Mapping[str, Any], warehouse_sources: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Expose bounded progress without retaining source rows or payloads."""
+    progress: dict[str, Any] = {}
+    backlog_bytes = 0
+    complete = in_progress = blocked = 0
+    states = checkpoint.get("sources") or {}
+    for name in TARGET_COLD_FILES:
+        snapshot = _snapshot(state / name)
+        if not snapshot:
+            continue
+        source = states.get(name) if isinstance(states, Mapping) else {}
+        source = source if isinstance(source, Mapping) else {}
+        size = int(snapshot.get("size_bytes") or 0)
+        offset = min(size, max(0, int(source.get("next_offset") or 0)))
+        remaining = max(0, size - offset)
+        status = "BLOCKED_REVISION" if source.get("rewrite_detected") else "COMPLETE" if remaining == 0 else "IN_PROGRESS"
+        if status == "COMPLETE":
+            complete += 1
+        elif status == "BLOCKED_REVISION":
+            blocked += 1
+        else:
+            in_progress += 1
+            backlog_bytes += remaining
+        progress[name] = {
+            "source_size_bytes": size,
+            "processed_bytes": offset,
+            "remaining_bytes": remaining,
+            "percent_consumed": round(offset * 100 / size, 4) if size else 100.0,
+            "partitions_completed": int(source.get("partitions_completed") or 0),
+            "records_represented": int(source.get("raw_records_represented") or 0),
+            "compressed_packets": int(source.get("packets_compressed") or 0),
+            "outcome_links": int(source.get("outcome_linked") or 0),
+            "current_source_revision": snapshot.get("version"),
+            "last_revision_recovery": source.get("last_revision_recovery"),
+            "last_status": source.get("last_status"),
+            "warehouse_reference_available": name in warehouse_sources,
+            "compression_reached": bool(source.get("packets_compressed") or 0),
+            "teacher_handoff_reached": bool(source.get("packets_compressed") or 0),
+            "v8_handoff_reached": bool(source.get("partitions_completed") or 0),
+            "v9_handoff_reached": bool(source.get("partitions_completed") or 0),
+            "cortex_candidate_handoff_reached": bool(source.get("partitions_completed") or 0),
+        }
+    return {
+        "sources": progress,
+        "backlog_bytes": backlog_bytes,
+        "sources_complete": complete,
+        "sources_in_progress": in_progress,
+        "sources_blocked": blocked,
+    }
+
+
 def build_incremental_historical_learning_governor_v1(
     state_dir: str = "state", resource_facts: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -388,6 +534,7 @@ def build_incremental_historical_learning_governor_v1(
     warehouse_sources = _warehouse_sources(state)
     candidates, partition_counts = _candidates(state, checkpoint, set(warehouse_sources))
     throughput = _work_budget(checkpoint, resource_facts)
+    source_progress = _source_progress(state, checkpoint, warehouse_sources)
     return {
         "suite": "ASTRA Incremental Historical Learning & Coverage Governor V10", "version": VERSION,
         "enabled": True, "current_status": "ERROR" if partition_counts.get("error") else "READY" if candidates else "IDLE_OR_COMPLETE",
@@ -397,7 +544,7 @@ def build_incremental_historical_learning_governor_v1(
         "work_budget": {"default": {"max_partitions_per_cycle": MAX_PARTITIONS_PER_CYCLE, "max_rows_per_partition": MAX_ROWS_PER_PARTITION, "max_bytes_per_partition": MAX_BYTES_PER_PARTITION}, "recommended": throughput.get("budget"), "hard_max": {"max_rows_per_partition": MAX_ROWS_PER_PARTITION_HARD, "max_bytes_per_partition": MAX_BYTES_PER_PARTITION_HARD}, "max_aggregate_updates": MAX_AGGREGATE_UPDATES_PER_PARTITION, "max_v8_patterns_updated": MAX_V8_PATTERNS_PER_UPDATE, "max_v8_interactions_updated": MAX_V8_INTERACTIONS_PER_UPDATE},
         "warehouse_manager": {"owner": "AstraKnowledgeWarehouseV1", "source_references_available": len(warehouse_sources), "unavailable_target_sources": partition_counts.get("warehouse_unavailable", 0)},
         "canonical_ownership": {"warehouse_manager": "AstraKnowledgeWarehouseV1", "compression": "Knowledge Compression Engine V1", "teacher": "Teacher Layer V1", "v8": "Historical Evidence Mining & Knowledge Distillation V1", "v9": "Evidence Utilization & Information Value V1", "v10": "Incremental Historical Learning Governor V1", "v10_1": "Historical Learning Compression Helpers V1", "adaptation": "V7/Cortex"},
-        "throughput": throughput, "coverage_funnel": _coverage(state, checkpoint, set(warehouse_sources)), "last_checkpoint": checkpoint.get("last_checkpoint"),
+        "throughput": throughput, "coverage_funnel": _coverage(state, checkpoint, set(warehouse_sources)), "source_progress": source_progress, "last_checkpoint": checkpoint.get("last_checkpoint"),
         "learning_velocity": dict(checkpoint.get("velocity") or {}), "explicit_cycle_required": True,
         **SAFETY,
     }
@@ -424,11 +571,11 @@ def run_incremental_historical_learning_cycle_v1(
         velocity["deferred_cycles"] = int(velocity.get("deferred_cycles") or 0) + 1
         checkpoint["last_checkpoint"] = {"status": "DEFERRED_RESOURCE_PRESSURE", "reason": decision["reason"], "at": _now()}
         _atomic_write(checkpoint_path, checkpoint)
-        return {"status": "DEFERRED_RESOURCE_PRESSURE", "resource_decision": decision, "partitions_processed": [], **SAFETY}
+        return {"status": "DEFERRED_RESOURCE_PRESSURE", "resource_decision": decision, "partitions_processed": [], "source_progress": _source_progress(state, checkpoint, _warehouse_sources(state)), **SAFETY}
     warehouse_sources = _warehouse_sources(state)
     candidates, _ = _candidates(state, checkpoint, set(warehouse_sources))
     if not candidates or max_partitions <= 0:
-        return {"status": "UNCHANGED", "resource_decision": decision, "partitions_processed": [], **SAFETY}
+        return {"status": "UNCHANGED", "resource_decision": decision, "partitions_processed": [], "source_progress": _source_progress(state, checkpoint, warehouse_sources), **SAFETY}
     candidate = candidates[0]
     rows, next_offset, bytes_read, error = _read_partition(state / candidate["source"], candidate["cursor_start"], max_bytes=max_bytes, max_rows=max_rows)
     source_state = checkpoint.setdefault("sources", {}).setdefault(candidate["source"], {})
@@ -468,4 +615,4 @@ def run_incremental_historical_learning_cycle_v1(
     _atomic_write(checkpoint_path, checkpoint)
     v8 = build_historical_evidence_mining_knowledge_distillation_v1(str(state), persist_lessons=True)
     v9 = build_evidence_utilization_information_value_v1(str(state))
-    return {"status": partition_status, "resource_decision": decision, "throughput": throughput, "partitions_processed": [{**candidate, "status": partition_status, "next_cursor": next_offset, "rows_examined": len(rows), "representative_rows": counters["rows_examined"], "outcome_linked_count": counters["outcome_linked"], "aggregate_updates": counters["aggregate_updates"], "bytes_read": bytes_read, "duration_seconds": elapsed, "compression_profile": compression.get("partition_profile"), "compression_ratio": compression.get("compression_ratio")}], "canonical_handoffs": {"compression": compression.get("canonical_compression_handoff"), "teacher": compression.get("canonical_teacher_handoff")}, "v8_bounded_snapshot": {"patterns": (v8.get("learning_coverage") or {}).get("pattern_count"), "interactions": (v8.get("learning_coverage") or {}).get("interaction_count"), "lessons": (v8.get("learning_coverage") or {}).get("distilled_lesson_count")}, "v9_bounded_snapshot": {"validation_priorities": sum(item.get("teaching_priority") == "VALIDATION_PRIORITY" for item in ((v9.get("learning_teaching_priority") or {}).get("items") or [])), "v7_candidates": len((v9.get("v7_cortex_handoff") or {}).get("candidates") or [])}, **SAFETY}
+    return {"status": partition_status, "resource_decision": decision, "throughput": throughput, "partitions_processed": [{**candidate, "status": partition_status, "next_cursor": next_offset, "rows_examined": len(rows), "representative_rows": counters["rows_examined"], "outcome_linked_count": counters["outcome_linked"], "aggregate_updates": counters["aggregate_updates"], "bytes_read": bytes_read, "duration_seconds": elapsed, "compression_profile": compression.get("partition_profile"), "compression_ratio": compression.get("compression_ratio")}], "source_progress": _source_progress(state, checkpoint, warehouse_sources), "canonical_handoffs": {"compression": compression.get("canonical_compression_handoff"), "teacher": compression.get("canonical_teacher_handoff")}, "v8_bounded_snapshot": {"patterns": (v8.get("learning_coverage") or {}).get("pattern_count"), "interactions": (v8.get("learning_coverage") or {}).get("interaction_count"), "lessons": (v8.get("learning_coverage") or {}).get("distilled_lesson_count")}, "v9_bounded_snapshot": {"validation_priorities": sum(item.get("teaching_priority") == "VALIDATION_PRIORITY" for item in ((v9.get("learning_teaching_priority") or {}).get("items") or [])), "v7_candidates": len((v9.get("v7_cortex_handoff") or {}).get("candidates") or [])}, **SAFETY}

@@ -59,6 +59,7 @@ def compact_cycle_result(result: Mapping[str, Any]) -> dict[str, Any]:
     partitions = cycle.get("partitions_processed") if isinstance(cycle.get("partitions_processed"), list) else []
     partition = dict(partitions[0]) if partitions and isinstance(partitions[0], Mapping) else {}
     throughput = result.get("throughput") if isinstance(result.get("throughput"), Mapping) else {}
+    source_progress = result.get("source_progress") if isinstance(result.get("source_progress"), Mapping) else {}
     return {
         "timestamp": _now(),
         "status": result.get("status"),
@@ -73,6 +74,7 @@ def compact_cycle_result(result: Mapping[str, Any]) -> dict[str, Any]:
         "aggregate_updates": partition.get("aggregate_updates"),
         "duration_seconds": partition.get("duration_seconds"),
         "reason": result.get("reason") or cycle.get("reason"),
+        "source_progress": source_progress,
     }
 
 
@@ -148,6 +150,7 @@ class HistoricalLearningCycleRunnerV1:
                     "status": "DEFERRED_RESOURCE_GOVERNOR",
                     "resource_decision": decision,
                     "throughput": status.get("throughput"),
+                    "source_progress": status.get("source_progress"),
                     "cycles_invoked": 0,
                     **SAFETY,
                 }
