@@ -77,6 +77,7 @@ from engine.alpaca_ws_monitor import _compact_broad_discovery_status_row
 ACTIVE_CYCLE_HEARTBEAT_SECONDS = 5.0
 RESOURCE_MEMORY_SAMPLE_LIMIT = 16
 CYCLE_TIMING_HISTORY_LIMIT = 32
+CONTINUOUS_GOVERNANCE_MIN_INTERVAL_SECONDS = 30.0
 
 
 def _compact_monitor_status_v1(status: dict[str, Any]) -> dict[str, Any]:
@@ -149,6 +150,18 @@ class PaperAutopilotWorker:
         self._memory_owner_previous: dict[str, tuple[float, int, int]] = {}
         self._cycle_timing_history: list[dict[str, Any]] = []
         self._cycle_state_write_samples: list[float] = []
+        self._governance_last_run_monotonic = 0.0
+        self._governance_last_result: dict[str, Any] = {}
+        try:
+            configured_governance_interval = float(
+                os.getenv(
+                    "ASTRA_CONTINUOUS_GOVERNANCE_MIN_INTERVAL_SECONDS",
+                    str(CONTINUOUS_GOVERNANCE_MIN_INTERVAL_SECONDS),
+                )
+            )
+        except (TypeError, ValueError):
+            configured_governance_interval = CONTINUOUS_GOVERNANCE_MIN_INTERVAL_SECONDS
+        self._governance_min_interval_seconds = max(5.0, min(300.0, configured_governance_interval))
 
     @staticmethod
     def _bounded_broker_truth_rows_v1(runtime: dict[str, Any]) -> list[dict[str, Any]]:
@@ -836,6 +849,35 @@ class PaperAutopilotWorker:
         derived scheduler repair, persist the existing autopilot state through
         its atomic writer so the next normal bounded cycle can consume it.
         """
+        now_monotonic = time.monotonic()
+        runtime_state = getattr(self.autopilot, "_runtime_state", {})
+        last_summary = dict(runtime_state.get("last_cycle_summary") or {}) if isinstance(runtime_state, dict) else {}
+        last_trace = dict(runtime_state.get("last_execution_trace") or {}) if isinstance(runtime_state, dict) else {}
+        def _count(value: Any) -> int:
+            try:
+                return int(value or 0)
+            except (TypeError, ValueError):
+                return 0
+        broker_mutated = any(
+            _count(last_summary.get(key) or last_trace.get(key)) > 0
+            for key in ("orders_submitted", "positions_closed", "broker_actions")
+        )
+        if (
+            self._governance_last_result
+            and not broker_mutated
+            and now_monotonic - self._governance_last_run_monotonic < self._governance_min_interval_seconds
+        ):
+            cached = dict(self._governance_last_result)
+            cached.update({
+                "scan_deferred": "DIAGNOSTIC_CADENCE",
+                "scan_deferred_seconds": round(
+                    max(0.0, self._governance_min_interval_seconds - (now_monotonic - self._governance_last_run_monotonic)),
+                    3,
+                ),
+                "provider_calls_used": 0,
+                "broker_actions_used": 0,
+            })
+            return cached
         worker_state = read_snapshot()
         safety = dict(getattr(self.autopilot, "_alpaca_safety_snapshot", lambda: {})() or {})
         crypto_activation = {}
@@ -1224,6 +1266,8 @@ class PaperAutopilotWorker:
             "technical_no_trade": trading_readiness.get("technical_no_trade"),
             "trading_readiness_fault_count": len(readiness_faults),
         })
+        self._governance_last_run_monotonic = now_monotonic
+        self._governance_last_result = dict(result)
         return result
 
     def _run_trading_readiness_v1(self, *, force: bool = False) -> dict[str, Any]:

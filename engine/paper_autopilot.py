@@ -7327,6 +7327,7 @@ class PaperAutopilotEngine:
     def _run_due_day_lane_close_stage(
         self,
         broker_position_by_symbol: Mapping[str, Mapping[str, Any]],
+        open_rows: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Prioritize due same-session lifecycle closes ahead of evidence work.
 
@@ -7339,7 +7340,7 @@ class PaperAutopilotEngine:
         executable quote before a sell is submitted.
         """
         reviewed = submitted = blocked = 0
-        rows = self._fetch_open_positions()
+        rows = list(open_rows) if open_rows is not None else self._fetch_open_positions()
         session = self._native_lane_exit_session_status()
         for row in rows:
             if str(row.get("lane_id") or "").upper().strip() not in {"DAY", "SCALP"}:
@@ -16472,6 +16473,7 @@ class PaperAutopilotEngine:
             crypto_refresh: dict[str, Any] = {}
             crypto_refresh_attempted = False
             preflight_broker_snapshot: dict[str, Any] = {}
+            preflight_open_rows: list[dict[str, Any]] = []
             try:
                 # Partial cycles are the normal runtime path under a bounded
                 # market-evidence backlog.  Register current broker symbols
@@ -16490,6 +16492,11 @@ class PaperAutopilotEngine:
                 # bounded evidence work.  This prevents a long scan or a
                 # partial-cycle return from silently rolling the position.
                 preclose_day_exit = self._run_due_day_lane_close_stage(preflight_positions)
+                # The close stage may mutate local lifecycle state, so take
+                # one post-close snapshot and reuse it for all downstream
+                # read-only consumers in this cycle. This avoids repeated
+                # identical SQLite scans without caching broker truth.
+                preflight_open_rows = list(self._fetch_open_positions() or [])
                 self._refresh_legacy_forward_activations(preflight_positions)
                 self._note_worker_progress("legacy_market_evidence_preflight")
                 legacy_canary_refresh = self._refresh_legacy_swing_canary_pre_submit(preflight_positions)
@@ -16499,7 +16506,6 @@ class PaperAutopilotEngine:
                 # active-position management. The partial-cycle path used
                 # to refresh it after management, making the fresh quote
                 # available only to the next cycle.
-                preflight_open_rows = list(self._fetch_open_positions() or [])
                 active_crypto_positions = any(
                     _norm_asset(row.get("asset_type") or row.get("asset_class") or "") == "crypto"
                     or str(row.get("lane_id") or row.get("lane") or "").upper().strip() == "CRYPTO"
@@ -16554,7 +16560,7 @@ class PaperAutopilotEngine:
                     }
                 evidence_capacity_snapshot = self._evidence_capacity_snapshot_v1(
                     broker_snapshot,
-                    self._fetch_open_positions(),
+                    preflight_open_rows,
                     safety,
                 )
                 if not crypto_refresh_attempted and callable(self.refresh_crypto_rankings_fn):
@@ -16582,7 +16588,7 @@ class PaperAutopilotEngine:
                 try:
                     self._note_worker_progress("loss_containment_review")
                     broker_position_by_symbol = dict(broker_snapshot.get("broker_position_by_symbol") or {})
-                    partial_open_rows = list(self._fetch_open_positions() or [])
+                    partial_open_rows = preflight_open_rows
                     latest_price_by_symbol_partial = self._loss_containment_quote_evidence(
                         broker_position_by_symbol,
                         managed_rows_by_symbol={
@@ -16749,7 +16755,7 @@ class PaperAutopilotEngine:
 
                     duplicate_exposure = self._duplicate_exposure_snapshot(
                         broker_snapshot,
-                        self._fetch_open_positions(),
+                        preflight_open_rows,
                         expire_reservations=True,
                     )
                     duplicate_open_symbols = set(duplicate_exposure.get("blocking_symbols") or set())
