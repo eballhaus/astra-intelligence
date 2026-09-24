@@ -25,6 +25,77 @@ VERSION = "1.3.1"
 ROOT_LIMIT = 100
 VERIFICATION_WINDOW = 3
 _SEVERITY_PRIORITY = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
+RESOURCE_EFFICIENCY_SAMPLE_LIMIT = 32
+
+
+def resource_efficiency_monitor_v1(
+    worker_state: dict[str, Any],
+    *,
+    previous: dict[str, Any] | None = None,
+    safe_actions_taken: list[str] | None = None,
+) -> dict[str, Any]:
+    """Build a bounded advisory trend for the existing worker resource owner.
+
+    This is deliberately a pure projection. Resource policy remains the
+    worker/governance authority; Sentinel consumes this explanation and never
+    changes broker, lifecycle, truth, or trading policy from it.
+    """
+    previous = dict(previous or {})
+    resource = _dict(worker_state.get("resource") or worker_state)
+    telemetry = _dict(resource.get("resource_memory_telemetry_v1"))
+    process = _dict(resource.get("worker_process"))
+    timing = _dict(worker_state.get("cycle_timing_v1"))
+    latest_timing = _dict(timing.get("latest"))
+    now = _now()
+    current = {
+        "sampled_at": now,
+        "rss_mb": round(_as_float(process.get("memory_mb") or telemetry.get("current_rss_mb")), 2),
+        "cpu_percent": _as_float(process.get("cpu_percent")),
+        "cycle_seconds": _as_float(latest_timing.get("total_seconds") or timing.get("total_seconds")),
+        "resource_state": _text(resource.get("resource_state") or worker_state.get("resource_state")) or "UNKNOWN_FAIL_CLOSED",
+        "background_suspended": bool(telemetry.get("background_work_suspended")),
+        "top_owner": _text((_dict((telemetry.get("top_memory_owners") or [{}])[0])).get("owner_name")),
+    }
+    samples = [dict(row) for row in list(previous.get("samples") or []) if isinstance(row, dict)]
+    samples = (samples + [current])[-RESOURCE_EFFICIENCY_SAMPLE_LIMIT:]
+    first_rss = _as_float(samples[0].get("rss_mb")) if samples else current["rss_mb"]
+    last_rss = _as_float(samples[-1].get("rss_mb")) if samples else current["rss_mb"]
+    rss_delta = round(last_rss - first_rss, 2)
+    state = current["resource_state"]
+    trend = "INSUFFICIENT_SAMPLES"
+    if len(samples) >= 3:
+        if rss_delta > 8.0:
+            trend = "RISING"
+        elif rss_delta < -8.0:
+            trend = "FALLING"
+        else:
+            trend = "PLATEAU"
+    actions = [str(item) for item in (safe_actions_taken or []) if str(item)][:8]
+    recommendations: list[str] = []
+    if state in {"RESOURCE_ELEVATED", "RESOURCE_HIGH_PAUSE", "RESOURCE_MEMORY_PAUSE", "RESOURCE_API_LATENCY_PAUSE", "RESOURCE_UNKNOWN_FAIL_CLOSED"}:
+        recommendations.append("DEFER_BACKGROUND_WORK")
+    if trend == "RISING":
+        recommendations.append("ESCALATE_MEMORY_TREND_TO_SENTINEL")
+    if telemetry.get("allocator_growth_signal") == "NO_SUSTAINED_PYTHON_BLOCK_GROWTH_SIGNAL" and trend in {"RISING", "PLATEAU"}:
+        recommendations.append("REVIEW_NATIVE_ALLOCATOR_OR_WORKLOAD_CHURN")
+    return {
+        "schema_version": "astra_resource_efficiency_monitor_v1",
+        "owner": "PaperAutopilotWorker.resource_policy",
+        "sentinel_consumer": "ContinuousSystemIntegrityScannerV1",
+        "authority": "ADVISORY_ONLY_EXISTING_RESOURCE_POLICY_REMAINS_AUTHORITATIVE",
+        "sample_limit": RESOURCE_EFFICIENCY_SAMPLE_LIMIT,
+        "sample_count": len(samples),
+        "samples": samples,
+        "rss_delta_mb": rss_delta,
+        "rss_trend": trend,
+        "resource_state": state,
+        "largest_observed_owner": current["top_owner"],
+        "safe_actions_taken": actions,
+        "recommendations": recommendations[:4],
+        "paper_only_preserved": True,
+        "trading_policy_changed": False,
+        "truth_lifecycle_reconciliation_changed": False,
+    }
 
 
 def _now() -> str:
@@ -51,6 +122,13 @@ def _atomic(path: Path, value: dict[str, Any]) -> None:
 def _number(value: Any, default: int = 0) -> int:
     try:
         return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
     except (TypeError, ValueError):
         return default
 
@@ -808,6 +886,9 @@ class ContinuousSystemIntegrityScannerV1:
             )
             previous_summary = _read(self.summary_path)
             crypto_market_data, crypto_signals, crypto_waiting = self._crypto_market_data(context, previous_summary, limits["max_rows"])
+            resource_efficiency = _dict(
+                _dict(worker_state.get("resource")).get("resource_memory_telemetry_v1")
+            ).get("resource_efficiency_monitor_v1") or {}
             signals.extend(crypto_signals); waiting.extend(crypto_waiting)
             signals.extend(self._registry_failures(registry, limits["max_facts"]))
             roots = [root_cause_from_signal_v1(signal) for signal in signals[:limits["max_issues"]]]
@@ -898,6 +979,7 @@ class ContinuousSystemIntegrityScannerV1:
                            "nondefect_count": len(platform_integrity.get("nondefects") or []),
                        },
                        "crypto_market_data": crypto_market_data,
+                       "resource_efficiency_monitor_v1": dict(resource_efficiency),
                        "persistent_lifecycle_blockers": [
                            row for row in (
                                _dict(context.get("lifecycle_intelligence") or runtime_state.get("astra_natural_truth_lifecycle_intelligence_v1")).get("persistent_lifecycle_blockers") or []

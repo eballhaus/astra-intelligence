@@ -178,3 +178,35 @@ def test_canonical_historical_owner_does_not_convert_pause_to_one_row(resource, 
     assert result['status'] == 'DEFERRED_RESOURCE_PRESSURE'
     assert result['partitions_processed'] == []
     assert __import__('json').loads(checkpoint.read_text())['throughput']['healthy_successful_cycles'] == 0
+
+
+def test_resource_efficiency_monitor_is_bounded_advisory_and_fail_closed():
+    from engine.astra_continuous_system_integrity_scanner_v1 import resource_efficiency_monitor_v1
+
+    prior = {"samples": [{"sampled_at": str(i), "rss_mb": 400.0 + i} for i in range(40)]}
+    result = resource_efficiency_monitor_v1(
+        {
+            "resource": {
+                "resource_state": "RESOURCE_MEMORY_PAUSE",
+                "worker_process": {"memory_mb": 900.0, "cpu_percent": 95.0},
+                "resource_memory_telemetry_v1": {
+                    "current_rss_mb": 900.0,
+                    "allocator_growth_signal": "NO_SUSTAINED_PYTHON_BLOCK_GROWTH_SIGNAL",
+                    "background_work_suspended": True,
+                    "top_memory_owners": [{"owner_name": "bounded-cache"}],
+                },
+            },
+            "cycle_timing_v1": {"latest": {"total_seconds": 18.0}},
+        },
+        previous=prior,
+        safe_actions_taken=["DEFER_BACKGROUND_WORK"],
+    )
+
+    assert result["sample_count"] == 32
+    assert len(result["samples"]) == 32
+    assert result["resource_state"] == "RESOURCE_MEMORY_PAUSE"
+    assert "DEFER_BACKGROUND_WORK" in result["recommendations"]
+    assert result["safe_actions_taken"] == ["DEFER_BACKGROUND_WORK"]
+    assert result["authority"] == "ADVISORY_ONLY_EXISTING_RESOURCE_POLICY_REMAINS_AUTHORITATIVE"
+    assert result["paper_only_preserved"]
+    assert result["truth_lifecycle_reconciliation_changed"] is False

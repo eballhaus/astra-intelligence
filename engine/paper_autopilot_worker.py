@@ -48,7 +48,10 @@ from engine.astra_truth_arbitration_v1 import (
     canonical_position_store_status_v1,
     read_canonical_open_crypto_positions,
 )
-from engine.astra_continuous_system_integrity_scanner_v1 import ContinuousSystemIntegrityScannerV1
+from engine.astra_continuous_system_integrity_scanner_v1 import (
+    ContinuousSystemIntegrityScannerV1,
+    resource_efficiency_monitor_v1,
+)
 from engine.astra_crypto_market_data_capability_matrix_v1 import CryptoMarketDataCapabilityMatrixV1
 from engine.astra_multilane_completion_matrix_v1 import AstraMultilaneCompletionMatrixV1
 from engine.astra_operating_health_contract_v1 import AstraOperatingHealthContractV1
@@ -148,6 +151,7 @@ class PaperAutopilotWorker:
         self._memory_last_compaction_result: dict[str, Any] = {}
         self._memory_last_healthy = time.monotonic()
         self._memory_owner_previous: dict[str, tuple[float, int, int]] = {}
+        self._resource_efficiency_monitor: dict[str, Any] = {}
         self._cycle_timing_history: list[dict[str, Any]] = []
         self._cycle_state_write_samples: list[float] = []
         self._governance_last_run_monotonic = 0.0
@@ -675,6 +679,22 @@ class PaperAutopilotWorker:
                 row["growth_rate"] = {"items_per_hour": round((count - prior_count) * 3600 / max(1, now - stamp), 2),
                                       "measured_bytes_per_hour": round((size - prior_size) * 3600 / max(1, now - stamp), 2)}
             self._memory_owner_previous[name] = (now, count, size)
+        latest_timing = self._cycle_timing_history[-1] if self._cycle_timing_history else {}
+        actions = []
+        if self._memory_background_suspended:
+            actions.append("DEFER_BACKGROUND_WORK")
+        if self._memory_last_compaction_result.get("items_released"):
+            actions.append("COMPACT_RECONSTRUCTABLE_DIAGNOSTICS")
+        if self._memory_native_bytes_released:
+            actions.append("RELEASE_UNUSED_NATIVE_PAGES")
+        self._resource_efficiency_monitor = resource_efficiency_monitor_v1(
+            {
+                "resource": sample,
+                "cycle_timing_v1": latest_timing,
+            },
+            previous=self._resource_efficiency_monitor,
+            safe_actions_taken=actions,
+        )
         return {
             "schema_version": "astra_worker_resource_memory_telemetry_v1",
             "sample_limit": RESOURCE_MEMORY_SAMPLE_LIMIT,
@@ -717,6 +737,7 @@ class PaperAutopilotWorker:
             "time_since_last_healthy_state": round(time.monotonic() - self._memory_last_healthy, 2),
             "unattributed_memory_estimate": {"status": "UNATTRIBUTED_MEMORY", "rss_mb": memory_mb, "reason": "bounded owner lower bounds overlap; native heap and allocator retention unmeasured"},
             "samples": list(self._memory_samples),
+            "resource_efficiency_monitor_v1": dict(self._resource_efficiency_monitor),
         }
 
     def _evidence_summary(self) -> dict[str, Any]:

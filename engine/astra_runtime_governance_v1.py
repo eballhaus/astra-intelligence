@@ -171,10 +171,36 @@ def worker_memory_owners(worker: Any) -> list[dict[str, Any]]:
         roots = {k: v for k, v in roots.items() if not k.startswith("provider_router.")}
     else:
         router_rows = []
+    lifecycle_cache_rows = []
+    lifecycle_tracker = sys.modules.get("engine.trade_lifecycle_tracker")
+    lifecycle_cache = getattr(lifecycle_tracker, "_LATEST_RECORD_CACHE", {}) if lifecycle_tracker else {}
+    lifecycle_cache_limit = int(getattr(lifecycle_tracker, "LATEST_RECORD_CACHE_MAX_ITEMS", 512) or 512)
+    for path, cache in list(lifecycle_cache.items()) if isinstance(lifecycle_cache, dict) else ():
+        owner_name = "engine.trade_lifecycle_tracker._LATEST_RECORD_CACHE"
+        roots.pop(owner_name, None)
+        size, truncated = retained_size_lower_bound(cache, max_nodes=65_536)
+        lifecycle_cache_rows.append({
+            "owner_name": owner_name,
+            "object_class": type(cache).__name__,
+            "item_count": len(cache),
+            "estimated_memory_bytes": size,
+            "estimate_method": "bounded_hot_cache_lower_bound",
+            "estimate_truncated": truncated,
+            "retention_class": "RECONSTRUCTABLE_DERIVED_CACHE",
+            "retention_limit": lifecycle_cache_limit,
+            "oldest_item_age": None,
+            "growth_rate": None,
+            "reconstructable": True,
+            "persisted_elsewhere": path,
+            "truth_critical": False,
+            "last_compaction_at": None,
+            "evictions_compactions": 0,
+            "reason_for_retention": "BOUNDED_HOT_ROWS;ARBITRARY_LIFECYCLE_RESOLVED_ON_DEMAND",
+        })
     # Large indexes must not disappear behind declaration order. The bounded
     # table explicitly reports root truncation when inspection has to stop.
     roots = dict(sorted(roots.items(), key=lambda pair: sys.getsizeof(pair[1]), reverse=True))
-    rows = _memory_owner_rows(roots) + router_rows
+    rows = lifecycle_cache_rows + _memory_owner_rows(roots) + router_rows
     # Refine the largest truncated roots within a small aggregate time budget.
     # Most owner rows are tiny; the initial lower bound must not be mistaken
     # for a proof that a large nested payload is small.
