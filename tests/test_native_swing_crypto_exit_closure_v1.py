@@ -127,6 +127,28 @@ class _TradeIntel:
         self.records.append(dict(row))
 
 
+class _ZeroResidualLaneBroker(_Broker):
+    """Paper broker fixture that proves an authoritative zero residual."""
+
+    def __init__(self, symbol: str, quantity: float) -> None:
+        super().__init__(order_status="filled", symbol=symbol)
+        self.quantity = quantity
+
+    def order(self, order_id):
+        return {
+            "ok": True,
+            "order": {
+                "id": order_id,
+                "symbol": self.symbol,
+                "status": "filled",
+                "client_order_id": "lane-exit",
+                "filled_qty": str(self.quantity),
+                "filled_avg_price": "101.0",
+                "filled_at": "2026-08-05T12:00:00Z",
+            },
+        }
+
+
 class NativeSwingCryptoExitClosureTests(unittest.TestCase):
     def _engine(self, root: pathlib.Path | None = None, broker=None, trade_intel=None) -> PaperAutopilotEngine:
         if root is None:
@@ -283,6 +305,47 @@ class NativeSwingCryptoExitClosureTests(unittest.TestCase):
             self.assertEqual(engine._refresh_authorized_lane_exit_pending()["filled"], 1)
             self.assertEqual(engine._runtime_state["native_lane_exit_lifecycle_v1"][row["position_id"]]["closure_state"], "LEARNING_ACKNOWLEDGED")
             self.assertEqual(len(intel.records), 1)
+
+    def test_all_lanes_complete_shared_native_truth_path_after_full_fill(self):
+        """Each lane uses the same strict close, learning, and release owner."""
+        for lane in ("DAY", "SCALP", "SWING", "CRYPTO"):
+            with self.subTest(lane=lane), tempfile.TemporaryDirectory() as directory, patch("engine.paper_autopilot.close_lifecycle_record", None):
+                root = pathlib.Path(directory)
+                (root / "broker_truth_records_v1.json").write_text('{"records": []}', encoding="utf-8")
+                row = _row(lane)
+                quantity = float(row["quantity"])
+                broker = _ZeroResidualLaneBroker(row["symbol"], quantity)
+                intel = _TradeIntel()
+                engine = self._engine(root, broker, intel)
+                with engine._connect() as conn:
+                    columns = ", ".join(row)
+                    placeholders = ", ".join("?" for _ in row)
+                    conn.execute(
+                        f"INSERT INTO paper_positions ({columns}, created_at, updated_at) VALUES ({placeholders}, ?, ?)",
+                        (*row.values(), _now(), _now()),
+                    )
+                    conn.commit()
+                engine._runtime_state["authorized_lane_exit_pending"] = {
+                    "exit-1": {
+                        "position_id": row["position_id"],
+                        "symbol": row["symbol"],
+                        "lane_id": lane,
+                        "order_id": "exit-1",
+                        "client_order_id": "lane-exit",
+                        "exit_reason": "existing_exit_contract",
+                        "normalized_sell_qty": quantity,
+                    }
+                }
+
+                result = engine._refresh_authorized_lane_exit_pending()
+
+                self.assertEqual(result["filled"], 1)
+                self.assertEqual(engine._runtime_state["native_lane_exit_lifecycle_v1"][row["position_id"]]["closure_state"], "LEARNING_ACKNOWLEDGED")
+                self.assertEqual(len(intel.records), 1)
+                records = json.loads((root / "broker_truth_records_v1.json").read_text(encoding="utf-8"))["records"]
+                self.assertEqual(len(records), 1)
+                self.assertEqual(records[0]["lane_id"], lane)
+                self.assertTrue(records[0]["broker_residual_zero_confirmed"])
 
     def test_identity_linked_full_fill_with_broker_dust_closes_once_and_learns(self):
         with tempfile.TemporaryDirectory() as directory, patch("engine.paper_autopilot.close_lifecycle_record", None):
