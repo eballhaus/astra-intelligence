@@ -860,6 +860,32 @@ class TradingReadinessTests(unittest.TestCase):
         self.assertEqual(result["recoveries"][0]["repair_action"], "RELOAD_CANONICAL_IDENTITY_STATE")
         self.assertEqual(result["broker_actions_used"], 0)
 
+    def test_crypto_aggregate_identity_ambiguity_is_not_classified_as_code_repair(self):
+        result = self._monitor().run_if_due(
+            runtime_state={
+                "last_execution_trace": {},
+                "last_evidence_capacity_snapshot": {
+                    "position_rows_for_read_only_consumers": [{
+                        "symbol": "ETHUSD", "asset_class": "crypto",
+                    }],
+                },
+                "position_lane_horizon_recovery_v1": {
+                    "positions": [{
+                        "symbol": "ETHUSD", "asset_class": "crypto",
+                        "horizon_status": "AMBIGUOUS",
+                        "canonical_identity_status": "AMBIGUOUS",
+                        "exact_blockers": ["AMBIGUOUS_SYMBOL_ONLY_MATCH"],
+                    }],
+                },
+            },
+            worker_state={},
+        )
+        fault = next(row for row in result["active_faults"] if row["fault_type"] == "CRYPTO_HORIZON_PRESENT_BUT_NOT_CONSUMED")
+        self.assertEqual(fault["classification"], "AMBIGUOUS_IDENTITY")
+        self.assertEqual(fault["verification_result"], "AMBIGUOUS_IDENTITY")
+        self.assertEqual(result["crypto_readiness"], "DEGRADED")
+        self.assertEqual(result["recoveries"], [])
+
     def test_canonical_active_equity_list_detects_missing_ws_without_quote_payload(self):
         calls: list[str] = []
         result = self._monitor().run_if_due(

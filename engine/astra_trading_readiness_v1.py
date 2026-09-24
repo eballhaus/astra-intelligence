@@ -1945,19 +1945,29 @@ class AstraTradingReadinessV1:
                 or _text(row.get("symbol")).upper().replace("/", "").replace("-", "").replace("_", "") in canonical_crypto_symbols
             )
         ]
-        unresolved_crypto = sum(
-            1 for row in crypto_rows
-            if str(row.get("horizon_status") or row.get("horizon_evidence_status") or "").upper() in {"UNRESOLVED", "UNAVAILABLE", "MISSING"}
-        )
+        unresolved_crypto_rows = [
+            row for row in crypto_rows
+            if str(row.get("horizon_status") or row.get("horizon_evidence_status") or "").upper() in {"UNRESOLVED", "UNAVAILABLE", "MISSING", "AMBIGUOUS"}
+        ]
+        unresolved_crypto = len(unresolved_crypto_rows)
+        ambiguous_crypto = [
+            row for row in unresolved_crypto_rows
+            if str(row.get("canonical_identity_status") or "").upper() == "AMBIGUOUS"
+            or "AMBIGUOUS_SYMBOL_ONLY_MATCH" in {str(blocker) for blocker in (row.get("exact_blockers") or [])}
+        ]
         if crypto_rows and unresolved_crypto:
-            issues.append({
+            issue = {
                 "fault_type": "CRYPTO_HORIZON_PRESENT_BUT_NOT_CONSUMED",
                 "component": "PaperAutopilot.position_lane_horizon_recovery",
                 "lanes": ["CRYPTO"],
                 "severity": "HIGH",
-                "repair_action": "RELOAD_CANONICAL_IDENTITY_STATE",
+                "repair_action": "" if len(ambiguous_crypto) == unresolved_crypto else "RELOAD_CANONICAL_IDENTITY_STATE",
                 "evidence": str(unresolved_crypto),
-            })
+            }
+            if ambiguous_crypto and len(ambiguous_crypto) == unresolved_crypto:
+                issue["classification"] = "AMBIGUOUS_IDENTITY"
+                issue["identity_ambiguity_count"] = len(ambiguous_crypto)
+            issues.append(issue)
         operating_health = _dict(runtime.get("astra_operating_health_contract_v1"))
         learning_ledger = _rows(operating_health.get("truth_to_learning_ledger"))
         if learning_ledger:
@@ -2101,6 +2111,7 @@ class AstraTradingReadinessV1:
                 "NATURAL_WAIT",
                 "BROKER_EXTERNAL",
                 "PROVIDER_EXTERNAL",
+                "AMBIGUOUS_IDENTITY",
             }
             result: dict[str, Any] = {}
             verification = "NOT_ATTEMPTED"
@@ -2209,6 +2220,7 @@ class AstraTradingReadinessV1:
                 "NATURAL_WAIT",
                 "BROKER_EXTERNAL",
                 "PROVIDER_EXTERNAL",
+                "AMBIGUOUS_IDENTITY",
             }
             row["verification_result"] = (
                 classification
@@ -2238,7 +2250,7 @@ class AstraTradingReadinessV1:
                 classification = _text(row.get("classification")).upper()
                 row["verification_result"] = (
                     classification
-                    if classification in {"NATURAL_WAIT", "BROKER_EXTERNAL", "PROVIDER_EXTERNAL"}
+                    if classification in {"NATURAL_WAIT", "BROKER_EXTERNAL", "PROVIDER_EXTERNAL", "AMBIGUOUS_IDENTITY"}
                     else "CODE_REPAIR_REQUIRED"
                 )
                 row["recovery_state"] = row["verification_result"]
@@ -2299,7 +2311,7 @@ class AstraTradingReadinessV1:
         for key, row in fault_rows.items():
             if (
                 row.get("verification_result") == "CODE_REPAIR_REQUIRED"
-                and _text(row.get("classification")).upper() not in {"NATURAL_WAIT", "BROKER_EXTERNAL", "PROVIDER_EXTERNAL"}
+                and _text(row.get("classification")).upper() not in {"NATURAL_WAIT", "BROKER_EXTERNAL", "PROVIDER_EXTERNAL", "AMBIGUOUS_IDENTITY"}
             ):
                 row["code_repair_package"] = self._repair_package(row, row, _dict(previous_faults.get(key)))
         fault_history = dict(previous_faults)

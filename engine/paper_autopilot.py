@@ -14261,10 +14261,58 @@ class PaperAutopilotEngine:
         # entry identity after an older local row has been compacted.  Admit
         # it only with its explicit broker-linked identity; symbol-only data
         # remains prohibited.
+        ambiguous_crypto_symbols: set[str] = set()
+        for raw in db_rows or []:
+            row = dict(raw or {})
+            if _text(row.get("status")).upper() not in {"", "OPEN"}:
+                continue
+            if _norm_asset(row.get("asset_type") or row.get("asset_class") or "") != "crypto":
+                continue
+            identity = _pick_first_text(
+                row.get("position_id"), row.get("lifecycle_id"),
+                row.get("source_lifecycle_id"), row.get("entry_fill_id"),
+            )
+            if not identity:
+                continue
+            aliases = _broker_position_symbol_aliases_v1(row.get("symbol"))
+            same_symbol_count = sum(
+                1
+                for sibling in (db_rows or [])
+                if _text(sibling.get("status")).upper() in {"", "OPEN"}
+                and _norm_asset(sibling.get("asset_type") or sibling.get("asset_class") or "") == "crypto"
+                and aliases.intersection(_broker_position_symbol_aliases_v1(sibling.get("symbol")))
+                and _pick_first_text(
+                    sibling.get("position_id"), sibling.get("lifecycle_id"),
+                    sibling.get("source_lifecycle_id"), sibling.get("entry_fill_id"),
+                )
+            )
+            if same_symbol_count > 1:
+                ambiguous_crypto_symbols.update(aliases)
         evidence: list[dict[str, Any]] = []
         evidence_current_ids: set[str] = set()
         for raw in db_rows or []:
             row = dict(raw or {})
+            row_aliases = _broker_position_symbol_aliases_v1(row.get("symbol"))
+            if row_aliases.intersection(ambiguous_crypto_symbols):
+                broker_for_symbol = next(
+                    (
+                        dict(broker_positions.get(alias) or {})
+                        for alias in row_aliases
+                        if alias in broker_positions
+                    ),
+                    {},
+                )
+                if not any(
+                    _text(broker_for_symbol.get(key))
+                    for key in (
+                        "entry_fill_id", "entry_order_id", "source_broker_order_id",
+                        "source_client_order_id", "position_id",
+                    )
+                ):
+                    # A broker aggregate with sibling lifecycles cannot use
+                    # either the shared timestamp or iteration order to pick
+                    # one lifecycle. Keep all siblings fail-closed.
+                    continue
             current_rows = []
             for symbol in _broker_position_symbol_aliases_v1(row.get("symbol")):
                 current_rows = current_by_symbol.get(symbol) or []
@@ -14329,12 +14377,36 @@ class PaperAutopilotEngine:
         for symbol, raw in broker_positions.items():
             broker = dict(raw or {})
             normalized = _text(broker.get("symbol") or symbol).upper()
+            broker_identity_present = any(
+                _text(broker.get(key))
+                for key in (
+                    "entry_fill_id", "entry_order_id", "source_broker_order_id",
+                    "source_client_order_id", "position_id",
+                )
+            )
+            active_same_symbol_lifecycles = {
+                _pick_first_text(
+                    row.get("position_id"), row.get("lifecycle_id"),
+                    row.get("source_lifecycle_id"), row.get("entry_fill_id"),
+                )
+                for row in (db_rows or [])
+                if _text(row.get("status")).upper() in {"", "OPEN"}
+                and _norm_asset(row.get("asset_type") or row.get("asset_class") or "") == "crypto"
+                and _broker_position_symbol_aliases_v1(row.get("symbol"))
+                .intersection(_broker_position_symbol_aliases_v1(normalized))
+            }
             current_rows = []
             for alias in _broker_position_symbol_aliases_v1(normalized):
                 current_rows = current_by_symbol.get(alias) or []
                 if current_rows:
                     break
-            if len(current_rows) == 1:
+            # A symbol-level crypto broker aggregate cannot safely inherit one
+            # of several sibling lifecycle identities.  Keep the aggregate
+            # unresolved until broker identity or a unique current lifecycle
+            # proves the association; never select the last row by iteration
+            # order.
+            ambiguous_same_symbol = len(active_same_symbol_lifecycles - {""}) > 1 and not broker_identity_present
+            if len(current_rows) == 1 and not ambiguous_same_symbol:
                 current = current_rows[0]
                 # These IDs are Astra metadata, not broker financial facts.
                 # Copying them into the recovery envelope permits an exact
@@ -14354,6 +14426,43 @@ class PaperAutopilotEngine:
             evidence_rows=evidence,
             snapshot_generated_at=_now_iso(),
         )
+        # Alpaca exposes one aggregate row for a same-symbol crypto holding,
+        # while the canonical store can retain several distinct fill-linked
+        # lifecycles for that symbol.  When the aggregate cannot be assigned
+        # to one lifecycle, preserve the unresolved row but classify the
+        # reason as identity ambiguity rather than a missing horizon handoff.
+        # No quantity, identity, or lifecycle record is synthesized here.
+        active_crypto_by_symbol: dict[str, int] = {}
+        for raw in db_rows or []:
+            row = dict(raw or {})
+            if _text(row.get("status")).upper() not in {"", "OPEN"}:
+                continue
+            if _norm_asset(row.get("asset_type") or row.get("asset_class") or "") != "crypto":
+                continue
+            for alias in _broker_position_symbol_aliases_v1(row.get("symbol")):
+                active_crypto_by_symbol[alias] = active_crypto_by_symbol.get(alias, 0) + 1
+        for recovered in ledger.get("positions") or []:
+            if not isinstance(recovered, dict):
+                continue
+            if _norm_asset(recovered.get("asset_class") or recovered.get("asset_type") or "") != "crypto":
+                continue
+            if _text(recovered.get("canonical_position_id") or recovered.get("canonical_lifecycle_id")):
+                continue
+            if max(
+                (active_crypto_by_symbol.get(alias, 0) for alias in _broker_position_symbol_aliases_v1(recovered.get("symbol"))),
+                default=0,
+            ) < 2:
+                continue
+            blockers = [
+                "AMBIGUOUS_SYMBOL_ONLY_MATCH",
+                *[blocker for blocker in list(recovered.get("exact_blockers") or []) if blocker != "AMBIGUOUS_SYMBOL_ONLY_MATCH"],
+            ]
+            recovered["canonical_identity_status"] = "AMBIGUOUS"
+            recovered["lane_status"] = "AMBIGUOUS" if recovered.get("lane_status") in {"", "UNAVAILABLE"} else recovered.get("lane_status")
+            recovered["horizon_status"] = "AMBIGUOUS" if recovered.get("horizon_status") in {"", "UNAVAILABLE"} else recovered.get("horizon_status")
+            recovered["exact_blockers"] = blockers
+            recovered["first_causal_blocker"] = "AMBIGUOUS_SYMBOL_ONLY_MATCH"
+            recovered["confidence"] = "NONE"
         self.position_lane_horizon_recovery.persist(ledger)
         self._runtime_state["position_lane_horizon_recovery_v1"] = ledger
         return ledger

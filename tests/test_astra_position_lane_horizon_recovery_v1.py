@@ -129,6 +129,39 @@ class PositionLaneHorizonRecoveryTests(unittest.TestCase):
         self.assertNotIn("canonical_position_id", enriched)
         self.assertNotIn("position_id", enriched)
 
+    def test_autopilot_does_not_select_one_sibling_crypto_lifecycle_from_aggregate(self):
+        from engine.paper_autopilot import PaperAutopilotEngine
+
+        broker = _broker(symbol="ETHUSD", asset_class="crypto", entry_fill_id="")
+        first = _evidence(
+            symbol="ETH/USD", asset_type="crypto", position_id="eth-legacy", entry_fill_id="eth-fill-legacy",
+            entry_order_id="eth-order-legacy", lane_id="CRYPTO", canonical_horizon="day_trade",
+        )
+        second = _evidence(
+            symbol="ETH/USD", asset_type="crypto", position_id="eth-clean", entry_fill_id="eth-fill-clean",
+            entry_order_id="eth-order-clean", lane_id="CRYPTO", canonical_horizon="day_trade",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            engine = PaperAutopilotEngine(
+                db_path=f"{directory}/positions.db",
+                state_path=f"{directory}/state.json",
+                enabled=False,
+            )
+            engine._runtime_state["last_evidence_capacity_snapshot"] = {
+                "position_rows_for_read_only_consumers": [{
+                    "symbol": "ETHUSD", "asset_class": "crypto", "qty": "2",
+                }],
+            }
+            ledger = engine._recover_broker_position_lane_horizon_v1(
+                {"ETHUSD": broker}, [first, second]
+            )
+        recovered = ledger["positions"][0]
+        self.assertEqual(recovered["canonical_identity_status"], "AMBIGUOUS")
+        self.assertEqual(recovered["lane_status"], "AMBIGUOUS")
+        self.assertEqual(recovered["horizon_status"], "AMBIGUOUS")
+        self.assertEqual(recovered["first_causal_blocker"], "AMBIGUOUS_SYMBOL_ONLY_MATCH")
+        self.assertEqual(recovered["canonical_position_id"], "", "aggregate must not inherit a sibling identity")
+
     def test_loss_containment_uses_exact_astra_position_identity(self):
         from engine.paper_autopilot import PaperAutopilotEngine
 
