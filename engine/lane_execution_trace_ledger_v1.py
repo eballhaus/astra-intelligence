@@ -52,6 +52,22 @@ def _exact_blocker(source: Mapping[str, Any]) -> str:
     # hot refresh has already replaced.
     if bool(source.get("partial_cycle_observation_only")) and bool(source.get("eligible")):
         return "CANDIDATE_ELIGIBLE_AWAITING_FULL_CYCLE"
+    # A candidate can pass its final quote refresh after an earlier gate was
+    # deferred.  When no submission occurred, do not carry that superseded
+    # diagnostic into the order-ready funnel; it makes a valid ready row look
+    # blocked and obscures the actual selected-to-submit conversion.
+    if (
+        bool(source.get("order_ready"))
+        and not bool(source.get("order_attempted"))
+        and _text(source.get("order_result")).lower() in {"", "rejected"}
+        and not any(
+            _text(source.get(field))
+            for field in ("order_rejection_reason", "order_submission_rejection_reason", "broker_rejection_reason")
+        )
+    ):
+        readiness = _text(source.get("order_readiness_reason"))
+        if readiness:
+            return readiness
     for field in (
         "order_rejection_reason",
         "order_submission_rejection_reason",
@@ -394,6 +410,9 @@ class LaneExecutionTraceLedgerV1:
             record = {
                 "trace_id": trace_id, "timestamp_utc": _now(), "cycle_id": _text(cycle_id),
                 "lane_id": lane, "candidate_id": candidate_id, "recommendation_id": recommendation_id,
+                "candidate_attempt_id": _text(source.get("candidate_attempt_id")) or _fingerprint((cycle_id, candidate_id, recommendation_id, source.get("decision_id") or source.get("selection_id"))),
+                "decision_revision": _text(source.get("decision_id") or source.get("selection_id")),
+                "order_intent_id": _text(source.get("order_intent_id")),
                 "symbol": symbol, "canonical_symbol": _text(source.get("canonical_symbol") or symbol).upper(),
                 "asset_class": _text(source.get("asset_class") or source.get("asset_type")),
                 "instrument_type": _text(source.get("instrument_type")),
@@ -407,6 +426,11 @@ class LaneExecutionTraceLedgerV1:
                     or source.get("candidate_snapshot_freshness")
                     or source.get("freshness_result")
                 ),
+                "provider_quote_timestamp": _text(source.get("provider_quote_timestamp")),
+                "market_observation_timestamp": _text(source.get("market_observation_timestamp")),
+                "provider_used": _text(source.get("provider_used")),
+                "quote_assignment_state": _text(source.get("quote_assignment_state")),
+                "quote_assignment_blocker": _text(source.get("quote_assignment_blocker")),
                 "eligibility_result": "PASS" if source.get("eligible") else "BLOCKED",
                 "session_result": "PASS" if source.get("paper_order_submission_allowed") else _text(source.get("session_state") or source.get("market_session_mode") or "BLOCKED"),
                 "capital_result": "PASS" if source.get("lane_activation_contract", {}).get("capital_configured", True) else "BLOCKED",

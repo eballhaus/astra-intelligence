@@ -108,6 +108,27 @@ class MultilaneExecutionIntegrityV1ContractTests(unittest.TestCase):
                 record = json.loads(handle.readline())
             self.assertEqual(record["exact_blocker"], "BROKER_ORDER_REJECTED:duplicate_client_order_id")
 
+    def test_order_ready_row_does_not_retain_superseded_pretrade_blocker(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            ledger = LaneExecutionTraceLedgerV1(root)
+            ledger.record([{
+                "lane_id": "CRYPTO", "candidate_id": "candidate-ready", "recommendation_id": "recommendation-ready",
+                "decision_id": "decision-ready", "order_intent_id": "intent-ready", "symbol": "ETH/USD",
+                "candidate_generated_at": "2026-08-21T21:47:00Z", "eligible": True, "selected": True,
+                "order_ready": True, "order_attempted": False, "order_result": "rejected",
+                "order_readiness_reason": "ready_for_existing_paper_order_boundary",
+                "provider_quote_timestamp": "2026-08-21T21:47:52Z", "market_observation_timestamp": "2026-08-21T21:47:52Z",
+                "provider_used": "alpaca", "quote_assignment_state": "ASSIGNED_AND_CONSUMED",
+            }], cycle_id="cycle-ready")
+            with open(ledger.path, "r", encoding="utf-8") as handle:
+                record = json.loads(handle.readline())
+            self.assertEqual(record["exact_blocker"], "ready_for_existing_paper_order_boundary")
+            self.assertEqual(record["order_intent_id"], "intent-ready")
+            self.assertEqual(record["decision_revision"], "decision-ready")
+            self.assertEqual(record["provider_used"], "alpaca")
+            self.assertTrue(record["candidate_attempt_id"])
+
     def test_reconciled_entry_fill_updates_only_fill_transition_counters(self):
         import tempfile
         with tempfile.TemporaryDirectory() as root:
