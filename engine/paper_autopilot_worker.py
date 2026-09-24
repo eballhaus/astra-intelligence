@@ -627,6 +627,43 @@ class PaperAutopilotWorker:
             ) if isinstance(monitor_status, dict) else 0,
         }
 
+    def _large_payload_metrics_v1(self) -> dict[str, Any]:
+        """Measure suspect payloads without parsing or reserializing them."""
+        state_dir = os.path.dirname(str(getattr(self.autopilot, "state_path", STATE) or STATE)) or STATE
+        filenames = {
+            "position_evidence_completeness_v1": "astra_position_evidence_completeness_v1.json",
+            "unified_position_advisory_v1": "astra_unified_position_advisory_v1.json",
+            "provider_consumption_telemetry_v1": "astra_provider_consumption_telemetry_v1.json",
+            "fmp_production_verification_v1": "astra_fmp_production_verification_v1.json",
+        }
+        sizes: dict[str, int] = {}
+        for owner, filename in filenames.items():
+            try:
+                sizes[owner] = int(os.stat(os.path.join(state_dir, filename)).st_size)
+            except OSError:
+                sizes[owner] = 0
+        runtime = getattr(self.autopilot, "_runtime_state", {})
+        runtime = runtime if isinstance(runtime, dict) else {}
+        metrics = getattr(self.autopilot, "_large_payload_cycle_metrics_v1", {})
+        builds = dict(metrics.get("builds") or {}) if isinstance(metrics, dict) else {}
+        serializations = dict(metrics.get("serializations") or {}) if isinstance(metrics, dict) else {}
+        try:
+            worker_snapshot_bytes = int(os.stat(str(getattr(self.autopilot, "state_path", ""))).st_size)
+        except OSError:
+            worker_snapshot_bytes = 0
+        return {
+            "large_payload_bytes_by_owner": sizes,
+            "runtime_state_large_payload_count": sum(
+                1 for owner in filenames if isinstance(runtime.get(owner), dict)
+            ),
+            "large_payload_builds_per_cycle": builds,
+            "large_payload_serializations_per_cycle": serializations,
+            "worker_snapshot_bytes": worker_snapshot_bytes,
+            "server_state_cache_bytes": int(sum(sizes.values())),
+            "server_state_cache_bytes_estimate": True,
+            "server_state_cache_owner": "server_extend_bounded_read_only_cache",
+        }
+
     def _record_resource_memory_telemetry(self, sample: dict[str, Any]) -> dict[str, Any]:
         """Keep a fixed-size RSS trend on the existing worker control plane."""
         try:
@@ -716,10 +753,12 @@ class PaperAutopilotWorker:
             else "NO_SUSTAINED_PYTHON_BLOCK_GROWTH_SIGNAL"
         )
         monitor_resource = dict(sample)
+        large_payload_metrics = self._large_payload_metrics_v1()
         monitor_resource["resource_memory_telemetry_v1"] = {
             "top_memory_owners": owners[:20],
             "background_work_suspended": self._memory_background_suspended,
             "allocator_growth_signal": allocator_growth_signal,
+            **large_payload_metrics,
         }
         self._resource_efficiency_monitor = resource_efficiency_monitor_v1(
             {
@@ -764,6 +803,7 @@ class PaperAutopilotWorker:
             "native_allocator": native,
             "native_bytes_released": self._memory_native_bytes_released,
             "last_compaction": self._memory_last_compaction_result,
+            **large_payload_metrics,
             "background_work_suspended": self._memory_background_suspended,
             "time_since_last_healthy_state": round(time.monotonic() - self._memory_last_healthy, 2),
             "unattributed_memory_estimate": {"status": "UNATTRIBUTED_MEMORY", "rss_mb": memory_mb, "reason": "bounded owner lower bounds overlap; native heap and allocator retention unmeasured"},
@@ -1241,25 +1281,24 @@ class PaperAutopilotWorker:
                 "shadow_protection": shadow_protection,
                 "quote_handoffs": list(getattr(self.autopilot, "_runtime_state", {}).get("crypto_quote_handoffs_v1") or (getattr(self.autopilot, "_runtime_state", {}).get("crypto_rankings_snapshot_v1") or {}).get("crypto_quote_handoffs_v1") or [])[:20],
                 "position_lane_horizon_recovery": dict(getattr(self.autopilot, "_runtime_state", {}).get("position_lane_horizon_recovery_v1") or {}),
-                "position_exit_readiness": dict(getattr(self.autopilot, "_runtime_state", {}).get("position_exit_readiness_v1") or {}),
-                "unified_position_advisory": dict(getattr(self.autopilot, "_runtime_state", {}).get("unified_position_advisory_v1") or {}),
+                "position_exit_readiness": getattr(self.autopilot, "_runtime_state", {}).get("position_exit_readiness_v1") or {},
+                "unified_position_advisory": getattr(self.autopilot, "_runtime_state", {}).get("unified_position_advisory_v1") or {},
                 "crypto_ranking_snapshot": dict(getattr(self.autopilot, "_runtime_state", {}).get("crypto_rankings_snapshot_v1") or {}),
                 "crypto_market_data_matrix": crypto_matrix,
                 "multilane_completion_matrix": multilane_completion,
-                "position_lane_horizon_recovery": dict(runtime.get("position_lane_horizon_recovery_v1") or {}),
                 "native_lane_exit_lifecycle": dict(runtime.get("native_lane_exit_lifecycle_v1") or {}),
                 "authorized_lane_exit_pending": dict(runtime.get("authorized_lane_exit_pending") or {}),
                 "historical_reconciliation_ownership_collisions": dict(getattr(self.autopilot, "_historical_reconciliation_ownership_collisions_v1", lambda: {})() or {}),
                 "entry_lane_horizon_integrity": dict(getattr(self.autopilot, "entry_lane_horizon_ledger", None).snapshot() if getattr(self.autopilot, "entry_lane_horizon_ledger", None) is not None else {}),
-                "provider_consumption_telemetry": dict(runtime.get("provider_consumption_telemetry_v1") or {}),
+                "provider_consumption_telemetry": runtime.get("provider_consumption_telemetry_v1") or {},
                 "broker_positions": positions[:20],
                 "broker_truth_records": truth_rows[-20:],
                 "canonical_lifecycle_lessons": [dict(row) for row in list(runtime.get("canonical_lifecycle_lessons_v1") or []) if isinstance(row, dict)][:20],
                 "broker_position_truth_facts": [dict(row) for row in list(runtime.get("broker_position_truth_facts_v1") or []) if isinstance(row, dict)][:20],
                 "price_truth_facts": [dict(row) for row in list(runtime.get("price_truth_facts_v1") or []) if isinstance(row, dict)][:20],
-                "position_evidence_completeness": dict(runtime.get("position_evidence_completeness_v1") or {}),
+                "position_evidence_completeness": runtime.get("position_evidence_completeness_v1") or {},
                 "lifecycle_intelligence": dict(runtime.get("astra_natural_truth_lifecycle_intelligence_v1") or {}),
-                "unified_position_advisory": dict(runtime.get("unified_position_advisory_v1") or {}),
+                "unified_position_advisory": runtime.get("unified_position_advisory_v1") or {},
                 "copilot_position_advisory_handoff": dict(runtime.get("copilot_position_advisory_handoff_v1") or {}),
                 "shadow_exit_diagnostics": dict(runtime.get("shadow_exit_diagnostics_v1") or {}),
                 "shadow_exit_analysis_outputs": dict(runtime.get("shadow_exit_analysis_outputs_v1") or {}),

@@ -1883,6 +1883,159 @@ def _compact_runtime_execution_trace_v1(trace: Mapping[str, Any]) -> dict[str, A
         "canonical_persistence": "lane_execution_trace_v1.jsonl;candidate_decision_ledger_v1.jsonl",
         "retention_reason": "bounded governance/status view; full decision evidence remains in canonical ledger",
     }
+    for key in (
+        "position_evidence_completeness_v1",
+        "unified_position_advisory_v1",
+        "provider_consumption_telemetry_v1",
+        "fmp_production_verification_v1",
+    ):
+        if key in compact:
+            compact[key] = _compact_runtime_large_payload_v1(compact.get(key), key)
+    return compact
+
+
+def _compact_runtime_large_payload_v1(payload: Any, owner: str) -> dict[str, Any]:
+    """Project advisory payloads for status storage without dropping canonical data.
+
+    The full payload remains owned by ``_runtime_state`` and its canonical
+    state file.  Runtime summaries are reconstructable and deliberately do
+    not contain nested position/evidence objects.
+    """
+    source_files = {
+        "position_evidence_completeness_v1": "astra_position_evidence_completeness_v1.json",
+        "unified_position_advisory_v1": "astra_unified_position_advisory_v1.json",
+        "provider_consumption_telemetry_v1": "astra_provider_consumption_telemetry_v1.json",
+        "fmp_production_verification_v1": "astra_fmp_production_verification_v1.json",
+    }
+    source = payload if isinstance(payload, Mapping) else {}
+    if source.get("full_payload_persisted") and "positions" not in source:
+        return dict(source)
+    summary: dict[str, Any] = {
+        "schema_version": str(source.get("schema_version") or owner),
+        "generated_at": source.get("generated_at"),
+        "source": source_files.get(owner, owner),
+        "full_payload_persisted": True,
+        "advisory_only": bool(source.get("advisory_only", True)),
+        "execution_authority": str(source.get("execution_authority") or "DISABLED"),
+        "broker_actions_used": int(_to_int(source.get("broker_actions_used"), 0)),
+        "state_mutations_from_get": int(_to_int(source.get("state_mutations_from_get"), 0)),
+    }
+    if owner == "unified_position_advisory_v1":
+        rows = [row for row in list(source.get("positions") or []) if isinstance(row, Mapping)]
+        advisory_counts: dict[str, int] = {}
+        priority_counts: dict[str, int] = {}
+        blockers: list[dict[str, Any]] = []
+        high_priority: list[str] = []
+        for row in rows:
+            advisory = str(row.get("final_advisory") or row.get("generic_advisory") or "UNKNOWN")[:64]
+            priority = str(row.get("priority") or "UNKNOWN")[:32]
+            advisory_counts[advisory] = advisory_counts.get(advisory, 0) + 1
+            priority_counts[priority] = priority_counts.get(priority, 0) + 1
+            symbol = str(row.get("symbol") or "").upper()
+            if symbol and priority in {"HIGH", "CRITICAL"} and symbol not in high_priority:
+                high_priority.append(symbol)
+            if len(blockers) < 12 and (row.get("first_causal_blocker") or row.get("primary_reason")):
+                blockers.append({
+                    "symbol": symbol,
+                    "advisory": advisory,
+                    "priority": priority,
+                    "blocker": str(row.get("first_causal_blocker") or row.get("primary_reason") or "")[:160],
+                })
+        summary.update({
+            "broker_position_count": _to_int(source.get("broker_position_count"), len(rows)),
+            "advisory_count": _to_int(source.get("advisory_count"), len(rows)),
+            "silent_drop_count": _to_int(source.get("silent_drop_count"), 0),
+            "final_advisory_counts": advisory_counts,
+            "priority_counts": priority_counts,
+            "high_priority_symbols": high_priority[:12],
+            "first_blockers": blockers,
+        })
+    elif owner == "position_evidence_completeness_v1":
+        rows = [row for row in list(source.get("positions") or []) if isinstance(row, Mapping)]
+        missing = []
+        for row in rows:
+            if len(missing) >= 12:
+                break
+            blocker = row.get("first_missing_producer") or row.get("first_causal_blocker")
+            if blocker:
+                missing.append({
+                    "symbol": str(row.get("symbol") or "").upper(),
+                    "blocker": str(blocker)[:160],
+                })
+        summary.update({
+            key: _to_int(source.get(key), 0)
+            for key in (
+                "broker_position_count", "positions_represented", "fresh_quote_count",
+                "fresh_completed_bar_count", "first_missing_producer_count",
+                "provider_calls_used",
+            )
+        })
+        summary["missing_evidence_by_symbol"] = missing
+    elif owner == "provider_consumption_telemetry_v1":
+        summary.update({
+            key: _to_int(source.get(key), 0)
+            for key in (
+                "provider_calls_used", "provider_count", "governor_blocked_count",
+                "successful_but_unconsumed_count",
+                "stale_evidence_count", "budget_warning_count",
+            )
+        })
+        families = []
+        for row in list(source.get("endpoint_families") or []):
+            if not isinstance(row, Mapping) or len(families) >= 12:
+                continue
+            families.append({
+                key: row.get(key)
+                for key in (
+                    "endpoint_family", "attempted", "successful", "failed_calls",
+                    "cache_hits", "cache_misses", "governor_blocked", "first_causal_blocker",
+                )
+                if key in row
+            })
+        summary["endpoint_families"] = families
+        summary["provider_status"] = [
+            {
+                "provider": row.get("provider"),
+                "attempted": _to_int(row.get("attempted"), 0),
+                "successful": _to_int(row.get("successful_calls"), 0),
+                "failed": _to_int(row.get("failed_calls"), 0),
+                "cache_hits": _to_int(row.get("cache_hits"), 0),
+            }
+            for row in list(source.get("providers") or [])[:4]
+            if isinstance(row, Mapping)
+        ]
+    elif owner == "fmp_production_verification_v1":
+        summary.update({
+            key: _to_int(source.get(key), 0)
+            for key in ("attempted_count", "successful_count", "failed_count", "provider_calls_used", "bytes_received")
+        })
+        summary["symbol"] = str(source.get("symbol") or "").upper()
+        summary["overall_status"] = str(source.get("overall_status") or source.get("status") or "")[:80]
+        endpoint_status = {}
+        for family, value in dict(source.get("endpoint_families") or {}).items():
+            if isinstance(value, Mapping):
+                endpoint_status[str(family)[:80]] = {
+                    key: value.get(key)
+                    for key in ("status", "attempted", "successful", "failed", "error_category", "response_state")
+                    if key in value
+                }
+            elif len(endpoint_status) < 12:
+                endpoint_status[str(family)[:80]] = str(value)[:120]
+        summary["endpoint_families"] = endpoint_status
+    return summary
+
+
+def _compact_runtime_cycle_summary_v1(summary: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep cycle status useful while excluding repeated full advisory payloads."""
+    compact = dict(summary or {})
+    for key in (
+        "position_evidence_completeness_v1",
+        "unified_position_advisory_v1",
+        "provider_consumption_telemetry_v1",
+        "fmp_production_verification_v1",
+    ):
+        if key in compact:
+            compact[key] = _compact_runtime_large_payload_v1(compact.get(key), key)
     return compact
 
 
@@ -2206,6 +2359,20 @@ class PaperAutopilotEngine:
             # It is observational provenance, not a second truth registry.
             "day_throughput_cohort_v1": {},
         }
+        self._large_payload_cycle_metrics_v1 = {
+            "builds": {
+                "position_evidence_completeness_v1": 0,
+                "unified_position_advisory_v1": 0,
+                "provider_consumption_telemetry_v1": 0,
+                "fmp_production_verification_v1": 0,
+            },
+            "serializations": {
+                "position_evidence_completeness_v1": 0,
+                "unified_position_advisory_v1": 0,
+                "provider_consumption_telemetry_v1": 0,
+                "fmp_production_verification_v1": 0,
+            },
+        }
 
         self._position_tracker = None
         if PositionTracker is not None:
@@ -2226,6 +2393,15 @@ class PaperAutopilotEngine:
             yield conn
         finally:
             conn.close()
+
+    def _note_large_runtime_payload_v1(self, owner: str, *, serialized: bool = False) -> None:
+        metrics = getattr(self, "_large_payload_cycle_metrics_v1", None)
+        if not isinstance(metrics, dict):
+            return
+        if owner in metrics["builds"]:
+            metrics["builds"][owner] += 1
+            if serialized:
+                metrics["serializations"][owner] += 1
 
     def _ensure_schema(self):
         os.makedirs(os.path.dirname(self.db_path) or ".", exist_ok=True)
@@ -2531,6 +2707,9 @@ class PaperAutopilotEngine:
     def _save_state_file(self, *, worker_owned: bool = False):
         # The append-only lane ledger already owns full decision evidence. Keep
         # only a compact, reconstructable runtime view across worker cycles.
+        self._runtime_state["last_cycle_summary"] = _compact_runtime_cycle_summary_v1(
+            self._runtime_state.get("last_cycle_summary") or {}
+        )
         self._runtime_state["last_execution_trace"] = _compact_runtime_execution_trace_v1(
             self._runtime_state.get("last_execution_trace") or {}
         )
@@ -2568,6 +2747,10 @@ class PaperAutopilotEngine:
             "worker_cycle_phase": str(self._runtime_state.get("worker_cycle_phase") or "not_started"),
             "worker_cycle_count": _to_int(self._runtime_state.get("worker_cycle_count"), 0),
             "worker_cycle_error": str(self._runtime_state.get("worker_cycle_error") or ""),
+            "large_payload_metrics_v1": {
+                "builds_per_cycle": dict(self._large_payload_cycle_metrics_v1.get("builds") or {}),
+                "serializations_per_cycle": dict(self._large_payload_cycle_metrics_v1.get("serializations") or {}),
+            },
             "worker_phase_timing_v1": dict(self._runtime_state.get("worker_phase_timing_v1") or {}),
             "provider_wait_trace_v1": dict(self._runtime_state.get("provider_wait_trace_v1") or {}),
             "last_close_by_symbol": dict(self._runtime_state.get("last_close_by_symbol") or {}),
@@ -15262,6 +15445,7 @@ class PaperAutopilotEngine:
             canonical_bar_evidence=canonical_bar_evidence,
         )
         save_position_evidence_completeness_v1(evidence, os.path.dirname(self.position_evidence_completeness_state_path) or "state")
+        self._note_large_runtime_payload_v1("position_evidence_completeness_v1", serialized=True)
         self._runtime_state["position_evidence_completeness_v1"] = evidence
         # Create the owner-approval scope for the 26 approved legacy symbols.
         if not self._runtime_state.get("legacy_retirement_owner_approval_v1"):
@@ -15370,6 +15554,7 @@ class PaperAutopilotEngine:
             recovery=recovery,
         )
         save_unified_position_advisory_v1(advisory, os.path.dirname(self.unified_position_advisory_state_path) or "state")
+        self._note_large_runtime_payload_v1("unified_position_advisory_v1", serialized=True)
         self._runtime_state["unified_position_advisory_v1"] = advisory
         self._runtime_state["copilot_position_advisory_handoff_v1"] = {
             "source": "astra_unified_position_advisory_v1",
@@ -15807,6 +15992,7 @@ class PaperAutopilotEngine:
             window_start=str(worker_window.get("started_at") or ""),
         )
         save_provider_consumption_telemetry_v1(telemetry, state_dir)
+        self._note_large_runtime_payload_v1("provider_consumption_telemetry_v1", serialized=True)
         self._runtime_state["provider_consumption_telemetry_v1"] = telemetry
         return telemetry
 
@@ -15845,6 +16031,7 @@ class PaperAutopilotEngine:
             result["provider_calls_used"] = int(bool(profile))
             result["broker_actions_used"] = 0
             save_fmp_production_verification_v1(result, state_dir)
+            self._note_large_runtime_payload_v1("fmp_production_verification_v1", serialized=True)
             self._runtime_state["fmp_production_verification_v1"] = result
             return result
         symbol = next((str(key).upper() for key in sorted(broker_position_by_symbol) if str(key).strip()), "AAPL")
@@ -15873,6 +16060,7 @@ class PaperAutopilotEngine:
             "profile_consumer_linked": str(profile.get("response_state") or "") == "SUCCESS",
         }
         save_fmp_production_verification_v1(result, state_dir)
+        self._note_large_runtime_payload_v1("fmp_production_verification_v1", serialized=True)
         self._runtime_state["fmp_production_verification_v1"] = result
         return result
 
@@ -16342,6 +16530,10 @@ class PaperAutopilotEngine:
         # or full path so a prior full-cycle sample cannot leak into telemetry.
         self._reset_worker_open_review_timing_v1()
         self._reset_provider_wait_trace_v1()
+        self._large_payload_cycle_metrics_v1 = {
+            "builds": {key: 0 for key in self._large_payload_cycle_metrics_v1["builds"]},
+            "serializations": {key: 0 for key in self._large_payload_cycle_metrics_v1["serializations"]},
+        }
         self._ensure_day_throughput_cohort_v1()
         # The canonical worker makes an empty forward-entry window explicit.
         self._runtime_state["entry_lane_horizon_integrity_v1"] = self.entry_lane_horizon_ledger.ensure_snapshot()
@@ -18014,11 +18206,11 @@ class PaperAutopilotEngine:
                 "loss_containment_review_v1": dict(loss_containment_review or {}),
                 "profit_protection_review_v1": dict(profit_protection_review or {}),
                 "legacy_position_risk_triage_v1": dict(legacy_position_risk_triage or {}),
-                "position_evidence_completeness_v1": dict(position_evidence_completeness or {}),
+                "position_evidence_completeness_v1": position_evidence_completeness,
                 "position_exit_readiness_v1": dict(position_exit_readiness or {}),
-                "unified_position_advisory_v1": dict(unified_position_advisory or {}),
-                "provider_consumption_telemetry_v1": dict(provider_consumption_telemetry or {}),
-                "fmp_production_verification_v1": dict(fmp_production_verification or {}),
+                "unified_position_advisory_v1": unified_position_advisory,
+                "provider_consumption_telemetry_v1": provider_consumption_telemetry,
+                "fmp_production_verification_v1": fmp_production_verification,
                 **self._learned_exit_runtime_summary(),
             }
             trace = {
@@ -18109,11 +18301,11 @@ class PaperAutopilotEngine:
                 "loss_containment_review_v1": dict(loss_containment_review or {}),
                 "profit_protection_review_v1": dict(profit_protection_review or {}),
                 "legacy_position_risk_triage_v1": dict(legacy_position_risk_triage or {}),
-                "position_evidence_completeness_v1": dict(position_evidence_completeness or {}),
+                "position_evidence_completeness_v1": position_evidence_completeness,
                 "position_exit_readiness_v1": dict(position_exit_readiness or {}),
-                "unified_position_advisory_v1": dict(unified_position_advisory or {}),
-                "provider_consumption_telemetry_v1": dict(provider_consumption_telemetry or {}),
-                "fmp_production_verification_v1": dict(fmp_production_verification or {}),
+                "unified_position_advisory_v1": unified_position_advisory,
+                "provider_consumption_telemetry_v1": provider_consumption_telemetry,
+                "fmp_production_verification_v1": fmp_production_verification,
                 "live_trading_changed": False,
                 "secrets_exposed": False,
             }

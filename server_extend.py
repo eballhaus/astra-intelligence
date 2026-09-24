@@ -37826,10 +37826,39 @@ def position_sell_alerts():
     return payload
 
 
+_READ_ONLY_STATE_CACHE_NAMES = frozenset({
+    "astra_provider_consumption_telemetry_v1.json",
+    "astra_position_evidence_completeness_v1.json",
+    "astra_unified_position_advisory_v1.json",
+    "astra_fmp_production_verification_v1.json",
+})
+_READ_ONLY_STATE_CACHE_LIMIT = 8
+_READ_ONLY_STATE_CACHE: dict[str, dict[str, object]] = {}
+
+
 def _read_json_file(path, default=None):
+    """Read API-only state with a bounded mtime-aware cache.
+
+    Worker-owned state remains authoritative on disk.  This cache is limited
+    to the four read-only advisory payloads and never participates in trading
+    decisions or writes.
+    """
+    cache_key = os.path.abspath(str(path))
+    use_cache = os.path.basename(cache_key) in _READ_ONLY_STATE_CACHE_NAMES
     try:
-        with open(path, "r") as f:
-            return json.load(f)
+        stat = os.stat(cache_key) if use_cache else None
+        fingerprint = (int(stat.st_mtime_ns), int(stat.st_size)) if stat else None
+        if use_cache:
+            cached = _READ_ONLY_STATE_CACHE.get(cache_key)
+            if cached and cached.get("fingerprint") == fingerprint:
+                return cached.get("payload")
+        with open(cache_key, "r") as f:
+            payload = json.load(f)
+        if use_cache:
+            _READ_ONLY_STATE_CACHE[cache_key] = {"fingerprint": fingerprint, "payload": payload}
+            while len(_READ_ONLY_STATE_CACHE) > _READ_ONLY_STATE_CACHE_LIMIT:
+                _READ_ONLY_STATE_CACHE.pop(next(iter(_READ_ONLY_STATE_CACHE)))
+        return payload
     except Exception:
         return {} if default is None else default
 

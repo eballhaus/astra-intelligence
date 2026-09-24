@@ -56,6 +56,12 @@ def resource_efficiency_monitor_v1(
         "resource_state": _text(resource.get("resource_state") or worker_state.get("resource_state")) or "UNKNOWN_FAIL_CLOSED",
         "background_suspended": bool(telemetry.get("background_work_suspended")),
         "top_owner": _text((_dict((telemetry.get("top_memory_owners") or [{}])[0])).get("owner_name")),
+        "large_payload_bytes_by_owner": dict(telemetry.get("large_payload_bytes_by_owner") or {}),
+        "large_payload_builds_per_cycle": dict(telemetry.get("large_payload_builds_per_cycle") or {}),
+        "large_payload_serializations_per_cycle": dict(telemetry.get("large_payload_serializations_per_cycle") or {}),
+        "runtime_state_large_payload_count": int(telemetry.get("runtime_state_large_payload_count") or 0),
+        "worker_snapshot_bytes": int(telemetry.get("worker_snapshot_bytes") or 0),
+        "server_state_cache_bytes": int(telemetry.get("server_state_cache_bytes") or 0),
     }
     samples = [dict(row) for row in list(previous.get("samples") or []) if isinstance(row, dict)]
     samples = (samples + [current])[-RESOURCE_EFFICIENCY_SAMPLE_LIMIT:]
