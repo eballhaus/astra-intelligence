@@ -172,6 +172,27 @@ class PaperAutopilotWorker:
         self._governance_min_interval_seconds = max(5.0, min(300.0, configured_governance_interval))
 
     @staticmethod
+    def _readiness_runtime_with_recovery_v1(
+        runtime: dict[str, Any],
+        recovery_owner: Any,
+    ) -> dict[str, Any]:
+        """Make the canonical recovery owner visible before first-cycle readiness."""
+        current = dict(runtime or {})
+        if current.get("position_lane_horizon_recovery_v1"):
+            return current
+        snapshot_fn = getattr(recovery_owner, "snapshot", None)
+        if not callable(snapshot_fn):
+            return current
+        try:
+            snapshot = dict(snapshot_fn() or {})
+        except Exception:
+            return current
+        if snapshot:
+            current["position_lane_horizon_recovery_v1"] = snapshot
+            runtime["position_lane_horizon_recovery_v1"] = snapshot
+        return current
+
+    @staticmethod
     def _bounded_broker_truth_rows_v1(runtime: dict[str, Any]) -> list[dict[str, Any]]:
         """Use the existing canonical fallback when this worker has no in-memory truth rows."""
         rows = [dict(row) for row in list(runtime.get("broker_truth_records_v1") or []) if isinstance(row, dict)]
@@ -1411,6 +1432,10 @@ class PaperAutopilotWorker:
         runtime = getattr(self.autopilot, "_runtime_state", {})
         def readiness_runtime() -> dict[str, Any]:
             current = dict(runtime)
+            current = self._readiness_runtime_with_recovery_v1(
+                current,
+                getattr(self.autopilot, "position_lane_horizon_recovery", None),
+            )
             try:
                 from engine.alpaca_ws_monitor import ALPACA_WS_MONITOR
                 monitor_status = _compact_monitor_status_v1(dict(ALPACA_WS_MONITOR.status() or {}))

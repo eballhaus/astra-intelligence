@@ -31,6 +31,31 @@ class _Autopilot:
 
 
 class PaperAutopilotWorkerProgressTests(unittest.TestCase):
+    def test_readiness_runtime_includes_recovery_owner_before_first_cycle(self):
+        runtime = {}
+
+        class RecoveryOwner:
+            def snapshot(self):
+                return {
+                    "positions": [{
+                        "symbol": "ETHUSD",
+                        "asset_type": "crypto",
+                        "canonical_identity_status": "AMBIGUOUS",
+                        "horizon_status": "AMBIGUOUS",
+                        "exact_blockers": ["AMBIGUOUS_SYMBOL_ONLY_MATCH"],
+                    }]
+                }
+
+        result = PaperAutopilotWorker._readiness_runtime_with_recovery_v1(
+            runtime,
+            RecoveryOwner(),
+        )
+        self.assertEqual(
+            result["position_lane_horizon_recovery_v1"]["positions"][0]["horizon_status"],
+            "AMBIGUOUS",
+        )
+        self.assertIn("position_lane_horizon_recovery_v1", runtime)
+
     def test_publish_persists_canonical_autopilot_enable_state(self):
         autopilot = _Autopilot()
         writes: list[dict] = []
