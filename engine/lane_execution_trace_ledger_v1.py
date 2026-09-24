@@ -179,6 +179,7 @@ class LaneExecutionTraceLedgerV1:
     def __init__(self, state_dir: str = "state") -> None:
         self.state_dir = str(state_dir or "state")
         self.path = os.path.join(self.state_dir, "lane_execution_trace_v1.jsonl")
+        self.truth_funnel_path = os.path.join(self.state_dir, "lane_truth_funnel_v1.jsonl")
         self.summary_path = os.path.join(self.state_dir, "lane_execution_trace_v1.summary.json")
         # This is the existing canonical candidate ledger. The worker adds
         # compact decision snapshots; it does not create a second store.
@@ -639,9 +640,63 @@ class LaneExecutionTraceLedgerV1:
         self._write_summary(summary)
         return {"appended": 1, "suppressed": 0, "trace_id": trace_id}
 
+    def record_exit_lifecycle_transition(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        """Persist one compact, transition-only exit/truth funnel event.
+
+        Candidate decisions and broker entry fills already have distinct trace
+        paths.  Exit readiness, reconciliation, strict truth, and learning
+        transitions happen later and must not be forced back into an old
+        candidate row.  This append-only stream stays under the same ledger
+        owner and contains identifiers/status only, never advisory payloads.
+        """
+        lane = _text(row.get("lane_id")).upper()
+        position_id = _text(row.get("position_id") or row.get("lifecycle_id"))
+        state = _text(row.get("state"))
+        stage_entered_at = _text(row.get("stage_entered_at")) or _now()
+        if lane not in LANES or not position_id or not state:
+            return {"appended": 0, "suppressed": 0, "reason": "INCOMPLETE_EXIT_TRANSITION_IDENTITY"}
+        event_id = "exit_transition:" + _fingerprint((
+            lane, position_id, state, stage_entered_at,
+            row.get("exit_fill_id"), row.get("strict_truth_created"),
+            row.get("learning_acknowledged"),
+        ))
+        event = {
+            "schema_version": "astra_lane_truth_funnel_event_v1",
+            "event_id": event_id,
+            "event_type": "EXIT_LIFECYCLE_TRANSITION",
+            "timestamp_utc": stage_entered_at,
+            "lane_id": lane,
+            "symbol": _text(row.get("symbol")).upper(),
+            "position_id": position_id,
+            "lifecycle_id": _text(row.get("lifecycle_id") or position_id),
+            "horizon": _text(row.get("horizon")),
+            "state": state,
+            "previous_state": _text(row.get("previous_state")),
+            "decision": _text(row.get("decision")),
+            "reason": _text(row.get("reason")),
+            "exact_blocker": _text(row.get("exact_blocker")),
+            "next_reevaluation": _text(row.get("next_reevaluation")),
+            "entry_order_id": _text(row.get("entry_order_id")),
+            "entry_fill_id": _text(row.get("entry_fill_id")),
+            "exit_order_id": _text(row.get("exit_order_id")),
+            "exit_fill_id": _text(row.get("exit_fill_id")),
+            "strict_truth_created": bool(row.get("strict_truth_created")),
+            "learning_acknowledged": bool(row.get("learning_acknowledged")),
+            "paper_only_preserved": True,
+            "source": "PaperAutopilot.native_lane_exit_lifecycle_v1",
+        }
+        try:
+            os.makedirs(self.state_dir, exist_ok=True)
+            with open(self.truth_funnel_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(event, separators=(",", ":"), ensure_ascii=True) + "\n")
+        except OSError:
+            return {"appended": 0, "suppressed": 0, "reason": "EXIT_FUNNEL_WRITE_FAILED", "event_id": event_id}
+        return {"appended": 1, "suppressed": 0, "event_id": event_id}
+
     def summary(self) -> dict[str, Any]:
         result = self._read_summary()
         result["ledger_path"] = self.path
+        result["truth_funnel_path"] = self.truth_funnel_path
         result["bounded_summary_read"] = True
         return result
 

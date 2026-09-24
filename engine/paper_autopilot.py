@@ -7055,6 +7055,33 @@ class PaperAutopilotEngine:
         }
         rows[position_id] = row
         self._runtime_state["native_lane_exit_lifecycle_v1"] = rows
+        execution_trace_ledger = getattr(self, "execution_trace_ledger", None)
+        if stage_changed and execution_trace_ledger is not None:
+            try:
+                execution_trace_ledger.record_exit_lifecycle_transition({
+                    "position_id": position_id,
+                    "lifecycle_id": position_id,
+                    "symbol": row.get("symbol"),
+                    "lane_id": row.get("lane_id"),
+                    "horizon": row.get("horizon"),
+                    "state": state,
+                    "previous_state": previous_stage,
+                    "decision": decision,
+                    "reason": reason,
+                    "exact_blocker": blocker,
+                    "next_reevaluation": next_reevaluation,
+                    "stage_entered_at": row.get("stage_entered_at"),
+                    "entry_order_id": row.get("entry_order_id"),
+                    "entry_fill_id": row.get("entry_fill_id"),
+                    "exit_order_id": extra.get("broker_order_id") or row.get("broker_order_id"),
+                    "exit_fill_id": extra.get("exit_fill_id") or row.get("exit_fill_id"),
+                    "strict_truth_created": extra.get("strict_truth_created", row.get("strict_truth_created")),
+                    "learning_acknowledged": extra.get("learning_acknowledged", row.get("learning_acknowledged")),
+                })
+            except Exception:
+                # Funnel telemetry is observational and cannot affect exit,
+                # reconciliation, strict truth, or learning behavior.
+                pass
         return row
 
     def _reconcile_current_position_broker_dust_mismatches_v1(
