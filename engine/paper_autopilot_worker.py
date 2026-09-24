@@ -79,7 +79,7 @@ from engine.alpaca_ws_monitor import _compact_broad_discovery_status_row
 # live canonical worker is never misreported as absent or stale.
 ACTIVE_CYCLE_HEARTBEAT_SECONDS = 5.0
 RESOURCE_MEMORY_SAMPLE_LIMIT = 16
-RESOURCE_MEMORY_OWNER_SCAN_INTERVAL_CYCLES = 6
+RESOURCE_MEMORY_OWNER_SCAN_INTERVAL_CYCLES = 30
 CYCLE_TIMING_HISTORY_LIMIT = 32
 CONTINUOUS_GOVERNANCE_MIN_INTERVAL_SECONDS = 30.0
 
@@ -154,6 +154,7 @@ class PaperAutopilotWorker:
         self._memory_owner_previous: dict[str, tuple[float, int, int]] = {}
         self._memory_owner_snapshot: list[dict[str, Any]] = []
         self._memory_owner_scan_cycle = -1
+        self._memory_owner_scan_resource_state = ""
         self._resource_efficiency_monitor: dict[str, Any] = {}
         self._cycle_timing_history: list[dict[str, Any]] = []
         self._cycle_state_write_samples: list[float] = []
@@ -655,11 +656,15 @@ class PaperAutopilotWorker:
         baseline = float(self._memory_startup_mb or 0.0)
         delta = round(memory_mb - baseline, 2)
         trend = "INSUFFICIENT_SAMPLES" if len(self._memory_samples) < 2 else "INCREASING" if delta > 1.0 else "DECREASING" if delta < -1.0 else "STABLE"
+        pressure_transition = (
+            resource_state in paused_states
+            and self._memory_owner_scan_resource_state not in paused_states
+        )
         scan_due = (
             not self._memory_owner_snapshot
             or self._memory_owner_scan_cycle < 0
             or self.cycle_count - self._memory_owner_scan_cycle >= RESOURCE_MEMORY_OWNER_SCAN_INTERVAL_CYCLES
-            or resource_state in paused_states | {"RESOURCE_ELEVATED"}
+            or pressure_transition
         )
         if scan_due:
             try:
@@ -670,6 +675,7 @@ class PaperAutopilotWorker:
                            "estimated_memory_bytes": 0, "reason_for_retention": "INSPECTION_FAILED:" + type(exc).__name__}]
             self._memory_owner_snapshot = [dict(row) for row in owners if isinstance(row, dict)]
             self._memory_owner_scan_cycle = int(self.cycle_count)
+            self._memory_owner_scan_resource_state = resource_state
         else:
             # Reuse metadata only; no runtime payload references cross cycles.
             owners = [dict(row) for row in self._memory_owner_snapshot]

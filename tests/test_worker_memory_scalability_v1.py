@@ -223,11 +223,11 @@ def test_deep_owner_scan_is_bounded_while_rss_sampling_remains_continuous(monkey
     monkeypatch.setattr(module, "native_allocator_snapshot", lambda: {"supported": False})
 
     sample = {"resource_state": "RESOURCE_NORMAL", "worker_process": {"memory_mb": 100.0, "cpu_percent": 1.0}}
-    for cycle in range(1, 8):
+    for cycle in range(1, module.RESOURCE_MEMORY_OWNER_SCAN_INTERVAL_CYCLES + 2):
         worker.cycle_count = cycle
         result = worker._record_resource_memory_telemetry(dict(sample))
         assert result["current_rss_mb"] == 100.0
 
-    assert calls == [1, 7]
+    assert calls == [1, module.RESOURCE_MEMORY_OWNER_SCAN_INTERVAL_CYCLES + 1]
     assert result["owner_scan_interval_cycles"] == module.RESOURCE_MEMORY_OWNER_SCAN_INTERVAL_CYCLES
     assert result["owner_scan_performed"] is True
