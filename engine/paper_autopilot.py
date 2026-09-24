@@ -2733,6 +2733,9 @@ class PaperAutopilotEngine:
             if isinstance(nested_value, dict):
                 canary[f"{field}_store"] = store_key
                 canary[f"{field}_count"] = len(nested_value)
+        large_payload_metrics = getattr(self, "_large_payload_cycle_metrics_v1", {})
+        if not isinstance(large_payload_metrics, dict):
+            large_payload_metrics = {}
         payload = {
             "autopilot_enabled": bool(getattr(self, "_enabled", False)),
             "paper_mode": self.paper_mode,
@@ -2748,8 +2751,8 @@ class PaperAutopilotEngine:
             "worker_cycle_count": _to_int(self._runtime_state.get("worker_cycle_count"), 0),
             "worker_cycle_error": str(self._runtime_state.get("worker_cycle_error") or ""),
             "large_payload_metrics_v1": {
-                "builds_per_cycle": dict(self._large_payload_cycle_metrics_v1.get("builds") or {}),
-                "serializations_per_cycle": dict(self._large_payload_cycle_metrics_v1.get("serializations") or {}),
+                "builds_per_cycle": dict(large_payload_metrics.get("builds") or {}),
+                "serializations_per_cycle": dict(large_payload_metrics.get("serializations") or {}),
             },
             "worker_phase_timing_v1": dict(self._runtime_state.get("worker_phase_timing_v1") or {}),
             "provider_wait_trace_v1": dict(self._runtime_state.get("provider_wait_trace_v1") or {}),
