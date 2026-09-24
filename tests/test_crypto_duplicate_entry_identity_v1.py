@@ -145,6 +145,61 @@ class CryptoDuplicateEntryIdentityTests(unittest.TestCase):
             current_id,
         )
 
+    def test_complete_provider_observation_is_not_contaminated_by_aggregate_ambiguity(self):
+        clean_id = "ETH/USD:2026-09-19T03:03:31"
+        ambiguous_id = "ETH/USD:2026-09-19T02:07:36"
+        state = {
+            "decisions": {
+                clean_id: {
+                    "position_id": clean_id,
+                    "symbol": "ETHUSD",
+                    "data_completeness": "complete",
+                    "exact_blockers": ["AMBIGUOUS_SYMBOL_ONLY_MATCH"],
+                    "horizon_recovery_status": "AMBIGUOUS",
+                    "evidence_provenance": {
+                        "provider_native_timestamp": "2026-09-24T19:55:00Z",
+                        "market_observation_unavailable": False,
+                    },
+                },
+                ambiguous_id: {
+                    "position_id": ambiguous_id,
+                    "symbol": "ETHUSD",
+                    "data_completeness": "incomplete",
+                    "exact_blockers": [
+                        "MARKET_OBSERVATION_TIMESTAMP_UNAVAILABLE",
+                        "AMBIGUOUS_SYMBOL_ONLY_MATCH",
+                    ],
+                    "evidence_provenance": {
+                        "provider_native_timestamp": "UNAVAILABLE",
+                        "market_observation_unavailable": True,
+                    },
+                },
+                "unresolved:ETHUSD": {
+                    "position_id": "unresolved:ETHUSD",
+                    "symbol": "ETHUSD",
+                    "data_completeness": "incomplete",
+                    "exact_blockers": ["AMBIGUOUS_SYMBOL_ONLY_MATCH"],
+                },
+            }
+        }
+        recovery = {
+            "positions": [{
+                "symbol": "ETHUSD",
+                "canonical_identity_status": "AMBIGUOUS",
+                "horizon_status": "AMBIGUOUS",
+                "exact_blockers": ["AMBIGUOUS_SYMBOL_ONLY_MATCH"],
+            }]
+        }
+
+        result = self.engine._attach_current_recovery_metadata_v1(state, recovery)
+        self.assertNotIn("AMBIGUOUS_SYMBOL_ONLY_MATCH", result["decisions"][clean_id]["exact_blockers"])
+        self.assertEqual(
+            result["decisions"][clean_id]["identity_ambiguity_scope"],
+            "BROKER_SYMBOL_AGGREGATE_ONLY",
+        )
+        self.assertIn("AMBIGUOUS_SYMBOL_ONLY_MATCH", result["decisions"][ambiguous_id]["exact_blockers"])
+        self.assertIn("AMBIGUOUS_SYMBOL_ONLY_MATCH", result["decisions"]["unresolved:ETHUSD"]["exact_blockers"])
+
 
 if __name__ == "__main__":
     unittest.main()

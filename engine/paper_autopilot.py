@@ -14485,6 +14485,7 @@ class PaperAutopilotEngine:
         result = dict(state or {})
         recovery_by_identity: dict[str, list[dict[str, Any]]] = {}
         recovery_by_symbol: dict[str, list[dict[str, Any]]] = {}
+        ambiguous_symbols: set[str] = set()
         for raw in (recovery or {}).get("positions") or []:
             if not isinstance(raw, dict):
                 continue
@@ -14492,6 +14493,15 @@ class PaperAutopilotEngine:
             symbol = _text(row.get("symbol")).upper()
             if symbol:
                 recovery_by_symbol.setdefault(symbol, []).append(row)
+            if (
+                symbol
+                and _text(row.get("canonical_identity_status")).upper() == "AMBIGUOUS"
+                and not any(
+                    _text(row.get(field))
+                    for field in ("canonical_position_id", "canonical_lifecycle_id", "position_id")
+                )
+            ):
+                ambiguous_symbols.add(symbol)
             if str(row.get("canonical_identity_status") or "").upper() != "RESOLVED":
                 continue
             for field in (
@@ -14501,11 +14511,52 @@ class PaperAutopilotEngine:
                 if identity:
                     recovery_by_identity.setdefault(identity, []).append(row)
         decisions: dict[str, Any] = {}
+        all_decisions = {
+            key: raw for key, raw in (result.get("decisions") or {}).items()
+            if isinstance(raw, dict)
+        }
         for decision_id, raw_decision in (result.get("decisions") or {}).items():
             if not isinstance(raw_decision, dict):
                 decisions[decision_id] = raw_decision
                 continue
             decision = dict(raw_decision)
+            symbol = _text(decision.get("symbol")).upper()
+            decision_identity = _pick_first_text(
+                decision.get("position_id"),
+                decision.get("canonical_position_id"),
+                decision_id,
+            )
+            same_symbol_lifecycles = [
+                raw for raw in all_decisions.values()
+                if _text(raw.get("symbol")).upper() == symbol
+                and _text(raw.get("position_id"), _text(raw.get("canonical_position_id")))
+                and not _text(raw.get("position_id")).startswith("unresolved:")
+            ]
+            # A symbol-only broker aggregate can leave an old ambiguity marker
+            # on a lifecycle that already has its own complete, provider-native
+            # observation.  Remove only that stale projection marker; do not
+            # resolve the aggregate, and do not touch incomplete lifecycles.
+            provenance = dict(decision.get("evidence_provenance") or {})
+            provider_timestamp = _text(
+                provenance.get("provider_native_timestamp"),
+                provenance.get("market_observation_timestamp"),
+            ).upper()
+            independently_complete = (
+                symbol in ambiguous_symbols
+                and len(same_symbol_lifecycles) > 1
+                and decision_identity
+                and not decision_identity.startswith("unresolved:")
+                and str(decision.get("data_completeness") or "").lower() == "complete"
+                and provider_timestamp not in {"", "UNAVAILABLE", "NONE", "NULL"}
+                and provenance.get("market_observation_unavailable") is not True
+                and set(decision.get("exact_blockers") or {}) <= {"AMBIGUOUS_SYMBOL_ONLY_MATCH"}
+            )
+            if independently_complete:
+                decision["exact_blockers"] = [
+                    blocker for blocker in list(decision.get("exact_blockers") or [])
+                    if blocker != "AMBIGUOUS_SYMBOL_ONLY_MATCH"
+                ]
+                decision["identity_ambiguity_scope"] = "BROKER_SYMBOL_AGGREGATE_ONLY"
             identity_candidates = {
                 _text(decision_id),
                 _text(decision.get("position_id")),
