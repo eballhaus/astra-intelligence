@@ -292,9 +292,17 @@ def _candidates(
         candidates.append({
             "partition_id": f"{name}:{snapshot['version']}:{offset}", "source": name,
             "source_snapshot": snapshot["version"], "cursor_start": offset,
-            "priority": _priority(name, summary), "evidence_domain": name.removesuffix(".jsonl"),
+            "priority": _priority(name, summary),
+            "partitions_completed": int(source.get("partitions_completed") or 0),
+            "evidence_domain": name.removesuffix(".jsonl"),
         })
-    return sorted(candidates, key=lambda item: (-item["priority"], item["source"], item["cursor_start"])), dict(counts)
+    # Fairness is the primary ordering key so a high-priority source cannot
+    # starve sources that have not received their first bounded partition.
+    # Priority still orders sources within the same scheduling round.
+    return sorted(
+        candidates,
+        key=lambda item: (item["partitions_completed"], -item["priority"], item["source"], item["cursor_start"]),
+    ), dict(counts)
 
 
 def _read_partition(path: Path, offset: int, *, max_bytes: int, max_rows: int) -> tuple[list[dict[str, Any]], int, int, str | None]:
@@ -571,7 +579,9 @@ def run_incremental_historical_learning_cycle_v1(
         velocity["deferred_cycles"] = int(velocity.get("deferred_cycles") or 0) + 1
         checkpoint["last_checkpoint"] = {"status": "DEFERRED_RESOURCE_PRESSURE", "reason": decision["reason"], "at": _now()}
         _atomic_write(checkpoint_path, checkpoint)
-        return {"status": "DEFERRED_RESOURCE_PRESSURE", "resource_decision": decision, "partitions_processed": [], "source_progress": _source_progress(state, checkpoint, _warehouse_sources(state)), **SAFETY}
+        # Do not locate Warehouse sources while trading pressure is active.
+        # The checkpoint is sufficient for a bounded deferred status response.
+        return {"status": "DEFERRED_RESOURCE_PRESSURE", "resource_decision": decision, "partitions_processed": [], "source_progress": _source_progress(state, checkpoint, {}), **SAFETY}
     warehouse_sources = _warehouse_sources(state)
     candidates, _ = _candidates(state, checkpoint, set(warehouse_sources))
     if not candidates or max_partitions <= 0:

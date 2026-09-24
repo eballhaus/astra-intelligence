@@ -9,6 +9,7 @@ from pathlib import Path
 from engine.astra_incremental_historical_learning_governor_v1 import (
     CHECKPOINT_FILE,
     DELTA_INDEX_FILE,
+    _candidates,
     build_incremental_historical_learning_governor_v1,
     run_incremental_historical_learning_cycle_v1,
 )
@@ -109,6 +110,26 @@ class IncrementalHistoricalLearningGovernorV1Tests(unittest.TestCase):
         })
         status = build_incremental_historical_learning_governor_v1(str(root), HEALTHY)
         self.assertEqual(status["current_priority_partition"]["source"], "candidate_decision_ledger_v1.jsonl")
+
+    def test_fair_rounds_prevent_replay_source_from_starving_new_sources(self):
+        root = self._root({
+            "replay_counterfactual_learning_v2.jsonl": [self._row()],
+            "candidate_decision_ledger_v1.jsonl": [self._row(symbol="NEW")],
+        })
+        sources = {}
+        for name, partitions in (("replay_counterfactual_learning_v2.jsonl", 36), ("candidate_decision_ledger_v1.jsonl", 0)):
+            source = root / name
+            stat = source.stat()
+            sources[name] = {
+                "snapshot_version": f"{stat.st_size}:{stat.st_mtime_ns}",
+                "source_size_bytes": stat.st_size,
+                "partitions_completed": partitions,
+                "next_offset": 0,
+            }
+        checkpoint = {"sources": sources}
+        candidates, _ = _candidates(root, checkpoint)
+        self.assertEqual(candidates[0]["source"], "candidate_decision_ledger_v1.jsonl")
+        self.assertEqual(candidates[0]["partitions_completed"], 0)
 
     def test_unhealthy_worker_or_resource_pressure_defers_without_mining(self):
         root = self._root({"candidate_decision_ledger_v1.jsonl": [self._row()]})
