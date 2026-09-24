@@ -19,6 +19,7 @@ from engine.astra_sentinel_causal_handoff_integrity_v1 import (
     classify_causal_handoff_facts_v1,
     collect_platform_integrity_monitors_v2,
 )
+from engine.astra_resource_aware_workload_scheduler_v1 import build_resource_aware_workload_plan
 
 
 VERSION = "1.3.1"
@@ -71,6 +72,7 @@ def resource_efficiency_monitor_v1(
         else:
             trend = "PLATEAU"
     actions = [str(item) for item in (safe_actions_taken or []) if str(item)][:8]
+    scheduler = build_resource_aware_workload_plan(worker_state, previous=previous.get("workload_scheduler_v1"))
     recommendations: list[str] = []
     if state in {"RESOURCE_ELEVATED", "RESOURCE_HIGH_PAUSE", "RESOURCE_MEMORY_PAUSE", "RESOURCE_API_LATENCY_PAUSE", "RESOURCE_UNKNOWN_FAIL_CLOSED"}:
         recommendations.append("DEFER_BACKGROUND_WORK")
@@ -92,6 +94,7 @@ def resource_efficiency_monitor_v1(
         "largest_observed_owner": current["top_owner"],
         "safe_actions_taken": actions,
         "recommendations": recommendations[:4],
+        "workload_scheduler_v1": scheduler,
         "paper_only_preserved": True,
         "trading_policy_changed": False,
         "truth_lifecycle_reconciliation_changed": False,

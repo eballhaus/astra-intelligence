@@ -18,6 +18,11 @@ if str(Path(__file__).resolve().parents[1]) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.astra_historical_learning_cycle_runner import HistoricalLearningCycleRunnerV1, compact_cycle_result
+from engine.astra_resource_aware_workload_scheduler_v1 import (
+    claim_background_slot,
+    release_background_slot,
+    scheduler_plan_from_state_dir,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -89,6 +94,14 @@ def run_once(
         result = {"status": "SKIP_ALREADY_RUNNING", "owner": "historical_learning_supervisor_v1", "updated_at": _now()}
         _atomic_write(status_path, result)
         return result
+    scheduler_owner = "historical_learning_supervisor_v1"
+    scheduler_plan = scheduler_plan_from_state_dir(state_dir)
+    lease = claim_background_slot(state_dir, scheduler_owner, scheduler_plan) if scheduler_plan else {"acquired": True, "status": "LEGACY_STATE_UNAVAILABLE"}
+    if not lease.get("acquired"):
+        result = {"status": "DEFERRED_RESOURCE_SCHEDULER", "owner": scheduler_owner, "resource_decision": {"decision": "DEFER", "reason": lease.get("reason") or lease.get("status")}}
+        _atomic_write(status_path, result)
+        release_pid(pid_path)
+        return result
     try:
         active_runner = runner or HistoricalLearningCycleRunnerV1(str(state_dir))
         result = active_runner.wake_once()
@@ -102,6 +115,8 @@ def run_once(
             "last_wakeup": _now(),
             "last_result": compact,
             "resource_decision": result.get("resource_decision"),
+            "scheduler": scheduler_plan or {},
+            "scheduler_lease": lease,
             "source_progress": result.get("source_progress") or compact.get("source_progress") or {},
             "safety": {
                 "broker_calls_added": 0,
@@ -114,6 +129,8 @@ def run_once(
         _atomic_write(status_path, payload)
         return payload
     finally:
+        if scheduler_plan:
+            release_background_slot(state_dir, scheduler_owner)
         release_pid(pid_path)
 
 
@@ -133,7 +150,17 @@ def run_forever(state_dir: Path, interval_seconds: float = DEFAULT_INTERVAL_SECO
     try:
         runner = HistoricalLearningCycleRunnerV1(str(state_dir), interval_seconds=interval_seconds)
         while not stopped:
-            result = runner.wake_once()
+            scheduler_owner = "historical_learning_supervisor_v1"
+            scheduler_plan = scheduler_plan_from_state_dir(state_dir)
+            lease = claim_background_slot(state_dir, scheduler_owner, scheduler_plan) if scheduler_plan else {"acquired": True}
+            if not lease.get("acquired"):
+                result = {"status": "DEFERRED_RESOURCE_SCHEDULER", "resource_decision": {"decision": "DEFER", "reason": lease.get("reason") or lease.get("status")}}
+            else:
+                try:
+                    result = runner.wake_once()
+                finally:
+                    if scheduler_plan:
+                        release_background_slot(state_dir, scheduler_owner)
             compact = compact_cycle_result(result)
             _atomic_write(
                 state_dir / STATUS_FILE,
@@ -146,6 +173,8 @@ def run_forever(state_dir: Path, interval_seconds: float = DEFAULT_INTERVAL_SECO
                     "last_wakeup": _now(),
                     "last_result": compact,
                     "resource_decision": result.get("resource_decision"),
+                    "scheduler": scheduler_plan or {},
+                    "scheduler_lease": lease,
                     "source_progress": result.get("source_progress") or compact.get("source_progress") or {},
                     "safety": {
                         "broker_calls_added": 0,

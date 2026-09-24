@@ -37,6 +37,7 @@ from engine.astra_storage_cache_attribution_learning_efficiency_v1 import (
     _outcome_timestamp,
     outcome_dimensions_for_row,
 )
+from engine.astra_resource_aware_workload_scheduler_v1 import build_resource_aware_workload_plan
 
 
 VERSION = "1.0.0"
@@ -113,6 +114,9 @@ def _resource_decision(state: Path, facts: Mapping[str, Any] | None = None) -> d
         facts = _read(state / "astra_worker_runtime_state_v1.json")
     if not facts:
         return {"decision": "DEFER", "reason": "WORKER_STATE_UNAVAILABLE"}
+    scheduler = build_resource_aware_workload_plan(facts)
+    if int(scheduler.get("max_background_workers") or 0) <= 0:
+        return {"decision": "DEFER", "reason": f"SCHEDULER:{scheduler.get('reason') or 'NO_BACKGROUND_CAPACITY'}"}
     liveness = facts.get("worker_liveness") if isinstance(facts.get("worker_liveness"), Mapping) else {}
     health = str(facts.get("worker_health") or facts.get("liveness_state") or facts.get("worker_liveness_state") or liveness.get("liveness_state") or "").upper()
     if facts.get("active_worker_present") is False:

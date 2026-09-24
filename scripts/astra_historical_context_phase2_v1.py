@@ -128,6 +128,8 @@ def manifest_symbols(state_dir: Path) -> list[str]:
 def worker_health(state_dir: Path) -> dict[str, Any]:
     runtime = read_json(state_dir / "astra_worker_runtime_state_v1.json", {})
     resource = runtime.get("resource") if isinstance(runtime.get("resource"), dict) else {}
+    telemetry = runtime.get("resource_memory_telemetry_v1") if isinstance(runtime.get("resource_memory_telemetry_v1"), dict) else {}
+    efficiency = telemetry.get("resource_efficiency_monitor_v1") if isinstance(telemetry.get("resource_efficiency_monitor_v1"), dict) else {}
     pid = runtime.get("active_worker_pid") or runtime.get("process_id")
     return {
         "worker_pid": pid,
@@ -140,6 +142,7 @@ def worker_health(state_dir: Path) -> dict[str, Any]:
         "cycle_elapsed_seconds": runtime.get("cycle_elapsed_seconds"),
         "source_identity": runtime.get("source_identity") or runtime.get("runtime_source_identity"),
         "updated_at": runtime.get("updated_at") or runtime.get("heartbeat_at"),
+        "workload_scheduler_v1": efficiency.get("workload_scheduler_v1") or {},
     }
 
 

@@ -26,6 +26,7 @@ if str(ROOT) not in sys.path:
 from engine.astra_pit_metadata_contract_v1 import normalize_historical_record
 from scripts.astra_historical_context_phase2_v1 import now_iso, read_json, worker_health
 from scripts.astra_historical_data_infrastructure_v1 import acquisition_manifest, acquire, durable_write
+from engine.astra_resource_aware_workload_scheduler_v1 import build_resource_aware_workload_plan
 
 STATE_ROOT = Path("/Users/Shared/AstraRuntime/state")
 SHARED_ENV = Path("/Users/Shared/AstraRuntime/.env")
@@ -111,6 +112,7 @@ def resource_gate(state_dir: Path = STATE_ROOT) -> dict[str, Any]:
     allowed_states = {"RESOURCE_NORMAL", "RESOURCE_ELEVATED"}
     blocked = state not in allowed_states or worker_count != 1 or last_error
     mode = "REDUCED" if state == "RESOURCE_ELEVATED" and not blocked else "NORMAL" if not blocked else "BLOCKED"
+    scheduler = build_resource_aware_workload_plan(health, previous=health.get("workload_scheduler_v1"))
     return {
         "allowed": not blocked,
         "mode": mode,
@@ -118,6 +120,8 @@ def resource_gate(state_dir: Path = STATE_ROOT) -> dict[str, Any]:
         "worker_count": worker_count,
         "reason": "REDUCE_BATCH" if mode == "REDUCED" else "RESOURCE_NORMAL" if mode == "NORMAL" else "worker_resource_or_health_gate",
         "health": {k: health.get(k) for k in ("worker_pid", "cycle_count", "updated_at", "last_error", "source_identity")},
+        "scheduler": scheduler,
+        "max_background_workers": scheduler["max_background_workers"],
     }
 
 

@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.astra_local_historical_gap_runner_v1 import resource_gate
 from scripts.astra_historical_data_infrastructure_v1 import durable_write
+from engine.astra_resource_aware_workload_scheduler_v1 import claim_background_slot, release_background_slot
 
 STATE_ROOT = Path("/Users/Shared/AstraRuntime/state")
 WORKER_STATE_ROOT = ROOT / "state"
@@ -152,7 +153,7 @@ def run_once(*, state_dir: Path = STATE_ROOT, worker_state_dir: Path = WORKER_ST
     provider_blocked: list[str] = []
     gate = resource_gate(worker_state_dir)
     if not gate["allowed"]:
-        result = {"status": "WAITING_FOR_RESOURCES", "resource_gate": gate, "completed_lanes": sorted(completed), "updated_at": now_iso()}
+        result = {"status": "WAITING_FOR_RESOURCES", "resource_gate": gate, "scheduler": gate.get("scheduler") or {}, "completed_lanes": sorted(completed), "updated_at": now_iso()}
         _write_json(status_path, result)
         _log(log_path, f"waiting resource_state={gate.get('resource_state')} worker_count={gate.get('worker_count')}")
         return result
@@ -160,15 +161,23 @@ def run_once(*, state_dir: Path = STATE_ROOT, worker_state_dir: Path = WORKER_ST
         if lane in completed:
             continue
         if not resource_gate(worker_state_dir)["allowed"]:
-            result = {"status": "WAITING_FOR_RESOURCES", "completed_lanes": sorted(completed), "updated_at": now_iso()}
+            result = {"status": "WAITING_FOR_RESOURCES", "scheduler": gate.get("scheduler") or {}, "completed_lanes": sorted(completed), "updated_at": now_iso()}
             _write_json(status_path, result)
             return result
         _write_json(status_path, {"status": "RUNNING", "lane": lane, "completed_lanes": sorted(completed), "updated_at": now_iso()})
-        try:
-            result = launch_child(lane, state_dir, log_path, poll_seconds, worker_state_dir)
-        except TypeError:
-            # Keep the small injectable test seam backward-compatible.
-            result = launch_child(lane, state_dir, log_path, poll_seconds)
+        scheduler = gate.get("scheduler") if isinstance(gate, dict) else None
+        lease = claim_background_slot(worker_state_dir, "historical_acquisition_supervisor_v1", scheduler) if scheduler else {"acquired": True}
+        if not lease.get("acquired"):
+            result = {"status": "RESOURCE_BLOCKED", "reason": lease.get("reason") or lease.get("status")}
+        else:
+            try:
+                result = launch_child(lane, state_dir, log_path, poll_seconds, worker_state_dir)
+            except TypeError:
+                # Keep the small injectable test seam backward-compatible.
+                result = launch_child(lane, state_dir, log_path, poll_seconds)
+            finally:
+                if scheduler:
+                    release_background_slot(worker_state_dir, "historical_acquisition_supervisor_v1")
         status = str(result.get("status") or "")
         if status == "RESOURCE_BLOCKED":
             result = {"status": "WAITING_FOR_RESOURCES", "lane": lane, "completed_lanes": sorted(completed), "updated_at": now_iso()}
@@ -184,6 +193,7 @@ def run_once(*, state_dir: Path = STATE_ROOT, worker_state_dir: Path = WORKER_ST
             continue
     result = {
         "status": "COMPLETE" if completed == set(LANES) else "WAITING_FOR_PROVIDER" if provider_blocked else "WAITING_FOR_RESOURCES",
+        "scheduler": gate.get("scheduler") or {},
         "provider_blocked_lanes": provider_blocked,
         "completed_lanes": sorted(completed),
         "updated_at": now_iso(),
