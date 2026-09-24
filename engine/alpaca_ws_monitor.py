@@ -51,6 +51,47 @@ def _float_or_none(value: Any) -> float | None:
     return parsed if parsed > 0 else None
 
 
+def _stream_state(
+    *,
+    desired: bool,
+    connected: bool,
+    stats: Mapping[str, Any],
+    reconnect_storm: bool,
+    stale: bool,
+) -> str:
+    """Separate transport death, quiet transport, and recent message flow."""
+    if not desired:
+        return "IDLE"
+    if (
+        reconnect_storm
+        or not connected
+        or str(stats.get("auth_state") or "") != "AUTHENTICATED"
+        or str(stats.get("subscription_state") or "") != "SUBSCRIBED"
+    ):
+        return "CONNECTION_DEAD"
+    if stale:
+        return "NETWORK_IDLE"
+    return "CONNECTED"
+
+
+def _observation_state(
+    desired: list[str],
+    observations: Mapping[str, Mapping[str, Any]],
+    now: float,
+    *,
+    max_age_seconds: float = 20.0,
+) -> str:
+    """Report data freshness independently from WebSocket transport state."""
+    if not desired:
+        return "IDLE"
+    for symbol in desired:
+        row = observations.get(symbol) or {}
+        received = _receive_epoch(row.get("receive_timestamp"))
+        if received is None or max(0.0, now - received) > max(0.0, max_age_seconds):
+            return "PROVIDER_DATA_STALE"
+    return "CURRENT"
+
+
 SIP_CANARY_ENV = "ASTRA_ALPACA_SIP_CANARY_SYMBOLS"
 MAX_SIP_CANARY_SYMBOLS = 24
 MAX_BROAD_DISCOVERY_OBSERVATIONS = 3_000
@@ -1435,6 +1476,22 @@ class AlpacaWSMonitor:
             and int(crypto_stats.get("reconnects") or 0) >= 3
             and int(crypto_stats.get("messages_received") or 0) == 0
         )
+        equity_stream_state = _stream_state(
+            desired=bool(desired),
+            connected=connected,
+            stats=stats,
+            reconnect_storm=reconnect_storm,
+            stale=stale_stream,
+        )
+        crypto_stream_state = _stream_state(
+            desired=bool(desired_crypto),
+            connected=crypto_connected,
+            stats=crypto_stats,
+            reconnect_storm=crypto_reconnect_storm,
+            stale=crypto_stale_stream,
+        )
+        equity_observation_state = _observation_state(desired, observations, now)
+        crypto_observation_state = _observation_state(desired_crypto, observations, now)
         transport_health = "IDLE"
         equity_health = "IDLE"
         if desired:
@@ -1534,6 +1591,12 @@ class AlpacaWSMonitor:
             "transport_health": transport_health,
             "equity_transport_health": equity_health,
             "crypto_transport_health": crypto_health,
+            "stream_state": equity_stream_state,
+            "equity_stream_state": equity_stream_state,
+            "crypto_stream_state": crypto_stream_state,
+            "observation_state": equity_observation_state,
+            "equity_observation_state": equity_observation_state,
+            "crypto_observation_state": crypto_observation_state,
             "stale_stream": stale_stream,
             "crypto_stale_stream": crypto_stale_stream,
             "connected_age_seconds": round(connected_age, 3) if connected_age is not None else None,
