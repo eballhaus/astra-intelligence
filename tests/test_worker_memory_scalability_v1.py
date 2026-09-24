@@ -210,3 +210,24 @@ def test_resource_efficiency_monitor_is_bounded_advisory_and_fail_closed():
     assert result["authority"] == "ADVISORY_ONLY_EXISTING_RESOURCE_POLICY_REMAINS_AUTHORITATIVE"
     assert result["paper_only_preserved"]
     assert result["truth_lifecycle_reconciliation_changed"] is False
+
+
+def test_deep_owner_scan_is_bounded_while_rss_sampling_remains_continuous(monkeypatch):
+    from engine import paper_autopilot_worker as module
+
+    monkeypatch.setattr(module, "read_snapshot", lambda: {})
+    worker = module.PaperAutopilotWorker(SimpleNamespace(_runtime_state={}, get_crypto_candidate_rows_fn=lambda: []))
+    worker.cycle_count = 1
+    calls = []
+    monkeypatch.setattr(module, "worker_memory_owners", lambda _worker: calls.append(worker.cycle_count) or [{"owner_name": "bounded", "item_count": 1, "estimated_memory_bytes": 10}])
+    monkeypatch.setattr(module, "native_allocator_snapshot", lambda: {"supported": False})
+
+    sample = {"resource_state": "RESOURCE_NORMAL", "worker_process": {"memory_mb": 100.0, "cpu_percent": 1.0}}
+    for cycle in range(1, 8):
+        worker.cycle_count = cycle
+        result = worker._record_resource_memory_telemetry(dict(sample))
+        assert result["current_rss_mb"] == 100.0
+
+    assert calls == [1, 7]
+    assert result["owner_scan_interval_cycles"] == module.RESOURCE_MEMORY_OWNER_SCAN_INTERVAL_CYCLES
+    assert result["owner_scan_performed"] is True

@@ -79,6 +79,7 @@ from engine.alpaca_ws_monitor import _compact_broad_discovery_status_row
 # live canonical worker is never misreported as absent or stale.
 ACTIVE_CYCLE_HEARTBEAT_SECONDS = 5.0
 RESOURCE_MEMORY_SAMPLE_LIMIT = 16
+RESOURCE_MEMORY_OWNER_SCAN_INTERVAL_CYCLES = 6
 CYCLE_TIMING_HISTORY_LIMIT = 32
 CONTINUOUS_GOVERNANCE_MIN_INTERVAL_SECONDS = 30.0
 
@@ -151,6 +152,8 @@ class PaperAutopilotWorker:
         self._memory_last_compaction_result: dict[str, Any] = {}
         self._memory_last_healthy = time.monotonic()
         self._memory_owner_previous: dict[str, tuple[float, int, int]] = {}
+        self._memory_owner_snapshot: list[dict[str, Any]] = []
+        self._memory_owner_scan_cycle = -1
         self._resource_efficiency_monitor: dict[str, Any] = {}
         self._cycle_timing_history: list[dict[str, Any]] = []
         self._cycle_state_write_samples: list[float] = []
@@ -652,12 +655,24 @@ class PaperAutopilotWorker:
         baseline = float(self._memory_startup_mb or 0.0)
         delta = round(memory_mb - baseline, 2)
         trend = "INSUFFICIENT_SAMPLES" if len(self._memory_samples) < 2 else "INCREASING" if delta > 1.0 else "DECREASING" if delta < -1.0 else "STABLE"
-        try:
-            owners = worker_memory_owners(self)
-        except Exception as exc:
-            # Optional introspection cannot interrupt trading-critical work.
-            owners = [{"owner_name": "UNATTRIBUTED_MEMORY", "item_count": 0,
-                       "estimated_memory_bytes": 0, "reason_for_retention": "INSPECTION_FAILED:" + type(exc).__name__}]
+        scan_due = (
+            not self._memory_owner_snapshot
+            or self._memory_owner_scan_cycle < 0
+            or self.cycle_count - self._memory_owner_scan_cycle >= RESOURCE_MEMORY_OWNER_SCAN_INTERVAL_CYCLES
+            or resource_state in paused_states | {"RESOURCE_ELEVATED"}
+        )
+        if scan_due:
+            try:
+                owners = worker_memory_owners(self)
+            except Exception as exc:
+                # Optional introspection cannot interrupt trading-critical work.
+                owners = [{"owner_name": "UNATTRIBUTED_MEMORY", "item_count": 0,
+                           "estimated_memory_bytes": 0, "reason_for_retention": "INSPECTION_FAILED:" + type(exc).__name__}]
+            self._memory_owner_snapshot = [dict(row) for row in owners if isinstance(row, dict)]
+            self._memory_owner_scan_cycle = int(self.cycle_count)
+        else:
+            # Reuse metadata only; no runtime payload references cross cycles.
+            owners = [dict(row) for row in self._memory_owner_snapshot]
         native = native_allocator_snapshot()
         if native.get("supported"):
             owners.append({"owner_name": "NATIVE_MALLOC_ALLOCATOR", "object_class": "malloc_zones",
@@ -687,9 +702,22 @@ class PaperAutopilotWorker:
             actions.append("COMPACT_RECONSTRUCTABLE_DIAGNOSTICS")
         if self._memory_native_bytes_released:
             actions.append("RELEASE_UNUSED_NATIVE_PAGES")
+        allocator_growth_signal = (
+            "SUSTAINED_PYTHON_BLOCK_GROWTH"
+            if len(self._memory_samples) >= 4
+            and int(allocated_blocks - int(self._memory_samples[0].get("python_allocated_blocks") or allocated_blocks)) > 100_000
+            and memory_mb - float(self._memory_samples[0].get("rss_mb") or memory_mb) > 32.0
+            else "NO_SUSTAINED_PYTHON_BLOCK_GROWTH_SIGNAL"
+        )
+        monitor_resource = dict(sample)
+        monitor_resource["resource_memory_telemetry_v1"] = {
+            "top_memory_owners": owners[:20],
+            "background_work_suspended": self._memory_background_suspended,
+            "allocator_growth_signal": allocator_growth_signal,
+        }
         self._resource_efficiency_monitor = resource_efficiency_monitor_v1(
             {
-                "resource": sample,
+                "resource": monitor_resource,
                 "cycle_timing_v1": latest_timing,
             },
             previous=self._resource_efficiency_monitor,
@@ -709,17 +737,14 @@ class PaperAutopilotWorker:
             "owner_counts": self._resource_memory_owner_counts(),
             "top_memory_owners": owners[:20],
             "memory_ownership_registry": owners,
+            "owner_scan_interval_cycles": RESOURCE_MEMORY_OWNER_SCAN_INTERVAL_CYCLES,
+            "owner_scan_performed": bool(scan_due),
+            "owner_scan_cycle": int(self._memory_owner_scan_cycle),
             "python_allocated_blocks": sys.getallocatedblocks(),
             "python_allocated_blocks_delta_recent_window": int(
                 allocated_blocks - int(self._memory_samples[0].get("python_allocated_blocks") or allocated_blocks)
             ),
-            "allocator_growth_signal": (
-                "SUSTAINED_PYTHON_BLOCK_GROWTH"
-                if len(self._memory_samples) >= 4
-                and int(allocated_blocks - int(self._memory_samples[0].get("python_allocated_blocks") or allocated_blocks)) > 100_000
-                and memory_mb - float(self._memory_samples[0].get("rss_mb") or memory_mb) > 32.0
-                else "NO_SUSTAINED_PYTHON_BLOCK_GROWTH_SIGNAL"
-            ),
+            "allocator_growth_signal": allocator_growth_signal,
             "configured_max_mb": self.limits.maximum_worker_memory_mb,
             "headroom_mb": round(self.limits.maximum_worker_memory_mb - memory_mb, 2),
             "memory_state": memory_budget_state(memory_mb, self.limits.maximum_worker_memory_mb),
